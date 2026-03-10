@@ -16,7 +16,7 @@ fi
 
 # ── 2. hermit ─────────────────────────────────────────────────────────────
 echo "→ Installing hermit..."
-uv tool install --python 3.11 --reinstall "$REPO_DIR[feishu,webhook]" -q
+uv tool install --python 3.11 --reinstall "$REPO_DIR" -q
 
 # Ensure uv tool bin is on PATH for this session
 export PATH="$(uv tool dir 2>/dev/null || echo "$HOME/.local/bin"):$PATH"
@@ -71,7 +71,7 @@ HAS_AUTH=$(grep -cE "^(ANTHROPIC_API_KEY|HERMIT_AUTH_TOKEN)=.+" "$ENV_FILE" 2>/d
 if [[ "$HAS_AUTH" -gt 0 ]] || [[ -n "${ANTHROPIC_API_KEY}${HERMIT_AUTH_TOKEN}" ]]; then
   echo "  hermit chat"
   [[ -n "$HERMIT_FEISHU_APP_ID" || $(grep -c "FEISHU_APP_ID" "$ENV_FILE" 2>/dev/null) -gt 0 ]] && \
-    echo "  hermit serve --adapter feishu"
+    echo "  hermit serve feishu"
 else
   echo "  One more step — add your API key to ~/.hermit/.env:"
   echo "    echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.hermit/.env"

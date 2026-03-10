@@ -4,5 +4,5 @@ services:
     env_file: .env
     volumes:
       - ${HOME}/.hermit:/root/.hermit
-    command: serve --adapter feishu
+    command: serve feishu
     restart: unless-stopped

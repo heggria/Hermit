@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Install dependencies first (cached layer)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra feishu --extra webhook
+RUN uv sync --frozen --no-dev
 
 # Copy source
 COPY hermit/ hermit/
