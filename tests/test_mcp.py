@@ -147,6 +147,27 @@ class TestPluginManagerMcpCollection:
         pm.start_mcp_servers(registry)
         assert pm._mcp_manager is None
 
+    def test_start_mcp_ignores_connection_failures(self, monkeypatch):
+        """MCP connection failures should not abort the main process."""
+        pm = PluginManager()
+        pm._all_mcp.append(McpServerSpec(
+            name="broken",
+            description="Broken MCP",
+            transport="http",
+            url="https://example.invalid/mcp",
+        ))
+
+        def _boom(self, specs):
+            raise RuntimeError("401 Unauthorized")
+
+        monkeypatch.setattr(McpClientManager, "connect_all_sync", _boom)
+
+        registry = ToolRegistry()
+        pm.start_mcp_servers(registry)
+
+        assert pm._mcp_manager is not None
+        assert pm._mcp_manager.get_tool_specs() == []
+
 
 # ── mcp_loader plugin (.mcp.json parsing) ────────────────────────
 

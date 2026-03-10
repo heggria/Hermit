@@ -315,7 +315,10 @@ class PluginManager:
             return
         from hermit.plugin.mcp_client import McpClientManager
         self._mcp_manager = McpClientManager()
-        self._mcp_manager.connect_all_sync(self._all_mcp)
+        try:
+            self._mcp_manager.connect_all_sync(self._all_mcp)
+        except Exception:
+            log.exception("mcp_startup_error")
         for tool in self._mcp_manager.get_tool_specs():
             try:
                 registry.register(tool)

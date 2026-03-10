@@ -184,11 +184,11 @@ mcp = "mcp:register"
 
 推荐优先使用：
 
-- [`JsonStore.read()`](/Users/beta/work/Hermit/hermit/storage/store.py)
-- [`JsonStore.write()`](/Users/beta/work/Hermit/hermit/storage/store.py)
-- [`JsonStore.update()`](/Users/beta/work/Hermit/hermit/storage/store.py)
-- [`atomic_write()`](/Users/beta/work/Hermit/hermit/storage/atomic.py)
-- [`FileGuard.acquire()`](/Users/beta/work/Hermit/hermit/storage/lock.py)
+- [`JsonStore.read()`](hermit/storage/store.py)
+- [`JsonStore.write()`](hermit/storage/store.py)
+- [`JsonStore.update()`](hermit/storage/store.py)
+- [`atomic_write()`](hermit/storage/atomic.py)
+- [`FileGuard.acquire()`](hermit/storage/lock.py)
 
 注意：
 
@@ -197,7 +197,7 @@ mcp = "mcp:register"
 
 ## 运行与调试建议
 
-- 先看 [`hermit/main.py`](/Users/beta/work/Hermit/hermit/main.py) 确认 CLI 入口
-- 再看 [`hermit/core/runner.py`](/Users/beta/work/Hermit/hermit/core/runner.py) 理解执行链路
-- 再看 [`hermit/plugin/manager.py`](/Users/beta/work/Hermit/hermit/plugin/manager.py) 理解能力装配
+- 先看 [`hermit/main.py`](hermit/main.py) 确认 CLI 入口
+- 再看 [`hermit/core/runner.py`](hermit/core/runner.py) 理解执行链路
+- 再看 [`hermit/plugin/manager.py`](hermit/plugin/manager.py) 理解能力装配
 - 涉及 scheduler / webhook / feishu 时，优先检查 `DISPATCH_RESULT` 是否是你要挂接的事件

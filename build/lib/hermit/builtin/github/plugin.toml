@@ -1,0 +1,8 @@
+[plugin]
+name = "github"
+version = "0.1.0"
+description = "GitHub MCP integration with a built-in GitHub workflow skill"
+builtin = true
+
+[entry]
+mcp = "mcp:register"

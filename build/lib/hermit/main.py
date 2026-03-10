@@ -17,13 +17,20 @@ import typer
 from hermit.config import Settings, get_settings
 
 
+def _hermit_env_path() -> Path:
+    base_dir = os.environ.get("HERMIT_BASE_DIR")
+    if base_dir:
+        return Path(base_dir).expanduser() / ".env"
+    return Path.home() / ".hermit" / ".env"
+
+
 def _load_hermit_env() -> None:
     """Load ~/.hermit/.env into os.environ before Settings is instantiated.
 
     Existing env vars take precedence (they are not overwritten), so shell-level
     exports always win over the file.
     """
-    env_path = Path.home() / ".hermit" / ".env"
+    env_path = _hermit_env_path()
     if not env_path.exists():
         return
     for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -249,7 +256,7 @@ class _PreflightItem:
 
 
 def _read_env_file_keys() -> set[str]:
-    env_path = Path.home() / ".hermit" / ".env"
+    env_path = _hermit_env_path()
     if not env_path.exists():
         return set()
     keys: set[str] = set()
@@ -283,7 +290,7 @@ def _format_preflight_item(item: _PreflightItem) -> str:
 
 
 def _build_serve_preflight(adapter: str, settings: Settings) -> tuple[list[_PreflightItem], list[str]]:
-    env_path = Path.home() / ".hermit" / ".env"
+    env_path = settings.base_dir / ".env"
     env_file_keys = _read_env_file_keys()
     items: list[_PreflightItem] = [
         _PreflightItem(
@@ -430,7 +437,7 @@ def setup() -> None:
 
     typer.echo(f"\n{BOLD}Hermit Setup{RESET}\n")
 
-    env_path = Path.home() / ".hermit" / ".env"
+    env_path = settings.base_dir / ".env"
     if env_path.exists():
         overwrite = typer.confirm(
             f"Config already exists at {env_path}. Overwrite?", default=False
@@ -492,7 +499,7 @@ def setup() -> None:
     typer.echo("\nNext steps:")
     typer.echo("  hermit chat")
     if use_feishu:
-        typer.echo("  hermit serve --adapter feishu")
+        typer.echo("  hermit serve feishu")
     typer.echo("")
 
 

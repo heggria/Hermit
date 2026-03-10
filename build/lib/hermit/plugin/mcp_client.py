@@ -89,10 +89,10 @@ class McpClientManager:
         """Connect to all MCP servers synchronously.
 
         Starts the lifecycle coroutine in the background loop and blocks until
-        all connections are established (or fail).
+        all connections are attempted. Individual MCP failures are logged and
+        must not interrupt the main Hermit process.
         """
         ready = threading.Event()
-        errors: list[Exception] = []
 
         async def lifecycle() -> None:
             # asyncio.Event must be created inside the target loop
@@ -109,14 +109,12 @@ class McpClientManager:
                     # Hold all context managers open until shutdown is signalled
                     await self._shutdown_event.wait()
                 # AsyncExitStack.__aexit__ runs here, in the same task
-            except Exception as exc:
-                errors.append(exc)
+            except Exception:
+                log.exception("mcp_lifecycle_error")
                 ready.set()
 
         self._lifecycle_future = asyncio.run_coroutine_threadsafe(lifecycle(), self._loop)
         ready.wait(timeout=60)
-        if errors:
-            raise errors[0]
 
     def get_tool_specs(self) -> list[ToolSpec]:
         """Return ToolSpec instances for all discovered MCP tools."""

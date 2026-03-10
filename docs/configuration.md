@@ -2,8 +2,8 @@
 
 相关文档：
 
-- [`architecture.md`](/Users/beta/work/Hermit/docs/architecture.md)
-- [`openclaw-comparison.md`](/Users/beta/work/Hermit/docs/openclaw-comparison.md)
+- [`architecture.md`](./architecture.md)
+- [`openclaw-comparison.md`](./openclaw-comparison.md)
 
 ## 配置来源与优先级
 
@@ -15,7 +15,7 @@
 
 实际细节：
 
-- 启动时 [`hermit/main.py`](/Users/beta/work/Hermit/hermit/main.py) 会先把 `~/.hermit/.env` 注入到 `os.environ`
+- 启动时 [`hermit/main.py`](../hermit/main.py) 会先把 `~/.hermit/.env` 注入到 `os.environ`
 - 如果 shell 里已经有同名变量，shell 值优先，不会被覆盖
 - `Settings` 随后再读取当前目录 `.env`
 
@@ -77,7 +77,7 @@
 
 ## 启动时注入的上下文
 
-[`hermit/context.py`](/Users/beta/work/Hermit/hermit/context.py) 会把这些路径和参数注入基础 system prompt：
+[`hermit/context.py`](../hermit/context.py) 会把这些路径和参数注入基础 system prompt：
 
 - `current_working_directory`
 - `hermit_base_dir`
@@ -94,7 +94,7 @@
 - `max_turns`
 - `sandbox_mode`
 
-随后 [`PluginManager.build_system_prompt()`](/Users/beta/work/Hermit/hermit/plugin/manager.py) 会继续拼接：
+随后 [`PluginManager.build_system_prompt()`](../hermit/plugin/manager.py) 会继续拼接：
 
 - rules 文本
 - skill catalog 或预加载 skill 全文
@@ -270,9 +270,9 @@ CLI 管理命令：
 
 对应实现：
 
-- [`hermit/storage/atomic.py`](/Users/beta/work/Hermit/hermit/storage/atomic.py)
-- [`hermit/storage/lock.py`](/Users/beta/work/Hermit/hermit/storage/lock.py)
-- [`hermit/storage/store.py`](/Users/beta/work/Hermit/hermit/storage/store.py)
+- [`hermit/storage/atomic.py`](../hermit/storage/atomic.py)
+- [`hermit/storage/lock.py`](../hermit/storage/lock.py)
+- [`hermit/storage/store.py`](../hermit/storage/store.py)
 
 `JsonStore` 当前公开方法是：
 
