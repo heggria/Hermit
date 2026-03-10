@@ -437,6 +437,7 @@ def setup() -> None:
 
     typer.echo(f"\n{BOLD}Hermit Setup{RESET}\n")
 
+    settings = get_settings()
     env_path = settings.base_dir / ".env"
     if env_path.exists():
         overwrite = typer.confirm(
@@ -499,7 +500,7 @@ def setup() -> None:
     typer.echo("\nNext steps:")
     typer.echo("  hermit chat")
     if use_feishu:
-        typer.echo("  hermit serve feishu")
+        typer.echo("  hermit serve --adapter feishu")
     typer.echo("")
 
 

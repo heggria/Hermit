@@ -219,13 +219,13 @@ Hermit 会读取两个位置的 MCP 配置：
 飞书服务：
 
 ```bash
-hermit serve feishu
+hermit serve --adapter feishu
 ```
 
 热重载：
 
 ```bash
-hermit reload feishu
+hermit reload --adapter feishu
 ```
 
 Docker Compose 里也提供了一个最小 Feishu 服务入口：

@@ -59,6 +59,7 @@ def _build_plist(exe: Path, adapter: str, log_dir: Path) -> str:
             <array>
                 <string>{exe}</string>
                 <string>serve</string>
+                <string>--adapter</string>
                 <string>{adapter}</string>
             </array>
             <key>RunAtLoad</key>

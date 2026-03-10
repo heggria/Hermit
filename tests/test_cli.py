@@ -18,6 +18,45 @@ def test_init_creates_workspace(tmp_path, monkeypatch) -> None:
     assert (tmp_path / ".hermit" / "plugins").exists()
 
 
+def test_setup_writes_env_file(tmp_path, monkeypatch) -> None:
+    from hermit.config import get_settings
+    import hermit.main as main_mod
+
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
+    get_settings.cache_clear()
+
+    confirm_answers = iter([False, False])
+
+    monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
+    monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: "sk-ant-test")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["setup"])
+
+    assert result.exit_code == 0
+    assert (tmp_path / ".hermit" / ".env").read_text(encoding="utf-8") == "ANTHROPIC_API_KEY=sk-ant-test\n"
+
+
+def test_setup_shows_adapter_flag_in_next_steps(tmp_path, monkeypatch) -> None:
+    from hermit.config import get_settings
+    import hermit.main as main_mod
+
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
+    get_settings.cache_clear()
+
+    confirm_answers = iter([False, True])
+    prompt_answers = iter(["sk-ant-test", "cli_xxx", "secret"])
+
+    monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
+    monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["setup"])
+
+    assert result.exit_code == 0
+    assert "hermit serve --adapter feishu" in result.output
+
+
 def test_serve_preflight_reports_missing_feishu_env(tmp_path, monkeypatch) -> None:
     from hermit.config import get_settings
 

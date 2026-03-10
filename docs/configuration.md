@@ -222,19 +222,19 @@ mcp__github__create_issue
 启动方式：
 
 ```bash
-hermit serve feishu
+hermit serve --adapter feishu
 ```
 
 热重载：
 
 ```bash
-hermit reload feishu
+hermit reload --adapter feishu
 ```
 
 注意：
 
-- `serve` / `reload` 的 `adapter` 在当前 Typer 定义里是位置参数，不是 `--adapter` 选项
-- `autostart enable/disable` 才是 `--adapter` 选项风格
+- `serve` / `reload` 的 `adapter` 在当前 CLI 里使用 `--adapter` 选项风格
+- `autostart enable/disable` 也使用 `--adapter` 选项风格
 
 Feishu 相关变量：
 
