@@ -58,6 +58,87 @@ def _serialize_messages(messages: list) -> str:
     return "\n\n".join(parts)
 
 
+def _sanitize_messages(messages: list) -> list:
+    """Return a cleaned copy of messages safe for Anthropic tool-use sequencing."""
+    cleaned: list[dict[str, Any]] = []
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        copied = dict(msg)
+        content = copied.get("content")
+        if isinstance(content, list):
+            copied["content"] = [
+                dict(block) if isinstance(block, dict) else block
+                for block in content
+            ]
+        cleaned.append(copied)
+
+    def _content_to_blocks(content: Any) -> list[dict[str, Any]]:
+        if isinstance(content, list):
+            return content
+        if isinstance(content, str):
+            return [{"type": "text", "text": content}]
+        return []
+
+    tail = cleaned[-1] if cleaned else None
+    if tail and tail.get("role") == "assistant" and isinstance(tail.get("content"), list):
+        tail_blocks = [block for block in tail["content"] if isinstance(block, dict)]
+        has_tool_use = any(block.get("type") == "tool_use" for block in tail_blocks)
+        has_text = any(block.get("type") == "text" and block.get("text") for block in tail_blocks)
+        if has_tool_use and not has_text:
+            orphan_ids = [block.get("id") for block in tail_blocks if block.get("type") == "tool_use" and block.get("id")]
+            log.warning("compact_sanitize_removed_trailing_tool_use", extra={"tool_use_ids": orphan_ids})
+            cleaned.pop()
+
+    for index, msg in enumerate(cleaned):
+        if msg.get("role") != "assistant":
+            continue
+
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+
+        tool_use_ids = [
+            block.get("id")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id")
+        ]
+        if not tool_use_ids:
+            continue
+
+        next_msg = cleaned[index + 1] if index + 1 < len(cleaned) else None
+        next_is_user = isinstance(next_msg, dict) and next_msg.get("role") == "user"
+        next_blocks = _content_to_blocks(next_msg.get("content")) if next_is_user else []
+        result_ids = {
+            block.get("tool_use_id")
+            for block in next_blocks
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id")
+        }
+        orphan_ids = [tool_use_id for tool_use_id in tool_use_ids if tool_use_id not in result_ids]
+        if not orphan_ids:
+            continue
+
+        log.warning("compact_sanitize_orphaned_tool_use", extra={"tool_use_ids": orphan_ids, "message_index": index})
+
+        synthetic_blocks = [
+            {
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": "[compact: result unavailable]",
+                "is_error": True,
+            }
+            for tool_use_id in orphan_ids
+        ]
+
+        if next_is_user and next_msg is not None:
+            next_msg["content"] = next_blocks + synthetic_blocks
+        else:
+            cleaned.insert(index + 1, {"role": "user", "content": synthetic_blocks})
+
+    return cleaned
+
+
 def _do_compact(runner: Any, session: Any) -> tuple[bool, str]:
     """Run LLM summarization and replace session.messages.
 
@@ -66,8 +147,9 @@ def _do_compact(runner: Any, session: Any) -> tuple[bool, str]:
     if not session.messages:
         return False, "没有可压缩的内容。"
 
-    original_count = len(session.messages)
-    history_text = _serialize_messages(session.messages)
+    sanitized_messages = _sanitize_messages(session.messages)
+    original_count = len(sanitized_messages)
+    history_text = _serialize_messages(sanitized_messages)
 
     try:
         response = runner.agent.client.messages.create(
