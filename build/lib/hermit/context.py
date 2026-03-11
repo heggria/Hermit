@@ -4,7 +4,6 @@ from pathlib import Path
 
 from hermit.config import Settings
 
-
 DEFAULT_CONTEXT_TEMPLATE = """# Hermit Context
 
 ## 身份

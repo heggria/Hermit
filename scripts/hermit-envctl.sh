@@ -14,15 +14,15 @@ fi
 case "${ENV_NAME}" in
   prod)
     BASE_DIR="${HOME}/.hermit"
-    APP_PATH="${HOME}/Applications/Hermit Menu.app"
+    APP_PATH="${HOME}/Applications/Hermit.app"
     ;;
   dev)
     BASE_DIR="${HOME}/.hermit-dev"
-    APP_PATH="${HOME}/Applications/Hermit Menu Dev.app"
+    APP_PATH="${HOME}/Applications/Hermit Dev.app"
     ;;
   test)
     BASE_DIR="${HOME}/.hermit-test"
-    APP_PATH="${HOME}/Applications/Hermit Menu Test.app"
+    APP_PATH="${HOME}/Applications/Hermit Test.app"
     ;;
   *)
     echo "Unknown environment: ${ENV_NAME}" >&2

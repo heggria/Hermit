@@ -207,9 +207,9 @@ git push origin v0.1.1
 
 macOS companion 分发：
 
-- `make mac-dmg` 会基于当前本机环境生成菜单栏 companion 的 `.dmg`
-- 当前 DMG 打包的是本地 companion app bundle，不是完全自包含的独立桌面应用
-- 更适合本机分发或内测，不应把它误认为跨机器零依赖安装器
+- `make mac-dmg` 会基于当前本机环境生成 `Hermit.app` 菜单栏 companion 的 `.dmg`
+- `make mac-dmg` 产出的 DMG 会嵌入当前 Python runtime，适合 test / prod 分发或内测安装
+- `make menubar-app` / `hermit-menubar-install-app` 默认不嵌 runtime，更适合本机 dev 调试
 
 启用 PyPI Trusted Publishing 前，需要在 PyPI 项目后台配置 trusted publisher，指向：
 

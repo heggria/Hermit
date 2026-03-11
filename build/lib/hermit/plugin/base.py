@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, List, Optional, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Protocol
 
 if TYPE_CHECKING:
     from hermit.core.runner import AgentRunner

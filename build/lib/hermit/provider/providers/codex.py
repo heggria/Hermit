@@ -10,7 +10,14 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from hermit.core.tools import ToolSpec, serialize_tool_result
-from hermit.provider.contracts import Provider, ProviderEvent, ProviderFeatures, ProviderRequest, ProviderResponse, UsageMetrics
+from hermit.provider.contracts import (
+    Provider,
+    ProviderEvent,
+    ProviderFeatures,
+    ProviderRequest,
+    ProviderResponse,
+    UsageMetrics,
+)
 
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _CODEX_OAUTH_BASE_URL = "https://chatgpt.com/backend-api/codex/responses"
@@ -496,7 +503,6 @@ class CodexOAuthProvider(Provider):
 
     def _stream_impl(self, request: ProviderRequest) -> Iterable[ProviderEvent]:
         current_text: dict[str, str] = {}
-        current_calls: dict[str, dict[str, Any]] = {}
         usage = UsageMetrics()
         stop_reason = "end_turn"
         with self._open_stream(request) as response:

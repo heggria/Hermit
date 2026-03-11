@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from hermit.storage import atomic_write
 from hermit.provider.messages import normalize_messages
+from hermit.storage import atomic_write
 
 
 @dataclass

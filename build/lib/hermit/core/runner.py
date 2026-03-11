@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Dict, Optional
 
+from hermit.core.session import SessionManager
 from hermit.provider.runtime import AgentResult, AgentRuntime, ToolCallback, ToolStartCallback
-from hermit.core.session import Session, SessionManager
 
 if TYPE_CHECKING:
     from hermit.plugin.manager import PluginManager

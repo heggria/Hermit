@@ -6,11 +6,10 @@ Zero external dependencies.
 """
 from __future__ import annotations
 
-from hermit.plugin.base import PluginContext
-from hermit.core.tools import ToolSpec
-
-from hermit.builtin.web_tools.search import handle_search
 from hermit.builtin.web_tools.fetch import handle_fetch
+from hermit.builtin.web_tools.search import handle_search
+from hermit.core.tools import ToolSpec
+from hermit.plugin.base import PluginContext
 
 
 def register(ctx: PluginContext) -> None:

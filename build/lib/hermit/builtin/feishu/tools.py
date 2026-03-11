@@ -214,11 +214,10 @@ def _build_doc_append_tool() -> ToolSpec:
             return _err("content is required")
 
         try:
-            import lark_oapi as lark
             from lark_oapi.api.docx.v1 import (
+                Block,
                 CreateDocumentBlockChildrenRequest,
                 CreateDocumentBlockChildrenRequestBody,
-                Block,
                 Text,
                 TextElement,
                 TextRun,
@@ -300,7 +299,7 @@ def _build_wiki_list_tool() -> ToolSpec:
         space_id = str(payload.get("space_id", "")).strip()
 
         try:
-            from lark_oapi.api.wiki.v2 import ListSpaceRequest, ListSpaceNodeRequest
+            from lark_oapi.api.wiki.v2 import ListSpaceNodeRequest, ListSpaceRequest
 
             client = build_lark_client()
 
@@ -519,7 +518,6 @@ def _build_send_message_tool() -> ToolSpec:
             return _err(f"Invalid receive_id_type: {receive_id_type}")
 
         try:
-            import lark_oapi as lark
             from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
             client = build_lark_client()
@@ -600,10 +598,10 @@ def _build_bitable_query_tool() -> ToolSpec:
 
         try:
             from lark_oapi.api.bitable.v1 import (
+                Condition,
+                FilterInfo,
                 SearchAppTableRecordRequest,
                 SearchAppTableRecordRequestBody,
-                FilterInfo,
-                Condition,
             )
 
             client = build_lark_client()
@@ -713,8 +711,8 @@ def _build_bitable_add_tool() -> ToolSpec:
 
         try:
             from lark_oapi.api.bitable.v1 import (
-                CreateAppTableRecordRequest,
                 AppTableRecord,
+                CreateAppTableRecordRequest,
             )
 
             client = build_lark_client()
@@ -792,9 +790,10 @@ def _build_sheet_read_tool() -> ToolSpec:
             return _err("range is required (e.g. 'Sheet1!A1:D10' or just 'A1:D10')")
 
         try:
-            from lark_oapi.core.model import BaseRequest
-            from lark_oapi.core.enum import HttpMethod, AccessTokenType
             import urllib.parse
+
+            from lark_oapi.core.enum import AccessTokenType, HttpMethod
+            from lark_oapi.core.model import BaseRequest
 
             client = build_lark_client()
             encoded_range = urllib.parse.quote(range_str, safe="")
@@ -868,8 +867,8 @@ def _build_sheet_write_tool() -> ToolSpec:
             return _err("values must be a non-empty 2D array of rows")
 
         try:
+            from lark_oapi.core.enum import AccessTokenType, HttpMethod
             from lark_oapi.core.model import BaseRequest
-            from lark_oapi.core.enum import HttpMethod, AccessTokenType
 
             client = build_lark_client()
             req = BaseRequest()
@@ -951,8 +950,8 @@ def _build_calendar_create_tool() -> ToolSpec:
 
         try:
             from lark_oapi.api.calendar.v4 import (
-                CreateCalendarEventRequest,
                 CalendarEvent,
+                CreateCalendarEventRequest,
                 TimeInfo,
             )
 

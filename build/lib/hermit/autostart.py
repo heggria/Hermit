@@ -10,10 +10,12 @@ instead of raising an error.
 """
 from __future__ import annotations
 
+import os
+import plistlib
+import re
 import shutil
 import subprocess
 import sys
-import plistlib
 from pathlib import Path
 from textwrap import dedent
 from typing import Optional
@@ -24,7 +26,27 @@ _LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
 
 def _label(adapter: str) -> str:
+    base_dir = _current_base_dir()
+    suffix = _base_dir_label_suffix(base_dir)
+    if suffix:
+        return f"{_LABEL_PREFIX}.{suffix}.{adapter}"
     return f"{_LABEL_PREFIX}.{adapter}"
+
+
+def _current_base_dir() -> Path:
+    raw = os.environ.get("HERMIT_BASE_DIR")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".hermit"
+
+
+def _base_dir_label_suffix(base_dir: Path) -> str:
+    resolved = base_dir.expanduser()
+    default_base_dir = Path.home() / ".hermit"
+    if resolved == default_base_dir:
+        return ""
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", resolved.name).strip("-").lower()
+    return slug or "custom"
 
 
 def _plist_path(adapter: str) -> Path:
@@ -149,7 +171,7 @@ def _list_managed_plists() -> list[Path]:
     """Return all Hermit LaunchAgent plist files in ~/Library/LaunchAgents."""
     if not _LAUNCH_AGENTS_DIR.exists():
         return []
-    return sorted(_LAUNCH_AGENTS_DIR.glob(f"{_LABEL_PREFIX}.*.plist"))
+    return sorted(_LAUNCH_AGENTS_DIR.glob(f"{_LABEL_PREFIX}*.plist"))
 
 
 def existing_adapters() -> list[str]:
@@ -252,12 +274,14 @@ def status(adapter: Optional[str] = None) -> str:
     for plist in plists:
         if not plist.exists():
             continue
-        # Derive adapter name from plist filename: com.hermit.serve.<adapter>.plist
-        stem = plist.stem  # com.hermit.serve.feishu
-        adp = stem.removeprefix(f"{_LABEL_PREFIX}.")
+        args = _plist_program_arguments(plist)
+        adp = _adapter_from_program_arguments(args)
+        if not adp:
+            continue
         loaded = _is_loaded(adp)
         state = "running" if loaded else "NOT loaded"
-        lines.append(f"  [{state:^10}]  {_label(adp)}")
+        label = plist.stem
+        lines.append(f"  [{state:^10}]  {label}")
         lines.append(f"               {plist}")
 
     return "Auto-start agents:\n" + "\n".join(lines)

@@ -4,14 +4,16 @@ import argparse
 import os
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from hermit import __version__
 from hermit.companion.control import hermit_base_dir
 
-APP_NAME = "Hermit Menu"
+APP_NAME = "Hermit"
 BUNDLE_ID = "com.hermit.menubar"
 
 
@@ -69,6 +71,133 @@ def _project_root() -> Path | None:
     return None
 
 
+def _icon_source() -> Path | None:
+    project_root = _project_root()
+    if project_root is None:
+        return None
+    source = project_root / "docs" / "hermit-icon.svg"
+    if source.exists():
+        return source
+    return None
+
+
+def _install_bundle_icon(resources_dir: Path) -> str | None:
+    source = _icon_source()
+    if source is None or sys.platform != "darwin":
+        return None
+    if shutil.which("sips") is None or shutil.which("iconutil") is None:
+        return None
+
+    icon_name = "HermitMenu"
+    iconset_dir = resources_dir / f"{icon_name}.iconset"
+    if iconset_dir.exists():
+        shutil.rmtree(iconset_dir)
+    iconset_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="hermit-icon-") as temp_dir:
+            temp_path = Path(temp_dir)
+            raster_png = temp_path / "hermit-icon.png"
+            inset_png = temp_path / "hermit-icon-inset.png"
+            subprocess.run(
+                [
+                    "sips",
+                    "-s",
+                    "format",
+                    "png",
+                    str(source),
+                    "--out",
+                    str(raster_png),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if not raster_png.exists():
+                return None
+
+            # Keep a consistent margin so the symbol does not appear oversized in Finder.
+            subprocess.run(
+                [
+                    "sips",
+                    "-z",
+                    "992",
+                    "992",
+                    str(raster_png),
+                    "--out",
+                    str(inset_png),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                [
+                    "sips",
+                    "--padToHeightWidth",
+                    "1024",
+                    "1024",
+                    str(inset_png),
+                    "--out",
+                    str(raster_png),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            sizes = {
+                "icon_16x16.png": 16,
+                "icon_16x16@2x.png": 32,
+                "icon_32x32.png": 32,
+                "icon_32x32@2x.png": 64,
+                "icon_128x128.png": 128,
+                "icon_128x128@2x.png": 256,
+                "icon_256x256.png": 256,
+                "icon_256x256@2x.png": 512,
+                "icon_512x512.png": 512,
+                "icon_512x512@2x.png": 1024,
+            }
+            for filename, size in sizes.items():
+                subprocess.run(
+                    [
+                        "sips",
+                        "-z",
+                        str(size),
+                        str(size),
+                        str(raster_png),
+                        "--out",
+                        str(iconset_dir / filename),
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+            icns_path = resources_dir / f"{icon_name}.icns"
+            if icns_path.exists():
+                icns_path.unlink()
+            subprocess.run(
+                [
+                    "iconutil",
+                    "-c",
+                    "icns",
+                    str(iconset_dir),
+                    "-o",
+                    str(icns_path),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return icns_path.name
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    finally:
+        if iconset_dir.exists():
+            shutil.rmtree(iconset_dir, ignore_errors=True)
+
+
 def install_app_bundle(
     *,
     target: Path | None = None,
@@ -85,6 +214,7 @@ def install_app_bundle(
     resources_dir.mkdir(parents=True, exist_ok=True)
     resolved_app_name = app_name(resolved_base_dir)
     resolved_bundle_id = bundle_id(resolved_base_dir)
+    icon_file = _install_bundle_icon(resources_dir)
 
     info = {
         "CFBundleDisplayName": resolved_app_name,
@@ -96,6 +226,8 @@ def install_app_bundle(
         "CFBundleVersion": "1",
         "LSUIElement": True,
     }
+    if icon_file:
+        info["CFBundleIconFile"] = icon_file
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
 
     env_lines = [f'export HERMIT_BASE_DIR="{resolved_base_dir}"']

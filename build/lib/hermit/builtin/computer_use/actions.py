@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 _TMP_PREFIX = "hermit_screenshot_"
 _CLICLICK = "cliclick"
 

@@ -3,7 +3,14 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional
 
 from hermit.core.tools import ToolSpec
-from hermit.provider.contracts import Provider, ProviderEvent, ProviderFeatures, ProviderRequest, ProviderResponse, UsageMetrics
+from hermit.provider.contracts import (
+    Provider,
+    ProviderEvent,
+    ProviderFeatures,
+    ProviderRequest,
+    ProviderResponse,
+    UsageMetrics,
+)
 from hermit.provider.messages import normalize_block
 
 _CACHE_CONTROL_EPHEMERAL: Dict[str, str] = {"type": "ephemeral"}

@@ -12,7 +12,6 @@ from hermit.plugin.base import (
     CommandSpec,
     HookEvent,
     McpServerSpec,
-    PluginContext,
     PluginManifest,
     SubagentSpec,
 )
@@ -47,7 +46,20 @@ class PluginManager:
     def discover_and_load(self, *search_dirs: Path) -> None:
         manifests = discover_plugins(*search_dirs)
         for manifest in manifests:
+            if self._is_disabled(manifest):
+                log.info(
+                    "skipping_disabled_plugin",
+                    name=manifest.name,
+                    builtin=manifest.builtin,
+                )
+                continue
             self._load_one(manifest)
+
+    def _is_disabled(self, manifest: PluginManifest) -> bool:
+        if not manifest.builtin or self.settings is None:
+            return False
+        disabled = getattr(self.settings, "disabled_builtin_plugins", [])
+        return manifest.name in set(disabled or [])
 
     def _load_one(self, manifest: PluginManifest) -> None:
         plugin_dir = Path(manifest.plugin_dir)

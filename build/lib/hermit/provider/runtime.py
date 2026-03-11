@@ -7,8 +7,14 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from hermit.core.tools import ToolRegistry, serialize_tool_result
-from hermit.provider.contracts import Provider, ProviderEvent, ProviderRequest, UsageMetrics
-from hermit.provider.messages import block_value, extract_text, extract_thinking, normalize_block, normalize_messages
+from hermit.provider.contracts import Provider, ProviderRequest, UsageMetrics
+from hermit.provider.messages import (
+    block_value,
+    extract_text,
+    extract_thinking,
+    normalize_block,
+    normalize_messages,
+)
 
 log = structlog.get_logger()
 

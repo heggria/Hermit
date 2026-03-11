@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 
-def build_lark_client(settings: object | None = None) -> "lark_oapi.Client":
+def build_lark_client(settings: object | None = None) -> Any:
     """Build a lark-oapi Client from settings or environment variables.
 
     Reads HERMIT_FEISHU_APP_ID / HERMIT_FEISHU_APP_SECRET (with

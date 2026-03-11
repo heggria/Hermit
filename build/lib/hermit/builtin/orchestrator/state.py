@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Dict, List, Optional
 
-
 Worker = Callable[[Dict[str, object]], Awaitable[Dict[str, object]]]
 
 
