@@ -154,7 +154,7 @@ jobs:
 
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: hermit-release-pypi-dist
           path: dist
@@ -176,13 +176,13 @@ jobs:
 
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: hermit-release-python-dist
           path: dist
 
       - name: Download macOS DMG bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: hermit-release-macos-dmg
           path: macos-dmg
