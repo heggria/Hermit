@@ -5,8 +5,8 @@ import contextlib
 import json
 import logging
 import os
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -48,15 +48,13 @@ def _load_hermit_env() -> None:
 
 _load_hermit_env()
 
-from hermit.context import build_base_context, ensure_default_context_file, load_context_text
-from hermit.provider.runtime import AgentResult
+from hermit.context import build_base_context, ensure_default_context_file
 from hermit.core.runner import AgentRunner
-from hermit.core.sandbox import CommandSandbox
 from hermit.core.session import SessionManager
-from hermit.core.tools import create_builtin_tool_registry
-from hermit.logging import configure_logging
 from hermit.i18n import resolve_locale, tr
+from hermit.logging import configure_logging
 from hermit.plugin.manager import PluginManager
+from hermit.provider.runtime import AgentResult
 from hermit.provider.services import build_provider_client_kwargs, build_runtime
 
 CLI_LOCALE = resolve_locale()
@@ -875,7 +873,6 @@ def serve(adapter: str = "feishu") -> None:
     configuration / plugins / tools are rebuilt from scratch, and the adapter
     restarts.  Use ``hermit reload`` to send SIGHUP conveniently.
     """
-    from hermit.plugin.base import HookEvent
 
     settings = get_settings()
     _ensure_workspace(settings)
@@ -1129,8 +1126,9 @@ def _get_schedule_store() -> Any:
 @schedule_app.command("list")
 def schedule_list() -> None:
     """List all scheduled tasks."""
-    from hermit.builtin.scheduler.models import ScheduledJob
     import datetime
+
+    from hermit.builtin.scheduler.models import ScheduledJob
 
     store = _get_schedule_store()
     data = store.read()
@@ -1169,6 +1167,7 @@ def schedule_add(
 ) -> None:
     """Add a new scheduled task."""
     import datetime as dt
+
     from hermit.builtin.scheduler.models import ScheduledJob
 
     if sum(x is not None for x in (cron, once, interval)) != 1:

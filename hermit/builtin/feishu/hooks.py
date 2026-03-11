@@ -31,10 +31,10 @@ def _on_dispatch_result(
 
     try:
         from hermit.builtin.feishu.reply import (
+            _should_use_card,
             build_result_card,
             send_card,
             send_text_message,
-            _should_use_card,
         )
 
         client = build_lark_client(settings) if settings is not None else build_lark_client()

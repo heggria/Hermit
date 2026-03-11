@@ -8,24 +8,23 @@ import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from hermit.builtin.feishu.normalize import FeishuMessage, normalize_event
 from hermit.builtin.feishu.reaction import send_ack, send_done
 from hermit.builtin.feishu.reply import (
-    smart_reply,
-    send_text_reply,
-    reply_card_return_id,
-    patch_card,
-    build_thinking_card,
+    _SKIP_TOOLS,
+    ToolStep,
+    build_error_card,
     build_progress_card,
     build_result_card_with_process,
-    build_error_card,
-    make_tool_step,
+    build_thinking_card,
     format_tool_start_hint,
-    format_tool_step_text,
-    ToolStep,
-    _SKIP_TOOLS,
+    make_tool_step,
+    patch_card,
+    reply_card_return_id,
+    send_text_reply,
+    smart_reply,
 )
 from hermit.plugin.base import AdapterSpec
 

@@ -3,12 +3,12 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hermit"
-version = "0.1.0"
+name = "hermit-agent"
+version = "0.2.0"
 description = "Hermit personal AI agent MVP."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
   { name = "Beta" },
 ]
@@ -62,6 +62,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "hermit/main.py" = ["E402"]

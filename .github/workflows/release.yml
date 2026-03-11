@@ -1,0 +1,186 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and publish, for example v0.1.0
+        required: true
+        type: string
+
+jobs:
+  build-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    outputs:
+      release_tag: ${{ steps.vars.outputs.release_tag }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "release_tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out requested tag
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: git checkout "${{ steps.vars.outputs.release_tag }}"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Verify project
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.release_tag }}
+        run: |
+          uv run python scripts/check_release_version.py --tag "$RELEASE_TAG"
+          make verify
+
+      - name: Build distributions
+        run: make build
+
+      - name: Validate built artifacts
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.release_tag }}
+        run: |
+          uv run python scripts/check_release_version.py --tag "$RELEASE_TAG" --dist-dir dist
+          shasum -a 256 dist/* > dist/SHA256SUMS.txt
+          uv run python scripts/generate_release_notes.py --tag "$RELEASE_TAG" --output dist/RELEASE_NOTES.md
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermit-release-python-dist
+          path: dist/*
+
+  build-macos-dmg:
+    needs: build-python
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "release_tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out requested tag
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: git checkout "${{ steps.vars.outputs.release_tag }}"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev --extra macos
+
+      - name: Validate version metadata
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.release_tag }}
+        run: uv run python scripts/check_release_version.py --tag "$RELEASE_TAG"
+
+      - name: Build macOS DMG
+        run: make mac-dmg
+
+      - name: Upload macOS DMG bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermit-release-macos-dmg
+          path: dist/*.dmg
+
+  publish-pypi:
+    needs: build-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+
+    environment:
+      name: pypi
+      url: https://pypi.org/project/hermit-agent/
+
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: hermit-release-python-dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
+  github-release:
+    needs:
+      - build-python
+      - build-macos-dmg
+      - publish-pypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: hermit-release-python-dist
+          path: dist
+
+      - name: Download macOS DMG bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: hermit-release-macos-dmg
+          path: macos-dmg
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-python.outputs.release_tag }}
+          body_path: dist/RELEASE_NOTES.md
+          files: |
+            dist/*
+            macos-dmg/*

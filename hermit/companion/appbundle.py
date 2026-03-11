@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
-import plistlib
 import os
+import plistlib
 import re
 import subprocess
 import sys
 from pathlib import Path
 
+from hermit import __version__
 from hermit.companion.control import hermit_base_dir
 
 APP_NAME = "Hermit Menu"
@@ -91,7 +92,7 @@ def install_app_bundle(
         "CFBundleIdentifier": resolved_bundle_id,
         "CFBundleName": resolved_app_name,
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleShortVersionString": __version__,
         "CFBundleVersion": "1",
         "LSUIElement": True,
     }

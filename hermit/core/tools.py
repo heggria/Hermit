@@ -8,7 +8,6 @@ from typing import Any, Callable, Optional
 from hermit.core.sandbox import CommandSandbox
 from hermit.storage import atomic_write
 
-
 ToolHandler = Callable[[dict[str, Any]], Any]
 
 

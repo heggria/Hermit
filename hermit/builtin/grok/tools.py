@@ -1,10 +1,9 @@
 """Grok plugin — registers grok_search tool."""
 from __future__ import annotations
 
-from hermit.plugin.base import PluginContext
-from hermit.core.tools import ToolSpec
-
 from hermit.builtin.grok.search import handle_grok_search
+from hermit.core.tools import ToolSpec
+from hermit.plugin.base import PluginContext
 
 
 def register(ctx: PluginContext) -> None:

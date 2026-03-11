@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from hermit.config import Settings
-from hermit.provider.profiles import load_plugin_variables
 from hermit.main import _build_anthropic_client_kwargs
+from hermit.provider.profiles import load_plugin_variables
 
 
 def test_settings_parse_prefixed_env_fields(monkeypatch) -> None:

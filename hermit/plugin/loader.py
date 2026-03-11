@@ -3,18 +3,16 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 import structlog
 
 from hermit.i18n import tr
-from hermit.plugin.base import PluginContext, PluginManifest
-from hermit.plugin.base import PluginVariableSpec
+from hermit.plugin.base import PluginContext, PluginManifest, PluginVariableSpec
 from hermit.plugin.config import resolve_plugin_context
 from hermit.plugin.hooks import HooksEngine
-
-import tomllib
 
 log = structlog.get_logger()
 

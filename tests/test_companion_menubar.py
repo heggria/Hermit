@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from hermit import __version__
 from hermit.companion import control, menubar
 
 
@@ -56,7 +57,7 @@ model = "gpt-5.4"
 
     message = menubar._about_message(adapter="feishu", base_dir=base_dir)
 
-    assert "Version: 0.1.0" in message
+    assert f"Version: {__version__}" in message
     assert "Adapter: feishu" in message
     assert "Profile: ready-profile" in message
     assert "Provider: codex-oauth" in message

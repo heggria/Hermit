@@ -22,8 +22,8 @@ def test_init_creates_workspace(tmp_path, monkeypatch) -> None:
 
 
 def test_setup_writes_env_file(tmp_path, monkeypatch) -> None:
-    from hermit.config import get_settings
     import hermit.main as main_mod
+    from hermit.config import get_settings
 
     monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
     get_settings.cache_clear()
@@ -41,8 +41,8 @@ def test_setup_writes_env_file(tmp_path, monkeypatch) -> None:
 
 
 def test_setup_shows_adapter_flag_in_next_steps(tmp_path, monkeypatch) -> None:
-    from hermit.config import get_settings
     import hermit.main as main_mod
+    from hermit.config import get_settings
 
     monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
     get_settings.cache_clear()
@@ -83,8 +83,8 @@ def test_serve_preflight_reports_missing_feishu_env(tmp_path, monkeypatch) -> No
 
 
 def test_serve_preflight_shows_resolved_env_sources(tmp_path, monkeypatch) -> None:
-    from hermit.config import get_settings
     import hermit.main as main_mod
+    from hermit.config import get_settings
 
     monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
@@ -290,8 +290,8 @@ def test_notify_reload_uses_settings_scheduler_chat_id(monkeypatch, tmp_path) ->
 
 
 def test_reload_removes_stale_pid_file(tmp_path, monkeypatch) -> None:
-    from hermit.config import get_settings
     import hermit.main as main_mod
+    from hermit.config import get_settings
 
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))

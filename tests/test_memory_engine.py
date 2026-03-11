@@ -4,22 +4,21 @@ import json
 from datetime import date
 from unittest.mock import patch
 
-from hermit.builtin.memory.engine import MemoryEngine
+from hermit.builtin.memory.engine import MemoryEngine, group_entries
 from hermit.builtin.memory.hooks import (
-    _clear_session_progress,
     _bump_session_index,
+    _clear_session_progress,
     _consolidate_category_entries,
     _format_transcript,
     _infer_confidence,
     _inject_relevant_memory,
     _mark_messages_processed,
-    _pending_messages,
     _parse_json,
+    _pending_messages,
     _should_checkpoint,
     _should_merge_entries,
 )
 from hermit.builtin.memory.types import MemoryEntry
-from hermit.builtin.memory.engine import group_entries
 
 
 def test_memory_engine_save_and_load(tmp_path) -> None:

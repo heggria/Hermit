@@ -466,7 +466,6 @@ def test_feishu_react_tool_registered(monkeypatch) -> None:
 
 def test_feishu_react_tool_resolves_alias_and_calls_api(monkeypatch) -> None:
     from hermit.builtin.feishu import hooks as hooks_mod
-    from hermit.builtin.feishu import reaction as reaction_mod
     from hermit.builtin.feishu.hooks import register
     from hermit.core.tools import ToolRegistry
     from hermit.plugin.base import PluginContext

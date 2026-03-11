@@ -68,8 +68,8 @@ Available tools:
 
 
 def _make_pm(tmp_path, monkeypatch):
-    from hermit.plugin.manager import PluginManager
     from hermit.config import Settings
+    from hermit.plugin.manager import PluginManager
 
     base_dir = tmp_path / ".hermit"
     _write_context7_plugin(base_dir)
@@ -147,8 +147,8 @@ def test_context7_skill_appears_in_system_prompt(tmp_path, monkeypatch):
 def mcp_manager():
     if not LIVE_MCP:
         pytest.skip("Set HERMIT_RUN_LIVE_MCP_TESTS=1 to run live MCP tests")
-    from hermit.plugin.mcp_client import McpClientManager
     from hermit.plugin.base import McpServerSpec
+    from hermit.plugin.mcp_client import McpClientManager
 
     mgr = McpClientManager()
     spec = McpServerSpec(

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Optional
 
-from pydantic import Field
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from hermit.i18n import locale_from_env, normalize_locale

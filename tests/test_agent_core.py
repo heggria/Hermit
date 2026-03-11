@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import dataclass
 
-import json
-
-from hermit.core.agent import ClaudeAgent, truncate_middle_text, _normalize_block
+from hermit.core.agent import ClaudeAgent, _normalize_block, truncate_middle_text
 from hermit.core.tools import ToolRegistry, ToolSpec
 
 

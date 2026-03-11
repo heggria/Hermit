@@ -12,7 +12,6 @@ from hermit.plugin.base import (
     CommandSpec,
     HookEvent,
     McpServerSpec,
-    PluginContext,
     PluginManifest,
     SubagentSpec,
 )

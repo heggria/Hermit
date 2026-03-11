@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import re
-import urllib.request
 import urllib.error
+import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 

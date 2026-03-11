@@ -142,19 +142,6 @@ def test_read_skill_tool_not_registered_when_no_skills() -> None:
 
     with __import__("pytest").raises(KeyError):
         registry.get("read_skill")
-
-
-def test_read_skill_handler_returns_content(tmp_path: Path) -> None:
-    pm = PluginManager()
-    pm._all_skills.append(
-        SkillDefinition(name="test-skill", description="Test", path=tmp_path, content="Full skill body here")
-    )
-
-    result = pm._read_skill_handler({"name": "test-skill"})
-    assert '<skill_content name="test-skill">' in result
-    assert "Full skill body here" in result
-
-
 def test_read_skill_handler_unknown_name(tmp_path: Path) -> None:
     pm = PluginManager()
     pm._all_skills.append(
@@ -300,74 +287,6 @@ def test_sanitize_does_not_transform_headings_or_tables() -> None:
     result = sanitize_for_feishu(text)
     assert "### Sub heading" in result
     assert "| a | b |" in result
-
-
-# ---- Skills loading tests ----
-
-def test_load_skills_parses_frontmatter(tmp_path: Path) -> None:
-    skill_dir = tmp_path / "my-skill"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        '---\nname: my-skill\ndescription: "Does things"\n---\n\nInstructions here.',
-        encoding="utf-8",
-    )
-
-    skills = load_skills(tmp_path)
-    assert len(skills) == 1
-    assert skills[0].name == "my-skill"
-    assert skills[0].description == "Does things"
-    assert skills[0].content == "Instructions here."
-
-
-def test_load_skills_falls_back_without_frontmatter(tmp_path: Path) -> None:
-    skill_dir = tmp_path / "legacy"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        "# Legacy Skill\nDo something old.",
-        encoding="utf-8",
-    )
-
-    skills = load_skills(tmp_path)
-    assert len(skills) == 1
-    assert skills[0].name == "legacy"
-    assert skills[0].description == "Legacy Skill"
-    assert "Do something old." in skills[0].content
-
-
-def test_load_skills_uses_dir_name_when_no_name_field(tmp_path: Path) -> None:
-    skill_dir = tmp_path / "auto-name"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        '---\ndescription: "Auto named"\n---\n\nBody.',
-        encoding="utf-8",
-    )
-
-    skills = load_skills(tmp_path)
-    assert skills[0].name == "auto-name"
-    assert skills[0].description == "Auto named"
-
-
-def test_load_skills_empty_dir(tmp_path: Path) -> None:
-    assert load_skills(tmp_path / "nonexistent") == []
-
-
-# ---- Feishu sanitizer tests ----
-
-def test_sanitize_for_feishu_hr_blank_line() -> None:
-    from hermit.builtin.feishu.reply import sanitize_for_feishu
-
-    text = "line1\n---\nline2"
-    result = sanitize_for_feishu(text)
-    assert "\n\n---" in result
-
-
-def test_sanitize_for_feishu_truncates_oversized() -> None:
-    from hermit.builtin.feishu.reply import sanitize_for_feishu
-
-    text = "x" * 30_000
-    result = sanitize_for_feishu(text)
-    assert len(result.encode("utf-8")) <= 28_000
-    assert "已截断" in result
 
 
 # ---- _should_use_card tests ----

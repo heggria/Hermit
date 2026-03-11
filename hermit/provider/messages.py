@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List
 
-
 _ALLOWED_BLOCK_KEYS = {
     "text": {"type", "text"},
     "tool_use": {"type", "id", "name", "input"},

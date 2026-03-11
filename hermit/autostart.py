@@ -10,12 +10,12 @@ instead of raising an error.
 """
 from __future__ import annotations
 
+import os
+import plistlib
+import re
 import shutil
 import subprocess
 import sys
-import plistlib
-import os
-import re
 from pathlib import Path
 from textwrap import dedent
 from typing import Optional

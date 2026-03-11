@@ -4,19 +4,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from hermit.builtin.webhook.models import WebhookConfig, WebhookRoute, load_config
-from hermit.builtin.webhook.server import FlattenDict, WebhookServer
+from hermit.builtin.webhook.server import WebhookServer
 from hermit.plugin.base import HookEvent
 from hermit.plugin.hooks import HooksEngine
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

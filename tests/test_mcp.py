@@ -9,10 +9,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from hermit.core.tools import ToolRegistry
-from hermit.plugin.config import resolve_plugin_context
-from hermit.plugin.loader import load_plugin_entries, parse_manifest
 from hermit.plugin.base import McpServerSpec, PluginContext, PluginManifest, PluginVariableSpec
+from hermit.plugin.config import resolve_plugin_context
 from hermit.plugin.hooks import HooksEngine
+from hermit.plugin.loader import load_plugin_entries, parse_manifest
 from hermit.plugin.manager import PluginManager
 from hermit.plugin.mcp_client import (
     MCP_TOOL_PREFIX,
@@ -20,7 +20,6 @@ from hermit.plugin.mcp_client import (
     mcp_tool_name,
     parse_mcp_tool_name,
 )
-
 
 # ── mcp_tool_name / parse_mcp_tool_name ───────────────────────────
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 import re
-import urllib.request
 import urllib.parse
+import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 

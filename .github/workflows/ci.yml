@@ -12,6 +12,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Validate version metadata
+        run: make version-check
+
+      - name: Run Ruff
+        run: uv run ruff check .
+
   test:
     strategy:
       fail-fast: false
@@ -44,3 +71,75 @@ jobs:
 
       - name: Run test suite
         run: uv run pytest -q
+
+  package:
+    needs:
+      - lint
+      - test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Build distributions
+        run: make build
+
+      - name: Validate package metadata
+        run: make package-check
+
+      - name: Smoke test installation
+        run: make install-check
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermit-dist
+          path: dist/*
+
+  macos-dmg:
+    needs:
+      - lint
+      - test
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev --extra macos
+
+      - name: Build macOS DMG
+        run: make mac-dmg
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermit-macos-dmg
+          path: dist/*.dmg

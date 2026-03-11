@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-import urllib.error
 
 import pytest
 
 from hermit.provider.contracts import ProviderRequest, ProviderResponse
-from hermit.provider.providers.codex import CodexOAuthProvider, CodexOAuthTokenManager, CodexProvider, _responses_input
+from hermit.provider.providers.codex import (
+    CodexOAuthProvider,
+    CodexOAuthTokenManager,
+    CodexProvider,
+    _responses_input,
+)
 from hermit.provider.services import build_provider
 
 

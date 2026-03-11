@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Optional
 
-
 DEFAULT_CATEGORIES = [
     "用户偏好",
     "项目约定",

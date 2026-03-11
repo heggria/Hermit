@@ -10,11 +10,16 @@ import structlog
 
 from hermit.context import build_base_context
 from hermit.core.sandbox import CommandSandbox
-from hermit.core.tools import ToolRegistry, create_builtin_tool_registry
+from hermit.core.tools import create_builtin_tool_registry
 from hermit.plugin.manager import PluginManager
 from hermit.provider.contracts import Provider, ProviderResponse
 from hermit.provider.messages import extract_text
-from hermit.provider.providers import CodexOAuthProvider, CodexOAuthTokenManager, CodexProvider, build_claude_provider
+from hermit.provider.providers import (
+    CodexOAuthProvider,
+    CodexOAuthTokenManager,
+    CodexProvider,
+    build_claude_provider,
+)
 from hermit.provider.runtime import AgentRuntime
 
 log = structlog.get_logger()

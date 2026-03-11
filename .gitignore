@@ -8,4 +8,6 @@ __pycache__
 .pytest_cache/
 .ruff_cache/
 build/
+dist/
+dist-test/
 *.cover

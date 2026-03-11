@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterable
+from typing import Iterable
 
 import pytest
 
 from hermit.core.tools import ToolRegistry, ToolSpec
-from hermit.provider.contracts import ProviderEvent, ProviderFeatures, ProviderRequest, ProviderResponse, UsageMetrics
+from hermit.provider.contracts import (
+    ProviderEvent,
+    ProviderFeatures,
+    ProviderRequest,
+    ProviderResponse,
+    UsageMetrics,
+)
 from hermit.provider.runtime import AgentRuntime
 from hermit.provider.services import (
     StructuredExtractionService,

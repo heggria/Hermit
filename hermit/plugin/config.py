@@ -6,7 +6,7 @@ from typing import Any
 
 import structlog
 
-from hermit.plugin.base import PluginManifest, PluginVariableSpec
+from hermit.plugin.base import PluginManifest
 from hermit.provider.profiles import load_plugin_variables
 
 log = structlog.get_logger()

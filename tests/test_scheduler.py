@@ -1,7 +1,6 @@
 """Tests for the scheduler plugin: models, engine, tools, and hook broadcast."""
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import Any
@@ -9,12 +8,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
 from hermit.builtin.scheduler.engine import SchedulerEngine, _build_execution_prompt
+from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
 from hermit.plugin.base import HookEvent
 from hermit.plugin.hooks import HooksEngine
-from hermit.storage import JsonStore
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -285,7 +282,6 @@ class TestEngineCatchUp:
         with engine._lock:
             engine._jobs.append(job)
 
-        executed: list[str] = []
         with patch.object(engine, "_run_agent") as mock_run:
             mock_result = MagicMock()
             mock_result.text = "caught up"
