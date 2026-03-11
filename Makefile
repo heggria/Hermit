@@ -1,4 +1,4 @@
-.PHONY: install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status dev-up dev-restart dev-down dev-status test test-cov lint format bump-version release-prep release-tag version-check build package-check install-check check verify precommit-install
+.PHONY: install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-cov lint format bump-version release-prep release-tag version-check build package-check install-check check verify precommit-install
 
 install:
 	@bash install.sh
@@ -30,6 +30,9 @@ env-down:
 env-status:
 	@bash scripts/hermit-envctl.sh $(if $(ENV),$(ENV),dev) status
 
+env-watch:
+	@bash scripts/hermit-watch.sh $(if $(ENV),$(ENV),dev)
+
 dev-up:
 	@bash scripts/hermit-envctl.sh dev up
 
@@ -41,6 +44,9 @@ dev-down:
 
 dev-status:
 	@bash scripts/hermit-envctl.sh dev status
+
+dev-watch:
+	@bash scripts/hermit-watch.sh dev
 
 test:
 	@uv run pytest -q

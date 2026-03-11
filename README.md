@@ -135,6 +135,7 @@ make env-status ENV=dev
 make env-up ENV=dev
 make env-up ENV=prod
 make env-up ENV=test
+make env-watch ENV=dev
 make env-restart ENV=dev
 make env-down ENV=dev
 make env-status ENV=dev
@@ -236,6 +237,7 @@ Hermit 会把状态写到 `~/.hermit` 下面，比如：
 scripts/hermit-envctl.sh dev up
 scripts/hermit-envctl.sh dev status
 scripts/hermit-envctl.sh dev restart
+scripts/hermit-watch.sh dev
 ```
 
 这些脚本会自动切到对应环境的 `HERMIT_BASE_DIR`。
@@ -289,6 +291,7 @@ scripts/hermit-env.sh dev sessions
 它们分别适合做这些事：
 
 - `make env-up ENV=<prod|dev|test>`：拉起指定环境的 `service + menubar`
+- `make env-watch ENV=<prod|dev|test>`：监听仓库源码并自动重启 `serve`，同时确保 menubar companion 已启动
 - `make env-restart ENV=<prod|dev|test>`：重启指定环境整套运行时
 - `make env-down ENV=<prod|dev|test>`：停止指定环境的 `service + menubar`
 - `make env-status ENV=<prod|dev|test>`：查看指定环境的进程和 PID
@@ -314,11 +317,31 @@ make env-up ENV=dev
 - webhook
 - `SERVE_START` / `SERVE_STOP` hooks
 
+如果你在改 Python 源码，优先开 watcher，而不是反复重装工具副本：
+
+```bash
+make env-watch ENV=dev
+```
+
+它会监听仓库里的 `hermit/`、`scripts/` 和 `pyproject.toml`，启动时也会补齐 menubar companion；一旦变化就自动重启：
+
+```bash
+scripts/hermit-env.sh dev serve --adapter feishu
+```
+
+这条链路直接从 repo 源码运行，不经过 `uv tool install --reinstall`。因此它解决的是“源码改完自动重启生效”，不是“重装一遍 dev 安装包”。
+
 如果服务已经在跑，你改了配置或插件，优先直接重启整套环境：
 
 ```bash
 make env-restart ENV=dev
 ```
+
+补充边界：
+
+- `make env-watch ENV=dev`：适合 Python 源码开发，文件变化后整进程重启
+- `hermit reload --adapter feishu`：适合配置、插件发现、工具注册这类优雅重载
+- `bash install.sh`：只保留给安装态副本、菜单栏 app bundle 或发版验证，不用于日常源码开发
 
 ### 7. 最适合新手的测试顺序
 

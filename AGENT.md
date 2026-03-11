@@ -41,6 +41,7 @@ make test
 
 ```bash
 scripts/hermit-envctl.sh <prod|dev|test> <up|restart|down|status|logs>
+scripts/hermit-watch.sh <prod|dev|test> [--adapter <adapter>]
 ```
 
 常用示例：
@@ -48,8 +49,10 @@ scripts/hermit-envctl.sh <prod|dev|test> <up|restart|down|status|logs>
 ```bash
 scripts/hermit-envctl.sh dev restart
 scripts/hermit-envctl.sh prod status
+scripts/hermit-watch.sh dev
 make env-restart ENV=dev
 make env-status ENV=prod
+make env-watch ENV=dev
 ```
 
 说明：
@@ -58,6 +61,8 @@ make env-status ENV=prod
 - 调试或重启本地环境时，优先使用总控脚本，不要再手动拼 `HERMIT_BASE_DIR + serve + menubar`
 - 总控脚本会同时处理对应环境的 `service`、`menubar`、menu app 和基础状态检查
 - 进入 CLI、查看配置、查看鉴权时，优先使用 `scripts/hermit-env.sh <env> ...`
+- 改 Python 源码时，优先使用 `scripts/hermit-watch.sh <env>` 或 `make env-watch ENV=<env>` 做监听重启；该入口会托管 `serve` 并确保 menubar companion 已启动
+- `hermit reload` 只当作优雅重载配置/插件/工具；它不是通用源码热更新
 
 ## 目录结构
 
