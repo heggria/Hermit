@@ -73,7 +73,9 @@ version-check:
 	@uv run python scripts/check_release_version.py
 
 build:
-	@uv build --out-dir dist --clear
+	@mkdir -p dist
+	@find dist -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+	@uv build --out-dir dist
 
 install-check: build
 	@rm -rf .pkg-venv
