@@ -8,7 +8,16 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            sync_args: --extra dev
+          - os: macos-latest
+            sync_args: --extra dev --extra macos
+
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
     steps:
@@ -26,7 +35,7 @@ jobs:
           python-version: "3.11"
 
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync ${{ matrix.sync_args }}
 
       - name: Run test suite
         run: uv run pytest -q

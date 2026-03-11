@@ -30,6 +30,10 @@ dev = [
   "pytest>=8.3.5",
   "pytest-asyncio>=0.26.0",
   "httpx>=0.28.0",
+  "coverage>=7.13.4",
+  "pytest-cov>=7.0.0",
+  "ruff>=0.13.0",
+  "pre-commit>=4.2.0",
 ]
 macos = [
   "rumps>=0.4.0",
@@ -44,6 +48,24 @@ hermit-menubar-install-app = "hermit.companion.appbundle:main"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
+[tool.coverage.run]
+branch = true
+source = ["hermit"]
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"hermit/main.py" = ["E402"]
+
 [tool.setuptools.packages.find]
 include = ["hermit*"]
 
@@ -53,10 +75,4 @@ include = ["hermit*"]
   "builtin/**/skills/**/*.md",
   "builtin/**/rules/**/*.md",
   "locales/*.json",
-]
-
-[dependency-groups]
-dev = [
-    "coverage>=7.13.4",
-    "pytest-cov>=7.0.0",
 ]

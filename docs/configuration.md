@@ -164,6 +164,13 @@ HERMIT_MODEL=gpt-5.4
 
 或在 `config.toml` 里定义 profile。
 
+如果你要启用内置 GitHub MCP 插件，常见环境变量是：
+
+```bash
+GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+GITHUB_MCP_URL=https://api.githubcopilot.com/mcp/
+```
+
 ## `config.toml` profile
 
 Hermit 支持在 `~/.hermit/config.toml` 中定义 profile。

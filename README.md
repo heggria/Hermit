@@ -162,6 +162,17 @@ hermit --help
 
 如果能正常看到命令列表，说明开发安装已经成功。
 
+常用开发命令：
+
+```bash
+make test
+make test-cov
+make lint
+make format
+make check
+make precommit-install
+```
+
 ### 5. 为什么一定要隔离开发环境
 
 Hermit 会把状态写到 `~/.hermit` 下面，比如：
