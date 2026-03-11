@@ -33,7 +33,9 @@ model = "claude-sonnet-4-6"
     assert settings.model == "gpt-5.4"
 
 
-def test_load_profile_runtime_settings_resolves_requested_profile(tmp_path: Path, monkeypatch) -> None:
+def test_load_profile_runtime_settings_resolves_requested_profile(
+    tmp_path: Path, monkeypatch
+) -> None:
     base_dir = tmp_path / ".hermit-dev"
     base_dir.mkdir()
     (base_dir / ".env").write_text("", encoding="utf-8")
@@ -114,7 +116,7 @@ scheduler_enabled = true
     )
 
     assert updated_path == config_path
-    assert 'scheduler_enabled = false' in config_path.read_text(encoding="utf-8")
+    assert "scheduler_enabled = false" in config_path.read_text(encoding="utf-8")
 
 
 def test_update_profile_setting_adds_missing_setting_to_profile_section(tmp_path: Path) -> None:
@@ -191,6 +193,15 @@ def test_ensure_config_file_writes_template(tmp_path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     assert 'default_profile = "default"' in text
     assert "[profiles.default]" in text
+
+
+def test_project_reference_paths_point_to_repo_files() -> None:
+    assert control.readme_path().name == "README.md"
+    assert control.readme_path().exists()
+    assert control.docs_path().name == "docs"
+    assert control.docs_path().exists()
+    assert control.project_repo_url().endswith("/heggria/Hermit")
+    assert control.project_wiki_url().endswith("/heggria/Hermit/wiki")
 
 
 def test_start_service_reports_failure_when_process_does_not_stay_up(
@@ -283,7 +294,9 @@ model = "claude-sonnet-4-6"
     statuses = iter(
         [
             control.ServiceStatus("feishu", base_dir / "serve-feishu.pid", 123, True, False, False),
-            control.ServiceStatus("feishu", base_dir / "serve-feishu.pid", 123, False, False, False),
+            control.ServiceStatus(
+                "feishu", base_dir / "serve-feishu.pid", 123, False, False, False
+            ),
         ]
     )
     monkeypatch.setattr(control, "service_status", lambda adapter, base_dir=None: next(statuses))
@@ -291,7 +304,9 @@ model = "claude-sonnet-4-6"
     monkeypatch.setattr(
         control,
         "start_service",
-        lambda adapter, base_dir=None, profile=None: "Started Hermit service for 'feishu' (PID 456).",
+        lambda adapter, base_dir=None, profile=None: (
+            "Started Hermit service for 'feishu' (PID 456)."
+        ),
     )
     monkeypatch.setattr(control.time, "sleep", lambda _seconds: None)
 
@@ -299,10 +314,14 @@ model = "claude-sonnet-4-6"
 
     assert "Switched default profile to 'codex-oauth'." in message
     assert "Started Hermit service for 'feishu' (PID 456)." in message
-    assert 'default_profile = "codex-oauth"' in (base_dir / "config.toml").read_text(encoding="utf-8")
+    assert 'default_profile = "codex-oauth"' in (base_dir / "config.toml").read_text(
+        encoding="utf-8"
+    )
 
 
-def test_update_profile_bool_and_restart_restarts_running_service(tmp_path: Path, monkeypatch) -> None:
+def test_update_profile_bool_and_restart_restarts_running_service(
+    tmp_path: Path, monkeypatch
+) -> None:
     base_dir = tmp_path / ".hermit-dev"
     base_dir.mkdir()
     config_path = base_dir / "config.toml"
@@ -322,7 +341,9 @@ scheduler_enabled = true
     statuses = iter(
         [
             control.ServiceStatus("feishu", base_dir / "serve-feishu.pid", 123, True, False, False),
-            control.ServiceStatus("feishu", base_dir / "serve-feishu.pid", 123, False, False, False),
+            control.ServiceStatus(
+                "feishu", base_dir / "serve-feishu.pid", 123, False, False, False
+            ),
         ]
     )
     monkeypatch.setattr(control, "service_status", lambda adapter, base_dir=None: next(statuses))
@@ -330,7 +351,9 @@ scheduler_enabled = true
     monkeypatch.setattr(
         control,
         "start_service",
-        lambda adapter, base_dir=None, profile=None: "Started Hermit service for 'feishu' (PID 456).",
+        lambda adapter, base_dir=None, profile=None: (
+            "Started Hermit service for 'feishu' (PID 456)."
+        ),
     )
     monkeypatch.setattr(control.time, "sleep", lambda _seconds: None)
 

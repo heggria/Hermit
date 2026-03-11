@@ -1,4 +1,4 @@
-.PHONY: install chat feishu menubar menubar-app test test-cov lint format check precommit-install
+.PHONY: install chat feishu menubar menubar-app env-up env-restart env-down env-status dev-up dev-restart dev-down dev-status test test-cov lint format check precommit-install
 
 install:
 	@bash install.sh
@@ -14,6 +14,30 @@ menubar:
 
 menubar-app:
 	@hermit-menubar-install-app --adapter feishu --open
+
+env-up:
+	@bash scripts/hermit-envctl.sh $(if $(ENV),$(ENV),dev) up
+
+env-restart:
+	@bash scripts/hermit-envctl.sh $(if $(ENV),$(ENV),dev) restart
+
+env-down:
+	@bash scripts/hermit-envctl.sh $(if $(ENV),$(ENV),dev) down
+
+env-status:
+	@bash scripts/hermit-envctl.sh $(if $(ENV),$(ENV),dev) status
+
+dev-up:
+	@bash scripts/hermit-envctl.sh dev up
+
+dev-restart:
+	@bash scripts/hermit-envctl.sh dev restart
+
+dev-down:
+	@bash scripts/hermit-envctl.sh dev down
+
+dev-status:
+	@bash scripts/hermit-envctl.sh dev status
 
 test:
 	@uv run pytest -q

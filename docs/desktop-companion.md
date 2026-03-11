@@ -23,7 +23,8 @@ menu bar companion 的职责是控制，不是承载 agent runtime。
 - 启动 / 停止 / reload `hermit serve`
 - 管理 `launchd` 自启
 - 管理菜单栏 app 自身的 Login Item
-- 打开配置文件、日志目录、Hermit home
+- 打开设置、README、Wiki、日志目录、Hermit home
+- 展示 About 面板，方便确认当前版本与运行上下文
 
 它不负责：
 
@@ -91,9 +92,12 @@ hermit-menubar --base-dir ~/.hermit --adapter feishu
 - Disable Auto-start
 - Enable / Disable Menu Login Item
 - Install / Open Menu App
-- Open Config
+- Open Settings
+- Open README
+- Open Wiki
 - Open Logs
 - Open Hermit Home
+- About Hermit
 
 ## 服务控制实现
 
@@ -153,7 +157,7 @@ scripts/hermit-autostart-env.sh test enable --adapter feishu
 
 ## 配置文件行为
 
-当你从菜单栏点击 `Open Config` 时：
+当你从菜单栏点击 `Open Settings` 时：
 
 - 如果 `~/.hermit/config.toml` 不存在
 - companion 会先生成一个默认模板

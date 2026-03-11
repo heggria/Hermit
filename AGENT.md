@@ -27,19 +27,37 @@ Hermit 是一个面向个人工作流的本地优先 AI Agent runtime。
 
 ## 开发环境
 
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
+开发、调试、重启本地环境统一走脚本，不再维护手工 `venv`、手工 `export HERMIT_BASE_DIR`、手工拼 `serve` / `menubar` 的说明。
 
 测试：
 
 ```bash
-uv run pytest
+make test
 ```
 
 `pyproject.toml` 要求 Python `>= 3.11`。不要使用 Python 3.9 解释器运行 CLI。
+
+环境控制统一入口：
+
+```bash
+scripts/hermit-envctl.sh <prod|dev|test> <up|restart|down|status|logs>
+```
+
+常用示例：
+
+```bash
+scripts/hermit-envctl.sh dev restart
+scripts/hermit-envctl.sh prod status
+make env-restart ENV=dev
+make env-status ENV=prod
+```
+
+说明：
+
+- `scripts/hermit-dev.sh` 现在只是 `dev` 的兼容别名，底层统一转发到 `scripts/hermit-envctl.sh`
+- 调试或重启本地环境时，优先使用总控脚本，不要再手动拼 `HERMIT_BASE_DIR + serve + menubar`
+- 总控脚本会同时处理对应环境的 `service`、`menubar`、menu app 和基础状态检查
+- 进入 CLI、查看配置、查看鉴权时，优先使用 `scripts/hermit-env.sh <env> ...`
 
 ## 目录结构
 

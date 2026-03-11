@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime
 import os
 import shutil
 import signal
@@ -9,9 +7,11 @@ import subprocess
 import sys
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator
 
 from hermit.provider.profiles import load_profile_catalog
 
@@ -95,7 +95,7 @@ def ensure_config_file(base_dir: Path | None = None) -> Path:
         path.write_text(
             "\n".join(
                 [
-                    '# Hermit profile catalog',
+                    "# Hermit profile catalog",
                     'default_profile = "default"',
                     "",
                     "[profiles.default]",
@@ -303,6 +303,28 @@ def _project_root() -> Path | None:
     return None
 
 
+def readme_path() -> Path:
+    project_root = _project_root()
+    if project_root is not None:
+        return project_root / "README.md"
+    return Path.cwd() / "README.md"
+
+
+def docs_path() -> Path:
+    project_root = _project_root()
+    if project_root is not None:
+        return project_root / "docs"
+    return Path.cwd() / "docs"
+
+
+def project_repo_url() -> str:
+    return "https://github.com/heggria/Hermit"
+
+
+def project_wiki_url() -> str:
+    return f"{project_repo_url()}/wiki"
+
+
 def run_hermit_command(
     args: list[str],
     *,
@@ -389,8 +411,7 @@ def start_service(
             f"{failure_detail} Logs: {stdout_path} / {stderr_path}"
         )
     return (
-        f"Failed to start Hermit service for '{adapter}'. "
-        f"Check logs: {stdout_path} / {stderr_path}"
+        f"Failed to start Hermit service for '{adapter}'. Check logs: {stdout_path} / {stderr_path}"
     )
 
 
@@ -403,7 +424,7 @@ def _extract_preflight_failure(stdout_path: Path) -> str | None:
     index = text.rfind(marker)
     if index == -1:
         return None
-    tail = text[index + len(marker):]
+    tail = text[index + len(marker) :]
     lines: list[str] = []
     for raw_line in tail.splitlines():
         stripped = raw_line.strip()
@@ -429,7 +450,9 @@ def stop_service(adapter: str, *, base_dir: Path | None = None) -> str:
     return f"Sent SIGTERM to Hermit service for '{adapter}' (PID {current_status.pid})."
 
 
-def reload_service(adapter: str, *, base_dir: Path | None = None, profile: str | None = None) -> str:
+def reload_service(
+    adapter: str, *, base_dir: Path | None = None, profile: str | None = None
+) -> str:
     run_hermit_command(["reload", "--adapter", adapter], base_dir=base_dir, profile=profile)
     return f"Reload signal sent for '{adapter}'."
 
@@ -480,10 +503,7 @@ def update_profile_bool_and_restart(
             if not service_status(adapter, base_dir=resolved_base_dir).running:
                 break
         start_message = start_service(adapter, base_dir=resolved_base_dir)
-        return (
-            f"Set '{key}' to {state_text} for profile '{profile_name}'. "
-            f"{start_message}"
-        )
+        return f"Set '{key}' to {state_text} for profile '{profile_name}'. {start_message}"
     return (
         f"Set '{key}' to {state_text} for profile '{profile_name}' in "
         f"{resolved_base_dir / 'config.toml'}."
@@ -493,7 +513,9 @@ def update_profile_bool_and_restart(
 def open_path(path: Path) -> None:
     if sys.platform == "darwin":
         target = path if path.exists() else path.parent
-        subprocess.Popen(["open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            ["open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
         return
     raise RuntimeError("Opening paths is only implemented for macOS.")
 
@@ -507,3 +529,10 @@ def open_in_textedit(path: Path) -> None:
         )
         return
     raise RuntimeError("Opening TextEdit is only implemented for macOS.")
+
+
+def open_url(url: str) -> None:
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    raise RuntimeError("Opening URLs is only implemented for macOS.")
