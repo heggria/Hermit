@@ -279,10 +279,11 @@ class PluginManager:
         )
         sys.stderr.flush()
 
-        def _sub_tool_call(name: str, inputs: dict, result: str) -> None:
+        def _sub_tool_call(name: str, inputs: dict, result: object) -> None:
             compact = ", ".join(f"{k}={repr(v)[:50]}" for k, v in inputs.items())
-            preview = result[:150].replace("\n", " ")
-            if len(result) > 150:
+            text = result if isinstance(result, str) else str(result)
+            preview = text[:150].replace("\n", " ")
+            if len(text) > 150:
                 preview += "..."
             sys.stderr.write(f"{MAGENTA}  │{RESET}   ▸ {name}({compact})\n")
             sys.stderr.write(f"{MAGENTA}  │{RESET}   {DIM}→ {preview}{RESET}\n")

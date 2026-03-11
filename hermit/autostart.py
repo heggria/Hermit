@@ -13,11 +13,13 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import plistlib
 from pathlib import Path
 from textwrap import dedent
 from typing import Optional
 
 _LABEL_PREFIX = "com.hermit.serve"
+_LEGACY_LABEL_PREFIXES = ("com.moltforge.serve",)
 _LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
 
@@ -27,6 +29,15 @@ def _label(adapter: str) -> str:
 
 def _plist_path(adapter: str) -> Path:
     return _LAUNCH_AGENTS_DIR / f"{_label(adapter)}.plist"
+
+
+def _legacy_plist_paths() -> list[Path]:
+    if not _LAUNCH_AGENTS_DIR.exists():
+        return []
+    paths: list[Path] = []
+    for prefix in _LEGACY_LABEL_PREFIXES:
+        paths.extend(sorted(_LAUNCH_AGENTS_DIR.glob(f"{prefix}*.plist")))
+    return paths
 
 
 def _find_executable() -> Optional[Path]:
@@ -89,11 +100,67 @@ def _is_loaded(adapter: str) -> bool:
     return _launchctl("list", _label(adapter)).returncode == 0
 
 
+def _plist_program_arguments(plist: Path) -> list[str]:
+    try:
+        data = plistlib.loads(plist.read_bytes())
+    except Exception:
+        return []
+    args = data.get("ProgramArguments")
+    if not isinstance(args, list):
+        return []
+    return [str(arg) for arg in args]
+
+
+def _adapter_from_program_arguments(args: list[str]) -> Optional[str]:
+    if not args:
+        return None
+    if "--adapter" in args:
+        idx = args.index("--adapter")
+        if idx + 1 < len(args):
+            return args[idx + 1]
+    if len(args) >= 3 and args[1] == "serve":
+        return args[2]
+    return None
+
+
+def _legacy_labels_for_adapter(adapter: str) -> list[str]:
+    labels = [prefix for prefix in _LEGACY_LABEL_PREFIXES]
+    labels.extend(f"{prefix}.{adapter}" for prefix in _LEGACY_LABEL_PREFIXES)
+    return labels
+
+
+def _cleanup_legacy_plists(adapter: str) -> list[Path]:
+    removed: list[Path] = []
+    for plist in _legacy_plist_paths():
+        args = _plist_program_arguments(plist)
+        legacy_adapter = _adapter_from_program_arguments(args)
+        if legacy_adapter not in (None, adapter):
+            continue
+        for label in _legacy_labels_for_adapter(adapter):
+            _launchctl("unload", str(plist))
+            _launchctl("remove", label)
+        if plist.exists():
+            plist.unlink()
+            removed.append(plist)
+    return removed
+
+
 def _list_managed_plists() -> list[Path]:
     """Return all Hermit LaunchAgent plist files in ~/Library/LaunchAgents."""
     if not _LAUNCH_AGENTS_DIR.exists():
         return []
     return sorted(_LAUNCH_AGENTS_DIR.glob(f"{_LABEL_PREFIX}.*.plist"))
+
+
+def existing_adapters() -> list[str]:
+    """Return adapters discovered from current and legacy LaunchAgent plists."""
+    adapters: set[str] = set()
+    for plist in [*_list_managed_plists(), *_legacy_plist_paths()]:
+        args = _plist_program_arguments(plist)
+        adapter = _adapter_from_program_arguments(args)
+        if adapter:
+            adapters.add(adapter)
+    return sorted(adapters)
 
 
 def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
@@ -120,6 +187,7 @@ def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
     _LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     plist = _plist_path(adapter)
+    removed_legacy = _cleanup_legacy_plists(adapter)
 
     # Reload if already present (update exe path or log dir).
     if plist.exists() and _is_loaded(adapter):
@@ -131,13 +199,17 @@ def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
     if result.returncode != 0:
         return f"launchctl load failed:\n{result.stderr.strip()}"
 
-    return (
+    message = (
         f"Auto-start enabled for adapter '{adapter}'.\n"
         f"  Label : {_label(adapter)}\n"
         f"  Plist : {plist}\n"
         f"  Logs  : {log_dir}/{adapter}-{{stdout,stderr}}.log\n"
         f"Hermit will start automatically at next login."
     )
+    if removed_legacy:
+        removed_text = ", ".join(str(path) for path in removed_legacy)
+        message += f"\nRemoved legacy LaunchAgents: {removed_text}"
+    return message
 
 
 def disable(adapter: str = "feishu") -> str:

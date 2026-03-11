@@ -112,16 +112,26 @@ def _extract_key_input(name: str, tool_input: dict) -> str:
     return ""
 
 
-def _summarize_result(result: str) -> str:
+def _summarize_result(result: Any) -> str:
     """Produce a short one-line summary of a tool result for display."""
-    text = result.strip()
+    if isinstance(result, list):
+        if result and isinstance(result[0], dict) and result[0].get("type") == "image":
+            return "[image result]"
+        text = json.dumps(result, ensure_ascii=False)
+    elif isinstance(result, dict):
+        if result.get("type") == "image":
+            return "[image result]"
+        text = json.dumps(result, ensure_ascii=False)
+    else:
+        text = str(result)
+    text = text.strip()
     text = re.sub(r"^```[^\n]*\n", "", text)
     text = re.sub(r"\n```$", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[:80] + "…" if len(text) > 80 else text
 
 
-def make_tool_step(name: str, tool_input: dict, result: str, elapsed_ms: int) -> ToolStep:
+def make_tool_step(name: str, tool_input: dict, result: Any, elapsed_ms: int) -> ToolStep:
     """Build a ToolStep from a completed tool invocation."""
     label = _TOOL_DISPLAY.get(name, name)
     return ToolStep(

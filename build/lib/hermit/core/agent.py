@@ -168,6 +168,15 @@ def truncate_middle_text(text: str, limit: int) -> str:
     return f"{text[:head]}\n...\n{text[-tail:]}"
 
 
+def _format_tool_result_content(value: Any, limit: int) -> Any:
+    serialized = serialize_tool_result(value)
+    if isinstance(serialized, str):
+        return truncate_middle_text(serialized, limit)
+    if isinstance(serialized, dict):
+        return [serialized]
+    return serialized
+
+
 class MessageCreateClient(Protocol):
     def create(self, **kwargs: Any) -> Any: ...
     def stream(self, **kwargs: Any) -> Any: ...
@@ -179,7 +188,7 @@ class AnthropicClientProtocol(Protocol):
 
 
 StreamCallback = Callable[[str, str], None]
-ToolCallback = Callable[[str, Dict[str, Any], str], None]
+ToolCallback = Callable[[str, Dict[str, Any], Any], None]
 ToolStartCallback = Callable[[str, Dict[str, Any]], None]
 
 
@@ -337,7 +346,7 @@ class ClaudeAgent:
                     on_tool_start(tool_name, tool_input)
                 try:
                     raw_result = self.registry.call(tool_name, tool_input)
-                    serialized = serialize_tool_result(raw_result)
+                    serialized = _format_tool_result_content(raw_result, self.tool_output_limit)
                 except KeyError:
                     serialized = f"Error: Unknown tool '{tool_name}'. Available: {list(self.registry._tools.keys())}"
                 except Exception as exc:
@@ -348,7 +357,7 @@ class ClaudeAgent:
                     {
                         "type": "tool_result",
                         "tool_use_id": _block_value(block, "id"),
-                        "content": truncate_middle_text(serialized, self.tool_output_limit),
+                        "content": serialized,
                     }
                 )
                 tool_calls += 1
@@ -479,7 +488,7 @@ class ClaudeAgent:
                 tool_input = dict(_block_value(block, "input", {}) or {})
                 try:
                     raw_result = self.registry.call(tool_name, tool_input)
-                    serialized = serialize_tool_result(raw_result)
+                    serialized = _format_tool_result_content(raw_result, self.tool_output_limit)
                 except KeyError:
                     serialized = f"Error: Unknown tool '{tool_name}'. Available: {list(self.registry._tools.keys())}"
                 except Exception as exc:
@@ -488,7 +497,7 @@ class ClaudeAgent:
                     {
                         "type": "tool_result",
                         "tool_use_id": _block_value(block, "id"),
-                        "content": truncate_middle_text(serialized, self.tool_output_limit),
+                        "content": serialized,
                     }
                 )
                 tool_calls += 1

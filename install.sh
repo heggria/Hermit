@@ -21,8 +21,48 @@ uv tool install --python 3.11 --reinstall "$REPO_DIR" -q
 # Ensure uv tool bin is on PATH for this session
 export PATH="$(uv tool dir 2>/dev/null || echo "$HOME/.local/bin"):$PATH"
 
+EXISTING_AUTOSTART_ADAPTERS="$(python3 - <<'PY'
+from pathlib import Path
+import plistlib
+
+launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
+prefixes = ("com.hermit.serve", "com.moltforge.serve")
+adapters = set()
+
+if launch_agents_dir.exists():
+    for prefix in prefixes:
+        for plist in launch_agents_dir.glob(f"{prefix}*.plist"):
+            try:
+                data = plistlib.loads(plist.read_bytes())
+            except Exception:
+                continue
+            args = data.get("ProgramArguments")
+            if not isinstance(args, list):
+                continue
+            args = [str(arg) for arg in args]
+            adapter = None
+            if "--adapter" in args:
+                idx = args.index("--adapter")
+                if idx + 1 < len(args):
+                    adapter = args[idx + 1]
+            elif len(args) >= 3 and args[1] == "serve":
+                adapter = args[2]
+            if adapter:
+                adapters.add(adapter)
+
+print(" ".join(sorted(adapters)))
+PY
+)"
+
 # ── 3. workspace ─────────────────────────────────────────────────────────────
 hermit init -q 2>/dev/null || hermit init
+
+if [[ -n "$EXISTING_AUTOSTART_ADAPTERS" ]]; then
+  echo "→ Refreshing existing auto-start services..."
+  for adapter in $EXISTING_AUTOSTART_ADAPTERS; do
+    hermit autostart enable --adapter "$adapter"
+  done
+fi
 
 # ── 4. auto-save credentials already in env ──────────────────────────────────
 mkdir -p "$(dirname "$ENV_FILE")"

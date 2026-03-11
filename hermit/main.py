@@ -68,11 +68,17 @@ CYAN = "\033[36m"
 RESET = "\033[0m"
 
 
-def _on_tool_call(name: str, inputs: dict, result: str) -> None:
-    compact_input = ", ".join(f"{k}={repr(v)[:60]}" for k, v in inputs.items())
-    preview = result[:200].replace("\n", " ")
-    if len(result) > 200:
+def _tool_result_preview(result: object, limit: int = 200) -> str:
+    text = result if isinstance(result, str) else str(result)
+    preview = text[:limit].replace("\n", " ")
+    if len(text) > limit:
         preview += "..."
+    return preview
+
+
+def _on_tool_call(name: str, inputs: dict, result: object) -> None:
+    compact_input = ", ".join(f"{k}={repr(v)[:60]}" for k, v in inputs.items())
+    preview = _tool_result_preview(result)
     typer.echo(f"{CYAN}  ▸ {name}({compact_input}){RESET}")
     typer.echo(f"{DIM}    → {preview}{RESET}")
 

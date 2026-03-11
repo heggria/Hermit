@@ -199,7 +199,9 @@ def create_builtin_tool_registry(
     return registry
 
 
-def serialize_tool_result(value: Any) -> str:
+def serialize_tool_result(value: Any) -> Any:
     if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
         return value
     return json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True)
