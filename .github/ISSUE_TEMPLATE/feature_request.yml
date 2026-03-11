@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an improvement to Hermit.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, UX, or configuration you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What have you tried or ruled out already?
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: Add examples, links, or constraints that matter.

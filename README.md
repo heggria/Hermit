@@ -81,109 +81,252 @@ pip install -e ".[dev,macos]"
 
 ## 开发
 
-如果你是要改 Hermit 本身，而不是只把它当成一个已安装工具用，推荐直接在仓库根目录走 editable install。
+如果你是第一次参与这个仓库开发，下面这段按“从零开始”写。照着做就能把项目跑起来，并知道改代码应该去哪里。
 
-### 1. 本地开发环境
+### 1. 先理解你要开发的是什么
 
-推荐流程：
+Hermit 不是一个 Web 应用，也不是一个前后端分离项目。它本质上是一个本地运行的 Python agent runtime。
+
+你可以把它理解成：
+
+- `hermit main.py` 提供 CLI 入口
+- `provider/` 负责接不同模型
+- `core/` 负责通用执行链路
+- `plugin/` 负责插件装配
+- `builtin/` 放已经做好的内置能力
+- `companion/` 是 macOS 菜单栏控制层
+
+所以开发 Hermit，大多数时候不是“启动网页然后点点点”，而是：
+
+1. 配置一个本地开发环境
+2. 运行 CLI 命令验证行为
+3. 跑测试确认没有改坏
+4. 必要时启动 `serve` 验证长期运行链路
+
+### 2. 第一次拉仓库后怎么开始
+
+先进入仓库根目录：
+
+```bash
+cd /Users/beta/work/Hermit
+```
+
+确认 Python 版本：
+
+```bash
+python3.11 --version
+```
+
+如果这里没有 `python3.11`，先解决 Python 环境问题，再继续。这个项目要求 Python `>= 3.11`。
+
+### 3. 创建虚拟环境
+
+推荐每个仓库自己有一个虚拟环境，不要把依赖直接装到系统 Python。
+
+执行：
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
+```
+
+激活后，你的终端前面通常会出现 `(.venv)`。
+
+以后每次重新打开终端，只要还在这个仓库里开发，都先执行一次：
+
+```bash
+source .venv/bin/activate
+```
+
+### 4. 安装开发依赖
+
+最常见的开发安装方式：
+
+```bash
 pip install -e ".[dev]"
 ```
 
-如果你也要调试 macOS 菜单栏 companion：
+这里的 `-e` 是 editable install，意思是你改了仓库里的 Python 代码，不需要重新安装包，命令会直接使用当前源码。
+
+如果你还要调试 macOS 菜单栏 companion，再执行：
 
 ```bash
 pip install -e ".[dev,macos]"
 ```
 
-仓库也默认按 `uv` 习惯使用，测试时可直接：
+装完后可以检查命令是否可用：
 
 ```bash
-uv run pytest -q
+hermit --help
 ```
 
-### 2. 开发时的状态目录隔离
+如果能正常看到命令列表，说明开发安装已经成功。
 
-开发时不要直接复用生产态的 `~/.hermit`。最简单的做法是给开发环境单独指定 `HERMIT_BASE_DIR`：
+### 5. 为什么一定要隔离开发环境
+
+Hermit 会把状态写到 `~/.hermit` 下面，比如：
+
+- `.env`
+- `config.toml`
+- memory
+- sessions
+- schedules
+- logs
+
+如果你开发时也直接用 `~/.hermit`，就容易和你平时真正使用的 Hermit 状态混在一起。
+
+最简单的做法是专门给开发环境一个目录：
 
 ```bash
 export HERMIT_BASE_DIR=~/.hermit-dev
 hermit init
 ```
 
-仓库内也提供了包装脚本：
+这条命令会初始化一个开发专用状态目录。
+
+如果你不想每次手动 export，仓库里已经带了包装脚本：
 
 ```bash
 scripts/hermit-env.sh dev chat
-scripts/hermit-env.sh dev serve --adapter feishu
 scripts/hermit-env.sh dev config show
+scripts/hermit-env.sh dev serve --adapter feishu
 ```
 
-这样可以把这些状态隔离开：
+对于初学者，建议优先用这些脚本，因为它们会帮你把 `HERMIT_BASE_DIR` 指到合适的位置。
 
-- `.env`
-- `config.toml`
-- sessions / memory / schedules
-- logs / pid
-- 已安装外部插件
+### 6. 第一次把 CLI 跑起来
 
-### 3. 常用开发入口
+先初始化开发目录：
 
-最常用的几个命令：
+```bash
+export HERMIT_BASE_DIR=~/.hermit-dev
+hermit init
+```
+
+然后查看当前配置：
+
+```bash
+hermit config show
+```
+
+这条命令非常重要。它可以帮你确认：
+
+- 当前 `base_dir` 是不是你想要的开发目录
+- 当前 provider 是什么
+- model 是什么
+- auth 是否可用
+- webhook / scheduler 是否开启
+
+如果你只是想先看命令能不能跑通，不一定非要马上连真实模型。很多纯配置、纯测试类命令不需要模型鉴权。
+
+### 7. 第一次进入交互模式
+
+如果你已经准备好了 provider 的鉴权，可以直接：
 
 ```bash
 hermit chat
-hermit run "解释当前 provider runtime 的结构"
-hermit startup-prompt
-hermit config show
-hermit profiles list
+```
+
+或者执行单次任务：
+
+```bash
+hermit run "解释当前仓库的目录结构"
+```
+
+如果报鉴权错误，先检查：
+
+```bash
 hermit auth status
 ```
 
-如果你在改长期运行链路，通常会用：
+它会告诉你当前 provider 会使用哪种鉴权来源。
+
+### 8. 第一次改代码前，先知道这些命令最有用
+
+开发时最常用的是下面几条：
+
+```bash
+hermit --help
+hermit config show
+hermit auth status
+hermit startup-prompt
+hermit plugin list
+hermit sessions
+```
+
+它们分别适合做这些事：
+
+- `hermit --help`：确认 CLI 子命令是否注册成功
+- `hermit config show`：确认配置解析是否正确
+- `hermit auth status`：确认鉴权来源是否正确
+- `hermit startup-prompt`：确认 system prompt 最终长什么样
+- `hermit plugin list`：确认插件有没有被发现和加载
+- `hermit sessions`：确认会话是否正常落盘
+
+### 9. 如果你改的是长期运行链路
+
+Hermit 不只有 `chat`，还有长期运行模式：
 
 ```bash
 hermit serve --adapter feishu
+```
+
+这个模式适合验证：
+
+- Feishu adapter
+- scheduler
+- webhook
+- `SERVE_START` / `SERVE_STOP` hooks
+
+如果服务已经在跑，你改了配置或插件，不一定要直接杀进程重启，可以试：
+
+```bash
 hermit reload --adapter feishu
 ```
 
-其中：
+`reload` 会发送 `SIGHUP`，让正在运行的服务做一次优雅重载，重新读取配置、插件和工具。
 
-- `startup-prompt` 用来确认最终 system prompt 是否符合预期
-- `config show` 用来确认 profile、provider、auth、webhook、scheduler 是否被正确解析
-- `reload` 用来验证配置与插件是否能被优雅重建
+### 10. 最适合新手的测试顺序
 
-### 4. 测试方式
+不要一上来就跑最复杂的长期运行场景。推荐顺序是：
 
-仓库当前测试覆盖的重点包括：
+1. 先跑 CLI 测试
+2. 再跑配置和 provider 测试
+3. 最后再跑全量测试
 
-- CLI
-- config / profile
-- provider runtime
-- session / memory / hooks
-- scheduler / webhook
-- Feishu adapter
-- macOS companion
-
-常用命令：
+命令：
 
 ```bash
-uv run pytest -q
 uv run pytest tests/test_cli.py -q
 uv run pytest tests/test_config.py tests/test_codex_provider.py -q
+uv run pytest -q
 ```
+
+如果你没装 `uv`，也可以直接：
+
+```bash
+pytest tests/test_cli.py -q
+pytest -q
+```
+
+但这个仓库整体是偏 `uv` 工作流的，所以优先推荐 `uv run pytest`。
+
+### 11. 改不同类型的代码，应该先看哪些测试
 
 如果你改的是：
 
-- CLI 命令或启动行为，优先看 `tests/test_cli.py`
-- provider / 鉴权 / profile，优先看 `tests/test_config.py`、`tests/test_codex_provider.py`
-- 插件装配、hook、tools，优先看 `tests/test_plugin_manager.py`、`tests/test_tools.py`
-- 长期记忆与状态存储，优先看 `tests/test_memory_engine.py`、`tests/test_memory_hooks.py`、`tests/test_session.py`
+- CLI 命令、初始化、启动参数：先看 `tests/test_cli.py`
+- 配置优先级、profile、环境变量：先看 `tests/test_config.py`
+- Codex / OpenAI / OAuth：先看 `tests/test_codex_provider.py`、`tests/test_provider_runtime_services.py`
+- memory / session / hooks：先看 `tests/test_memory_engine.py`、`tests/test_memory_hooks.py`、`tests/test_session.py`
+- scheduler：先看 `tests/test_scheduler.py`、`tests/test_scheduler_dispatch.py`
+- webhook：先看 `tests/test_webhook_server.py`
+- Feishu：先看 `tests/test_feishu_dispatcher.py`、`tests/test_companion_control.py`
+- 菜单栏 app：先看 `tests/test_companion_menubar.py`、`tests/test_companion_appbundle.py`
 
-### 5. 代码结构怎么改
+一个很实用的习惯是：先打开相关测试文件，看它想保证什么行为，再去改实现。
+
+### 12. 改代码时，模块应该放哪里
 
 顶层结构：
 
@@ -205,23 +348,24 @@ skills/    仓库内辅助 skill
 - `companion/`：macOS 菜单栏 companion
 - `storage/`：文件锁、原子写、JSON store
 
-一个简单判断标准：
+简单记法：
 
 - 通用执行框架放 `core/`
 - 模型接入与鉴权放 `provider/`
 - 功能扩展优先放 `builtin/`
 - 插件基础设施放 `plugin/`
 - macOS 控制层放 `companion/`
+- 文件持久化相关放 `storage/`
 
-不要把具体产品能力继续堆进 `core/`。
+不要把具体业务能力继续堆进 `core/`，否则后面会越来越难维护。
 
-### 6. 新增功能时的落点
+### 13. 新增一个功能时，常见落点
 
 如果你要加的是：
 
 - 新工具、hook、slash command、adapter、MCP 集成：优先做成 `hermit/builtin/<plugin>/`
 - 新 provider：放进 `hermit/provider/providers/`，再在 `hermit/provider/services.py` 接入
-- 新配置项：先加到 `hermit/config.py`，再补 `config show`、相关文档和测试
+- 新配置项：先加到 `hermit/config.py`，再补 `config show`、文档和测试
 - 新 CLI 子命令：加在 `hermit/main.py`，同时补 `tests/test_cli.py`
 - 新菜单栏行为：改 `hermit/companion/`
 
@@ -231,7 +375,29 @@ skills/    仓库内辅助 skill
 - `tools.py` / `hooks.py` / `commands.py` / `adapter.py` / `mcp.py` 中的一个或多个
 - 需要时再带 `skills/` 或 `rules/`
 
-### 7. 调试建议
+如果你是新手，最稳妥的方法是先找一个现有 builtin 插件照着抄结构，不要从空白目录开始想象。
+
+### 14. 一个推荐的新手开发流程
+
+假设你要改一个 CLI 行为，建议这样做：
+
+1. 打开相关测试文件，例如 `tests/test_cli.py`
+2. 找到最接近你需求的测试
+3. 先看当前实现在哪个文件，通常是 `hermit/main.py`
+4. 改实现
+5. 先跑相关测试
+6. 再跑一次全量测试
+7. 最后手动执行一遍 CLI 命令确认输出
+
+如果你要改 provider / 配置链路，也是同样思路：
+
+1. 先看测试
+2. 再看 `config.py` 和 `provider/services.py`
+3. 改实现
+4. 跑相关测试
+5. 用 `hermit config show` 和 `hermit auth status` 手动确认
+
+### 15. 遇到问题时先查哪里
 
 查运行时问题时，优先用这几个入口：
 
@@ -243,15 +409,41 @@ hermit plugin list
 hermit sessions
 ```
 
-如果是长期运行问题，再看：
+如果是长期运行问题，再看开发目录下这些文件：
 
 - `~/.hermit-dev/logs/`
 - `~/.hermit-dev/serve-<adapter>.pid`
 - `~/.hermit-dev/schedules/jobs.json`
 - `~/.hermit-dev/schedules/history.json`
 - `~/.hermit-dev/sessions/`
+- `~/.hermit-dev/memory/memories.md`
 
 如果是菜单栏启动的服务，日志通常会在对应 base dir 的 `logs/` 下。
+
+### 16. 给完全没接触过项目的人一个最短上手路径
+
+如果你只想最快开始开发，按这个顺序做：
+
+```bash
+cd /Users/beta/work/Hermit
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+export HERMIT_BASE_DIR=~/.hermit-dev
+hermit init
+uv run pytest tests/test_cli.py -q
+hermit config show
+hermit --help
+```
+
+做到这里，你已经完成了：
+
+- 开发环境安装
+- 开发态状态目录隔离
+- 基本测试验证
+- CLI 可用性验证
+
+接下来再去改代码，会稳很多。
 
 ## 快速开始
 

@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a defect or regression.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include commands, config, or screenshots if useful.
+      placeholder: |
+        1. Run `...`
+        2. Configure `...`
+        3. Observe `...`
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, install method, provider mode, and any relevant env vars.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and traces
+      description: Paste the relevant logs or traceback.
+      render: shell
