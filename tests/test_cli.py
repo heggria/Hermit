@@ -243,12 +243,19 @@ def test_build_serve_preflight_uses_profile_feishu_settings(tmp_path, monkeypatc
     monkeypatch.delenv("HERMIT_PROFILE", raising=False)
     monkeypatch.delenv("HERMIT_FEISHU_APP_ID", raising=False)
     monkeypatch.delenv("HERMIT_FEISHU_APP_SECRET", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_BASE_URL", raising=False)
+    monkeypatch.delenv("HERMIT_BASE_URL", raising=False)
 
     items, errors = _build_serve_preflight("feishu", settings)
     details = {item.label: item.detail for item in items}
 
     assert errors == []
     assert details["Profile"] == "local (config.toml)"
+    assert details["LLM 鉴权"] == "config.toml profile"
     assert details["飞书 App ID"] == "config.toml profile"
     assert details["飞书 App Secret"] == "config.toml profile"
     assert details["飞书进度卡片"] == "false"

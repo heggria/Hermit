@@ -367,6 +367,15 @@ def _build_serve_preflight(adapter: str, settings: Settings) -> tuple[list[_Pref
                     else ", 未设置 Claude base URL"
                 )
             items.append(_PreflightItem(label="LLM 鉴权", ok=True, detail=detail))
+        elif settings.claude_api_key or settings.claude_auth_token:
+            detail = "config.toml profile"
+            if settings.claude_auth_token:
+                detail += (
+                    ", config.toml profile base_url"
+                    if settings.claude_base_url
+                    else ", 未设置 Claude base URL"
+                )
+            items.append(_PreflightItem(label="LLM 鉴权", ok=True, detail=detail))
         else:
             errors.append(
                 "缺少 Claude 鉴权。请设置 `HERMIT_CLAUDE_API_KEY` / `ANTHROPIC_API_KEY`，"
