@@ -4,8 +4,8 @@ import datetime
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, Optional
 
-from hermit.kernel.controller import TaskController
 from hermit.core.session import SessionManager, sanitize_session_messages
+from hermit.kernel.controller import TaskController
 from hermit.provider.runtime import AgentResult, AgentRuntime, ToolCallback, ToolStartCallback
 
 if TYPE_CHECKING:
@@ -233,8 +233,8 @@ class AgentRunner:
                 resolution={"reason": reason},
             )
             text = (
-                f"本次审批已拒绝，当前操作不会继续。"
-                f"\n如需继续，请重新发起请求；届时你可以对新的审批请求再次进行批准。"
+                "本次审批已拒绝，当前操作不会继续。"
+                "\n如需继续，请重新发起请求；届时你可以对新的审批请求再次进行批准。"
             )
             messages = list(session.messages)
             messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})

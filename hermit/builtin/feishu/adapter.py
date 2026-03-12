@@ -593,7 +593,9 @@ class FeishuAdapter:
             send_done(self._client, msg.message_id, self._settings)
 
     def _card_action_response(self, content: str, *, level: str = "info", card: dict[str, Any] | None = None) -> Any:
-        from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
+        from lark_oapi.event.callback.model.p2_card_action_trigger import (
+            P2CardActionTriggerResponse,
+        )
 
         toast_type = level if level in {"info", "success", "error"} else "info"
         payload: dict[str, Any] = {"toast": {"type": toast_type, "content": content}}

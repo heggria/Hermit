@@ -9,11 +9,11 @@ import shutil
 import signal
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-import traceback
 
 import typer
 
@@ -1438,7 +1438,6 @@ def schedule_list() -> None:
     """List all scheduled tasks."""
     import datetime
 
-    from hermit.builtin.scheduler.models import ScheduledJob
 
     store = _get_schedule_store()
     jobs = store.list_schedules()

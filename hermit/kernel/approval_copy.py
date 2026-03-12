@@ -4,7 +4,6 @@ import concurrent.futures
 from dataclasses import dataclass
 from typing import Any, Callable
 
-
 Formatter = Callable[[dict[str, Any]], dict[str, str] | str | None]
 
 

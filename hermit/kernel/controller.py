@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any
 
 from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.store import KernelStore

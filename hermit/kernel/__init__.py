@@ -1,6 +1,6 @@
 from hermit.kernel.approval_copy import ApprovalCopyService
-from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.approvals import ApprovalService
+from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.controller import TaskController
 from hermit.kernel.executor import ToolExecutionResult, ToolExecutor

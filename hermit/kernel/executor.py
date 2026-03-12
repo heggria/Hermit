@@ -11,7 +11,12 @@ from hermit.kernel.approval_copy import ApprovalCopyService
 from hermit.kernel.approvals import ApprovalService
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.context import TaskExecutionContext, capture_execution_environment
-from hermit.kernel.policy import ActionRequest, PolicyDecision, PolicyEngine, build_action_fingerprint
+from hermit.kernel.policy import (
+    ActionRequest,
+    PolicyDecision,
+    PolicyEngine,
+    build_action_fingerprint,
+)
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.store import KernelStore
 

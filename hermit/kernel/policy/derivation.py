@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
-from typing import Any
 
 from hermit.kernel.policy.models import ActionRequest
 

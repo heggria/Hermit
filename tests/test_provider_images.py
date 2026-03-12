@@ -5,7 +5,11 @@ import base64
 from hermit.provider.contracts import ProviderRequest
 from hermit.provider.images import prepare_messages_for_provider
 from hermit.provider.providers.claude import ClaudeProvider
-from hermit.provider.providers.codex import CodexOAuthProvider, CodexOAuthTokenManager, CodexProvider
+from hermit.provider.providers.codex import (
+    CodexOAuthProvider,
+    CodexOAuthTokenManager,
+    CodexProvider,
+)
 
 
 def test_prepare_messages_for_provider_compresses_base64_images(monkeypatch) -> None:
