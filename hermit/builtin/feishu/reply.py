@@ -846,6 +846,177 @@ def build_result_card(text: str) -> dict:
     return RichCardBuilder(text).build()
 
 
+def build_approval_card(
+    text: str,
+    approval_id: str,
+    steps: list[ToolStep] | None = None,
+    *,
+    title: str | None = None,
+    detail: str | None = None,
+    command_preview: str | None = None,
+) -> dict[str, Any]:
+    """Build a dedicated approval card with approve/deny buttons."""
+    button_row = {
+        "tag": "column_set",
+        "horizontal_spacing": "8px",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "不通过"},
+                        "type": "default",
+                        "width": "fill",
+                        "behaviors": [
+                            {
+                                "type": "callback",
+                                "value": {
+                                    "kind": "approval",
+                                    "action": "deny",
+                                    "approval_id": approval_id,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "通过"},
+                        "type": "primary_filled",
+                        "width": "fill",
+                        "behaviors": [
+                            {
+                                "type": "callback",
+                                "value": {
+                                    "kind": "approval",
+                                    "action": "approve",
+                                    "approval_id": approval_id,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+    clean_text = sanitize_for_feishu(text)
+    clean_detail = sanitize_for_feishu(detail or "")
+    command = (command_preview or "").strip()
+    body_elements: list[dict[str, Any]] = [_markdown_element(clean_text, margin="0 0 8px 0")]
+    if clean_detail and clean_detail != clean_text:
+        body_elements.append(_markdown_element(clean_detail, text_size="small", margin="0 0 8px 0"))
+    if command:
+        body_elements.append(
+            {
+                "tag": "collapsible_panel",
+                "expanded": False,
+                "header": {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": "查看原始命令",
+                    },
+                },
+                "elements": [
+                    _markdown_element(f"```bash\n{sanitize_for_feishu(command)}\n```", text_size="small", margin="4px 0"),
+                ],
+                "margin": "0 0 8px 0",
+            }
+        )
+    body_elements.extend(
+        [
+            _markdown_element(f"*Approval ID: `{approval_id}`*", text_size="small", margin="0 0 10px 0"),
+            button_row,
+        ]
+    )
+    if steps:
+        lines: list[str] = []
+        for step in steps:
+            elapsed_s = step.elapsed_ms / 1000
+            line = f"✅ {step.display}"
+            if step.key_input:
+                line += f": {step.key_input}"
+            line += f" ({elapsed_s:.1f}s)"
+            lines.append(line)
+        body_elements.extend(
+            [
+                {"tag": "hr", "margin": "8px 0"},
+                {
+                    "tag": "collapsible_panel",
+                    "expanded": False,
+                    "header": {
+                        "title": {
+                            "tag": "plain_text",
+                            "content": f"已完成步骤 ({len(steps)})",
+                        },
+                    },
+                    "elements": [
+                        _markdown_element("\n".join(lines), text_size="small", margin="4px 0"),
+                    ],
+                },
+            ]
+        )
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "summary": {"content": "任务等待审批"},
+        },
+        "header": {
+            "title": {"content": title or "等待审批", "tag": "plain_text"},
+            "template": "orange",
+        },
+        "body": {
+            "padding": "8px 12px 12px 12px",
+            "elements": body_elements,
+        },
+    }
+
+
+def build_approval_resolution_card(
+    action: str,
+    approval_id: str,
+    text: str,
+) -> dict[str, Any]:
+    """Build a terminal approval-state card with buttons removed."""
+    action_key = action.strip().lower()
+    if action_key == "approve":
+        title = "已通过"
+        template = "green"
+    elif action_key == "deny":
+        title = "未通过"
+        template = "red"
+    else:
+        title = "已处理"
+        template = "grey"
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "summary": {"content": title},
+        },
+        "header": {
+            "title": {"content": title, "tag": "plain_text"},
+            "template": template,
+        },
+        "body": {
+            "padding": "8px 12px 12px 12px",
+            "elements": [
+                _markdown_element(sanitize_for_feishu(text), margin="0 0 8px 0"),
+                _markdown_element(f"*Approval ID: `{approval_id}`*", text_size="small", margin="0"),
+            ],
+        },
+    }
+
+
 def build_error_card(hint: str = "处理出错，请稍后重试") -> dict:
     """Build an error-state card for patching when the agent fails."""
     return {

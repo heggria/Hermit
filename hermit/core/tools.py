@@ -18,6 +18,12 @@ class ToolSpec:
     input_schema: dict[str, Any]
     handler: ToolHandler
     readonly: bool = False  # True = no side effects; safe to call in plan mode
+    action_class: str | None = None
+    resource_scope_hint: str | list[str] | None = None
+    idempotent: bool = False
+    risk_hint: str | None = None
+    requires_receipt: bool | None = None
+    supports_preview: bool = False
 
 class ToolRegistry:
     def __init__(self) -> None:
@@ -87,6 +93,11 @@ def create_builtin_tool_registry(
             },
             handler=read_file,
             readonly=True,
+            action_class="read_local",
+            resource_scope_hint=str(root_dir),
+            idempotent=True,
+            risk_hint="low",
+            requires_receipt=False,
         )
     )
     registry.register(
@@ -102,6 +113,11 @@ def create_builtin_tool_registry(
                 "required": ["path", "content"],
             },
             handler=write_file,
+            action_class="write_local",
+            resource_scope_hint=str(root_dir),
+            risk_hint="high",
+            requires_receipt=True,
+            supports_preview=True,
         )
     )
     registry.register(
@@ -114,6 +130,11 @@ def create_builtin_tool_registry(
                 "required": ["command"],
             },
             handler=bash,
+            action_class="execute_command",
+            resource_scope_hint=str(root_dir),
+            risk_hint="critical",
+            requires_receipt=True,
+            supports_preview=True,
         )
     )
 
@@ -157,6 +178,11 @@ def create_builtin_tool_registry(
                 },
                 handler=read_hermit_file,
                 readonly=True,
+                action_class="read_local",
+                resource_scope_hint=str(config_root_dir),
+                idempotent=True,
+                risk_hint="low",
+                requires_receipt=False,
             )
         )
         registry.register(
@@ -172,6 +198,11 @@ def create_builtin_tool_registry(
                     "required": ["path", "content"],
                 },
                 handler=write_hermit_file,
+                action_class="write_local",
+                resource_scope_hint=str(config_root_dir),
+                risk_hint="high",
+                requires_receipt=True,
+                supports_preview=True,
             )
         )
         registry.register(
@@ -185,6 +216,11 @@ def create_builtin_tool_registry(
                 },
                 handler=list_hermit_files,
                 readonly=True,
+                action_class="read_local",
+                resource_scope_hint=str(config_root_dir),
+                idempotent=True,
+                risk_hint="low",
+                requires_receipt=False,
             )
         )
     return registry

@@ -52,6 +52,7 @@ from hermit.context import build_base_context, ensure_default_context_file
 from hermit.core.runner import AgentRunner
 from hermit.core.session import SessionManager
 from hermit.i18n import resolve_locale, tr
+from hermit.kernel import ApprovalCopyService, KernelStore, TaskController
 from hermit.logging import configure_logging
 from hermit.plugin.manager import PluginManager
 from hermit.provider.runtime import AgentResult
@@ -66,12 +67,14 @@ schedule_app = typer.Typer(help=tr("cli.schedule.help", locale=CLI_LOCALE))
 config_app = typer.Typer(help=tr("cli.config.help", locale=CLI_LOCALE))
 profiles_app = typer.Typer(help=tr("cli.profiles.help", locale=CLI_LOCALE))
 auth_app = typer.Typer(help=tr("cli.auth.help", locale=CLI_LOCALE))
+task_app = typer.Typer(help="Task kernel inspection and approval commands.")
 app.add_typer(plugin_app, name="plugin")
 app.add_typer(autostart_app, name="autostart")
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(config_app, name="config")
 app.add_typer(profiles_app, name="profiles")
 app.add_typer(auth_app, name="auth")
+app.add_typer(task_app, name="task")
 
 DIM = "\033[2m"
 CYAN = "\033[36m"
@@ -215,6 +218,8 @@ def _ensure_workspace(settings: Settings) -> None:
         settings.plugins_dir,
         settings.sessions_dir,
         settings.image_memory_dir,
+        settings.kernel_dir,
+        settings.kernel_artifacts_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True)
     ensure_default_context_file(settings.context_file)
@@ -709,9 +714,26 @@ def _build_runner(
     serve_mode: bool = False,
 ) -> tuple[AgentRunner, PluginManager]:
     """Build an AgentRunner (agent + session manager + plugin manager)."""
-    agent, pm = build_runtime(settings, preloaded_skills=preloaded_skills, pm=pm, serve_mode=serve_mode)
-    manager = SessionManager(settings.sessions_dir, settings.session_idle_timeout_seconds)
-    runner = AgentRunner(agent, manager, pm, serve_mode=serve_mode)
+    store = KernelStore(settings.kernel_db_path)
+    agent, pm = build_runtime(
+        settings,
+        preloaded_skills=preloaded_skills,
+        pm=pm,
+        serve_mode=serve_mode,
+        store=store,
+    )
+    manager = SessionManager(
+        settings.sessions_dir,
+        settings.session_idle_timeout_seconds,
+        store=store,
+    )
+    runner = AgentRunner(
+        agent,
+        manager,
+        pm,
+        serve_mode=serve_mode,
+        task_controller=TaskController(store),
+    )
     pm.setup_commands(runner)
     return runner, pm
 
@@ -983,6 +1005,102 @@ def sessions() -> None:
         typer.echo(sid)
 
 
+def _get_kernel_store() -> KernelStore:
+    settings = get_settings()
+    _ensure_workspace(settings)
+    return KernelStore(settings.kernel_db_path)
+
+
+@task_app.command("list")
+def task_list(limit: int = typer.Option(20, help="Maximum number of tasks to show.")) -> None:
+    """List recent tasks from the kernel ledger."""
+    store = _get_kernel_store()
+    tasks = store.list_tasks(limit=limit)
+    if not tasks:
+        typer.echo("No tasks found.")
+        return
+    for task in tasks:
+        typer.echo(f"[{task.task_id}] {task.status} {task.source_channel} {task.title}")
+
+
+@task_app.command("show")
+def task_show(task_id: str = typer.Argument(..., help="Task ID.")) -> None:
+    """Show one task and its pending approvals."""
+    store = _get_kernel_store()
+    task = store.get_task(task_id)
+    if task is None:
+        typer.echo(f"Task not found: {task_id}")
+        raise typer.Exit(1)
+    typer.echo(json.dumps(task.__dict__, ensure_ascii=False, indent=2))
+    approvals = store.list_approvals(task_id=task_id, limit=20)
+    if approvals:
+        typer.echo("\nPending/Recent approvals:")
+        copy_service = ApprovalCopyService()
+        for approval in approvals:
+            typer.echo(f"  [{approval.approval_id}] {approval.status} {approval.approval_type}")
+            summary = copy_service.resolve_copy(approval.requested_action, approval.approval_id).summary
+            typer.echo(f"    {summary}")
+
+
+@task_app.command("events")
+def task_events(task_id: str = typer.Argument(..., help="Task ID."), limit: int = 100) -> None:
+    """Show task events."""
+    store = _get_kernel_store()
+    typer.echo(json.dumps(store.list_events(task_id=task_id, limit=limit), ensure_ascii=False, indent=2))
+
+
+@task_app.command("receipts")
+def task_receipts(task_id: Optional[str] = typer.Option(None, help="Optional task ID filter."), limit: int = 50) -> None:
+    """Show receipts."""
+    store = _get_kernel_store()
+    payload = [receipt.__dict__ for receipt in store.list_receipts(task_id=task_id, limit=limit)]
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _task_resolution(action: str, approval_id: str, reason: str = "") -> None:
+    settings = get_settings()
+    _ensure_workspace(settings)
+    runner, pm = _build_runner(settings)
+    try:
+        store = _get_kernel_store()
+        approval = store.get_approval(approval_id)
+        if approval is None:
+            typer.echo(f"Approval not found: {approval_id}")
+            raise typer.Exit(1)
+        task = store.get_task(approval.task_id)
+        conversation_id = task.conversation_id if task is not None else "cli"
+        result = runner._resolve_approval(  # type: ignore[attr-defined]
+            conversation_id,
+            action=action,
+            approval_id=approval_id,
+            reason=reason,
+        )
+        typer.echo(result.text)
+    finally:
+        pm.stop_mcp_servers()
+
+
+@task_app.command("approve")
+def task_approve(approval_id: str = typer.Argument(..., help="Approval ID.")) -> None:
+    """Approve and resume a blocked task."""
+    _task_resolution("approve", approval_id)
+
+
+@task_app.command("deny")
+def task_deny(
+    approval_id: str = typer.Argument(..., help="Approval ID."),
+    reason: str = typer.Option("", help="Optional deny reason."),
+) -> None:
+    """Deny a blocked task."""
+    _task_resolution("deny", approval_id, reason=reason)
+
+
+@task_app.command("resume")
+def task_resume(approval_id: str = typer.Argument(..., help="Approval ID to resume.")) -> None:
+    """Resume a blocked task by approving its latest pending approval."""
+    _task_resolution("approve", approval_id)
+
+
 # --------------- Plugin sub-commands ---------------
 
 @plugin_app.command("list")
@@ -1110,17 +1228,8 @@ def autostart_status(
 
 # --------------- Schedule sub-commands ---------------
 
-def _get_schedule_store() -> Any:
-    """Return a JsonStore for reading schedules outside of serve context."""
-    from hermit.storage import JsonStore
-    settings = get_settings()
-    schedules_dir = settings.schedules_dir
-    schedules_dir.mkdir(parents=True, exist_ok=True)
-    return JsonStore(
-        schedules_dir / "jobs.json",
-        default={"jobs": []},
-        cross_process=True,
-    )
+def _get_schedule_store() -> KernelStore:
+    return _get_kernel_store()
 
 
 @schedule_app.command("list")
@@ -1131,8 +1240,7 @@ def schedule_list() -> None:
     from hermit.builtin.scheduler.models import ScheduledJob
 
     store = _get_schedule_store()
-    data = store.read()
-    jobs = [ScheduledJob.from_dict(j) for j in data.get("jobs", [])]
+    jobs = store.list_schedules()
     if not jobs:
         typer.echo("No scheduled tasks.")
         return
@@ -1204,25 +1312,18 @@ def schedule_add(
     )
 
     store = _get_schedule_store()
-    data = store.read()
-    data.setdefault("jobs", []).append(job.to_dict())
-    store.write(data)
+    store.create_schedule(job)
     typer.echo(f"Added task [{job.id}] '{job.name}' ({schedule_type}).")
-    typer.echo("Note: the schedule will be active next time `hermit serve` starts.")
+    typer.echo("Task is now stored in the kernel ledger and will be picked up by `hermit serve`.")
 
 
 @schedule_app.command("remove")
 def schedule_remove(job_id: str = typer.Argument(..., help="Task ID to remove.")) -> None:
     """Remove a scheduled task."""
     store = _get_schedule_store()
-    data = store.read()
-    jobs = data.get("jobs", [])
-    before = len(jobs)
-    data["jobs"] = [j for j in jobs if j.get("id") != job_id]
-    if len(data["jobs"]) == before:
+    if not store.delete_schedule(job_id):
         typer.echo(f"Error: no task with id '{job_id}' found.")
         raise typer.Exit(1)
-    store.write(data)
     typer.echo(f"Removed task '{job_id}'.")
 
 
@@ -1230,13 +1331,9 @@ def schedule_remove(job_id: str = typer.Argument(..., help="Task ID to remove.")
 def schedule_enable(job_id: str = typer.Argument(..., help="Task ID to enable.")) -> None:
     """Enable a scheduled task."""
     store = _get_schedule_store()
-    data = store.read()
-    for j in data.get("jobs", []):
-        if j.get("id") == job_id:
-            j["enabled"] = True
-            store.write(data)
-            typer.echo(f"Enabled task '{job_id}'.")
-            return
+    if store.update_schedule(job_id, enabled=True):
+        typer.echo(f"Enabled task '{job_id}'.")
+        return
     typer.echo(f"Error: no task with id '{job_id}' found.")
     raise typer.Exit(1)
 
@@ -1245,13 +1342,9 @@ def schedule_enable(job_id: str = typer.Argument(..., help="Task ID to enable.")
 def schedule_disable(job_id: str = typer.Argument(..., help="Task ID to disable.")) -> None:
     """Disable a scheduled task."""
     store = _get_schedule_store()
-    data = store.read()
-    for j in data.get("jobs", []):
-        if j.get("id") == job_id:
-            j["enabled"] = False
-            store.write(data)
-            typer.echo(f"Disabled task '{job_id}'.")
-            return
+    if store.update_schedule(job_id, enabled=False):
+        typer.echo(f"Disabled task '{job_id}'.")
+        return
     typer.echo(f"Error: no task with id '{job_id}' found.")
     raise typer.Exit(1)
 
@@ -1263,24 +1356,8 @@ def schedule_history(
 ) -> None:
     """Show execution history for scheduled tasks."""
     import datetime
-    import json
-
-    settings = get_settings()
-    history_path = settings.schedules_dir / "history.json"
-    if not history_path.exists():
-        typer.echo("No execution history.")
-        return
-
-    try:
-        data = json.loads(history_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        typer.echo("No execution history.")
-        return
-
-    records = data.get("records", [])
-    if job_id:
-        records = [r for r in records if r.get("job_id") == job_id]
-    records = records[-limit:]
+    store = _get_schedule_store()
+    records = [record.to_dict() for record in store.list_schedule_history(job_id=job_id, limit=limit)]
 
     if not records:
         typer.echo("No execution history.")

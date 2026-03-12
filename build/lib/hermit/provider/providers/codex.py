@@ -18,6 +18,7 @@ from hermit.provider.contracts import (
     ProviderResponse,
     UsageMetrics,
 )
+from hermit.provider.images import prepare_messages_for_provider
 
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _CODEX_OAUTH_BASE_URL = "https://chatgpt.com/backend-api/codex/responses"
@@ -39,6 +40,84 @@ def _stringify_tool_output(content: Any) -> str:
     if isinstance(serialized, str):
         return serialized
     return json.dumps(serialized, ensure_ascii=False)
+
+
+def _tool_result_image_parts(content: Any, *, codex_oauth: bool) -> list[dict[str, Any]]:
+    image_part = _codex_oauth_image_part_from_block if codex_oauth else _image_part_from_block
+    if isinstance(content, dict) and str(content.get("type", "")) == "image":
+        return [image_part(content)]
+    if not isinstance(content, list):
+        return []
+    parts: list[dict[str, Any]] = []
+    for block in content:
+        if isinstance(block, dict) and str(block.get("type", "")) == "image":
+            parts.append(image_part(block))
+    return parts
+
+
+def _tool_result_output(content: Any, *, codex_oauth: bool) -> str:
+    images = _tool_result_image_parts(content, codex_oauth=codex_oauth)
+    if not images:
+        return _stringify_tool_output(content)
+    if isinstance(content, dict) and str(content.get("type", "")) == "image":
+        return "[tool returned image content]"
+    if isinstance(content, list):
+        non_image_blocks = [
+            block
+            for block in content
+            if not (isinstance(block, dict) and str(block.get("type", "")) == "image")
+        ]
+        if non_image_blocks:
+            return _stringify_tool_output(non_image_blocks)
+    return "[tool returned image content]"
+
+
+def _tool_result_follow_up_items(call_id: str, content: Any, *, codex_oauth: bool) -> list[dict[str, Any]]:
+    images = _tool_result_image_parts(content, codex_oauth=codex_oauth)
+    if not images:
+        return []
+    return [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": f"Tool result for call {call_id} includes image content."},
+                *images,
+            ],
+        }
+    ]
+
+
+def _error_code_message(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    error = payload.get("error")
+    if isinstance(error, dict):
+        code = error.get("code")
+        message = error.get("message") or error.get("detail")
+        return (str(code) if code is not None else None, str(message) if message is not None else None)
+    response = payload.get("response")
+    if isinstance(response, dict):
+        response_error = response.get("error")
+        if isinstance(response_error, dict):
+            code = response_error.get("code")
+            message = response_error.get("message") or response_error.get("detail")
+            return (str(code) if code is not None else None, str(message) if message is not None else None)
+        incomplete = response.get("incomplete_details")
+        if isinstance(incomplete, dict):
+            reason = incomplete.get("reason")
+            message = incomplete.get("message") or reason
+            return (str(reason) if reason is not None else None, str(message) if message is not None else None)
+    code = payload.get("code")
+    message = payload.get("message") or payload.get("detail")
+    return (str(code) if code is not None else None, str(message) if message is not None else None)
+
+
+def _format_stream_error(prefix: str, payload: dict[str, Any]) -> str:
+    code, message = _error_code_message(payload)
+    if code and message:
+        return f"{prefix} {code}: {message}"
+    if message:
+        return f"{prefix}: {message}"
+    return f"{prefix}: {json.dumps(payload, ensure_ascii=False)[:500]}"
 
 
 def _image_part_from_block(block: dict[str, Any]) -> dict[str, Any]:
@@ -69,13 +148,13 @@ def _codex_oauth_image_part_from_block(block: dict[str, Any]) -> dict[str, Any]:
         url = str(source.get("url", "")).strip()
         if not url:
             raise ValueError("Invalid image block: empty image URL")
-        return {"type": "input_image", "source": {"type": "url", "url": url}}
+        return {"type": "input_image", "image_url": url}
     if source_type == "base64":
         media_type = str(source.get("media_type", "")).strip() or "application/octet-stream"
         data = str(source.get("data", "")).strip()
         if not data:
             raise ValueError("Invalid image block: empty base64 image data")
-        return {"type": "input_image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+        return {"type": "input_image", "image_url": f"data:{media_type};base64,{data}"}
     raise ValueError(f"Unsupported image source type: {source_type or 'unknown'}")
 
 
@@ -131,13 +210,16 @@ def _responses_input(messages: list[dict[str, Any]], *, codex_oauth: bool = Fals
                         }
                     )
                 elif block_type == "tool_result":
+                    call_id = str(block.get("tool_use_id", ""))
+                    output = _tool_result_output(block.get("content"), codex_oauth=codex_oauth)
                     items.append(
                         {
                             "type": "function_call_output",
-                            "call_id": str(block.get("tool_use_id", "")),
-                            "output": _stringify_tool_output(block.get("content")),
+                            "call_id": call_id,
+                            "output": output,
                         }
                     )
+                    items.extend(_tool_result_follow_up_items(call_id, block.get("content"), codex_oauth=codex_oauth))
             continue
 
         items.append({"type": "message", "role": role, "content": content if codex_oauth else _message_content_parts(content)})
@@ -273,9 +355,10 @@ class CodexProvider(Provider):
         )
 
     def _payload(self, request: ProviderRequest) -> dict[str, Any]:
+        prepared_messages = prepare_messages_for_provider(request.messages)
         payload: dict[str, Any] = {
             "model": request.model or self.model,
-            "input": _responses_input(request.messages),
+            "input": _responses_input(prepared_messages),
             "max_output_tokens": request.max_tokens,
             "store": False,
         }
@@ -466,13 +549,14 @@ class CodexOAuthProvider(Provider):
         )
 
     def _payload(self, request: ProviderRequest) -> dict[str, Any]:
+        prepared_messages = prepare_messages_for_provider(request.messages)
         instructions = request.system_prompt if request.system_prompt is not None else self.system_prompt
         if not instructions:
             instructions = "You are Hermit's coding assistant."
         payload: dict[str, Any] = {
             "model": request.model or self.model,
             "instructions": instructions,
-            "input": _responses_input(request.messages, codex_oauth=True),
+            "input": _responses_input(prepared_messages, codex_oauth=True),
             "store": False,
             "stream": True,
         }
@@ -560,10 +644,12 @@ class CodexOAuthProvider(Provider):
                         if any(isinstance(item, dict) and item.get("type") == "function_call" for item in output):
                             stop_reason = "tool_use"
                         events.append(ProviderEvent(type="message_end", stop_reason=stop_reason, usage=usage))
+                elif event_type == "response.failed":
+                    raise RuntimeError(_format_stream_error("Codex OAuth stream error", payload))
+                elif event_type == "response.incomplete":
+                    raise RuntimeError(_format_stream_error("Codex OAuth stream incomplete", payload))
                 elif event_type == "error":
-                    code = payload.get("code")
-                    message = payload.get("message")
-                    raise RuntimeError(f"Codex OAuth stream error {code}: {message}")
+                    raise RuntimeError(_format_stream_error("Codex OAuth stream error", payload))
                 return events
 
             for raw_line in response:
@@ -578,6 +664,8 @@ class CodexOAuthProvider(Provider):
                     event_type = line.split(":", 1)[1].strip()
                 elif line.startswith("data:"):
                     data_lines.append(line.split(":", 1)[1].strip())
+            for event in flush_event():
+                yield event
 
     def generate(self, request: ProviderRequest) -> ProviderResponse:
         content: list[dict[str, Any]] = []

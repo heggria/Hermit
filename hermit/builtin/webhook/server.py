@@ -77,6 +77,12 @@ class WebhookServer:
         self._app = FastAPI(title="Hermit Webhook", docs_url=None, redoc_url=None)
         self._app.add_api_route("/health", self._health, methods=["GET"])
         self._app.add_api_route("/routes", self._list_routes, methods=["GET"])
+        self._app.add_api_route("/tasks", self._list_tasks, methods=["GET"])
+        self._app.add_api_route("/tasks/{task_id}", self._show_task, methods=["GET"])
+        self._app.add_api_route("/tasks/{task_id}/events", self._task_events, methods=["GET"])
+        self._app.add_api_route("/approvals/pending", self._list_pending_approvals, methods=["GET"])
+        self._app.add_api_route("/approvals/{approval_id}/approve", self._approve, methods=["POST"])
+        self._app.add_api_route("/approvals/{approval_id}/deny", self._deny, methods=["POST"])
 
         for route in config.routes:
             self._register_route(route)
@@ -180,6 +186,121 @@ class WebhookServer:
             notify=route.notify,
             metadata={"payload_keys": list(payload.keys())},
         )
+
+    def _kernel_store(self) -> Any:
+        if self._runner is None:
+            raise HTTPException(status_code=503, detail="Runner is not attached")
+        task_controller = getattr(self._runner, "task_controller", None)
+        if task_controller is not None:
+            return task_controller.store
+        store = getattr(getattr(self._runner, "agent", None), "kernel_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="Task kernel is not available")
+        return store
+
+    async def _verify_control_request(self, request: Request) -> bytes:
+        body = await request.body()
+        if self._config.control_secret:
+            self._verify_signature(
+                body,
+                self._config.control_secret,
+                "X-Hermit-Signature-256",
+                request.headers,
+            )
+        return body
+
+    async def _list_tasks(self, request: Request, limit: int = 20) -> dict[str, Any]:
+        await self._verify_control_request(request)
+        store = self._kernel_store()
+        return {
+            "tasks": [task.__dict__ for task in store.list_tasks(limit=limit)]
+        }
+
+    async def _show_task(self, task_id: str, request: Request) -> dict[str, Any]:
+        await self._verify_control_request(request)
+        store = self._kernel_store()
+        task = store.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {
+            "task": task.__dict__,
+            "approvals": [approval.__dict__ for approval in store.list_approvals(task_id=task_id, limit=20)],
+        }
+
+    async def _task_events(self, task_id: str, request: Request, limit: int = 100) -> dict[str, Any]:
+        await self._verify_control_request(request)
+        store = self._kernel_store()
+        return {"events": store.list_events(task_id=task_id, limit=limit)}
+
+    async def _list_pending_approvals(
+        self,
+        request: Request,
+        conversation_id: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        await self._verify_control_request(request)
+        store = self._kernel_store()
+        approvals = store.list_approvals(conversation_id=conversation_id, status="pending", limit=limit)
+        return {"approvals": [approval.__dict__ for approval in approvals]}
+
+    async def _approve(self, approval_id: str, request: Request) -> dict[str, Any]:
+        body = await self._verify_control_request(request)
+        resolution = {}
+        if body:
+            try:
+                import json
+                resolution = json.loads(body)
+            except Exception:
+                resolution = {}
+
+        if self._runner is None:
+            raise HTTPException(status_code=503, detail="Runner is not attached")
+        store = self._kernel_store()
+        approval = store.get_approval(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        task = store.get_task(approval.task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        result = self._runner._resolve_approval(  # type: ignore[attr-defined]
+            task.conversation_id,
+            action="approve",
+            approval_id=approval_id,
+        )
+        return {
+            "status": "approved",
+            "approval_id": approval_id,
+            "text": result.text,
+            "resolution": resolution,
+        }
+
+    async def _deny(self, approval_id: str, request: Request) -> dict[str, Any]:
+        body = await self._verify_control_request(request)
+        reason = ""
+        if body:
+            try:
+                import json
+                payload = json.loads(body)
+                reason = str(payload.get("reason", "")).strip()
+            except Exception:
+                reason = ""
+
+        if self._runner is None:
+            raise HTTPException(status_code=503, detail="Runner is not attached")
+        store = self._kernel_store()
+        approval = store.get_approval(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        task = store.get_task(approval.task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        result = self._runner._resolve_approval(  # type: ignore[attr-defined]
+            task.conversation_id,
+            action="deny",
+            approval_id=approval_id,
+            reason=reason,
+        )
+        return {"status": "denied", "approval_id": approval_id, "text": result.text}
 
     # ------------------------------------------------------------------
     # Utility endpoints

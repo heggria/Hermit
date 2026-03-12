@@ -7,6 +7,8 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from hermit.core.tools import ToolRegistry, serialize_tool_result
+from hermit.kernel.context import TaskExecutionContext
+from hermit.kernel.executor import ToolExecutionResult, ToolExecutor
 from hermit.provider.contracts import Provider, ProviderRequest, UsageMetrics
 from hermit.provider.messages import (
     block_value,
@@ -66,6 +68,11 @@ class AgentResult:
     tool_calls: int
     thinking: str = ""
     messages: List[Dict[str, Any]] = None  # type: ignore[assignment]
+    blocked: bool = False
+    approval_id: str | None = None
+    step_attempt_id: str | None = None
+    task_id: str | None = None
+    step_id: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -83,6 +90,7 @@ class AgentRuntime:
         tool_output_limit: int = 4000,
         thinking_budget: int = 0,
         system_prompt: Optional[str] = None,
+        tool_executor: ToolExecutor | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -92,6 +100,7 @@ class AgentRuntime:
         self.tool_output_limit = tool_output_limit
         self.thinking_budget = thinking_budget
         self.system_prompt = system_prompt
+        self.tool_executor = tool_executor
 
     def clone(
         self,
@@ -113,6 +122,7 @@ class AgentRuntime:
             tool_output_limit=self.tool_output_limit,
             thinking_budget=self.thinking_budget,
             system_prompt=self.system_prompt if system_prompt is None else system_prompt,
+            tool_executor=self.tool_executor,
         )
 
     def _usage_to_result(self, usage: UsageMetrics, **kwargs: Any) -> AgentResult:
@@ -154,13 +164,86 @@ class AgentRuntime:
         on_tool_start: Optional[ToolStartCallback] = None,
         disable_tools: bool = False,
         readonly_only: bool = False,
+        task_context: TaskExecutionContext | None = None,
     ) -> AgentResult:
         messages: List[Dict[str, Any]] = normalize_messages(message_history or [])
         messages.append({"role": "user", "content": prompt})
+        return self._run_from_messages(
+            messages,
+            start_turn=1,
+            on_tool_call=on_tool_call,
+            on_tool_start=on_tool_start,
+            disable_tools=disable_tools,
+            readonly_only=readonly_only,
+            task_context=task_context,
+        )
+
+    def resume(
+        self,
+        *,
+        step_attempt_id: str,
+        task_context: TaskExecutionContext,
+        on_tool_call: Optional[ToolCallback] = None,
+        on_tool_start: Optional[ToolStartCallback] = None,
+    ) -> AgentResult:
+        if self.tool_executor is None:
+            raise RuntimeError("Task resume requires a configured ToolExecutor")
+        snapshot = self.tool_executor.load_blocked_state(step_attempt_id)
+        messages = normalize_messages(list(snapshot.get("messages", [])))
+        pending_tool_blocks = list(snapshot.get("pending_tool_blocks", []))
+        tool_result_blocks = list(snapshot.get("tool_result_blocks", []))
+        next_turn = int(snapshot.get("next_turn", 1))
+        disable_tools = bool(snapshot.get("disable_tools", False))
+        readonly_only = bool(snapshot.get("readonly_only", False))
         tool_calls = 0
         usage = UsageMetrics()
 
-        for turn in range(1, self.max_turns + 1):
+        executed = self._execute_tool_turn(
+            messages=messages,
+            tool_use_blocks=pending_tool_blocks,
+            tool_result_blocks=tool_result_blocks,
+            turn=next_turn - 1,
+            on_tool_call=on_tool_call,
+            on_tool_start=on_tool_start,
+            disable_tools=disable_tools,
+            readonly_only=readonly_only,
+            task_context=task_context,
+            usage=usage,
+            tool_calls=tool_calls,
+        )
+        if isinstance(executed, AgentResult):
+            return executed
+        tool_result_blocks, tool_calls = executed
+        messages.append({"role": "user", "content": tool_result_blocks})
+        self.tool_executor.clear_blocked_state(step_attempt_id)
+        return self._run_from_messages(
+            messages,
+            start_turn=next_turn,
+            on_tool_call=on_tool_call,
+            on_tool_start=on_tool_start,
+            disable_tools=disable_tools,
+            readonly_only=readonly_only,
+            task_context=task_context,
+            usage=usage,
+            tool_calls=tool_calls,
+        )
+
+    def _run_from_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        start_turn: int,
+        on_tool_call: Optional[ToolCallback],
+        on_tool_start: Optional[ToolStartCallback],
+        disable_tools: bool,
+        readonly_only: bool,
+        task_context: TaskExecutionContext | None,
+        usage: UsageMetrics | None = None,
+        tool_calls: int = 0,
+    ) -> AgentResult:
+        usage = usage or UsageMetrics()
+
+        for turn in range(start_turn, self.max_turns + 1):
             try:
                 response = self.provider.generate(
                     self._request(
@@ -178,6 +261,9 @@ class AgentRuntime:
                     turns=turn,
                     tool_calls=tool_calls,
                     messages=messages,
+                    task_id=task_context.task_id if task_context else None,
+                    step_id=task_context.step_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
                 )
 
             usage.input_tokens += response.usage.input_tokens
@@ -192,6 +278,9 @@ class AgentRuntime:
                     turns=turn,
                     tool_calls=tool_calls,
                     messages=messages,
+                    task_id=task_context.task_id if task_context else None,
+                    step_id=task_context.step_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
                 )
 
             response_blocks = [normalize_block(block) for block in response.content]
@@ -205,35 +294,31 @@ class AgentRuntime:
                     tool_calls=tool_calls,
                     thinking=extract_thinking(response_blocks),
                     messages=messages,
+                    task_id=task_context.task_id if task_context else None,
+                    step_id=task_context.step_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
                 )
 
             tool_use_blocks = [block for block in response_blocks if block_value(block, "type") == "tool_use"]
             if not tool_use_blocks:
                 raise RuntimeError("Provider requested tool_use without tool blocks.")
 
-            tool_result_blocks: List[Dict[str, Any]] = []
-            for block in tool_use_blocks:
-                tool_name = str(block_value(block, "name"))
-                tool_input = dict(block_value(block, "input", {}) or {})
-                if on_tool_start:
-                    on_tool_start(tool_name, tool_input)
-                try:
-                    raw_result = self.registry.call(tool_name, tool_input)
-                    serialized = format_tool_result_content(raw_result, self.tool_output_limit)
-                except KeyError:
-                    serialized = f"Error: Unknown tool '{tool_name}'. Available: {list(self.registry._tools.keys())}"
-                except Exception as exc:
-                    serialized = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
-                if on_tool_call:
-                    on_tool_call(tool_name, tool_input, serialized)
-                tool_result_blocks.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block_value(block, "id"),
-                        "content": serialized,
-                    }
-                )
-                tool_calls += 1
+            executed = self._execute_tool_turn(
+                messages=messages,
+                tool_use_blocks=tool_use_blocks,
+                tool_result_blocks=[],
+                turn=turn,
+                on_tool_call=on_tool_call,
+                on_tool_start=on_tool_start,
+                disable_tools=disable_tools,
+                readonly_only=readonly_only,
+                task_context=task_context,
+                usage=usage,
+                tool_calls=tool_calls,
+            )
+            if isinstance(executed, AgentResult):
+                return executed
+            tool_result_blocks, tool_calls = executed
 
             messages.append({"role": "user", "content": tool_result_blocks})
 
@@ -267,6 +352,9 @@ class AgentRuntime:
                 turns=self.max_turns + 1,
                 tool_calls=tool_calls,
                 messages=messages,
+                task_id=task_context.task_id if task_context else None,
+                step_id=task_context.step_id if task_context else None,
+                step_attempt_id=task_context.step_attempt_id if task_context else None,
             )
         except Exception as exc:
             log.error("final_summary_failed", error=str(exc))
@@ -276,7 +364,116 @@ class AgentRuntime:
                 turns=self.max_turns + 1,
                 tool_calls=tool_calls,
                 messages=messages,
+                task_id=task_context.task_id if task_context else None,
+                step_id=task_context.step_id if task_context else None,
+                step_attempt_id=task_context.step_attempt_id if task_context else None,
             )
+
+    def _execute_tool_turn(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        tool_use_blocks: List[Dict[str, Any]],
+        tool_result_blocks: List[Dict[str, Any]],
+        turn: int,
+        on_tool_call: Optional[ToolCallback],
+        on_tool_start: Optional[ToolStartCallback],
+        disable_tools: bool,
+        readonly_only: bool,
+        task_context: TaskExecutionContext | None,
+        usage: UsageMetrics,
+        tool_calls: int,
+    ) -> AgentResult | tuple[List[Dict[str, Any]], int]:
+        for index, block in enumerate(tool_use_blocks):
+            tool_name = str(block_value(block, "name"))
+            tool_input = dict(block_value(block, "input", {}) or {})
+            if on_tool_start:
+                on_tool_start(tool_name, tool_input)
+            try:
+                exec_result = self._execute_tool(
+                    task_context=task_context,
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                )
+                serialized = exec_result.model_content
+            except KeyError:
+                serialized = f"Error: Unknown tool '{tool_name}'. Available: {list(self.registry._tools.keys())}"
+                exec_result = ToolExecutionResult(model_content=serialized, raw_result=serialized)
+            except Exception as exc:
+                serialized = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
+                exec_result = ToolExecutionResult(model_content=serialized, raw_result=serialized)
+
+            if exec_result.blocked and self.tool_executor is not None and task_context is not None:
+                self.tool_executor.persist_blocked_state(
+                    task_context,
+                    pending_tool_blocks=tool_use_blocks[index:],
+                    tool_result_blocks=tool_result_blocks,
+                    messages=messages,
+                    next_turn=turn + 1,
+                    disable_tools=disable_tools,
+                    readonly_only=readonly_only,
+                )
+                blocked_message = exec_result.approval_message or str(exec_result.model_content)
+                blocked_messages = list(messages)
+                blocked_messages.append(
+                    {"role": "assistant", "content": [{"type": "text", "text": blocked_message}]}
+                )
+                return self._usage_to_result(
+                    usage,
+                    text=blocked_message,
+                    turns=turn,
+                    tool_calls=tool_calls,
+                    messages=blocked_messages,
+                    blocked=True,
+                    approval_id=exec_result.approval_id,
+                    task_id=task_context.task_id,
+                    step_id=task_context.step_id,
+                    step_attempt_id=task_context.step_attempt_id,
+                )
+
+            if exec_result.denied and task_context is not None:
+                denied_message = str(exec_result.model_content)
+                denied_messages = list(messages)
+                denied_messages.append(
+                    {"role": "assistant", "content": [{"type": "text", "text": denied_message}]}
+                )
+                return self._usage_to_result(
+                    usage,
+                    text=denied_message,
+                    turns=turn,
+                    tool_calls=tool_calls,
+                    messages=denied_messages,
+                    task_id=task_context.task_id,
+                    step_id=task_context.step_id,
+                    step_attempt_id=task_context.step_attempt_id,
+                )
+
+            if on_tool_call:
+                on_tool_call(tool_name, tool_input, serialized)
+            tool_result_blocks.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block_value(block, "id"),
+                    "content": serialized,
+                }
+            )
+            tool_calls += 1
+        return tool_result_blocks, tool_calls
+
+    def _execute_tool(
+        self,
+        *,
+        task_context: TaskExecutionContext | None,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> ToolExecutionResult:
+        if self.tool_executor is None or task_context is None:
+            raw_result = self.registry.call(tool_name, tool_input)
+            return ToolExecutionResult(
+                model_content=format_tool_result_content(raw_result, self.tool_output_limit),
+                raw_result=raw_result,
+            )
+        return self.tool_executor.execute(task_context, tool_name, tool_input)
 
     def run_stream(
         self,

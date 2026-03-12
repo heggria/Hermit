@@ -23,7 +23,7 @@ def _on_serve_start(*, settings: Any, runner: Any = None, **kw: Any) -> None:
     from hermit.builtin.webhook.server import WebhookServer
 
     config = load_config(settings)
-    if not config.routes:
+    if not config.routes and not config.control_secret:
         _log.info("webhook_no_routes_configured")
         return
 

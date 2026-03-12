@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from hermit.builtin.webhook.models import WebhookConfig, WebhookRoute, load_config
 from hermit.builtin.webhook.server import WebhookServer
+from hermit.kernel.store import KernelStore
 from hermit.plugin.base import HookEvent
 from hermit.plugin.hooks import HooksEngine
 
@@ -55,6 +57,16 @@ def signed_config() -> WebhookConfig:
 
 
 @pytest.fixture
+def control_config() -> WebhookConfig:
+    return WebhookConfig(
+        host="127.0.0.1",
+        port=8321,
+        routes=[],
+        control_secret="control-secret",
+    )
+
+
+@pytest.fixture
 def hooks() -> HooksEngine:
     return HooksEngine()
 
@@ -67,6 +79,27 @@ def _make_server(config: WebhookConfig, hooks: HooksEngine) -> WebhookServer:
     mock_runner.dispatch.return_value = mock_result
     server._runner = mock_runner
     return server
+
+
+def _seed_kernel_records(store: KernelStore) -> tuple[str, str]:
+    store.ensure_conversation("webhook-control", source_channel="webhook")
+    task = store.create_task(
+        conversation_id="webhook-control",
+        title="Webhook control test",
+        goal="Approve a pending action",
+        source_channel="webhook",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    approval = store.create_approval(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        approval_type="write_local",
+        requested_action={"tool_name": "write_file"},
+        request_packet_ref=None,
+    )
+    return task.task_id, approval.approval_id
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +172,103 @@ class TestSignatureVerification:
         client = TestClient(server._app, raise_server_exceptions=False)
         resp = client.post("/webhook/github", json={"pull_request": {"title": "Fix"}})
         assert resp.status_code == 401
+
+
+class TestControlEndpoints:
+    @staticmethod
+    def _sign(body: bytes, secret: str) -> str:
+        return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    def test_list_tasks_requires_valid_signature(self, control_config, hooks, tmp_path: Path) -> None:
+        store = KernelStore(tmp_path / "kernel" / "state.db")
+        task_id, _approval_id = _seed_kernel_records(store)
+        server = WebhookServer(control_config, hooks)
+        server._runner = SimpleNamespace(
+            task_controller=SimpleNamespace(store=store),
+            _resolve_approval=MagicMock(),
+        )
+        client = TestClient(server._app)
+
+        resp = client.get(
+            "/tasks",
+            headers={"X-Hermit-Signature-256": self._sign(b"", "control-secret")},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["tasks"][0]["task_id"] == task_id
+
+    def test_pending_approvals_endpoint_lists_kernel_records(self, control_config, hooks, tmp_path: Path) -> None:
+        store = KernelStore(tmp_path / "kernel" / "state.db")
+        _task_id, approval_id = _seed_kernel_records(store)
+        server = WebhookServer(control_config, hooks)
+        server._runner = SimpleNamespace(
+            task_controller=SimpleNamespace(store=store),
+            _resolve_approval=MagicMock(),
+        )
+        client = TestClient(server._app)
+
+        resp = client.get(
+            "/approvals/pending?conversation_id=webhook-control",
+            headers={"X-Hermit-Signature-256": self._sign(b"", "control-secret")},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["approvals"][0]["approval_id"] == approval_id
+
+    def test_approve_endpoint_uses_task_conversation(self, control_config, hooks, tmp_path: Path) -> None:
+        store = KernelStore(tmp_path / "kernel" / "state.db")
+        _task_id, approval_id = _seed_kernel_records(store)
+        resolve = MagicMock(return_value=SimpleNamespace(text="approved"))
+        server = WebhookServer(control_config, hooks)
+        server._runner = SimpleNamespace(
+            task_controller=SimpleNamespace(store=store),
+            _resolve_approval=resolve,
+        )
+        client = TestClient(server._app)
+        body = json.dumps({"source": "test"}).encode()
+
+        resp = client.post(
+            f"/approvals/{approval_id}/approve",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hermit-Signature-256": self._sign(body, "control-secret"),
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "approved"
+        resolve.assert_called_once_with("webhook-control", action="approve", approval_id=approval_id)
+
+    def test_deny_endpoint_forwards_reason(self, control_config, hooks, tmp_path: Path) -> None:
+        store = KernelStore(tmp_path / "kernel" / "state.db")
+        _task_id, approval_id = _seed_kernel_records(store)
+        resolve = MagicMock(return_value=SimpleNamespace(text="denied"))
+        server = WebhookServer(control_config, hooks)
+        server._runner = SimpleNamespace(
+            task_controller=SimpleNamespace(store=store),
+            _resolve_approval=resolve,
+        )
+        client = TestClient(server._app)
+        body = json.dumps({"reason": "not safe"}).encode()
+
+        resp = client.post(
+            f"/approvals/{approval_id}/deny",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hermit-Signature-256": self._sign(body, "control-secret"),
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "denied"
+        resolve.assert_called_once_with(
+            "webhook-control",
+            action="deny",
+            approval_id=approval_id,
+            reason="not safe",
+        )
 
 
 # ---------------------------------------------------------------------------

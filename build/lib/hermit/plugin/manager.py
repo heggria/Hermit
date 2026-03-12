@@ -120,6 +120,11 @@ class PluginManager:
                     "required": ["name"],
                 },
                 handler=self._read_skill_handler,
+                readonly=True,
+                action_class="read_local",
+                idempotent=True,
+                risk_hint="low",
+                requires_receipt=False,
             ))
 
         self.hooks.fire(HookEvent.REGISTER_TOOLS, registry=registry)

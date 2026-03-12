@@ -11,8 +11,18 @@ import structlog
 from hermit.context import build_base_context
 from hermit.core.sandbox import CommandSandbox
 from hermit.core.tools import create_builtin_tool_registry
+from hermit.kernel import (
+    ApprovalCopyService,
+    ApprovalService,
+    ArtifactStore,
+    KernelStore,
+    PolicyEngine,
+    ReceiptService,
+    TaskController,
+    ToolExecutor,
+)
 from hermit.plugin.manager import PluginManager
-from hermit.provider.contracts import Provider, ProviderResponse
+from hermit.provider.contracts import Provider, ProviderRequest, ProviderResponse
 from hermit.provider.messages import extract_text
 from hermit.provider.providers import (
     CodexOAuthProvider,
@@ -23,6 +33,15 @@ from hermit.provider.providers import (
 from hermit.provider.runtime import AgentRuntime
 
 log = structlog.get_logger()
+
+_APPROVAL_COPY_SYSTEM_PROMPT = (
+    "You rewrite approval prompts into user-friendly Chinese product copy. "
+    "You must only use the supplied JSON facts and must not invent any targets, commands, risks, or services. "
+    "Return strict JSON with exactly these keys: title, summary, detail. "
+    "Keep summary and detail concise, clear, and human. "
+    "Explain what the tool is about to do and why approval is needed. "
+    "Do not dump raw shell commands into summary or detail unless absolutely necessary."
+)
 
 
 def build_provider(settings: Any, *, model: str, system_prompt: str | None = None) -> Provider:
@@ -80,6 +99,8 @@ def build_provider_client_kwargs(settings: Any, provider: Optional[str] = None) 
             kwargs["base_url"] = settings.claude_base_url
         if settings.parsed_claude_headers:
             kwargs["default_headers"] = settings.parsed_claude_headers
+        if getattr(settings, "command_timeout_seconds", 0):
+            kwargs["timeout"] = settings.command_timeout_seconds
         return kwargs
     if selected == "codex":
         kwargs = {}
@@ -107,6 +128,7 @@ def build_runtime(
     pm: PluginManager | None = None,
     serve_mode: bool = False,
     cwd: Path | None = None,
+    store: KernelStore | None = None,
 ) -> tuple[AgentRuntime, PluginManager]:
     if pm is None:
         pm = PluginManager(settings=settings)
@@ -119,6 +141,7 @@ def build_runtime(
         timeout_seconds=settings.command_timeout_seconds,
         cwd=workdir,
     )
+    kernel_store = store or KernelStore(settings.kernel_db_path)
     registry = create_builtin_tool_registry(
         workdir, sandbox, config_root_dir=settings.base_dir,
     )
@@ -148,6 +171,18 @@ def build_runtime(
     system_prompt = pm.build_system_prompt(base_prompt, preloaded_skills=preloaded_skills)
     provider = build_provider(settings, model=settings.model, system_prompt=system_prompt)
     runtime_model = getattr(provider, "model", settings.model)
+    artifact_store = ArtifactStore(settings.kernel_artifacts_dir)
+    approval_copy_service = build_approval_copy_service(settings)
+    tool_executor = ToolExecutor(
+        registry=registry,
+        store=kernel_store,
+        artifact_store=artifact_store,
+        policy_engine=PolicyEngine(),
+        approval_service=ApprovalService(kernel_store),
+        approval_copy_service=approval_copy_service,
+        receipt_service=ReceiptService(kernel_store),
+        tool_output_limit=settings.tool_output_limit,
+    )
     runtime = AgentRuntime(
         provider=provider,
         registry=registry,
@@ -157,7 +192,11 @@ def build_runtime(
         tool_output_limit=settings.tool_output_limit,
         thinking_budget=settings.thinking_budget,
         system_prompt=system_prompt,
+        tool_executor=tool_executor,
     )
+    runtime.kernel_store = kernel_store  # type: ignore[attr-defined]
+    runtime.artifact_store = artifact_store  # type: ignore[attr-defined]
+    runtime.task_controller = TaskController(kernel_store)  # type: ignore[attr-defined]
     pm.configure_subagent_runtime(runtime)
     return runtime, pm
 
@@ -247,3 +286,49 @@ def _parse_json_response(response: ProviderResponse) -> dict[str, Any] | None:
                 continue
     log.warning("provider_json_parse_failed", preview=raw[:200])
     return None
+
+
+class LLMApprovalFormatter:
+    def __init__(self, provider: Provider, *, model: str, max_tokens: int = 120) -> None:
+        self.provider = provider
+        self.model = model
+        self.max_tokens = max_tokens
+
+    def format(self, facts: dict[str, Any]) -> dict[str, str] | None:
+        response = self.provider.generate(
+            ProviderRequest(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system_prompt=_APPROVAL_COPY_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": json.dumps(facts, ensure_ascii=False, indent=2)}],
+            )
+        )
+        parsed = _parse_json_response(response)
+        if not isinstance(parsed, dict):
+            return None
+        title = str(parsed.get("title", "")).strip()
+        summary = str(parsed.get("summary", "")).strip()
+        detail = str(parsed.get("detail", "")).strip()
+        if not title or not summary or not detail:
+            return None
+        return {
+            "title": title,
+            "summary": summary,
+            "detail": detail,
+        }
+
+
+def build_approval_copy_service(settings: Any) -> ApprovalCopyService:
+    if not bool(getattr(settings, "approval_copy_formatter_enabled", False)):
+        return ApprovalCopyService()
+    try:
+        model = getattr(settings, "approval_copy_model", None) or getattr(settings, "model", "")
+        provider = build_provider(settings, model=model, system_prompt=None)
+        formatter = LLMApprovalFormatter(provider, model=getattr(provider, "model", model))
+        return ApprovalCopyService(
+            formatter=formatter.format,
+            formatter_timeout_ms=int(getattr(settings, "approval_copy_formatter_timeout_ms", 500)),
+        )
+    except Exception as exc:
+        log.warning("approval_copy_formatter_init_failed", error=str(exc))
+        return ApprovalCopyService()

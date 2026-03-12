@@ -22,6 +22,7 @@ class WebhookConfig:
     host: str = "0.0.0.0"
     port: int = 8321
     routes: list[WebhookRoute] = field(default_factory=list)
+    control_secret: str | None = None
 
 
 def load_config(settings: Any = None) -> WebhookConfig:
@@ -37,8 +38,10 @@ def load_config(settings: Any = None) -> WebhookConfig:
 
     host_override = getattr(settings, "webhook_host", None)
     port_override = getattr(settings, "webhook_port", None)
+    control_secret_override = getattr(settings, "webhook_control_secret", None)
     host = str(host_override or raw.get("host", "0.0.0.0"))
     port = int(port_override or raw.get("port", 8321))
+    control_secret = str(control_secret_override or raw.get("control_secret") or "").strip() or None
 
     routes: list[WebhookRoute] = []
     for name, route_raw in raw.get("routes", {}).items():
@@ -55,7 +58,7 @@ def load_config(settings: Any = None) -> WebhookConfig:
             )
         )
 
-    return WebhookConfig(host=host, port=port, routes=routes)
+    return WebhookConfig(host=host, port=port, routes=routes, control_secret=control_secret)
 
 
 def _resolve_config_path(settings: Any) -> Path:

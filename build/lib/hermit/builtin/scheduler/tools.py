@@ -244,6 +244,9 @@ def register(ctx: PluginContext) -> None:
             "required": ["name", "prompt", "schedule_type"],
         },
         handler=_handle_create,
+        action_class="write_local",
+        risk_hint="high",
+        requires_receipt=True,
     ))
 
     ctx.add_tool(ToolSpec(
@@ -255,6 +258,10 @@ def register(ctx: PluginContext) -> None:
         },
         handler=_handle_list,
         readonly=True,
+        action_class="read_local",
+        idempotent=True,
+        risk_hint="low",
+        requires_receipt=False,
     ))
 
     ctx.add_tool(ToolSpec(
@@ -271,6 +278,9 @@ def register(ctx: PluginContext) -> None:
             "required": ["job_id"],
         },
         handler=_handle_delete,
+        action_class="write_local",
+        risk_hint="high",
+        requires_receipt=True,
     ))
 
     ctx.add_tool(ToolSpec(
@@ -292,6 +302,9 @@ def register(ctx: PluginContext) -> None:
             "required": ["job_id"],
         },
         handler=_handle_update,
+        action_class="write_local",
+        risk_hint="high",
+        requires_receipt=True,
     ))
 
     ctx.add_tool(ToolSpec(
@@ -317,4 +330,8 @@ def register(ctx: PluginContext) -> None:
         },
         handler=_handle_history,
         readonly=True,
+        action_class="read_local",
+        idempotent=True,
+        risk_hint="low",
+        requires_receipt=False,
     ))

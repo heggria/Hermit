@@ -15,6 +15,8 @@ from hermit.builtin.feishu.reaction import send_ack, send_done
 from hermit.builtin.feishu.reply import (
     _SKIP_TOOLS,
     ToolStep,
+    build_approval_card,
+    build_approval_resolution_card,
     build_error_card,
     build_progress_card,
     build_result_card_with_process,
@@ -26,6 +28,7 @@ from hermit.builtin.feishu.reply import (
     send_text_reply,
     smart_reply,
 )
+from hermit.kernel.approval_copy import ApprovalCopyService
 from hermit.plugin.base import AdapterSpec
 
 if TYPE_CHECKING:
@@ -38,6 +41,8 @@ _SWEEP_INTERVAL_SECONDS = 300  # 5 minutes
 
 # Minimum seconds between consecutive PATCH calls on the progress card.
 _PATCH_MIN_INTERVAL = 1.0
+_RAW_CONTROL_TEXT = {"开始执行", "执行吧", "确认执行", "继续执行", "approve", "deny"}
+_RAW_CONTROL_PREFIXES = ("批准 ", "拒绝 ", "approve ", "deny ")
 
 
 
@@ -72,6 +77,7 @@ class FeishuAdapter:
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._ws_exited = threading.Event()
         self._ws_error: BaseException | None = None
+        self._approval_copy = ApprovalCopyService()
 
     async def start(self, runner: AgentRunner) -> None:
         if not self._app_id or not self._app_secret:
@@ -134,6 +140,7 @@ class FeishuAdapter:
         event_handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(self._on_message)
+            .register_p2_card_action_trigger(self._on_card_action)
             .build()
         )
 
@@ -285,6 +292,68 @@ class FeishuAdapter:
         except RuntimeError:
             log.debug("Feishu worker pool already stopped; dropping msg_id=%s", msg.message_id)
 
+    def _on_card_action(self, data: Any) -> Any:
+        """Handle interactive card button clicks for approvals."""
+        event = getattr(data, "event", None)
+        action = getattr(event, "action", None)
+        context = getattr(event, "context", None)
+        value = dict(getattr(action, "value", {}) or {})
+        action_type = str(value.get("action", "")).strip().lower()
+        approval_id = str(value.get("approval_id", "")).strip()
+        message_id = str(getattr(context, "open_message_id", "") or "")
+
+        if value.get("kind") != "approval" or action_type not in {"approve", "deny"} or not approval_id:
+            return self._card_action_response(
+                "暂不支持这个按钮操作。",
+                level="info",
+            )
+        if self._runner is None or self._client is None:
+            return self._card_action_response(
+                "Hermit 当前不可用，请稍后重试。",
+                level="error",
+            )
+
+        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
+        if store is None:
+            return self._card_action_response(
+                "审批内核未启用。",
+                level="error",
+            )
+
+        approval = store.get_approval(approval_id)
+        if approval is None:
+            return self._card_action_response(
+                f"未找到审批：{approval_id}",
+                level="error",
+            )
+        if approval.status != "pending":
+            status_text = f"该审批已处理：{approval.status}"
+            return self._card_action_response(
+                status_text,
+                level="info",
+                card=build_approval_resolution_card(approval.status, approval_id, status_text),
+            )
+
+        try:
+            self._executor.submit(self._handle_approval_action, approval_id, action_type, message_id)
+        except RuntimeError:
+            return self._card_action_response(
+                "后台处理器已停止，审批未提交。",
+                level="error",
+            )
+
+        if action_type == "approve":
+            return self._card_action_response(
+                "已通过，正在继续执行。",
+                level="success",
+                card=build_thinking_card("已通过，正在继续执行..."),
+            )
+        return self._card_action_response(
+            "已拒绝，本次操作不会继续执行。",
+            level="success",
+            card=build_approval_resolution_card("deny", approval_id, "已拒绝执行。任务保持暂停，可稍后再次批准。"),
+        )
+
     def _is_duplicate(self, message_id: str) -> bool:
         """Thread-safe dedup check. Feishu uses at-least-once delivery."""
         if not message_id:
@@ -308,6 +377,22 @@ class FeishuAdapter:
         if msg.chat_type == "group" and msg.sender_id:
             return f"{msg.chat_id}:{msg.sender_id}"
         return msg.chat_id
+
+    def _should_dispatch_raw(self, session_id: str, raw_text: str) -> bool:
+        stripped = raw_text.strip()
+        if not stripped:
+            return False
+        if stripped.startswith("/"):
+            return True
+        lowered = stripped.lower()
+        if stripped in _RAW_CONTROL_TEXT or lowered in _RAW_CONTROL_TEXT:
+            return True
+        if stripped.startswith(_RAW_CONTROL_PREFIXES) or lowered.startswith(_RAW_CONTROL_PREFIXES):
+            return True
+        task_controller = getattr(self._runner, "task_controller", None)
+        if task_controller is None:
+            return False
+        return task_controller.resolve_text_command(session_id, stripped) is not None
 
     def _process_message(self, msg: FeishuMessage) -> None:
         """Run agent synchronously (runs in thread pool).
@@ -338,7 +423,7 @@ class FeishuAdapter:
         # "/" prefix is preserved.  _build_prompt wraps the text with Feishu
         # metadata tags which would break the leading-slash detection in dispatch().
         raw_text = (msg.text or "").strip()
-        if raw_text.startswith("/"):
+        if self._should_dispatch_raw(session_id, raw_text):
             dispatch_text = raw_text
         else:
             dispatch_text = self._build_prompt(session_id, msg)
@@ -423,13 +508,146 @@ class FeishuAdapter:
 
         # ── Final result ─────────────────────────────────────────────────────
         if result.text and self._client and msg.message_id:
-            if card_msg_id[0]:
+            blocked = bool(result.agent_result and result.agent_result.blocked)
+            approval_id = str(getattr(result.agent_result, "approval_id", "") or "")
+            if blocked and approval_id:
+                approval = None
+                task_controller = getattr(self._runner, "task_controller", None)
+                store = getattr(task_controller, "store", None)
+                if store is not None:
+                    approval = store.get_approval(approval_id)
+                approval_text = result.text
+                if approval is not None:
+                    approval_text = self._approval_copy.blocked_message(approval.requested_action, approval_id)
+                approval_card = build_approval_card(approval_text, approval_id, steps)
+                if card_msg_id[0]:
+                    patch_card(self._client, card_msg_id[0], approval_card)
+                else:
+                    reply_card_return_id(self._client, msg.message_id, approval_card)
+            elif card_msg_id[0]:
                 final_card = build_result_card_with_process(result.text, steps)
                 patch_card(self._client, card_msg_id[0], final_card)
             else:
                 smart_reply(self._client, msg.message_id, result.text)
 
             send_done(self._client, msg.message_id, self._settings)
+
+    def _card_action_response(self, content: str, *, level: str = "info", card: dict[str, Any] | None = None) -> Any:
+        from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
+
+        toast_type = level if level in {"info", "success", "error"} else "info"
+        payload: dict[str, Any] = {"toast": {"type": toast_type, "content": content}}
+        if card is not None:
+            payload["card"] = {"type": "raw", "data": card}
+        return P2CardActionTriggerResponse(payload)
+
+    def _handle_approval_action(self, approval_id: str, action: str, message_id: str) -> None:
+        if self._runner is None or self._client is None:
+            return
+
+        task_controller = getattr(self._runner, "task_controller", None)
+        store = getattr(task_controller, "store", None)
+        if store is None:
+            return
+
+        approval = store.get_approval(approval_id)
+        if approval is None:
+            if message_id:
+                patch_card(
+                    self._client,
+                    message_id,
+                    build_error_card(f"审批不存在：{approval_id}"),
+                )
+            return
+
+        task = store.get_task(approval.task_id)
+        if task is None:
+            if message_id:
+                patch_card(
+                    self._client,
+                    message_id,
+                    build_error_card(f"审批关联任务不存在：{approval.task_id}"),
+                )
+            return
+
+        steps: list[ToolStep] = []
+        last_patch_time: list[float] = [0.0]
+        step_start_time: list[float] = [time.monotonic()]
+
+        def _patch_progress(hint: str, throttle: bool = True) -> None:
+            if not message_id:
+                return
+            now = time.monotonic()
+            if throttle and now - last_patch_time[0] < _PATCH_MIN_INTERVAL:
+                return
+            patch_card(self._client, message_id, build_progress_card(steps, hint))
+            last_patch_time[0] = now
+
+        def on_tool_start(name: str, tool_input: dict[str, Any]) -> None:
+            if name in _SKIP_TOOLS:
+                return
+            _patch_progress(format_tool_start_hint(name, tool_input), throttle=False)
+            step_start_time[0] = time.monotonic()
+
+        def on_tool_call(name: str, tool_input: dict[str, Any], result: str) -> None:
+            if name in _SKIP_TOOLS:
+                return
+            elapsed_ms = int((time.monotonic() - step_start_time[0]) * 1000)
+            step_start_time[0] = time.monotonic()
+            steps.append(make_tool_step(name, tool_input, result, elapsed_ms))
+            _patch_progress("正在继续处理...", throttle=True)
+
+        try:
+            if action == "deny":
+                result = self._runner._resolve_approval(
+                    task.conversation_id,
+                    action="deny",
+                    approval_id=approval_id,
+                )
+                if message_id:
+                    patch_card(
+                        self._client,
+                        message_id,
+                        build_approval_resolution_card("deny", approval_id, result.text),
+                    )
+                return
+
+            result = self._runner._resolve_approval(
+                task.conversation_id,
+                action="approve",
+                approval_id=approval_id,
+                on_tool_call=on_tool_call,
+                on_tool_start=on_tool_start,
+            )
+            blocked = bool(result.agent_result and result.agent_result.blocked)
+            next_approval_id = str(getattr(result.agent_result, "approval_id", "") or "")
+            if message_id:
+                if blocked and next_approval_id:
+                    patch_card(
+                        self._client,
+                        message_id,
+                        build_approval_card(result.text, next_approval_id, steps),
+                    )
+                elif result.text:
+                    patch_card(
+                        self._client,
+                        message_id,
+                        build_result_card_with_process(result.text, steps),
+                    )
+                else:
+                    patch_card(
+                        self._client,
+                        message_id,
+                        build_approval_resolution_card("approve", approval_id, "已通过并执行完成。"),
+                    )
+        except Exception:
+            log.exception("Failed to resolve approval %s from Feishu card action", approval_id)
+            if message_id:
+                patch_card(
+                    self._client,
+                    message_id,
+                    build_error_card("审批处理失败，请稍后重试"),
+                )
 
     def _build_prompt(self, session_id: str, msg: FeishuMessage) -> str:
         """Build the agent prompt, injecting message_id and chat_id for tool use."""

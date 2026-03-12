@@ -17,6 +17,7 @@ from hermit.plugin.manager import PluginManager
 from hermit.plugin.mcp_client import (
     MCP_TOOL_PREFIX,
     McpClientManager,
+    _sanitize_http_headers,
     mcp_tool_name,
     parse_mcp_tool_name,
 )
@@ -49,6 +50,28 @@ class TestMcpToolNaming:
 
     def test_prefix_constant(self):
         assert MCP_TOOL_PREFIX == "mcp__"
+
+
+def test_sanitize_http_headers_drops_empty_bearer_token() -> None:
+    sanitized = _sanitize_http_headers(
+        {
+            "Authorization": "Bearer ",
+            "X-Test": "  ok  ",
+            "X-Empty": "   ",
+        }
+    )
+
+    assert sanitized == {"X-Test": "ok"}
+
+
+def test_sanitize_http_headers_keeps_valid_authorization() -> None:
+    sanitized = _sanitize_http_headers(
+        {
+            "Authorization": "Bearer ghp_test_123",
+        }
+    )
+
+    assert sanitized == {"Authorization": "Bearer ghp_test_123"}
 
 
 # ── McpServerSpec ─────────────────────────────────────────────────

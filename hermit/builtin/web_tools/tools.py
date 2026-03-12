@@ -59,6 +59,10 @@ def register(ctx: PluginContext) -> None:
         },
         handler=handle_search,
         readonly=True,
+        action_class="network_read",
+        idempotent=True,
+        risk_hint="low",
+        requires_receipt=False,
     ))
 
     ctx.add_tool(ToolSpec(
@@ -84,4 +88,8 @@ def register(ctx: PluginContext) -> None:
         },
         handler=handle_fetch,
         readonly=True,
+        action_class="network_read",
+        idempotent=True,
+        risk_hint="low",
+        requires_receipt=False,
     ))

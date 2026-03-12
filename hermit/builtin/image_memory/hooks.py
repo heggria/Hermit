@@ -142,6 +142,9 @@ def _build_image_store_from_path_tool(engine: ImageMemoryEngine, settings: Any) 
             "required": ["path", "session_id"],
         },
         handler=handler,
+        action_class="write_local",
+        risk_hint="high",
+        requires_receipt=True,
     )
 
 
@@ -192,6 +195,9 @@ def _build_image_store_from_feishu_tool(engine: ImageMemoryEngine, settings: Any
             "required": ["session_id", "message_id", "image_key"],
         },
         handler=handler,
+        action_class="credentialed_api_call",
+        risk_hint="high",
+        requires_receipt=True,
     )
 
 
@@ -218,6 +224,11 @@ def _build_image_search_tool(engine: ImageMemoryEngine) -> ToolSpec:
             "required": [],
         },
         handler=handler,
+        readonly=True,
+        action_class="read_local",
+        idempotent=True,
+        risk_hint="low",
+        requires_receipt=False,
     )
 
 
@@ -238,6 +249,11 @@ def _build_image_get_tool(engine: ImageMemoryEngine) -> ToolSpec:
             "required": ["image_id"],
         },
         handler=handler,
+        readonly=True,
+        action_class="read_local",
+        idempotent=True,
+        risk_hint="low",
+        requires_receipt=False,
     )
 
 
@@ -267,6 +283,9 @@ def _build_image_attach_to_feishu_tool(engine: ImageMemoryEngine) -> ToolSpec:
             "required": ["image_id"],
         },
         handler=handler,
+        action_class="credentialed_api_call",
+        risk_hint="high",
+        requires_receipt=True,
     )
 
 

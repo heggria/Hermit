@@ -5,14 +5,16 @@ import datetime
 import json
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
+from hermit.kernel.store import KernelStore
 from hermit.plugin.base import HookEvent
-from hermit.storage import JsonStore, atomic_write
+from hermit.storage import atomic_write
 
 if TYPE_CHECKING:
     from hermit.config import Settings
@@ -62,12 +64,8 @@ class SchedulerEngine:
         self._runner: Any = None
         self._schedules_dir = settings.base_dir / "schedules"
         self._schedules_dir.mkdir(parents=True, exist_ok=True)
-
-        self._jobs_store = JsonStore(
-            self._schedules_dir / "jobs.json",
-            default={"jobs": []},
-            cross_process=True,
-        )
+        kernel_db_path = getattr(settings, "kernel_db_path", settings.base_dir / "kernel" / "state.db")
+        self._store = KernelStore(Path(kernel_db_path))
         self._history_path = self._schedules_dir / "history.json"
         self._logs_dir = self._schedules_dir / "logs"
         self._logs_dir.mkdir(parents=True, exist_ok=True)
@@ -258,15 +256,11 @@ class SchedulerEngine:
         return self._run_agent_standalone(execution_prompt)
 
     def _run_agent_via_runner(self, prompt: str) -> Any:
-        """Run using the serve-context agent — no plugin reload needed.
-
-        Creates a fresh runtime that shares the serve provider,
-        registry, and system prompt so plugins are never reloaded.
-        The empty message_history ensures full session isolation.
-        """
-        serve_agent = self._runner.agent
-        agent = serve_agent.clone()
-        return agent.run(prompt)
+        session_id = f"schedule-{uuid.uuid4().hex[:8]}"
+        result = self._runner.dispatch(session_id, prompt)
+        if result.agent_result is None:
+            raise RuntimeError(result.text)
+        return result.agent_result
 
     def _run_agent_standalone(self, prompt: str) -> Any:
         """Fallback: build a fresh agent when running outside serve context (e.g. CLI)."""
@@ -332,30 +326,25 @@ class SchedulerEngine:
     # ------------------------------------------------------------------
 
     def _load_jobs(self) -> None:
-        data = self._jobs_store.read()
-        raw_jobs = data.get("jobs", [])
         with self._lock:
-            self._jobs = [ScheduledJob.from_dict(j) for j in raw_jobs]
+            self._jobs = list(self._store.list_schedules())
 
     def _persist_jobs(self) -> None:
         with self._lock:
-            payload = {"jobs": [j.to_dict() for j in self._jobs]}
-        self._jobs_store.write(payload)
+            jobs = list(self._jobs)
+        existing = {job.id for job in jobs}
+        for job in jobs:
+            self._store.create_schedule(job)
+        for current in self._store.list_schedules():
+            if current.id not in existing:
+                self._store.delete_schedule(current.id)
 
     def _load_history(self) -> list[JobExecutionRecord]:
-        if not self._history_path.exists():
-            return []
-        try:
-            data = json.loads(self._history_path.read_text(encoding="utf-8"))
-            return [JobExecutionRecord.from_dict(r) for r in data.get("records", [])]
-        except (json.JSONDecodeError, OSError):
-            return []
+        return self._store.list_schedule_history(limit=_HISTORY_MAX_RECORDS)
 
     def _append_history(self, record: JobExecutionRecord) -> None:
-        records = self._load_history()
-        records.append(record)
-        if len(records) > _HISTORY_MAX_RECORDS:
-            records = records[-_HISTORY_MAX_RECORDS:]
+        self._store.append_schedule_history(record)
+        records = self._store.list_schedule_history(limit=_HISTORY_MAX_RECORDS)
         payload = {"records": [r.to_dict() for r in records]}
         atomic_write(self._history_path, json.dumps(payload, ensure_ascii=False, indent=2))
 

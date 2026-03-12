@@ -1,11 +1,10 @@
-"""Planner plugin: plan mode with file persistence and confirm-to-execute."""
+"""Planner plugin backed by task-kernel conversation metadata + artifacts."""
 from __future__ import annotations
 
-import datetime
 import re
-from pathlib import Path
 from typing import Any
 
+from hermit.kernel.store import KernelStore
 from hermit.plugin.base import CommandSpec, HookEvent
 
 # Natural-language phrases that signal "I want to execute the plan now".
@@ -28,23 +27,73 @@ _PLAN_MODE_PROMPT = (
     "</plan_mode>"
 )
 
-_state: dict[str, Any] = {
-    "plan_mode": False,
-    "plan_file": None,
-}
+_PLANNER_KEY = "planner"
+
+
+def _store_from_runner(runner: Any) -> KernelStore | None:
+    controller = getattr(runner, "task_controller", None)
+    return getattr(controller, "store", None)
+
+
+def _artifact_store_from_runner(runner: Any) -> Any:
+    return getattr(getattr(runner, "agent", None), "artifact_store", None)
+
+
+def _planner_state(store: KernelStore | None, session_id: str) -> dict[str, Any]:
+    if store is None:
+        return {"mode": False, "plan_artifact_id": None}
+    conversation = store.ensure_conversation(session_id, source_channel="chat")
+    metadata = dict(conversation.metadata)
+    state = metadata.get(_PLANNER_KEY)
+    if isinstance(state, dict):
+        return {"mode": bool(state.get("mode")), "plan_artifact_id": state.get("plan_artifact_id")}
+    return {"mode": False, "plan_artifact_id": None}
+
+
+def _set_planner_state(
+    store: KernelStore | None,
+    session_id: str,
+    *,
+    mode: bool,
+    plan_artifact_id: str | None,
+) -> None:
+    if store is None:
+        return
+    conversation = store.ensure_conversation(session_id, source_channel="chat")
+    metadata = dict(conversation.metadata)
+    metadata[_PLANNER_KEY] = {
+        "mode": mode,
+        "plan_artifact_id": plan_artifact_id,
+    }
+    store.update_conversation_metadata(session_id, metadata)
+
+
+def _load_plan_text(store: KernelStore | None, runner: Any, artifact_id: str | None) -> str | None:
+    if store is None or not artifact_id:
+        return None
+    artifact = store.get_artifact(artifact_id)
+    artifact_store = _artifact_store_from_runner(runner)
+    if artifact is None or artifact_store is None:
+        return None
+    try:
+        return artifact_store.read_text(artifact.uri)
+    except OSError:
+        return None
 
 
 def _pre_run_hook(prompt: str, **kwargs: Any) -> str | dict[str, Any]:
-    if not _state["plan_mode"]:
+    session_id = str(kwargs.get("session_id", ""))
+    runner = kwargs.get("runner")
+    store = _store_from_runner(runner)
+    state = _planner_state(store, session_id)
+    if not state["mode"]:
         return prompt
 
     # Natural-language execution intent: if the user says "开始执行" etc. and a plan
     # already exists, switch transparently to execution mode without needing /plan confirm.
-    plan_file: Path | None = _state["plan_file"]
-    if plan_file and plan_file.exists() and _EXECUTE_INTENT_RE.search(prompt):
-        plan_content = plan_file.read_text(encoding="utf-8")
-        _state["plan_mode"] = False
-        _state["plan_file"] = None
+    plan_content = _load_plan_text(store, runner, state["plan_artifact_id"])
+    if plan_content and _EXECUTE_INTENT_RE.search(prompt):
+        _set_planner_state(store, session_id, mode=False, plan_artifact_id=None)
         return (
             f"<execution_plan>\n{plan_content}\n</execution_plan>\n\n"
             "用户已确认执行。请严格按照以上计划逐步执行。每完成一步，简要报告结果后继续下一步。"
@@ -54,40 +103,53 @@ def _pre_run_hook(prompt: str, **kwargs: Any) -> str | dict[str, Any]:
 
 
 def _post_run_hook(result: Any, **kwargs: Any) -> None:
-    if not _state["plan_mode"]:
+    session_id = str(kwargs.get("session_id", ""))
+    runner = kwargs.get("runner")
+    store = _store_from_runner(runner)
+    state = _planner_state(store, session_id)
+    if not state["mode"]:
         return
     text = getattr(result, "text", None)
     if not text:
         return
-    plans_dir = Path.home() / ".hermit" / "plans"
-    plans_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    plan_path = plans_dir / f"{ts}.md"
-    plan_path.write_text(text, encoding="utf-8")
-    _state["plan_file"] = plan_path
+    artifact_store = _artifact_store_from_runner(runner)
+    if store is None or artifact_store is None:
+        return
+    uri, content_hash = artifact_store.store_text(text, extension="md")
+    artifact = store.create_artifact(
+        task_id=getattr(result, "task_id", None),
+        step_id=getattr(result, "step_id", None),
+        kind="plan",
+        uri=uri,
+        content_hash=content_hash,
+        producer="planner",
+        retention_class="task",
+        trust_tier="derived",
+        metadata={"conversation_id": session_id},
+    )
+    _set_planner_state(store, session_id, mode=True, plan_artifact_id=artifact.artifact_id)
 
 
 def _cmd_plan(runner: Any, session_id: str, text: str) -> Any:
     from hermit.core.runner import DispatchResult
 
+    store = _store_from_runner(runner)
+    state = _planner_state(store, session_id)
     parts = text.strip().split()
     subcommand = parts[1].lower() if len(parts) > 1 else ""
 
     if subcommand == "off":
-        _state["plan_mode"] = False
-        _state["plan_file"] = None
+        _set_planner_state(store, session_id, mode=False, plan_artifact_id=None)
         return DispatchResult("规划模式已关闭，所有工具已恢复。", is_command=True)
 
     if subcommand == "confirm":
-        plan_file: Path | None = _state["plan_file"]
-        if not plan_file or not plan_file.exists():
+        plan_content = _load_plan_text(store, runner, state["plan_artifact_id"])
+        if not plan_content:
             return DispatchResult(
                 "没有可执行的计划文件。请先在规划模式下发送任务生成计划，再使用 /plan confirm。",
                 is_command=True,
             )
-        plan_content = plan_file.read_text(encoding="utf-8")
-        _state["plan_mode"] = False
-        _state["plan_file"] = None
+        _set_planner_state(store, session_id, mode=False, plan_artifact_id=None)
 
         execution_prompt = (
             f"<execution_plan>\n{plan_content}\n</execution_plan>\n\n"
@@ -100,20 +162,21 @@ def _cmd_plan(runner: Any, session_id: str, text: str) -> Any:
             agent_result=result,
         )
 
-    if _state["plan_mode"]:
-        plan_path_str = str(_state["plan_file"]) if _state["plan_file"] else "（尚未生成）"
+    if state["mode"]:
+        artifact = store.get_artifact(state["plan_artifact_id"]) if store and state["plan_artifact_id"] else None
+        plan_path_str = artifact.uri if artifact is not None else "（尚未生成）"
         return DispatchResult(
             f"规划模式已开启。\n计划文件：{plan_path_str}\n\n"
             '发送任务即可生成计划；计划生成后，说"开始执行"或 /plan confirm 均可启动执行，/plan off 退出。',
             is_command=True,
         )
 
-    _state["plan_mode"] = True
-    _state["plan_file"] = None
-    plans_dir = Path.home() / ".hermit" / "plans"
+    _set_planner_state(store, session_id, mode=True, plan_artifact_id=None)
+    plans_dir = getattr(getattr(runner, "agent", None), "artifact_store", None)
+    plans_hint = getattr(plans_dir, "root_dir", "kernel artifact store")
     return DispatchResult(
         f"已进入规划模式。只读工具（搜索、读文件等）仍可使用，有副作用的操作已禁用。\n"
-        f"计划将保存至 {plans_dir}/\n\n"
+        f"计划将保存至 {plans_hint}\n\n"
         "发送你的任务，我将调研后输出结构化计划但不执行任何写操作。\n"
         '计划生成后，直接说"开始执行"或使用 /plan confirm 均可启动执行，/plan off 退出规划模式。',
         is_command=True,

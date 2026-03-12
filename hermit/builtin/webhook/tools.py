@@ -189,6 +189,10 @@ def register(ctx: PluginContext) -> None:
         input_schema={"type": "object", "properties": {}},
         handler=_handle_list,
         readonly=True,
+        action_class="read_local",
+        idempotent=True,
+        risk_hint="low",
+        requires_receipt=False,
     ))
 
     ctx.add_tool(ToolSpec(
@@ -239,6 +243,9 @@ def register(ctx: PluginContext) -> None:
             "required": ["name", "prompt_template"],
         },
         handler=_handle_add,
+        action_class="write_local",
+        risk_hint="high",
+        requires_receipt=True,
     ))
 
     ctx.add_tool(ToolSpec(
@@ -255,6 +262,9 @@ def register(ctx: PluginContext) -> None:
             "required": ["name"],
         },
         handler=_handle_delete,
+        action_class="write_local",
+        risk_hint="high",
+        requires_receipt=True,
     ))
 
     ctx.add_tool(ToolSpec(
@@ -290,4 +300,7 @@ def register(ctx: PluginContext) -> None:
             "required": ["name"],
         },
         handler=_handle_update,
+        action_class="write_local",
+        risk_hint="high",
+        requires_receipt=True,
     ))

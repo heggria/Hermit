@@ -5,6 +5,7 @@ import asyncio
 import copy
 import json
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 from hermit.builtin.feishu.normalize import FeishuMessage, normalize_event
@@ -285,6 +286,171 @@ def test_feishu_adapter_builds_prompt_from_images(tmp_path) -> None:
     assert "流程图" in prompt
 
 
+def test_feishu_adapter_replies_with_approval_card_for_blocked_result(monkeypatch) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+    from hermit.core.runner import DispatchResult
+
+    sent_cards: list[dict[str, Any]] = []
+    smart_calls: list[str] = []
+    done_calls: list[str] = []
+
+    adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=False))
+    adapter._client = object()
+    store = SimpleNamespace(
+        get_approval=lambda approval_id: SimpleNamespace(
+            approval_id=approval_id,
+            requested_action={
+                "tool_name": "read_skill",
+                "tool_input": {"name": "computer-use"},
+                "risk_level": "low",
+                "approval_packet": {"title": "确认读取技能说明", "summary": "准备加载 computer-use 技能说明。"},
+            },
+        )
+    )
+    adapter._runner = SimpleNamespace(
+        task_controller=SimpleNamespace(store=store, resolve_text_command=lambda *_a, **_kw: None),
+        dispatch=lambda **_: DispatchResult(
+            text="准备加载 computer-use 技能说明（审批编号：approval_123）。请使用 `/task approve approval_123`，或直接回复“批准 approval_123”继续执行。",
+            agent_result=SimpleNamespace(blocked=True, approval_id="approval_123"),
+        )
+    )
+
+    monkeypatch.setattr("hermit.builtin.feishu.adapter.send_ack", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.build_approval_card",
+        lambda text, approval_id, steps, **kwargs: {
+            "text": text,
+            "approval_id": approval_id,
+            "steps": len(steps),
+            "title": kwargs.get("title"),
+            "detail": kwargs.get("detail"),
+            "command_preview": kwargs.get("command_preview"),
+        },
+    )
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.reply_card_return_id",
+        lambda _client, _message_id, card: sent_cards.append(card) or "om_reply",
+    )
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.smart_reply",
+        lambda *_a, **_kw: smart_calls.append("smart"),
+    )
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.send_done",
+        lambda *_a, **_kw: done_calls.append("done"),
+    )
+
+    msg = FeishuMessage(
+        chat_id="oc_1",
+        message_id="om_1",
+        sender_id="user-1",
+        text="开始吧",
+        message_type="text",
+        chat_type="p2p",
+        image_keys=[],
+    )
+    adapter._process_message(msg)
+
+    assert sent_cards == [{
+        "text": "准备加载 computer-use 技能说明。",
+        "approval_id": "approval_123",
+        "steps": 0,
+        "title": "确认读取技能说明",
+        "detail": "风险等级：low。请确认后继续执行。",
+        "command_preview": None,
+    }]
+    assert smart_calls == []
+    assert done_calls == ["done"]
+
+
+def test_feishu_adapter_card_action_submits_approval_job(monkeypatch) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    submitted: list[tuple[Any, tuple[Any, ...]]] = []
+
+    class FakeExecutor:
+        def submit(self, fn, *args):
+            submitted.append((fn, args))
+            return None
+
+    store = SimpleNamespace(
+        get_approval=lambda approval_id: SimpleNamespace(approval_id=approval_id, status="pending")
+    )
+    runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
+    adapter = FeishuAdapter()
+    adapter._runner = runner  # type: ignore[assignment]
+    adapter._client = object()
+    adapter._executor = FakeExecutor()  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.build_thinking_card",
+        lambda hint: {"hint": hint},
+    )
+
+    event = SimpleNamespace(
+        event=SimpleNamespace(
+            action=SimpleNamespace(value={"kind": "approval", "action": "approve", "approval_id": "approval_123"}),
+            context=SimpleNamespace(open_message_id="om_card_1"),
+        )
+    )
+    response = adapter._on_card_action(event)
+
+    assert len(submitted) == 1
+    assert submitted[0][0] == adapter._handle_approval_action
+    assert submitted[0][1] == ("approval_123", "approve", "om_card_1")
+    assert response.toast is not None
+    assert response.toast.content == "已通过，正在继续执行。"
+
+
+def test_feishu_adapter_reissues_pending_approval_cards_on_startup(monkeypatch) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    sent_cards: list[tuple[str, dict[str, Any]]] = []
+    adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=False))
+    adapter._client = object()
+    adapter._runner = SimpleNamespace(
+        task_controller=SimpleNamespace(
+            store=SimpleNamespace(
+                list_approvals=lambda **kwargs: [
+                    SimpleNamespace(
+                        approval_id="approval_123",
+                        task_id="task_1",
+                        requested_action={
+                            "tool_name": "bash",
+                            "command_preview": "rm -rf ~/tmp/demo",
+                            "display_copy": {
+                                "title": "确认删除操作",
+                                "summary": "准备删除本地文件或目录。",
+                                "detail": "这个操作可能不可恢复，建议先确认删除范围；原始命令可在详情中查看。",
+                            },
+                        },
+                    )
+                ],
+                get_task=lambda task_id: SimpleNamespace(
+                    task_id=task_id,
+                    conversation_id="oc_chat:user_1",
+                    source_channel="feishu",
+                ),
+            )
+        )
+    )
+
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.send_card",
+        lambda _client, chat_id, card: sent_cards.append((chat_id, card)) or "om_new",
+    )
+
+    adapter._reissue_pending_approval_cards()
+
+    assert len(sent_cards) == 1
+    chat_id, card = sent_cards[0]
+    assert chat_id == "oc_chat"
+    body = card["body"]["elements"]
+    text_blocks = [element["content"] for element in body if element.get("tag") == "markdown"]
+    assert any("准备删除本地文件或目录。" in block for block in text_blocks)
+    assert any("旧审批卡片的按钮可能已失效" in block for block in text_blocks)
+
+
 def test_feishu_adapter_stop_shuts_down_background_resources(monkeypatch) -> None:
     from hermit.builtin.feishu.adapter import FeishuAdapter
 
@@ -448,6 +614,19 @@ def test_build_prompt_without_message_id() -> None:
     assert "<feishu_msg_id>" not in prompt
     assert "<feishu_chat_id>oc_1</feishu_chat_id>" in prompt
     assert "测试" in prompt
+
+
+def test_feishu_control_messages_bypass_prompt_wrapping() -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    adapter = FeishuAdapter()
+    adapter._runner = type("Runner", (), {"task_controller": None})()
+
+    assert adapter._should_dispatch_raw("oc_1", "批准 approval_123") is True
+    assert adapter._should_dispatch_raw("oc_1", "开始执行") is True
+    assert adapter._should_dispatch_raw("oc_1", "通过") is True
+    assert adapter._should_dispatch_raw("oc_1", "批准") is True
+    assert adapter._should_dispatch_raw("oc_1", "普通问题") is False
 
 
 def test_feishu_react_tool_registered(monkeypatch) -> None:

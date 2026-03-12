@@ -113,4 +113,7 @@ def _build_react_tool(settings: Any = None) -> ToolSpec:
             "required": ["message_id", "emoji"],
         },
         handler=handler,
+        action_class="credentialed_api_call",
+        risk_hint="high",
+        requires_receipt=True,
     )

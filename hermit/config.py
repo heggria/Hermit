@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     webhook_enabled: bool = True
     webhook_host: Optional[str] = None
     webhook_port: Optional[int] = None
+    webhook_control_secret: Optional[str] = None
+    approval_copy_formatter_enabled: bool = True
+    approval_copy_model: Optional[str] = None
+    approval_copy_formatter_timeout_ms: int = 500
 
     @model_validator(mode="before")
     @classmethod
@@ -197,6 +201,10 @@ class Settings(BaseSettings):
         _set_if_present(values, "webhook_enabled", env_file_values.get("HERMIT_WEBHOOK_ENABLED"))
         _set_if_present(values, "webhook_host", env_file_values.get("HERMIT_WEBHOOK_HOST"))
         _set_if_present(values, "webhook_port", env_file_values.get("HERMIT_WEBHOOK_PORT"))
+        _set_if_present(values, "webhook_control_secret", env_file_values.get("HERMIT_WEBHOOK_CONTROL_SECRET"))
+        _set_if_present(values, "approval_copy_formatter_enabled", env_file_values.get("HERMIT_APPROVAL_COPY_FORMATTER_ENABLED"))
+        _set_if_present(values, "approval_copy_model", env_file_values.get("HERMIT_APPROVAL_COPY_MODEL"))
+        _set_if_present(values, "approval_copy_formatter_timeout_ms", env_file_values.get("HERMIT_APPROVAL_COPY_FORMATTER_TIMEOUT_MS"))
         _override_if_present(values, "claude_api_key", os.environ.get("HERMIT_CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"))
         _override_if_present(values, "claude_auth_token", os.environ.get("HERMIT_CLAUDE_AUTH_TOKEN") or os.environ.get("HERMIT_AUTH_TOKEN"))
         _override_if_present(values, "claude_base_url", os.environ.get("HERMIT_CLAUDE_BASE_URL") or os.environ.get("HERMIT_BASE_URL"))
@@ -217,6 +225,10 @@ class Settings(BaseSettings):
         _override_if_present(values, "webhook_enabled", os.environ.get("HERMIT_WEBHOOK_ENABLED"))
         _override_if_present(values, "webhook_host", os.environ.get("HERMIT_WEBHOOK_HOST"))
         _override_if_present(values, "webhook_port", os.environ.get("HERMIT_WEBHOOK_PORT"))
+        _override_if_present(values, "webhook_control_secret", os.environ.get("HERMIT_WEBHOOK_CONTROL_SECRET"))
+        _override_if_present(values, "approval_copy_formatter_enabled", os.environ.get("HERMIT_APPROVAL_COPY_FORMATTER_ENABLED"))
+        _override_if_present(values, "approval_copy_model", os.environ.get("HERMIT_APPROVAL_COPY_MODEL"))
+        _override_if_present(values, "approval_copy_formatter_timeout_ms", os.environ.get("HERMIT_APPROVAL_COPY_FORMATTER_TIMEOUT_MS"))
         return values
 
     @model_validator(mode="after")
@@ -295,6 +307,18 @@ class Settings(BaseSettings):
     @property
     def schedules_dir(self) -> Path:
         return self.base_dir / "schedules"
+
+    @property
+    def kernel_dir(self) -> Path:
+        return self.base_dir / "kernel"
+
+    @property
+    def kernel_db_path(self) -> Path:
+        return self.kernel_dir / "state.db"
+
+    @property
+    def kernel_artifacts_dir(self) -> Path:
+        return self.kernel_dir / "artifacts"
 
     @property
     def context_file(self) -> Path:

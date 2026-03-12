@@ -32,6 +32,22 @@ MCP_TOOL_PREFIX = "mcp__"
 MCP_TOOL_SEP = "__"
 
 
+def _sanitize_http_headers(headers: dict[str, Any] | None) -> dict[str, str]:
+    """Drop invalid or empty HTTP headers before constructing the client."""
+    sanitized: dict[str, str] = {}
+    for raw_key, raw_value in (headers or {}).items():
+        key = str(raw_key).strip()
+        value = str(raw_value).strip()
+        if not key or not value:
+            continue
+        if key.lower() == "authorization":
+            lower = value.lower()
+            if lower == "bearer" or (lower.startswith("bearer ") and not value[7:].strip()):
+                continue
+        sanitized[key] = value
+    return sanitized
+
+
 def mcp_tool_name(server_name: str, tool_name: str) -> str:
     return f"{MCP_TOOL_PREFIX}{server_name}{MCP_TOOL_SEP}{tool_name}"
 
@@ -179,8 +195,9 @@ class McpClientManager:
                 log.error("mcp_missing_url", server=spec.name)
                 return
             import httpx
+            headers = _sanitize_http_headers(spec.headers)
             http_client = await stack.enter_async_context(
-                httpx.AsyncClient(headers=spec.headers or {})
+                httpx.AsyncClient(headers=headers)
             )
             transport = await stack.enter_async_context(
                 streamable_http_client(spec.url, http_client=http_client)

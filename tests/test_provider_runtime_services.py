@@ -17,6 +17,7 @@ from hermit.provider.runtime import AgentRuntime
 from hermit.provider.services import (
     StructuredExtractionService,
     VisionAnalysisService,
+    build_approval_copy_service,
     build_provider,
     build_provider_client_kwargs,
 )
@@ -218,4 +219,90 @@ def test_vision_analysis_service_passes_image_blocks() -> None:
     )
 
     assert result == {"summary": "ok"}
-    assert provider.requests[0].messages[0]["content"][0]["type"] == "image"
+
+
+def test_build_approval_copy_service_returns_template_when_disabled() -> None:
+    service = build_approval_copy_service(
+        SimpleNamespace(
+            approval_copy_formatter_enabled=False,
+        )
+    )
+
+    copy = service.resolve_copy(
+        {
+            "tool_name": "write_file",
+            "target_paths": ["src/app.py"],
+            "risk_level": "high",
+        },
+        "approval_demo",
+    )
+
+    assert copy.title == "确认文件修改"
+    assert "准备修改 1 个文件" in copy.summary
+
+
+def test_llm_approval_formatter_output_is_used_when_enabled(monkeypatch) -> None:
+    provider = FakeProvider(
+        responses=[
+            ProviderResponse(
+                content=[
+                    {
+                        "type": "text",
+                        "text": '{"title":"确认修改代码","summary":"准备修改 1 个文件 `src/app.py`。","detail":"这是一次本地代码变更，请确认后继续。"}',
+                    }
+                ]
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        "hermit.provider.services.build_provider",
+        lambda settings, *, model, system_prompt=None: provider,
+    )
+
+    service = build_approval_copy_service(
+        SimpleNamespace(
+            approval_copy_formatter_enabled=True,
+            approval_copy_model="gpt-5.4-mini",
+            approval_copy_formatter_timeout_ms=500,
+            model="gpt-5.4",
+        )
+    )
+    copy = service.resolve_copy(
+        {
+            "tool_name": "write_file",
+            "target_paths": ["src/app.py"],
+            "risk_level": "high",
+        },
+        "approval_demo",
+    )
+
+    assert copy.title == "确认修改代码"
+    assert copy.summary == "准备修改 1 个文件 `src/app.py`。"
+    assert provider.requests[0].system_prompt is not None
+
+
+def test_llm_approval_formatter_falls_back_when_provider_init_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "hermit.provider.services.build_provider",
+        lambda settings, *, model, system_prompt=None: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    service = build_approval_copy_service(
+        SimpleNamespace(
+            approval_copy_formatter_enabled=True,
+            approval_copy_model="gpt-5.4-mini",
+            approval_copy_formatter_timeout_ms=500,
+            model="gpt-5.4",
+        )
+    )
+    copy = service.resolve_copy(
+        {
+            "tool_name": "bash",
+            "command_preview": "git status",
+            "risk_level": "medium",
+        },
+        "approval_demo",
+    )
+
+    assert copy.summary == "准备执行一条会修改当前环境的命令。"

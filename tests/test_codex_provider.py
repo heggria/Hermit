@@ -60,6 +60,47 @@ def test_responses_input_maps_tool_history_and_images() -> None:
     }
 
 
+def test_responses_input_hoists_tool_result_images_for_codex_oauth() -> None:
+    items = _responses_input(
+        [
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "call_img", "name": "computer_screenshot", "input": {}}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_img",
+                        "content": {
+                            "type": "image",
+                            "source": {"type": "url", "url": "https://example.com/screen.png"},
+                        },
+                    }
+                ],
+            },
+        ],
+        codex_oauth=True,
+    )
+
+    assert items[0] == {
+        "type": "function_call",
+        "call_id": "call_img",
+        "name": "computer_screenshot",
+        "arguments": "{}",
+    }
+    assert items[1] == {
+        "type": "function_call_output",
+        "call_id": "call_img",
+        "output": "[tool returned image content]",
+    }
+    assert items[2]["type"] == "message"
+    assert items[2]["role"] == "user"
+    assert items[2]["content"][0]["type"] == "input_text"
+    assert items[2]["content"][1] == {
+        "type": "input_image",
+        "image_url": "https://example.com/screen.png",
+    }
+
+
 def test_codex_provider_generate_parses_text_and_tool_calls(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
 
@@ -292,6 +333,64 @@ def test_codex_oauth_provider_stream_wraps_http_error(monkeypatch, tmp_path: Pat
                 )
             )
         )
+
+
+def test_codex_oauth_provider_generate_surfaces_nested_stream_errors(monkeypatch, tmp_path: Path) -> None:
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "header.eyJleHAiOiA0MTAyNDQ0ODAwLCAiY2xpZW50X2lkIjogImFwcCJ9.sig",
+                    "refresh_token": "rt_test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeSseResponse:
+        def __init__(self, lines: list[str]) -> None:
+            self._lines = [line.encode("utf-8") for line in lines]
+            self.headers = {}
+            self.status = 200
+
+        def __iter__(self):
+            return iter(self._lines)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+    def fake_urlopen(request, timeout: int):
+        return _FakeSseResponse(
+            [
+                "event: error\n",
+                'data: {"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Too much input.","param":"input"}}\n',
+                "\n",
+                "event: response.failed\n",
+                'data: {"type":"response.failed","response":{"status":"failed","error":{"code":"context_length_exceeded","message":"Too much input."}}}\n',
+                "\n",
+            ]
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    provider = CodexOAuthProvider(
+        token_manager=CodexOAuthTokenManager(auth_path=auth_path),
+        model="gpt-5.4",
+    )
+
+    response = provider.generate(
+        ProviderRequest(
+            model="gpt-5.4",
+            max_tokens=64,
+            messages=[{"role": "user", "content": "hello"}],
+        )
+    )
+
+    assert response.error == "Codex OAuth API error: Codex OAuth stream error context_length_exceeded: Too much input."
 
 
 def test_codex_oauth_token_manager_requires_client_id_for_refresh(tmp_path: Path) -> None:

@@ -44,4 +44,8 @@ def register(ctx: PluginContext) -> None:
         },
         handler=handle_grok_search,
         readonly=True,
+        action_class="network_read",
+        idempotent=True,
+        risk_hint="low",
+        requires_receipt=False,
     ))

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
+from hermit.kernel.store import KernelStore
 from hermit.main import _build_serve_preflight, _notify_reload, app
 
 
@@ -260,6 +261,150 @@ def test_build_serve_preflight_uses_profile_feishu_settings(tmp_path, monkeypatc
     assert details["飞书 App Secret"] == "config.toml profile"
     assert details["飞书进度卡片"] == "false"
     assert details["Scheduler 飞书通知"] == "已配置"
+
+
+def test_task_list_show_and_receipts_commands_read_kernel_state(tmp_path, monkeypatch) -> None:
+    from hermit.config import get_settings
+    from hermit.kernel.store import KernelStore
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-task", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-task",
+        title="CLI Task",
+        goal="Inspect task CLI output",
+        source_channel="chat",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    store.create_receipt(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        action_type="write_local",
+        input_refs=["artifact_in"],
+        environment_ref="artifact_env",
+        policy_result={"decision": "require_approval"},
+        approval_ref=None,
+        output_refs=["artifact_out"],
+        result_summary="write_file executed successfully",
+    )
+
+    runner = CliRunner()
+
+    list_result = runner.invoke(app, ["task", "list"])
+    assert list_result.exit_code == 0
+    assert task.task_id in list_result.output
+    assert "CLI Task" in list_result.output
+
+    show_result = runner.invoke(app, ["task", "show", task.task_id])
+    assert show_result.exit_code == 0
+    assert '"task_id"' in show_result.output
+    assert task.task_id in show_result.output
+
+    receipts_result = runner.invoke(app, ["task", "receipts", "--task-id", task.task_id])
+    assert receipts_result.exit_code == 0
+    assert "write_file executed successfully" in receipts_result.output
+
+
+def test_task_approve_and_deny_commands_delegate_to_runner(tmp_path, monkeypatch) -> None:
+    import hermit.main as main_mod
+    from hermit.config import get_settings
+    from hermit.kernel.store import KernelStore
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-approval", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-approval",
+        title="Pending approval",
+        goal="Approve from CLI",
+        source_channel="chat",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    approval = store.create_approval(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        approval_type="write_local",
+        requested_action={"tool_name": "write_file"},
+        request_packet_ref=None,
+    )
+
+    calls: list[tuple[str, str, str, str]] = []
+
+    class FakeRunner:
+        def _resolve_approval(self, conversation_id: str, *, action: str, approval_id: str, reason: str = ""):
+            calls.append((conversation_id, action, approval_id, reason))
+            return SimpleNamespace(text=f"{action}:{approval_id}")
+
+    class FakePM:
+        def stop_mcp_servers(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_mod, "_build_runner", lambda settings: (FakeRunner(), FakePM()))
+
+    runner = CliRunner()
+    approve_result = runner.invoke(app, ["task", "approve", approval.approval_id])
+    deny_result = runner.invoke(app, ["task", "deny", approval.approval_id, "--reason", "hold"])
+
+    assert approve_result.exit_code == 0
+    assert deny_result.exit_code == 0
+    assert approve_result.output.strip() == f"approve:{approval.approval_id}"
+    assert deny_result.output.strip() == f"deny:{approval.approval_id}"
+    assert calls == [
+        ("cli-approval", "approve", approval.approval_id, ""),
+        ("cli-approval", "deny", approval.approval_id, "hold"),
+    ]
+
+
+def test_task_show_displays_approval_canonical_summary(monkeypatch, tmp_path) -> None:
+    from hermit.config import get_settings
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-task-show", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-task-show",
+        title="CLI Approval Summary",
+        goal="Inspect approval summary",
+        source_channel="chat",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    approval = store.create_approval(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        approval_type="write_local",
+        requested_action={
+            "tool_name": "write_file",
+            "display_copy": {
+                "title": "确认文件修改",
+                "summary": "准备修改 1 个文件：`src/app.py`。",
+                "detail": "变更预览已生成；确认后将继续执行。",
+            },
+        },
+        request_packet_ref=None,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["task", "show", task.task_id])
+
+    assert result.exit_code == 0
+    assert approval.approval_id in result.output
+    assert "准备修改 1 个文件" in result.output
 
 
 def test_notify_reload_uses_settings_scheduler_chat_id(monkeypatch, tmp_path) -> None:

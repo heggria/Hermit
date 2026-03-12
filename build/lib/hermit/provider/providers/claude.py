@@ -11,6 +11,7 @@ from hermit.provider.contracts import (
     ProviderResponse,
     UsageMetrics,
 )
+from hermit.provider.images import prepare_messages_for_provider
 from hermit.provider.messages import normalize_block
 
 _CACHE_CONTROL_EPHEMERAL: Dict[str, str] = {"type": "ephemeral"}
@@ -138,12 +139,13 @@ class ClaudeProvider(Provider):
         )
 
     def _payload(self, request: ProviderRequest, *, stream: bool = False) -> Dict[str, Any]:
+        prepared_messages = prepare_messages_for_provider(request.messages)
         system_prompt = request.system_prompt if request.system_prompt is not None else self.system_prompt
         system_payload, cached_messages = _inject_cache_control(
-            list(request.messages[:-1]),
+            list(prepared_messages[:-1]),
             system_prompt,
         )
-        cached_messages = cached_messages + [request.messages[-1]] if request.messages else []
+        cached_messages = cached_messages + [prepared_messages[-1]] if prepared_messages else []
         if request.thinking_budget > 0:
             cached_messages = _strip_thinking_blocks(cached_messages)
         payload: Dict[str, Any] = {
@@ -260,5 +262,7 @@ def build_claude_provider(
         kwargs["base_url"] = settings.claude_base_url
     if settings.parsed_claude_headers:
         kwargs["default_headers"] = settings.parsed_claude_headers
+    if getattr(settings, "command_timeout_seconds", 0):
+        kwargs["timeout"] = settings.command_timeout_seconds
     client = Anthropic(**kwargs)
     return ClaudeProvider(client, model=model, system_prompt=system_prompt)
