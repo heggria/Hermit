@@ -147,6 +147,7 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_catch_up: bool = True
     scheduler_feishu_chat_id: Optional[str] = None
+    kernel_dispatch_worker_count: int = 4
     webhook_enabled: bool = True
     webhook_host: Optional[str] = None
     webhook_port: Optional[int] = None
@@ -203,6 +204,7 @@ class Settings(BaseSettings):
         _set_if_present(values, "scheduler_enabled", env_file_values.get("HERMIT_SCHEDULER_ENABLED"))
         _set_if_present(values, "scheduler_catch_up", env_file_values.get("HERMIT_SCHEDULER_CATCH_UP"))
         _set_if_present(values, "scheduler_feishu_chat_id", env_file_values.get("HERMIT_SCHEDULER_FEISHU_CHAT_ID"))
+        _set_if_present(values, "kernel_dispatch_worker_count", env_file_values.get("HERMIT_KERNEL_DISPATCH_WORKER_COUNT"))
         _set_if_present(values, "webhook_enabled", env_file_values.get("HERMIT_WEBHOOK_ENABLED"))
         _set_if_present(values, "webhook_host", env_file_values.get("HERMIT_WEBHOOK_HOST"))
         _set_if_present(values, "webhook_port", env_file_values.get("HERMIT_WEBHOOK_PORT"))
@@ -231,6 +233,7 @@ class Settings(BaseSettings):
         _override_if_present(values, "scheduler_enabled", os.environ.get("HERMIT_SCHEDULER_ENABLED"))
         _override_if_present(values, "scheduler_catch_up", os.environ.get("HERMIT_SCHEDULER_CATCH_UP"))
         _override_if_present(values, "scheduler_feishu_chat_id", os.environ.get("HERMIT_SCHEDULER_FEISHU_CHAT_ID"))
+        _override_if_present(values, "kernel_dispatch_worker_count", os.environ.get("HERMIT_KERNEL_DISPATCH_WORKER_COUNT"))
         _override_if_present(values, "webhook_enabled", os.environ.get("HERMIT_WEBHOOK_ENABLED"))
         _override_if_present(values, "webhook_host", os.environ.get("HERMIT_WEBHOOK_HOST"))
         _override_if_present(values, "webhook_port", os.environ.get("HERMIT_WEBHOOK_PORT"))

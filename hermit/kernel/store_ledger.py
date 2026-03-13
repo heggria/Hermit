@@ -481,7 +481,10 @@ class KernelLedgerStoreMixin:
         scope_kind: str,
         scope_ref: str,
         category: str,
-        content: str,
+        content: str | None = None,
+        claim_text: str | None = None,
+        structured_assertion: dict[str, Any] | None = None,
+        promotion_candidate: bool = True,
         status: str = "active",
         confidence: float = 0.5,
         trust_tier: str = "observed",
@@ -493,14 +496,16 @@ class KernelLedgerStoreMixin:
     ) -> BeliefRecord:
         belief_id = self._id("belief")
         created_at = time.time()
+        claim = (claim_text or content or "").strip()
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO beliefs (
-                    belief_id, task_id, conversation_id, scope_kind, scope_ref, category, content,
-                    status, confidence, trust_tier, evidence_refs_json, supersedes_json, contradicts_json,
-                    memory_ref, invalidated_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    belief_id, task_id, conversation_id, scope_kind, scope_ref, category, content, claim_text,
+                    structured_assertion_json, promotion_candidate, status, confidence, trust_tier,
+                    evidence_refs_json, supersedes_json, contradicts_json, memory_ref, invalidated_at,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     belief_id,
@@ -509,7 +514,10 @@ class KernelLedgerStoreMixin:
                     scope_kind,
                     scope_ref,
                     category,
-                    content,
+                    claim,
+                    claim,
+                    json.dumps(structured_assertion or {}, ensure_ascii=False),
+                    int(bool(promotion_candidate)),
                     status,
                     confidence,
                     trust_tier,
@@ -534,7 +542,9 @@ class KernelLedgerStoreMixin:
                     "scope_kind": scope_kind,
                     "scope_ref": scope_ref,
                     "category": category,
-                    "content": content,
+                    "claim_text": claim,
+                    "structured_assertion": structured_assertion or {},
+                    "promotion_candidate": bool(promotion_candidate),
                     "status": status,
                     "confidence": confidence,
                     "trust_tier": trust_tier,
@@ -594,6 +604,7 @@ class KernelLedgerStoreMixin:
         contradicts: list[str] | object = _UNSET,
         supersedes: list[str] | object = _UNSET,
         invalidated_at: float | None | object = _UNSET,
+        promotion_candidate: bool | object = _UNSET,
     ) -> None:
         belief = self.get_belief(belief_id)
         if belief is None:
@@ -604,12 +615,15 @@ class KernelLedgerStoreMixin:
         next_contradicts = belief.contradicts if contradicts is _UNSET else list(contradicts)
         next_supersedes = belief.supersedes if supersedes is _UNSET else list(supersedes)
         next_invalidated_at = belief.invalidated_at if invalidated_at is _UNSET else invalidated_at
+        next_promotion_candidate = (
+            belief.promotion_candidate if promotion_candidate is _UNSET else bool(promotion_candidate)
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE beliefs
                 SET status = ?, memory_ref = ?, contradicts_json = ?, supersedes_json = ?,
-                    invalidated_at = ?, updated_at = ?
+                    invalidated_at = ?, promotion_candidate = ?, updated_at = ?
                 WHERE belief_id = ?
                 """,
                 (
@@ -618,6 +632,7 @@ class KernelLedgerStoreMixin:
                     json.dumps(list(next_contradicts), ensure_ascii=False),
                     json.dumps(list(next_supersedes), ensure_ascii=False),
                     next_invalidated_at,
+                    int(next_promotion_candidate),
                     updated_at,
                     belief_id,
                 ),
@@ -635,6 +650,7 @@ class KernelLedgerStoreMixin:
                     "contradicts": list(next_contradicts),
                     "supersedes": list(next_supersedes),
                     "invalidated_at": next_invalidated_at,
+                    "promotion_candidate": next_promotion_candidate,
                     "updated_at": updated_at,
                 },
             )
@@ -645,39 +661,89 @@ class KernelLedgerStoreMixin:
         task_id: str,
         conversation_id: str | None,
         category: str,
-        content: str,
+        content: str | None = None,
+        claim_text: str | None = None,
+        structured_assertion: dict[str, Any] | None = None,
+        scope_kind: str = "conversation",
+        scope_ref: str = "",
+        promotion_reason: str = "belief_promotion",
+        retention_class: str = "volatile_fact",
         status: str = "active",
         confidence: float = 0.5,
         trust_tier: str = "durable",
         evidence_refs: list[str] | None = None,
         supersedes: list[str] | None = None,
+        supersedes_memory_ids: list[str] | None = None,
+        superseded_by_memory_id: str | None = None,
         source_belief_ref: str | None = None,
+        invalidation_reason: str | None = None,
         invalidated_at: float | None = None,
+        expires_at: float | None = None,
     ) -> MemoryRecord:
+        from hermit.kernel.memory_governance import MemoryGovernanceService
+
         memory_id = self._id("memory")
         created_at = time.time()
+        claim = (claim_text or content or "").strip()
+        governance = MemoryGovernanceService()
+        if (
+            scope_kind == "conversation"
+            and not scope_ref
+            and promotion_reason == "belief_promotion"
+            and retention_class == "volatile_fact"
+        ):
+            classification = governance.classify_claim(
+                category=category,
+                claim_text=claim,
+                conversation_id=conversation_id,
+                promotion_reason=promotion_reason,
+            )
+            scope_kind = classification.scope_kind
+            scope_ref = classification.scope_ref
+            category = classification.category
+            retention_class = classification.retention_class
+            structured_assertion = {
+                **dict(classification.structured_assertion or {}),
+                **dict(structured_assertion or {}),
+            }
+            if expires_at is None:
+                expires_at = classification.expires_at
+        normalized_status = "invalidated" if status == "superseded" else status
+        normalized_reason = invalidation_reason or ("superseded" if status == "superseded" else None)
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO memory_records (
-                    memory_id, task_id, conversation_id, category, content, status,
-                    confidence, trust_tier, evidence_refs_json, supersedes_json,
-                    source_belief_ref, invalidated_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    memory_id, task_id, conversation_id, category, content, claim_text,
+                    structured_assertion_json, scope_kind, scope_ref, promotion_reason, retention_class,
+                    status, confidence, trust_tier, evidence_refs_json, supersedes_json,
+                    supersedes_memory_ids_json, superseded_by_memory_id, source_belief_ref,
+                    invalidation_reason, invalidated_at, expires_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     memory_id,
                     task_id,
                     conversation_id,
                     category,
-                    content,
-                    status,
+                    claim,
+                    claim,
+                    json.dumps(structured_assertion or {}, ensure_ascii=False),
+                    scope_kind,
+                    scope_ref,
+                    promotion_reason,
+                    retention_class,
+                    normalized_status,
                     confidence,
                     trust_tier,
                     json.dumps(list(evidence_refs or []), ensure_ascii=False),
                     json.dumps(list(supersedes or []), ensure_ascii=False),
+                    json.dumps(list(supersedes_memory_ids or []), ensure_ascii=False),
+                    superseded_by_memory_id,
                     source_belief_ref,
+                    normalized_reason,
                     invalidated_at,
+                    expires_at,
                     created_at,
                     created_at,
                 ),
@@ -692,14 +758,23 @@ class KernelLedgerStoreMixin:
                 payload={
                     "conversation_id": conversation_id,
                     "category": category,
-                    "content": content,
-                    "status": status,
+                    "claim_text": claim,
+                    "structured_assertion": structured_assertion or {},
+                    "scope_kind": scope_kind,
+                    "scope_ref": scope_ref,
+                    "promotion_reason": promotion_reason,
+                    "retention_class": retention_class,
+                    "status": normalized_status,
                     "confidence": confidence,
                     "trust_tier": trust_tier,
                     "evidence_refs": list(evidence_refs or []),
                     "supersedes": list(supersedes or []),
+                    "supersedes_memory_ids": list(supersedes_memory_ids or []),
+                    "superseded_by_memory_id": superseded_by_memory_id,
                     "source_belief_ref": source_belief_ref,
+                    "invalidation_reason": normalized_reason,
                     "invalidated_at": invalidated_at,
+                    "expires_at": expires_at,
                     "created_at": created_at,
                     "updated_at": created_at,
                 },
@@ -718,16 +793,28 @@ class KernelLedgerStoreMixin:
         *,
         status: str | None = None,
         conversation_id: str | None = None,
+        scope_kind: str | None = None,
+        scope_ref: str | None = None,
         limit: int = 200,
     ) -> list[MemoryRecord]:
         clauses: list[str] = []
         params: list[Any] = []
         if status:
-            clauses.append("status = ?")
-            params.append(status)
+            if status == "active":
+                clauses.append("status = 'active' AND (expires_at IS NULL OR expires_at > ?)")
+                params.append(time.time())
+            else:
+                clauses.append("status = ?")
+                params.append(status)
         if conversation_id:
             clauses.append("(conversation_id = ? OR conversation_id IS NULL)")
             params.append(conversation_id)
+        if scope_kind:
+            clauses.append("scope_kind = ?")
+            params.append(scope_kind)
+        if scope_ref:
+            clauses.append("scope_ref = ?")
+            params.append(scope_ref)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
         with self._lock:
@@ -740,26 +827,51 @@ class KernelLedgerStoreMixin:
         *,
         status: str | object = _UNSET,
         supersedes: list[str] | object = _UNSET,
+        supersedes_memory_ids: list[str] | object = _UNSET,
+        superseded_by_memory_id: str | None | object = _UNSET,
+        invalidation_reason: str | None | object = _UNSET,
         invalidated_at: float | None | object = _UNSET,
+        expires_at: float | None | object = _UNSET,
     ) -> None:
         record = self.get_memory_record(memory_id)
         if record is None:
             return
         updated_at = time.time()
-        next_status = record.status if status is _UNSET else str(status)
+        requested_status = record.status if status is _UNSET else str(status)
+        next_status = "invalidated" if requested_status == "superseded" else requested_status
         next_supersedes = record.supersedes if supersedes is _UNSET else list(supersedes)
+        next_supersedes_memory_ids = (
+            record.supersedes_memory_ids if supersedes_memory_ids is _UNSET else list(supersedes_memory_ids)
+        )
+        next_superseded_by_memory_id = (
+            record.superseded_by_memory_id if superseded_by_memory_id is _UNSET else superseded_by_memory_id
+        )
+        next_invalidation_reason = (
+            record.invalidation_reason
+            if invalidation_reason is _UNSET
+            else invalidation_reason
+        )
+        if requested_status == "superseded" and next_invalidation_reason is None:
+            next_invalidation_reason = "superseded"
         next_invalidated_at = record.invalidated_at if invalidated_at is _UNSET else invalidated_at
+        next_expires_at = record.expires_at if expires_at is _UNSET else expires_at
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE memory_records
-                SET status = ?, supersedes_json = ?, invalidated_at = ?, updated_at = ?
+                SET status = ?, supersedes_json = ?, supersedes_memory_ids_json = ?,
+                    superseded_by_memory_id = ?, invalidation_reason = ?, invalidated_at = ?,
+                    expires_at = ?, updated_at = ?
                 WHERE memory_id = ?
                 """,
                 (
                     next_status,
                     json.dumps(list(next_supersedes), ensure_ascii=False),
+                    json.dumps(list(next_supersedes_memory_ids), ensure_ascii=False),
+                    next_superseded_by_memory_id,
+                    next_invalidation_reason,
                     next_invalidated_at,
+                    next_expires_at,
                     updated_at,
                     memory_id,
                 ),
@@ -774,7 +886,11 @@ class KernelLedgerStoreMixin:
                 payload={
                     "status": next_status,
                     "supersedes": list(next_supersedes),
+                    "supersedes_memory_ids": list(next_supersedes_memory_ids),
+                    "superseded_by_memory_id": next_superseded_by_memory_id,
+                    "invalidation_reason": next_invalidation_reason,
                     "invalidated_at": next_invalidated_at,
+                    "expires_at": next_expires_at,
                     "updated_at": updated_at,
                 },
             )

@@ -125,6 +125,28 @@ _LOWER_PROOF_EXPORT_LATEST_TEXTS = {
     "导出这个任务的proof",
     "导出当前任务证明",
 }
+_LOWER_PLAN_ENTER_TEXTS = {
+    "进入规划模式",
+    "开始规划",
+    "先规划一下",
+    "先计划一下",
+    "先给个计划",
+    "plan current task",
+}
+_LOWER_PLAN_CONFIRM_TEXTS = {
+    "开始执行",
+    "执行吧",
+    "确认执行",
+    "按计划执行",
+    "run the plan",
+    "execute the plan",
+}
+_LOWER_PLAN_EXIT_TEXTS = {
+    "退出规划模式",
+    "关闭规划模式",
+    "结束规划模式",
+    "plan off",
+}
 _LOWER_ROLLBACK_LATEST_TEXTS = {
     "回滚这次操作",
     "回滚这次写入",
@@ -214,6 +236,13 @@ def parse_control_intent(
         return ControlIntent("task_proof_export", match.group(1))
     if latest_task_id and lowered in _LOWER_PROOF_EXPORT_LATEST_TEXTS:
         return ControlIntent("task_proof_export", latest_task_id)
+
+    if lowered in _LOWER_PLAN_ENTER_TEXTS:
+        return ControlIntent("plan_enter", latest_task_id or "")
+    if latest_task_id and lowered in _LOWER_PLAN_CONFIRM_TEXTS:
+        return ControlIntent("plan_confirm", latest_task_id)
+    if latest_task_id and lowered in _LOWER_PLAN_EXIT_TEXTS:
+        return ControlIntent("plan_exit", latest_task_id)
 
     match = _ROLLBACK_WITH_ID_RE.match(stripped)
     if match:

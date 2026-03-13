@@ -15,7 +15,7 @@ from hermit.kernel.store_scheduler import KernelSchedulerStoreMixin
 from hermit.kernel.store_support import _canonical_json, _canonical_json_from_raw, _sha256_hex
 from hermit.kernel.store_tasks import KernelTaskStoreMixin
 
-_SCHEMA_VERSION = "3"
+_SCHEMA_VERSION = "4"
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "tasks",
@@ -90,7 +90,7 @@ class KernelStore(
             "SELECT value FROM kernel_meta WHERE key = 'schema_version'"
         ).fetchone()
         version = str(row[0]) if row is not None else ""
-        if version != _SCHEMA_VERSION:
+        if version not in {"3", _SCHEMA_VERSION}:
             raise KernelSchemaError(
                 f"Existing kernel database at {self.db_path} has schema_version={version or 'unknown'}, "
                 f"but Hermit requires schema_version={_SCHEMA_VERSION}. "
@@ -385,6 +385,20 @@ class KernelStore(
             self._ensure_column("events", "event_hash", "TEXT")
             self._ensure_column("events", "prev_event_hash", "TEXT")
             self._ensure_column("events", "hash_chain_algo", "TEXT")
+            self._ensure_column("beliefs", "claim_text", "TEXT")
+            self._ensure_column("beliefs", "structured_assertion_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column("beliefs", "promotion_candidate", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column("memory_records", "claim_text", "TEXT")
+            self._ensure_column("memory_records", "structured_assertion_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column("memory_records", "scope_kind", "TEXT")
+            self._ensure_column("memory_records", "scope_ref", "TEXT")
+            self._ensure_column("memory_records", "promotion_reason", "TEXT")
+            self._ensure_column("memory_records", "retention_class", "TEXT")
+            self._ensure_column("memory_records", "supersedes_memory_ids_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column("memory_records", "superseded_by_memory_id", "TEXT")
+            self._ensure_column("memory_records", "invalidation_reason", "TEXT")
+            self._ensure_column("memory_records", "expires_at", "REAL")
+            self._migrate_memory_schema_v4()
             self._backfill_event_hash_chain()
             self._conn.execute(
                 """
@@ -402,6 +416,74 @@ class KernelStore(
         if column in existing:
             return
         self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _migrate_memory_schema_v4(self) -> None:
+        self._conn.execute(
+            """
+            UPDATE beliefs
+            SET claim_text = COALESCE(NULLIF(claim_text, ''), content)
+            WHERE claim_text IS NULL OR claim_text = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE memory_records
+            SET claim_text = COALESCE(NULLIF(claim_text, ''), content)
+            WHERE claim_text IS NULL OR claim_text = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE memory_records
+            SET scope_kind = CASE
+                    WHEN category IN ('用户偏好') THEN 'global'
+                    WHEN category IN ('项目约定', '工具与环境', '环境与工具') THEN 'workspace'
+                    ELSE 'conversation'
+                END
+            WHERE scope_kind IS NULL OR scope_kind = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE memory_records
+            SET scope_ref = CASE
+                    WHEN scope_kind = 'global' THEN 'global'
+                    WHEN scope_kind = 'workspace' THEN 'workspace:default'
+                    ELSE COALESCE(conversation_id, 'conversation:unknown')
+                END
+            WHERE scope_ref IS NULL OR scope_ref = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE memory_records
+            SET retention_class = CASE
+                    WHEN category = '用户偏好' THEN 'user_preference'
+                    WHEN category = '项目约定' THEN 'project_convention'
+                    WHEN category IN ('工具与环境', '环境与工具') THEN 'tooling_environment'
+                    WHEN category = '进行中的任务' THEN 'task_state'
+                    ELSE 'volatile_fact'
+                END
+            WHERE retention_class IS NULL OR retention_class = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE memory_records
+            SET promotion_reason = COALESCE(NULLIF(promotion_reason, ''), 'legacy_memory_migration')
+            WHERE promotion_reason IS NULL OR promotion_reason = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE memory_records
+            SET status = 'invalidated',
+                invalidation_reason = COALESCE(NULLIF(invalidation_reason, ''), 'superseded'),
+                invalidated_at = COALESCE(invalidated_at, updated_at, created_at, ?)
+            WHERE status = 'superseded'
+            """,
+            (time.time(),),
+        )
 
     def _id(self, prefix: str) -> str:
         return f"{prefix}_{uuid.uuid4().hex[:12]}"

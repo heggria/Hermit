@@ -58,7 +58,9 @@ class SchedulerEngine:
         self._runner: Any = None
         self._schedules_dir = settings.base_dir / "schedules"
         self._schedules_dir.mkdir(parents=True, exist_ok=True)
-        kernel_db_path = getattr(settings, "kernel_db_path", settings.base_dir / "kernel" / "state.db")
+        kernel_db_path = getattr(settings, "kernel_db_path", None)
+        if not isinstance(kernel_db_path, (str, Path)):
+            kernel_db_path = settings.base_dir / "kernel" / "state.db"
         self._store = KernelStore(Path(kernel_db_path))
         self._history_path = self._schedules_dir / "history.json"
         self._logs_dir = self._schedules_dir / "logs"
@@ -187,6 +189,39 @@ class SchedulerEngine:
 
     def _execute(self, job: ScheduledJob) -> None:
         log.info("scheduler_executing", job_id=job.id, job_name=job.name)
+        from hermit.core.runner import AgentRunner
+
+        if isinstance(self._runner, AgentRunner):
+            notify: dict[str, str] = {}
+            chat_id = getattr(job, "feishu_chat_id", None) or getattr(
+                self._settings, "scheduler_feishu_chat_id", ""
+            )
+            if chat_id:
+                notify["feishu_chat_id"] = chat_id
+            session_id = f"schedule-{job.id}-{uuid.uuid4().hex[:8]}"
+            self._runner.enqueue_ingress(
+                session_id,
+                job.prompt,
+                source_channel="scheduler",
+                notify=notify,
+                source_ref="scheduler",
+                ingress_metadata={
+                    "title": job.name,
+                    "schedule_job_id": job.id,
+                    "schedule_job_name": job.name,
+                },
+                requested_by="scheduler",
+            )
+            with self._lock:
+                job.last_run_at = time.time()
+                if job.schedule_type == "once":
+                    job.enabled = False
+                    job.next_run_at = None
+                else:
+                    job.next_run_at = self._compute_next_run(job)
+            self._persist_jobs()
+            return
+
         started_at = time.time()
         result_text = ""
         success = False
@@ -204,7 +239,7 @@ class SchedulerEngine:
 
         finished_at = time.time()
 
-        notify: dict[str, str] = {}
+        notify = {}
         chat_id = getattr(job, "feishu_chat_id", None) or getattr(
             self._settings, "scheduler_feishu_chat_id", ""
         )

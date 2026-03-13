@@ -109,6 +109,7 @@ class KernelTaskStoreMixin:
         title: str,
         goal: str,
         source_channel: str,
+        status: str = "running",
         owner: str = "hermit",
         priority: str = "normal",
         policy_profile: str = "default",
@@ -123,13 +124,14 @@ class KernelTaskStoreMixin:
                 INSERT INTO tasks (
                     task_id, conversation_id, title, goal, status, priority, owner,
                     policy_profile, source_channel, parent_task_id, requested_by, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
                     conversation_id,
                     title,
                     goal,
+                    status,
                     priority,
                     owner,
                     policy_profile,
@@ -155,7 +157,7 @@ class KernelTaskStoreMixin:
                     "conversation_id": conversation_id,
                     "title": title,
                     "goal": goal,
-                    "status": "running",
+                    "status": status,
                     "priority": priority,
                     "owner": owner,
                     "policy_profile": policy_profile,
@@ -385,6 +387,64 @@ class KernelTaskStoreMixin:
             rows = self._rows(query, tuple(params))
         return [self._step_attempt_from_row(row) for row in rows]
 
+    def list_ready_step_attempts(self, *, limit: int = 100) -> list[StepAttemptRecord]:
+        query = """
+            SELECT sa.*
+            FROM step_attempts sa
+            JOIN steps s ON s.step_id = sa.step_id
+            JOIN tasks t ON t.task_id = sa.task_id
+            WHERE sa.status = 'ready'
+              AND s.status = 'ready'
+              AND t.status IN ('queued', 'running')
+            ORDER BY sa.started_at ASC
+            LIMIT ?
+        """
+        with self._lock:
+            rows = self._rows(query, (limit,))
+        return [self._step_attempt_from_row(row) for row in rows]
+
+    def claim_next_ready_step_attempt(self) -> StepAttemptRecord | None:
+        with self._lock, self._conn:
+            row = self._row(
+                """
+                SELECT sa.*
+                FROM step_attempts sa
+                JOIN steps s ON s.step_id = sa.step_id
+                JOIN tasks t ON t.task_id = sa.task_id
+                WHERE sa.status = 'ready'
+                  AND s.status = 'ready'
+                  AND t.status IN ('queued', 'running')
+                ORDER BY sa.started_at ASC
+                LIMIT 1
+                """
+            )
+            if row is None:
+                return None
+            attempt = self._step_attempt_from_row(row)
+            self._conn.execute(
+                "UPDATE step_attempts SET status = ? WHERE step_attempt_id = ?",
+                ("running", attempt.step_attempt_id),
+            )
+            self._conn.execute(
+                "UPDATE steps SET status = ?, finished_at = NULL WHERE step_id = ?",
+                ("running", attempt.step_id),
+            )
+            self._conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
+                ("running", time.time(), attempt.task_id),
+            )
+            self._append_event_tx(
+                event_id=self._id("event"),
+                event_type="step_attempt.claimed",
+                entity_type="step_attempt",
+                entity_id=attempt.step_attempt_id,
+                task_id=attempt.task_id,
+                step_id=attempt.step_id,
+                actor="kernel",
+                payload={"status": "running", "attempt": attempt.attempt},
+            )
+        return self.get_step_attempt(attempt.step_attempt_id)
+
     def update_step_attempt(
         self,
         step_attempt_id: str,
@@ -517,3 +577,23 @@ class KernelTaskStoreMixin:
             }
             for row in rows
         ]
+
+    def iter_events(
+        self,
+        *,
+        task_id: str | None = None,
+        after_event_seq: int | None = None,
+        batch_size: int = 200,
+    ):
+        cursor = after_event_seq
+        while True:
+            batch = self.list_events(
+                task_id=task_id,
+                after_event_seq=cursor,
+                limit=batch_size,
+            )
+            if not batch:
+                break
+            for event in batch:
+                yield event
+            cursor = int(batch[-1]["event_seq"])

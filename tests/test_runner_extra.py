@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import hermit.core.runner as runner_module
 from hermit.core.runner import AgentRunner, DispatchResult
 from hermit.provider.runtime import AgentResult
 
@@ -104,6 +105,8 @@ class _FakeTaskController:
         self.store = _FakeStore(approval)
         self.resolution = None
         self.started: list[dict] = []
+        self.enqueued: list[dict] = []
+        self.resumed_attempts: list[str] = []
         self.finalized: list[tuple[object, str]] = []
         self.blocked: list[object] = []
 
@@ -117,6 +120,26 @@ class _FakeTaskController:
         ctx = SimpleNamespace(task_id="task", step_id="step", step_attempt_id="attempt")
         self.started.append({"kwargs": kwargs, "ctx": ctx})
         return ctx
+
+    def enqueue_task(self, **kwargs):
+        attempt_id = f"attempt-{len(self.enqueued) + 1}"
+        ctx = SimpleNamespace(
+            conversation_id=kwargs["conversation_id"],
+            source_channel=kwargs["source_channel"],
+            task_id=f"task-{len(self.enqueued) + 1}",
+            step_id=f"step-{len(self.enqueued) + 1}",
+            step_attempt_id=attempt_id,
+            ingress_metadata=dict(kwargs.get("ingress_metadata", {}) or {}),
+        )
+        self.enqueued.append({"kwargs": kwargs, "ctx": ctx})
+        return ctx
+
+    def enqueue_resume(self, step_attempt_id: str):
+        self.resumed_attempts.append(step_attempt_id)
+        return SimpleNamespace(step_attempt_id=step_attempt_id)
+
+    def ensure_conversation(self, *_args, **_kwargs) -> None:
+        return None
 
     def finalize_result(
         self,
@@ -237,6 +260,50 @@ def test_runner_resolve_approval_handles_missing_deny_and_approve_paths() -> Non
     assert controller.blocked
 
 
+def test_runner_enqueue_ingress_queues_async_task_and_wakes_dispatcher() -> None:
+    runner, agent, _session_manager, plugin_manager, controller = _make_runner()
+    wake_calls: list[str] = []
+    runner._dispatch_service = SimpleNamespace(wake=lambda: wake_calls.append("wake"))
+
+    ctx = runner.enqueue_ingress(
+        "session",
+        "hello",
+        source_channel="webhook",
+        notify={"feishu_chat_id": "oc_1"},
+        source_ref="webhook/test",
+        ingress_metadata={"webhook_route": "test"},
+    )
+
+    assert ctx.task_id == "task-1"
+    queued = controller.enqueued[0]["kwargs"]
+    assert queued["source_channel"] == "webhook"
+    assert queued["kind"] == "plan"
+    assert queued["policy_profile"] == "readonly"
+    assert queued["source_ref"] == "webhook/test"
+    assert queued["ingress_metadata"]["dispatch_mode"] == "async"
+    assert queued["ingress_metadata"]["notify"] == {"feishu_chat_id": "oc_1"}
+    assert queued["ingress_metadata"]["webhook_route"] == "test"
+    assert "<session_time>" in queued["ingress_metadata"]["entry_prompt"]
+    assert "processed:hello" in queued["ingress_metadata"]["entry_prompt"]
+    assert queued["workspace_root"] == agent.workspace_root
+    assert wake_calls == ["wake"]
+    assert plugin_manager.started == ["session"]
+
+
+def test_runner_enqueue_approval_resume_queues_resume_without_inline_resume() -> None:
+    approval = SimpleNamespace(approval_id="approval-1", step_attempt_id="attempt-1")
+    runner, agent, session_manager, _plugin_manager, controller = _make_runner(approval)
+
+    result = runner.enqueue_approval_resume("session", action="approve_once", approval_id="approval-1")
+
+    assert result.is_command is True
+    assert "queued" in result.text.lower()
+    assert controller.store.resolved[-1]["resolution"]["mode"] == "once"
+    assert controller.resumed_attempts == ["attempt-1"]
+    assert agent.resume_calls == []
+    assert session_manager.saved >= 1
+
+
 def test_runner_add_command_and_register_command_decorator() -> None:
     runner, *_ = _make_runner()
 
@@ -264,3 +331,79 @@ def test_runner_messages_can_render_zh_cn(monkeypatch) -> None:
     assert "1 轮用户消息，共 2 条记录" in history.text
     assert "用法：" in task_usage.text
     assert new_result.text == "已开启新会话。"
+
+
+def test_runner_background_services_start_stop_and_wake(monkeypatch) -> None:
+    runner, _agent, _session_manager, plugin_manager, _controller = _make_runner()
+    started: list[str] = []
+    stopped: list[str] = []
+    wakes: list[str] = []
+
+    class FakeObservationService:
+        def __init__(self, _runner) -> None:
+            started.append("obs_init")
+
+        def start(self) -> None:
+            started.append("obs_start")
+
+        def stop(self) -> None:
+            stopped.append("obs_stop")
+
+    class FakeDispatchService:
+        def __init__(self, _runner, *, worker_count: int) -> None:
+            started.append(f"dispatch_init:{worker_count}")
+
+        def start(self) -> None:
+            started.append("dispatch_start")
+
+        def stop(self) -> None:
+            stopped.append("dispatch_stop")
+
+        def wake(self) -> None:
+            wakes.append("wake")
+
+    monkeypatch.setattr(runner_module, "ObservationService", FakeObservationService)
+    monkeypatch.setattr("hermit.kernel.dispatch.KernelDispatchService", FakeDispatchService)
+
+    runner.start_background_services()
+    runner.wake_dispatcher()
+    runner.stop_background_services()
+
+    assert started == ["obs_init", "obs_start", "dispatch_init:4", "dispatch_start"]
+    assert wakes == ["wake"]
+    assert stopped == ["dispatch_stop", "obs_stop"]
+    assert runner._dispatch_service is None
+    assert runner._observation_service is None
+
+
+def test_runner_resume_attempt_handles_terminal_and_blocked_paths() -> None:
+    approval = SimpleNamespace(approval_id="approval-1", step_attempt_id="attempt-1")
+    runner, agent, _session_manager, plugin_manager, controller = _make_runner(approval)
+    controller.resume_attempt = lambda step_attempt_id: SimpleNamespace(
+        conversation_id="session",
+        task_id="task",
+        step_id="step",
+        step_attempt_id=step_attempt_id,
+    )
+
+    agent.resume_result = AgentResult(
+        text="resume ok",
+        turns=1,
+        tool_calls=0,
+        messages=[{"role": "assistant", "content": [{"type": "text", "text": "resume ok"}]}],
+    )
+    terminal = runner.resume_attempt("attempt-1")
+    assert terminal.text == "resume ok"
+    assert controller.finalized[-1][1] == "succeeded"
+    assert plugin_manager.post_run[-1] == "resume ok"
+
+    agent.resume_result = AgentResult(
+        text="need approval",
+        turns=1,
+        tool_calls=0,
+        messages=[],
+        blocked=True,
+    )
+    blocked = runner.resume_attempt("attempt-1")
+    assert blocked.blocked is True
+    assert controller.blocked

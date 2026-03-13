@@ -16,6 +16,7 @@ __all__ = [
     "ReceiptService",
     "BeliefService",
     "MemoryRecordService",
+    "PlanningService",
     "SupervisionService",
     "TaskController",
     "TaskExecutionContext",
@@ -41,6 +42,7 @@ _EXPORTS = {
     "SupervisionService": ("hermit.kernel.supervision", "SupervisionService"),
     "BeliefService": ("hermit.kernel.knowledge", "BeliefService"),
     "MemoryRecordService": ("hermit.kernel.knowledge", "MemoryRecordService"),
+    "PlanningService": ("hermit.kernel.planning", "PlanningService"),
 }
 
 

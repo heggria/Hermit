@@ -38,12 +38,21 @@ def _append_item(items: list[dict[str, Any]], item: dict[str, Any]) -> None:
     items.append(item)
 
 
-def build_task_topic(events: list[dict[str, Any]]) -> dict[str, Any]:
-    items: list[dict[str, Any]] = []
-    current_hint = "Task is running."
-    current_phase = ""
-    current_progress_percent: int | None = None
-    status = "running"
+def build_task_topic(
+    events: list[dict[str, Any]],
+    *,
+    initial: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    seed = dict(initial or {})
+    items = list(seed.get("items", []) or [])
+    current_hint = str(seed.get("current_hint", "") or "Task is running.")
+    current_phase = str(seed.get("current_phase", "") or "")
+    current_progress_percent = seed.get("current_progress_percent")
+    try:
+        current_progress_percent = int(current_progress_percent) if current_progress_percent is not None else None
+    except (TypeError, ValueError):
+        current_progress_percent = None
+    status = str(seed.get("status", "") or "running")
 
     for event in events:
         event_type = str(event.get("event_type", ""))

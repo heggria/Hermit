@@ -62,6 +62,7 @@ from hermit.kernel import (
     SupervisionService,
     TaskController,
 )
+from hermit.kernel.memory_governance import MemoryGovernanceService
 from hermit.kernel.proofs import ProofService
 from hermit.logging import configure_logging
 from hermit.plugin.manager import PluginManager
@@ -105,6 +106,12 @@ task_grant_app = typer.Typer(
         "Path grant inspection and revocation commands.",
     )
 )
+memory_app = typer.Typer(
+    help=_cli_t(
+        "cli.memory.help",
+        "Memory inspection and governance debugging commands.",
+    )
+)
 app.add_typer(plugin_app, name="plugin")
 app.add_typer(autostart_app, name="autostart")
 app.add_typer(schedule_app, name="schedule")
@@ -112,6 +119,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(profiles_app, name="profiles")
 app.add_typer(auth_app, name="auth")
 app.add_typer(task_app, name="task")
+app.add_typer(memory_app, name="memory")
 task_app.add_typer(task_grant_app, name="grant")
 
 DIM = "\033[2m"
@@ -1527,6 +1535,90 @@ def _get_kernel_store() -> KernelStore:
     return KernelStore(settings.kernel_db_path)
 
 
+def _format_epoch(ts: float | None) -> str:
+    if ts is None:
+        return "-"
+    return datetime.fromtimestamp(float(ts)).isoformat(timespec="seconds")
+
+
+def _memory_payload_from_record(record: Any, *, settings: Settings) -> dict[str, Any]:
+    governance = MemoryGovernanceService()
+    workspace_root = (
+        record.scope_ref
+        if getattr(record, "scope_kind", "") == "workspace" and getattr(record, "scope_ref", "")
+        else str(settings.base_dir)
+    )
+    inspection = governance.inspect_claim(
+        category=record.category,
+        claim_text=record.claim_text,
+        conversation_id=record.conversation_id,
+        workspace_root=workspace_root,
+        promotion_reason=record.promotion_reason,
+    )
+    assertion = dict(getattr(record, "structured_assertion", {}) or {})
+    return {
+        "memory_id": record.memory_id,
+        "task_id": record.task_id,
+        "conversation_id": record.conversation_id,
+        "claim_text": record.claim_text,
+        "stored_category": record.category,
+        "status": record.status,
+        "scope_kind": record.scope_kind,
+        "scope_ref": record.scope_ref,
+        "retention_class": record.retention_class,
+        "promotion_reason": record.promotion_reason,
+        "confidence": record.confidence,
+        "trust_tier": record.trust_tier,
+        "evidence_refs": list(record.evidence_refs),
+        "supersedes": list(record.supersedes),
+        "supersedes_memory_ids": list(record.supersedes_memory_ids),
+        "superseded_by_memory_id": record.superseded_by_memory_id,
+        "source_belief_ref": record.source_belief_ref,
+        "invalidation_reason": record.invalidation_reason,
+        "invalidated_at": record.invalidated_at,
+        "expires_at": record.expires_at,
+        "structured_assertion": assertion,
+        "inspection": inspection,
+    }
+
+
+def _render_memory_payload(payload: dict[str, Any]) -> str:
+    inspection = dict(payload.get("inspection", {}) or {})
+    lines = [
+        f"Memory ID: {payload.get('memory_id', '-')}",
+        f"Claim: {payload.get('claim_text', '')}",
+        f"Stored Category: {payload.get('stored_category', payload.get('category', '-'))}",
+        f"Resolved Category: {inspection.get('category', '-')}",
+        f"Retention: {inspection.get('retention_class', payload.get('retention_class', '-'))}",
+        f"Status: {payload.get('status', inspection.get('status', '-'))}",
+        f"Scope: {inspection.get('scope_kind', payload.get('scope_kind', '-'))} {inspection.get('scope_ref', payload.get('scope_ref', '-'))}",
+        f"Subject: {inspection.get('subject_key', '-') or '-'}",
+        f"Topic: {inspection.get('topic_key', '-') or '-'}",
+        f"Promotion Reason: {payload.get('promotion_reason', '-')}",
+        f"Confidence: {payload.get('confidence', '-')}",
+        f"Trust Tier: {payload.get('trust_tier', '-')}",
+        f"Expires At: {_format_epoch(payload.get('expires_at'))}",
+        f"Invalidated At: {_format_epoch(payload.get('invalidated_at'))}",
+        f"Superseded By: {payload.get('superseded_by_memory_id') or '-'}",
+    ]
+    source_belief_ref = payload.get("source_belief_ref")
+    if source_belief_ref:
+        lines.append(f"Source Belief: {source_belief_ref}")
+    if payload.get("supersedes"):
+        lines.append("Supersedes:")
+        lines.extend([f"  - {item}" for item in payload["supersedes"]])
+    explanations = list(inspection.get("explanation", []) or [])
+    if explanations:
+        lines.append("Governance:")
+        lines.extend([f"  - {item}" for item in explanations])
+    matched_signals = dict((inspection.get("structured_assertion", {}) or {}).get("matched_signals", {}) or {})
+    if matched_signals:
+        lines.append("Matched Signals:")
+        for name, hits in sorted(matched_signals.items()):
+            lines.append(f"  - {name}: {', '.join(hits)}")
+    return "\n".join(lines)
+
+
 @task_app.command("list")
 def task_list(
     limit: int = typer.Option(
@@ -1903,6 +1995,99 @@ def task_grant_revoke(
 ) -> None:
     """Revoke a path grant."""
     _task_grant_revoke(grant_id)
+
+
+@memory_app.command("inspect")
+def memory_inspect(
+    memory_id: Optional[str] = typer.Argument(
+        None,
+        help=_cli_t("cli.memory.inspect.memory_id", "Optional memory ID."),
+    ),
+    claim_text: Optional[str] = typer.Option(
+        None,
+        "--claim-text",
+        help=_cli_t("cli.memory.inspect.claim_text", "Inspect a raw claim without reading a stored memory record."),
+    ),
+    category: str = typer.Option(
+        "其他",
+        "--category",
+        help=_cli_t("cli.memory.inspect.category", "Category hint used for raw claim inspection."),
+    ),
+    conversation_id: Optional[str] = typer.Option(
+        None,
+        "--conversation-id",
+        help=_cli_t("cli.memory.inspect.conversation_id", "Conversation scope hint."),
+    ),
+    workspace_root: Optional[Path] = typer.Option(
+        None,
+        "--workspace-root",
+        help=_cli_t("cli.memory.inspect.workspace_root", "Workspace scope hint."),
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help=_cli_t("cli.memory.inspect.json", "Emit JSON instead of human-readable text."),
+    ),
+) -> None:
+    """Inspect a stored memory record or preview governance classification for a raw claim."""
+    settings = get_settings()
+    _ensure_workspace(settings)
+    governance = MemoryGovernanceService()
+
+    if not memory_id and not claim_text:
+        typer.echo(
+            _t(
+                "cli.memory.inspect.require_target",
+                "Provide either a memory_id argument or --claim-text.",
+            )
+        )
+        raise typer.Exit(1)
+
+    if memory_id:
+        store = _get_kernel_store()
+        record = store.get_memory_record(memory_id)
+        if record is None:
+            typer.echo(
+                _t(
+                    "cli.memory.inspect.not_found",
+                    "Memory not found: {memory_id}",
+                    memory_id=memory_id,
+                )
+            )
+            raise typer.Exit(1)
+        payload = _memory_payload_from_record(record, settings=settings)
+    else:
+        resolved_workspace_root = str(workspace_root.resolve()) if workspace_root else str(settings.base_dir)
+        inspection = governance.inspect_claim(
+            category=category,
+            claim_text=str(claim_text or ""),
+            conversation_id=conversation_id,
+            workspace_root=resolved_workspace_root,
+        )
+        payload = {
+            "memory_id": None,
+            "claim_text": claim_text,
+            "stored_category": category,
+            "status": "preview",
+            "scope_kind": inspection["scope_kind"],
+            "scope_ref": inspection["scope_ref"],
+            "retention_class": inspection["retention_class"],
+            "promotion_reason": "belief_promotion",
+            "confidence": None,
+            "trust_tier": None,
+            "supersedes": [],
+            "superseded_by_memory_id": None,
+            "source_belief_ref": None,
+            "invalidated_at": None,
+            "expires_at": inspection["expires_at"],
+            "structured_assertion": inspection["structured_assertion"],
+            "inspection": inspection,
+        }
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(_render_memory_payload(payload))
 
 
 # --------------- Plugin sub-commands ---------------

@@ -164,37 +164,55 @@ class WebhookServer:
             return
 
         prompt = FlattenDict(payload).render(route.prompt_template)
-
         session_id = f"webhook-{route.name}-{uuid4().hex[:8]}"
         _log.info("webhook_dispatch", route=route.name, session_id=session_id)  # type: ignore[call-arg]
 
-        result_text = ""
-        success = True
-        error: str | None = None
+        from hermit.core.runner import AgentRunner
+
+        if not isinstance(self._runner, AgentRunner):
+            result_text = ""
+            success = True
+            error: str | None = None
+            try:
+                result = self._runner.dispatch(session_id, prompt)
+                result_text = result.text or ""
+            except Exception as exc:
+                success = False
+                error = str(exc)
+                _log.exception("webhook_dispatch_error", route=route.name, error=error)  # type: ignore[call-arg]
+            finally:
+                try:
+                    self._runner.close_session(session_id)
+                except Exception:
+                    _log.exception("webhook_close_session_error", route=route.name, session_id=session_id)  # type: ignore[call-arg]
+
+            self._hooks.fire(
+                HookEvent.DISPATCH_RESULT,
+                source=f"webhook/{route.name}",
+                title=f"Webhook: {route.name}",
+                result_text=result_text,
+                success=success,
+                error=error,
+                notify=route.notify,
+                metadata={"payload_keys": list(payload.keys())},
+            )
+            return
 
         try:
-            result = self._runner.dispatch(session_id, prompt)
-            result_text = result.text or ""
+            self._runner.enqueue_ingress(
+                session_id,
+                prompt,
+                source_channel="webhook",
+                notify=route.notify,
+                source_ref=f"webhook/{route.name}",
+                ingress_metadata={
+                    "title": f"Webhook: {route.name}",
+                    "webhook_route": route.name,
+                    "payload_keys": list(payload.keys()),
+                },
+            )
         except Exception as exc:
-            success = False
-            error = str(exc)
-            _log.exception("webhook_dispatch_error", route=route.name, error=error)  # type: ignore[call-arg]
-        finally:
-            try:
-                self._runner.close_session(session_id)
-            except Exception:
-                _log.exception("webhook_close_session_error", route=route.name, session_id=session_id)  # type: ignore[call-arg]
-
-        self._hooks.fire(
-            HookEvent.DISPATCH_RESULT,
-            source=f"webhook/{route.name}",
-            title=f"Webhook: {route.name}",
-            result_text=result_text,
-            success=success,
-            error=error,
-            notify=route.notify,
-            metadata={"payload_keys": list(payload.keys())},
-        )
+            _log.exception("webhook_dispatch_error", route=route.name, error=str(exc))  # type: ignore[call-arg]
 
     def _kernel_store(self) -> Any:
         if self._runner is None:

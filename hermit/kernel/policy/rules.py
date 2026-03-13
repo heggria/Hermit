@@ -92,6 +92,37 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
     sensitive_paths = list(request.derived.get("sensitive_paths", []))
     outside_workspace = bool(request.derived.get("outside_workspace"))
     grant_ref = str(request.context.get("path_grant_ref", "") or "").strip()
+    planning_required = bool(request.context.get("planning_required", False))
+    selected_plan_ref = str(request.context.get("selected_plan_ref", "") or "").strip()
+    if planning_required and not selected_plan_ref and request.action_class in {
+        "write_local",
+        "patch_file",
+        "execute_command",
+        "network_write",
+        "credentialed_api_call",
+        "publication",
+        "vcs_mutation",
+        "external_mutation",
+    }:
+        outcomes.append(
+            RuleOutcome(
+                verdict="approval_required",
+                reasons=[PolicyReason("plan_required", "Selected execution plan is required before high-risk execution.", "warning")],
+                obligations=PolicyObligations(
+                    require_receipt=True,
+                    require_preview=False,
+                    require_approval=True,
+                    approval_risk_level=request.risk_hint or "high",
+                ),
+                approval_packet={
+                    "title": "Select an execution plan first",
+                    "summary": "This action requires a confirmed plan before it can run.",
+                    "risk_level": request.risk_hint or "high",
+                },
+                risk_level=request.risk_hint or "high",
+            )
+        )
+        return outcomes
     if request.action_class in {"write_local", "patch_file"} and sensitive_paths and outside_workspace:
         outcomes.append(
             RuleOutcome(

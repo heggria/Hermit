@@ -10,6 +10,11 @@ import structlog
 
 from hermit.builtin.memory.engine import MemoryEngine
 from hermit.builtin.memory.types import MemoryEntry
+from hermit.kernel.artifacts import ArtifactStore
+from hermit.kernel.context import TaskExecutionContext, WorkingStateSnapshot
+from hermit.kernel.context_compiler import ContextCompiler
+from hermit.kernel.planning import PlanningService
+from hermit.kernel.memory_governance import MemoryGovernanceService
 from hermit.plugin.base import HookEvent, PluginContext
 from hermit.provider.services import StructuredExtractionService, build_provider
 from hermit.storage import JsonStore
@@ -21,6 +26,7 @@ _MAX_MSG_CHARS = 800
 _CHECKPOINT_MIN_CHARS = 300
 _CHECKPOINT_MIN_MESSAGES = 6
 _CHECKPOINT_MIN_USER_MESSAGES = 2
+_GOVERNANCE = MemoryGovernanceService()
 
 _EXPLICIT_MEMORY_RE = re.compile(
     r"(记住|牢记|以后都|今后都|统一使用|统一回复|不要再|必须|务必|偏好|约定|规则|规范|"
@@ -80,7 +86,7 @@ def register(ctx: PluginContext) -> None:
     ctx.add_hook(HookEvent.SYSTEM_PROMPT, lambda: _inject_memory(engine, settings), priority=10)
     ctx.add_hook(
         HookEvent.PRE_RUN,
-        lambda prompt, **kwargs: _inject_relevant_memory(engine, settings, prompt),
+        lambda prompt, **kwargs: _inject_relevant_memory(engine, settings, prompt, **kwargs),
         priority=15,
     )
     ctx.add_hook(
@@ -101,13 +107,26 @@ def register(ctx: PluginContext) -> None:
 
 
 def _inject_memory(engine: MemoryEngine, settings: Any | None = None) -> str:
-    categories = _knowledge_categories(engine, settings)
-    prompt = engine.summary_prompt(categories, limit_per_category=3)
+    compiler_result = _compile_context_pack(
+        engine,
+        settings,
+        query="",
+        conversation_id=None,
+        runner=None,
+    )
+    if compiler_result is None:
+        categories = _knowledge_categories(engine, settings)
+        static_categories = _GOVERNANCE.filter_static_categories(categories)
+        prompt = engine.summary_prompt(static_categories, limit_per_category=3)
+        entry_count = sum(min(3, len(entries)) for entries in static_categories.values() if entries)
+        category_count = sum(1 for entries in static_categories.values() if entries)
+    else:
+        prompt = compiler_result["static_prompt"]
+        entry_count = len(compiler_result["pack"].static_memory)
+        category_count = len({item["category"] for item in compiler_result["pack"].static_memory})
     if not prompt:
         log.info("memory_injected", categories=0, entries=0)
         return ""
-    entry_count = sum(min(3, len(entries)) for entries in categories.values() if entries)
-    category_count = sum(1 for entries in categories.values() if entries)
     log.info("memory_injected", categories=category_count, entries=entry_count)
     return f"<memory_context>\n{prompt}\n</memory_context>"
 
@@ -116,14 +135,27 @@ def _inject_relevant_memory(
     engine: MemoryEngine,
     settings: Any | str | None,
     prompt: str | None = None,
+    session_id: str | None = None,
+    runner: Any | None = None,
+    **_: Any,
 ) -> str:
     # Keep backward compatibility with older helper call sites/tests that pass
     # only `(engine, prompt)`.
     if prompt is None:
         prompt = str(settings or "")
         settings = None
-    categories = _knowledge_categories(engine, settings)
-    relevant = engine.retrieval_prompt(prompt, categories=categories, limit=5, char_budget=900)
+    compiler_result = _compile_context_pack(
+        engine,
+        settings,
+        query=prompt,
+        conversation_id=session_id,
+        runner=runner,
+    )
+    if compiler_result is None:
+        categories = _knowledge_categories(engine, settings)
+        relevant = engine.retrieval_prompt(prompt, categories=categories, limit=5, char_budget=900)
+    else:
+        relevant = compiler_result["retrieval_prompt"]
     if not relevant:
         return prompt
     return f"<relevant_memory>\n{relevant}\n</relevant_memory>\n\n{prompt}"
@@ -141,12 +173,90 @@ def _knowledge_categories(engine: MemoryEngine, settings: Any | None) -> Dict[st
     store = KernelStore(Path(kernel_db_path))
     try:
         service = MemoryRecordService(store, mirror_path=Path(settings.memory_file))
-        service.bootstrap_from_markdown(Path(settings.memory_file))
-        categories = service.active_categories()
-        return categories or engine.load()
+        return service.active_categories()
     finally:
         store.close()
 
+
+def _compile_context_pack(
+    engine: MemoryEngine,
+    settings: Any | None,
+    *,
+    query: str,
+    conversation_id: str | None,
+    runner: Any | None,
+) -> dict[str, Any] | None:
+    if settings is None:
+        return None
+    kernel_db_path = getattr(settings, "kernel_db_path", None)
+    if not kernel_db_path:
+        return None
+    from hermit.kernel.store import KernelStore
+
+    artifact_store = None
+    kernel_artifacts_dir = getattr(settings, "kernel_artifacts_dir", None)
+    if kernel_artifacts_dir:
+        artifact_store = ArtifactStore(Path(kernel_artifacts_dir))
+    store = KernelStore(Path(kernel_db_path))
+    try:
+        task_id = ""
+        if runner is not None and conversation_id and getattr(runner, "task_controller", None) is not None:
+            active_task = runner.task_controller.active_task_for_conversation(conversation_id)
+            if active_task is not None:
+                task_id = active_task.task_id
+        workspace_root = str(Path(settings.memory_file).parent)
+        ctx = TaskExecutionContext(
+            conversation_id=conversation_id or "memory-system",
+            task_id=task_id,
+            step_id="context_pack",
+            step_attempt_id="context_pack",
+            source_channel="memory",
+            workspace_root=workspace_root,
+        )
+        compiler = ContextCompiler(_GOVERNANCE, artifact_store)
+        planning = PlanningService(store, artifact_store)
+        planning_state = planning.state_for_task(task_id) if task_id else None
+        pack = compiler.compile(
+            context=ctx,
+            working_state=WorkingStateSnapshot(
+                goal_summary=query[:400],
+                planning_mode=bool(planning_state.planning_mode) if planning_state else False,
+                candidate_plan_refs=list(planning_state.candidate_plan_refs) if planning_state else [],
+                selected_plan_ref=str(planning_state.selected_plan_ref or "") if planning_state else "",
+                plan_status=str(planning_state.plan_status or "none") if planning_state else "none",
+            ),
+            beliefs=store.list_beliefs(status="active", limit=200),
+            memories=store.list_memory_records(status="active", conversation_id=conversation_id, limit=500),
+            query=query,
+        )
+        if artifact_store is not None and pack.artifact_uri is not None:
+            artifact = store.create_artifact(
+                task_id=task_id or None,
+                step_id=None,
+                kind="context.pack/v1",
+                uri=pack.artifact_uri,
+                content_hash=str(pack.artifact_hash or pack.pack_hash),
+                producer="memory_hook",
+                retention_class="audit",
+                trust_tier="derived",
+                metadata={"pack_hash": pack.pack_hash, "conversation_id": conversation_id or ""},
+            )
+            if task_id:
+                store.append_event(
+                    event_type="context.pack.compiled",
+                    entity_type="task",
+                    entity_id=task_id,
+                    task_id=task_id,
+                    actor="kernel",
+                    payload={"artifact_ref": artifact.artifact_id, "pack_hash": pack.pack_hash},
+                )
+        return {
+            "pack": pack,
+            "static_prompt": compiler.render_static_prompt(pack),
+            "retrieval_prompt": compiler.render_retrieval_prompt(pack),
+        }
+    finally:
+        store.close()
 
 def _save_memories(
     engine: MemoryEngine,
@@ -494,6 +604,7 @@ def _promote_memories_via_kernel(
             memory = memory_service.promote_from_belief(
                 belief=belief,
                 conversation_id=ctx.conversation_id,
+                workspace_root=str(Path(settings.memory_file).parent),
             )
             promoted_beliefs.append(belief.belief_id)
             promoted_memories.append(memory.memory_id)
@@ -629,7 +740,7 @@ def _extract_memory_payload(
         log.info("memory_extraction_empty", reason="short_transcript", transcript_chars=len(transcript))
         return {"used_keywords": set(), "new_entries": []}
 
-    existing = engine.load()
+    existing = _knowledge_categories(engine, settings)
     existing_text = engine.summary_prompt(existing)
     user_content = (
         f"<existing_memories>\n{existing_text}\n</existing_memories>\n\n"

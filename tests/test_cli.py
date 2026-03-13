@@ -437,6 +437,50 @@ def test_task_list_show_and_receipts_commands_read_kernel_state(tmp_path, monkey
     assert "write_file executed successfully" in receipts_result.output
 
 
+def test_memory_inspect_command_reports_stored_and_preview_governance(tmp_path, monkeypatch) -> None:
+    from hermit.config import get_settings
+    from hermit.kernel.store import KernelStore
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    record = store.create_memory_record(
+        task_id="task-memory",
+        conversation_id="chat-memory",
+        category="其他",
+        claim_text="当前无任何定时任务，刚刚已经全部清理完成。",
+        confidence=0.9,
+        evidence_refs=[],
+    )
+
+    runner = CliRunner()
+    stored_result = runner.invoke(app, ["memory", "inspect", record.memory_id])
+    preview_result = runner.invoke(
+        app,
+        [
+            "memory",
+            "inspect",
+            "--claim-text",
+            "以后都用简体中文回复我，不要再切英文。",
+            "--json",
+        ],
+    )
+
+    assert stored_result.exit_code == 0
+    assert f"Memory ID: {record.memory_id}" in stored_result.output
+    assert "Resolved Category: 进行中的任务" in stored_result.output
+    assert "Subject: schedule" in stored_result.output
+    assert "Governance:" in stored_result.output
+
+    assert preview_result.exit_code == 0
+    preview_payload = json.loads(preview_result.output)
+    assert preview_payload["inspection"]["category"] == "用户偏好"
+    assert preview_payload["inspection"]["retention_class"] == "user_preference"
+    assert preview_payload["inspection"]["scope_kind"] == "global"
+
+
 def test_task_explain_command_summarizes_authority_chain(tmp_path, monkeypatch) -> None:
     from hermit.config import get_settings
     from hermit.kernel.store import KernelStore

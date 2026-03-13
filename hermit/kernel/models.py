@@ -177,7 +177,9 @@ class BeliefRecord:
     scope_kind: str
     scope_ref: str
     category: str
-    content: str
+    claim_text: str
+    structured_assertion: dict[str, Any] = field(default_factory=dict)
+    promotion_candidate: bool = True
     status: str = "active"
     confidence: float = 0.5
     trust_tier: str = "observed"
@@ -189,6 +191,10 @@ class BeliefRecord:
     created_at: float | None = None
     updated_at: float | None = None
 
+    @property
+    def content(self) -> str:
+        return self.claim_text
+
 
 @dataclass
 class MemoryRecord:
@@ -196,16 +202,29 @@ class MemoryRecord:
     task_id: str
     conversation_id: str | None
     category: str
-    content: str
+    claim_text: str
+    structured_assertion: dict[str, Any] = field(default_factory=dict)
+    scope_kind: str = "conversation"
+    scope_ref: str = ""
+    promotion_reason: str = "belief_promotion"
+    retention_class: str = "volatile_fact"
     status: str = "active"
     confidence: float = 0.5
     trust_tier: str = "durable"
     evidence_refs: list[str] = field(default_factory=list)
     supersedes: list[str] = field(default_factory=list)
+    supersedes_memory_ids: list[str] = field(default_factory=list)
+    superseded_by_memory_id: str | None = None
     source_belief_ref: str | None = None
+    invalidation_reason: str | None = None
     invalidated_at: float | None = None
+    expires_at: float | None = None
     created_at: float | None = None
     updated_at: float | None = None
+
+    @property
+    def content(self) -> str:
+        return self.claim_text
 
 
 @dataclass

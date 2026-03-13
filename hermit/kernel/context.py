@@ -18,6 +18,7 @@ class TaskExecutionContext:
     actor: str = "user"
     policy_profile: str = "default"
     workspace_root: str = ""
+    ingress_metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -30,6 +31,7 @@ class TaskExecutionContext:
             "actor": self.actor,
             "policy_profile": self.policy_profile,
             "workspace_root": self.workspace_root,
+            "ingress_metadata": dict(self.ingress_metadata),
             "created_at": self.created_at,
         }
 
@@ -44,8 +46,32 @@ class TaskExecutionContext:
             actor=str(data.get("actor", "user")),
             policy_profile=str(data.get("policy_profile", "default")),
             workspace_root=str(data.get("workspace_root", "")),
+            ingress_metadata=dict(data.get("ingress_metadata", {}) or {}),
             created_at=float(data.get("created_at", time.time())),
         )
+
+
+@dataclass
+class WorkingStateSnapshot:
+    goal_summary: str = ""
+    open_loops: list[str] = field(default_factory=list)
+    active_constraints: list[str] = field(default_factory=list)
+    pending_approvals: list[str] = field(default_factory=list)
+    recent_results: list[str] = field(default_factory=list)
+    planning_mode: bool = False
+    candidate_plan_refs: list[str] = field(default_factory=list)
+    selected_plan_ref: str = ""
+    plan_status: str = "none"
+
+    def __post_init__(self) -> None:
+        self.goal_summary = self.goal_summary[:400]
+        self.open_loops = [item[:200] for item in self.open_loops[:8]]
+        self.active_constraints = [item[:200] for item in self.active_constraints[:8]]
+        self.pending_approvals = [item[:200] for item in self.pending_approvals[:8]]
+        self.recent_results = [item[:200] for item in self.recent_results[:8]]
+        self.candidate_plan_refs = [str(item)[:200] for item in self.candidate_plan_refs[:8]]
+        self.selected_plan_ref = self.selected_plan_ref[:200]
+        self.plan_status = self.plan_status[:64] or "none"
 
 
 def capture_execution_environment(*, cwd: Path) -> dict[str, Any]:

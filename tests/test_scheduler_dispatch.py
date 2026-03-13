@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,7 @@ import pytest
 
 from hermit.builtin.scheduler.engine import SchedulerEngine
 from hermit.builtin.scheduler.models import ScheduledJob
+from hermit.core.runner import AgentRunner
 from hermit.plugin.base import HookEvent
 from hermit.plugin.hooks import HooksEngine
 
@@ -34,6 +36,15 @@ def hooks() -> HooksEngine:
 @pytest.fixture
 def engine(tmp_settings: Any, hooks: HooksEngine) -> SchedulerEngine:
     return SchedulerEngine(settings=tmp_settings, hooks=hooks)
+
+
+def _make_real_runner() -> AgentRunner:
+    return AgentRunner(
+        agent=MagicMock(workspace_root="/tmp/workspace"),
+        session_manager=SimpleNamespace(),
+        plugin_manager=SimpleNamespace(settings=SimpleNamespace(locale="zh-CN")),
+        task_controller=SimpleNamespace(source_from_session=lambda _session_id: "scheduler"),
+    )
 
 
 class TestSchedulerFiresDispatchResult:
@@ -172,3 +183,32 @@ class TestSchedulerFiresDispatchResult:
             engine._execute(job)
 
         assert schedule_events == [], "SCHEDULE_RESULT should no longer be fired"
+
+    def test_execute_enqueues_async_ingress_for_agent_runner(
+        self, engine: SchedulerEngine, hooks: HooksEngine
+    ) -> None:
+        dispatch_events: list[dict[str, Any]] = []
+        hooks.register(str(HookEvent.DISPATCH_RESULT), lambda **kw: dispatch_events.append(kw))
+        runner = _make_real_runner()
+        enqueue_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        runner.enqueue_ingress = lambda *args, **kwargs: enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_1")  # type: ignore[method-assign]
+        engine._runner = runner
+
+        job = ScheduledJob.create(
+            name="async-job", prompt="run async",
+            schedule_type="once", once_at=time.time() - 1,
+        )
+        job.feishu_chat_id = "oc_async"  # type: ignore[attr-defined]
+
+        engine._execute(job)
+
+        assert len(enqueue_calls) == 1
+        args, kwargs = enqueue_calls[0]
+        assert args[1] == "run async"
+        assert kwargs["source_channel"] == "scheduler"
+        assert kwargs["notify"] == {"feishu_chat_id": "oc_async"}
+        assert kwargs["source_ref"] == "scheduler"
+        assert kwargs["requested_by"] == "scheduler"
+        assert kwargs["ingress_metadata"]["schedule_job_id"] == job.id
+        assert kwargs["ingress_metadata"]["schedule_job_name"] == "async-job"
+        assert dispatch_events == []

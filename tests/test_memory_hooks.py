@@ -90,23 +90,93 @@ def test_inject_memory_logs_counts_when_entries_exist(tmp_path) -> None:
     log_mock.assert_called_once()
 
 
+def test_inject_memory_only_keeps_static_categories(tmp_path) -> None:
+    engine = MemoryEngine(tmp_path / "memories.md")
+    engine.save(
+        {
+            "用户偏好": [MemoryEntry(category="用户偏好", content="只能用中文回复用户")],
+            "项目约定": [MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")],
+            "工具与环境": [MemoryEntry(category="工具与环境", content="Hermit 仓库位于 /Users/beta/work/Hermit")],
+            "进行中的任务": [MemoryEntry(category="进行中的任务", content="当前无任何定时任务")],
+            "其他": [MemoryEntry(category="其他", content="今天已完成热门话题搜索")],
+            "技术决策": [MemoryEntry(category="技术决策", content="当前默认 provider 为 claude")],
+            "环境与工具": [MemoryEntry(category="环境与工具", content="图片记忆库当前为空")],
+        }
+    )
+
+    content = hooks._inject_memory(engine)
+
+    assert "<memory_context>" in content
+    assert "只能用中文回复用户" in content
+    assert "默认工作目录固定到 /repo" in content
+    assert "Hermit 仓库位于 /Users/beta/work/Hermit" in content
+    assert "当前无任何定时任务" not in content
+    assert "今天已完成热门话题搜索" not in content
+    assert "当前默认 provider 为 claude" not in content
+    assert "图片记忆库当前为空" not in content
+
+
 def test_inject_memory_prefers_kernel_memory_records_when_available(tmp_path) -> None:
     settings = _settings(tmp_path, include_kernel=True)
     store = KernelStore(settings.kernel_db_path)
-    store.create_memory_record(
-        task_id="task_kernel_memory",
-        conversation_id="chat-kernel-memory",
-        category="项目约定",
-        content="Kernel memory takes precedence",
-        confidence=0.9,
-        evidence_refs=[],
-    )
+    try:
+        store.create_memory_record(
+            task_id="task_kernel_memory",
+            conversation_id="chat-kernel-memory",
+            category="项目约定",
+            content="Kernel memory takes precedence",
+            confidence=0.9,
+            evidence_refs=[],
+        )
+        engine = MemoryEngine(settings.memory_file)
+        engine.save({"项目约定": [MemoryEntry(category="项目约定", content="legacy mirror entry")]})
+
+        content = hooks._inject_memory(engine, settings)
+
+        assert "Kernel memory takes precedence" in content
+    finally:
+        store.close()
+
+
+def test_inject_memory_filters_non_static_kernel_categories(tmp_path) -> None:
+    settings = _settings(tmp_path, include_kernel=True)
+    store = KernelStore(settings.kernel_db_path)
+    try:
+        store.create_memory_record(
+            task_id="task_pref",
+            conversation_id="chat-memory",
+            category="用户偏好",
+            content="只能用中文回复用户",
+            confidence=0.9,
+            evidence_refs=[],
+        )
+        store.create_memory_record(
+            task_id="task_task",
+            conversation_id="chat-memory",
+            category="进行中的任务",
+            content="当前无任何定时任务",
+            confidence=0.9,
+            evidence_refs=[],
+        )
+        engine = MemoryEngine(settings.memory_file)
+        engine.save({})
+
+        content = hooks._inject_memory(engine, settings)
+
+        assert "只能用中文回复用户" in content
+        assert "当前无任何定时任务" not in content
+    finally:
+        store.close()
+
+
+def test_kernel_memory_does_not_fallback_to_markdown_when_db_is_empty(tmp_path) -> None:
+    settings = _settings(tmp_path, include_kernel=True)
     engine = MemoryEngine(settings.memory_file)
     engine.save({"项目约定": [MemoryEntry(category="项目约定", content="legacy mirror entry")]})
 
     content = hooks._inject_memory(engine, settings)
 
-    assert "Kernel memory takes precedence" in content
+    assert content == ""
 
 
 def test_save_memories_returns_early_without_messages(tmp_path) -> None:

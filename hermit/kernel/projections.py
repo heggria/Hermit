@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from hermit.kernel.proofs import ProofService
+from hermit.kernel.planning import PlanningService
 from hermit.kernel.store import KernelStore
 from hermit.kernel.topics import build_task_topic
 
-_PROJECTION_SCHEMA_VERSION = "tail-v4"
+_PROJECTION_SCHEMA_VERSION = "tail-v5"
 
 
 class ProjectionService:
@@ -15,17 +18,79 @@ class ProjectionService:
         self.proofs = ProofService(store)
 
     def rebuild_task(self, task_id: str) -> dict[str, Any]:
+        cache = self.store.get_projection_cache(task_id)
+        if cache is not None and cache["schema_version"] == _PROJECTION_SCHEMA_VERSION:
+            payload = self._incremental_rebuild(task_id, cache["payload"])
+        else:
+            payload = self._full_rebuild(task_id)
+        proof = self.proofs.build_proof_summary(task_id)
+        self.store.upsert_projection_cache(
+            task_id,
+            schema_version=_PROJECTION_SCHEMA_VERSION,
+            event_head_hash=proof["head_hash"],
+            payload=payload,
+        )
+        return payload
+
+    def _full_rebuild(self, task_id: str) -> dict[str, Any]:
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise KeyError(f"Task not found: {task_id}")
+        return self._assemble_payload(task_id, task.conversation_id, previous_tool_history=[])
+
+    def _incremental_rebuild(self, task_id: str, cached_payload: dict[str, Any]) -> dict[str, Any]:
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise KeyError(f"Task not found: {task_id}")
+        previous_tool_history = list(cached_payload.get("tool_history", []))
+        last_seq = int(cached_payload.get("tool_history_event_seq", 0) or 0)
+        new_tool_history = self._tool_history_from_events(
+            self.store.list_events(task_id=task_id, after_event_seq=last_seq, limit=500)
+        )
+        return self._assemble_payload(
+            task_id,
+            task.conversation_id,
+            previous_tool_history=previous_tool_history + new_tool_history,
+        )
+
+    def _assemble_payload(
+        self,
+        task_id: str,
+        conversation_id: str,
+        *,
+        previous_tool_history: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         task = self.store.get_task(task_id)
         if task is None:
             raise KeyError(f"Task not found: {task_id}")
         proof = self.proofs.build_proof_summary(task_id)
         projection = self.store.build_task_projection(task_id)
         events = self.store.list_events(task_id=task_id, limit=500)
+        planning = PlanningService(self.store)
+        planning_state = planning.state_for_task(task_id)
         beliefs = [belief.__dict__ for belief in self.store.list_beliefs(task_id=task_id, limit=200)]
         knowledge = [
             record.__dict__
-            for record in self.store.list_memory_records(conversation_id=task.conversation_id, limit=200)
+            for record in self.store.list_memory_records(conversation_id=conversation_id, limit=200)
         ]
+        latest_context_pack_ref = None
+        for artifact in reversed(self.store.list_artifacts(task_id=task_id, limit=200)):
+            if artifact.kind == "context.pack/v1":
+                latest_context_pack_ref = artifact.artifact_id
+                break
+        latest_planning_decision_id = None
+        for decision in self.store.list_decisions(task_id=task_id, limit=200):
+            if decision.decision_type == "planning":
+                latest_planning_decision_id = decision.decision_id
+                break
+        current_tool_history = previous_tool_history or self._tool_history_from_events(events)
+        if previous_tool_history:
+            seen = {(entry["event_seq"], entry["tool_name"], entry["key_input"]) for entry in previous_tool_history}
+            for entry in self._tool_history_from_events(events):
+                key = (entry["event_seq"], entry["tool_name"], entry["key_input"])
+                if key not in seen:
+                    current_tool_history.append(entry)
+                    seen.add(key)
         rollbacks = []
         for receipt in self.store.list_receipts(task_id=task_id, limit=200):
             rollback = self.store.get_rollback_for_receipt(receipt.receipt_id)
@@ -38,14 +103,15 @@ class ProjectionService:
             "topic": build_task_topic(events),
             "beliefs": beliefs,
             "knowledge": knowledge,
+            "latest_context_pack_ref": latest_context_pack_ref,
+            "planning": planning_state.to_dict(),
+            "selected_plan_ref": planning_state.selected_plan_ref,
+            "latest_plan_artifact_refs": planning.latest_plan_artifact_refs(task_id),
+            "latest_planning_decision_id": latest_planning_decision_id,
+            "tool_history": current_tool_history,
+            "tool_history_event_seq": int(events[-1]["event_seq"]) if events else 0,
             "rollbacks": rollbacks,
         }
-        self.store.upsert_projection_cache(
-            task_id,
-            schema_version=_PROJECTION_SCHEMA_VERSION,
-            event_head_hash=proof["head_hash"],
-            payload=payload,
-        )
         return payload
 
     def rebuild_all(self) -> dict[str, Any]:
@@ -78,3 +144,45 @@ class ProjectionService:
             assert cache is not None
             return cache["payload"]
         return self.rebuild_task(task_id)
+
+    def _tool_history_from_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        history: list[dict[str, Any]] = []
+        for event in events:
+            if event["event_type"] != "action.requested":
+                continue
+            payload = dict(event["payload"])
+            tool_name = str(payload.get("tool_name") or "")
+            if not tool_name:
+                continue
+            tool_input = self._tool_input_from_event(payload.get("artifact_ref"))
+            history.append(
+                {
+                    "event_seq": int(event["event_seq"]),
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "key_input": json.dumps(self._key_input(tool_input), ensure_ascii=False),
+                    "occurred_at": float(event["occurred_at"]),
+                }
+            )
+        return history
+
+    def _tool_input_from_event(self, artifact_ref: Any) -> dict[str, Any]:
+        if not artifact_ref:
+            return {}
+        artifact = self.store.get_artifact(str(artifact_ref))
+        if artifact is None:
+            return {}
+        try:
+            raw = Path(artifact.uri).read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        tool_input = data.get("tool_input", {})
+        return dict(tool_input) if isinstance(tool_input, dict) else {}
+
+    @staticmethod
+    def _key_input(tool_input: dict[str, Any]) -> Any:
+        if not tool_input:
+            return ""
+        first_value = next(iter(tool_input.values()))
+        return first_value

@@ -3,14 +3,18 @@ from __future__ import annotations
 import datetime
 import json
 import re
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Optional
 
 from hermit.core.session import SessionManager, sanitize_session_messages
 from hermit.i18n import resolve_locale, tr
+from hermit.kernel.planning import PlanningService
 from hermit.kernel.controller import TaskController
 from hermit.kernel.observation import ObservationService
 from hermit.provider.runtime import AgentResult, AgentRuntime, ToolCallback, ToolStartCallback
+from hermit.storage import atomic_write
 
 if TYPE_CHECKING:
     from hermit.plugin.manager import PluginManager
@@ -108,21 +112,409 @@ class AgentRunner:
         self._observation_service: ObservationService | None = None
         # Instance-level copy: core commands + plugin commands added later via add_command()
         self._commands: Dict[str, tuple[CommandHandler, str, bool]] = dict(self._core_commands)
+        self._dispatch_service: object | None = None
 
     def start_background_services(self) -> None:
         if self._observation_service is None:
             self._observation_service = ObservationService(self)
         self._observation_service.start()
+        if self._dispatch_service is None:
+            from hermit.kernel.dispatch import KernelDispatchService
+
+            worker_count = int(getattr(getattr(self.pm, "settings", None), "kernel_dispatch_worker_count", 4) or 4)
+            self._dispatch_service = KernelDispatchService(self, worker_count=worker_count)
+            self._dispatch_service.start()
 
     def stop_background_services(self) -> None:
+        if self._dispatch_service is not None:
+            stopper = getattr(self._dispatch_service, "stop", None)
+            if callable(stopper):
+                stopper()
+            self._dispatch_service = None
         if self._observation_service is not None:
             self._observation_service.stop()
+            self._observation_service = None
 
     def add_command(
         self, name: str, handler: CommandHandler, help_text: str, cli_only: bool = False,
     ) -> None:
         """Register a command on this runner instance (used by plugins)."""
         self._commands[name] = (handler, help_text, cli_only)
+
+    def wake_dispatcher(self) -> None:
+        waker = getattr(self._dispatch_service, "wake", None)
+        if callable(waker):
+            waker()
+
+    def _ensure_session_started(self, session_id: str) -> None:
+        if session_id not in self._session_started:
+            self.pm.on_session_start(session_id)
+            self._session_started.add(session_id)
+
+    def _prepare_prompt_context(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        source_channel: str,
+    ) -> tuple[object, str, dict[str, object], str]:
+        ensure_conversation = getattr(self.task_controller, "ensure_conversation", None)
+        if callable(ensure_conversation):
+            ensure_conversation(session_id, source_channel=source_channel)
+        session = self.session_manager.get_or_create(session_id)
+        sanitized_messages = sanitize_session_messages(session.messages)
+        if sanitized_messages != session.messages:
+            session.messages = sanitized_messages
+            self.session_manager.save(session)
+        self._ensure_session_started(session_id)
+        prompt, run_opts = self.pm.on_pre_run(
+            text,
+            session_id=session_id,
+            session=session,
+            messages=list(session.messages),
+            runner=self,
+        )
+        now = datetime.datetime.now()
+        session_started = datetime.datetime.fromtimestamp(session.created_at)
+        time_ctx = (
+            f"<session_time>"
+            f"session_started_at={session_started.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"message_sent_at={now.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"</session_time>\n\n"
+        )
+        planning = PlanningService(self.task_controller.store, getattr(self.agent, "artifact_store", None))
+        planning_mode = planning.pending_for_conversation(session_id) or PlanningService.planning_requested(text)
+        if planning_mode:
+            run_opts = dict(run_opts)
+            run_opts["readonly_only"] = True
+            run_opts["planning_mode"] = True
+            prompt = prompt + _t("kernel.planner.mode.prompt", runner=self)
+        full_prompt = time_ctx + prompt
+        task_goal = _strip_internal_markup(text) or _strip_internal_markup(full_prompt) or text.strip() or full_prompt.strip()
+        return session, full_prompt, run_opts, task_goal
+
+    def _maybe_capture_planning_result(
+        self,
+        task_ctx: TaskExecutionContext,
+        result: AgentResult,
+        *,
+        readonly_only: bool,
+    ) -> bool:
+        if not readonly_only:
+            return False
+        step = self.task_controller.store.get_step(task_ctx.step_id)
+        if step is None or step.kind != "plan":
+            return False
+        planning = PlanningService(self.task_controller.store, getattr(self.agent, "artifact_store", None))
+        plan_ref = planning.capture_plan_result(task_ctx, plan_text=result.text or "")
+        self.task_controller.mark_planning_ready(
+            task_ctx,
+            plan_artifact_ref=plan_ref,
+            result_preview=_result_preview(result.text or ""),
+            result_text=result.text or "",
+        )
+        result.execution_status = "planning_ready"
+        result.status_managed_by_kernel = True
+        return True
+
+    def _run_existing_task(
+        self,
+        task_ctx: TaskExecutionContext,
+        prompt: str,
+        *,
+        readonly_only: bool = False,
+        disable_tools: bool = False,
+        on_tool_call: Optional[ToolCallback] = None,
+        on_tool_start: Optional[ToolStartCallback] = None,
+    ) -> AgentResult:
+        session = self.session_manager.get_or_create(task_ctx.conversation_id)
+        result = self.agent.run(
+            prompt,
+            message_history=list(session.messages),
+            on_tool_call=on_tool_call,
+            on_tool_start=on_tool_start,
+            disable_tools=disable_tools,
+            readonly_only=readonly_only,
+            task_context=task_ctx,
+        )
+        session.total_input_tokens += result.input_tokens
+        session.total_output_tokens += result.output_tokens
+        session.total_cache_read_tokens += result.cache_read_tokens
+        session.total_cache_creation_tokens += result.cache_creation_tokens
+        session.messages = result.messages
+        self.session_manager.save(session)
+        if result.suspended or result.blocked:
+            if not getattr(result, "status_managed_by_kernel", False):
+                self.task_controller.mark_suspended(
+                    task_ctx,
+                    waiting_kind=str(getattr(result, "waiting_kind", "") or "awaiting_approval"),
+                )
+        else:
+            planning_captured = self._maybe_capture_planning_result(task_ctx, result, readonly_only=readonly_only)
+            if not getattr(result, "status_managed_by_kernel", False) and not planning_captured:
+                self.task_controller.finalize_result(
+                    task_ctx,
+                    status=self._result_status(result),
+                    result_preview=_result_preview(result.text or ""),
+                    result_text=result.text or "",
+                )
+            self.pm.on_post_run(result, session_id=task_ctx.conversation_id, session=session, runner=self)
+        return result
+
+    def enqueue_ingress(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        source_channel: str | None = None,
+        notify: dict[str, object] | None = None,
+        source_ref: str = "",
+        ingress_metadata: dict[str, object] | None = None,
+        requested_by: str | None = "user",
+    ):
+        source = source_channel or self.task_controller.source_from_session(session_id)
+        _session, full_prompt, run_opts, task_goal = self._prepare_prompt_context(
+            session_id,
+            text,
+            source_channel=source,
+        )
+        task_kind = "plan" if run_opts.get("readonly_only", False) else "respond"
+        metadata = dict(ingress_metadata or {})
+        metadata.update({
+            "dispatch_mode": "async",
+            "entry_prompt": full_prompt,
+            "notify": dict(notify or {}),
+            "source_ref": source_ref,
+            "disable_tools": bool(run_opts.get("disable_tools", False)),
+            "readonly_only": bool(run_opts.get("readonly_only", False)),
+        })
+        ctx = self.task_controller.enqueue_task(
+            conversation_id=session_id,
+            goal=task_goal,
+            source_channel=source,
+            kind=task_kind,
+            policy_profile="readonly" if run_opts.get("readonly_only", False) else "default",
+            workspace_root=str(getattr(self.agent, "workspace_root", "") or ""),
+            requested_by=requested_by,
+            ingress_metadata=metadata,
+            source_ref=source_ref or None,
+        )
+        if run_opts.get("planning_mode", False):
+            planning = PlanningService(self.task_controller.store, getattr(self.agent, "artifact_store", None))
+            planning.set_pending_for_conversation(session_id, enabled=False)
+            planning.enter_planning(ctx.task_id)
+        self.wake_dispatcher()
+        return ctx
+
+    def enqueue_approval_resume(
+        self,
+        session_id: str,
+        *,
+        action: str,
+        approval_id: str,
+        reason: str = "",
+    ) -> DispatchResult:
+        approval = self.task_controller.store.get_approval(approval_id)
+        if approval is None:
+            return DispatchResult(
+                _t("kernel.runner.approval_not_found", runner=self, approval_id=approval_id),
+                is_command=True,
+            )
+
+        session = self.session_manager.get_or_create(session_id)
+        if action == "deny":
+            self.task_controller.store.resolve_approval(
+                approval_id,
+                status="denied",
+                resolved_by="user",
+                resolution={"status": "denied", "mode": "denied", "reason": reason},
+            )
+            text = _t("kernel.runner.approval_denied", runner=self)
+            messages = list(session.messages)
+            messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
+            session.messages = messages
+            self.session_manager.save(session)
+            return DispatchResult(text=text, is_command=True)
+
+        resolution_mode = "always_directory" if action == "approve_always_directory" else "once"
+        self.task_controller.store.resolve_approval(
+            approval_id,
+            status="granted",
+            resolved_by="user",
+            resolution={"status": "granted", "mode": resolution_mode},
+        )
+        self.task_controller.enqueue_resume(approval.step_attempt_id)
+        self.wake_dispatcher()
+        text = _t(
+            "kernel.runner.approval_queued",
+            runner=self,
+            default="Approval granted. The task is queued to resume.",
+        )
+        messages = list(session.messages)
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
+        session.messages = messages
+        self.session_manager.save(session)
+        return DispatchResult(text=text, is_command=True)
+
+    def process_claimed_attempt(
+        self,
+        step_attempt_id: str,
+        *,
+        on_tool_call: Optional[ToolCallback] = None,
+        on_tool_start: Optional[ToolStartCallback] = None,
+    ) -> AgentResult:
+        task_ctx = self.task_controller.context_for_attempt(step_attempt_id)
+        session_id = task_ctx.conversation_id
+        self.task_controller.ensure_conversation(session_id, source_channel=task_ctx.source_channel)
+        session = self.session_manager.get_or_create(session_id)
+        self._ensure_session_started(session_id)
+
+        metadata = dict(task_ctx.ingress_metadata or {})
+        execution_mode = str(
+            self.task_controller.store.get_step_attempt(step_attempt_id).context.get("execution_mode", "run")  # type: ignore[union-attr]
+            if self.task_controller.store.get_step_attempt(step_attempt_id) is not None
+            else "run"
+        )
+        started_at = time.time()
+        try:
+            if execution_mode == "resume":
+                result = self.agent.resume(
+                    step_attempt_id=step_attempt_id,
+                    task_context=task_ctx,
+                    on_tool_call=on_tool_call,
+                    on_tool_start=on_tool_start,
+                )
+            else:
+                result = self.agent.run(
+                    str(metadata.get("entry_prompt", "") or ""),
+                    message_history=list(session.messages),
+                    on_tool_call=on_tool_call,
+                    on_tool_start=on_tool_start,
+                    disable_tools=bool(metadata.get("disable_tools", False)),
+                    readonly_only=bool(metadata.get("readonly_only", False)),
+                    task_context=task_ctx,
+                )
+        except Exception as exc:
+            result = AgentResult(
+                text=f"[API Error] {exc}",
+                turns=0,
+                tool_calls=0,
+                messages=list(session.messages),
+                task_id=task_ctx.task_id,
+                step_id=task_ctx.step_id,
+                step_attempt_id=task_ctx.step_attempt_id,
+                execution_status="failed",
+            )
+
+        session.total_input_tokens += result.input_tokens
+        session.total_output_tokens += result.output_tokens
+        session.total_cache_read_tokens += result.cache_read_tokens
+        session.total_cache_creation_tokens += result.cache_creation_tokens
+        session.messages = result.messages
+        self.session_manager.save(session)
+
+        if result.suspended or result.blocked:
+            if not getattr(result, "status_managed_by_kernel", False):
+                self.task_controller.mark_suspended(
+                    task_ctx,
+                    waiting_kind=str(getattr(result, "waiting_kind", "") or "awaiting_approval"),
+                )
+            return result
+
+        status = self._result_status(result)
+        planning_captured = self._maybe_capture_planning_result(
+            task_ctx,
+            result,
+            readonly_only=bool(metadata.get("readonly_only", False)),
+        )
+        if not getattr(result, "status_managed_by_kernel", False) and not planning_captured:
+            self.task_controller.finalize_result(
+                task_ctx,
+                status=status,
+                result_preview=_result_preview(result.text or ""),
+                result_text=result.text or "",
+            )
+        self.pm.on_post_run(result, session_id=session_id, session=session, runner=self)
+        self._emit_async_dispatch_result(task_ctx, result, started_at=started_at)
+        self._record_scheduler_execution(task_ctx, result, started_at=started_at)
+        return result
+
+    def _emit_async_dispatch_result(
+        self,
+        task_ctx: TaskExecutionContext,
+        result: AgentResult,
+        *,
+        started_at: float,
+    ) -> None:
+        notify = dict(task_ctx.ingress_metadata.get("notify", {}) or {})
+        if not notify:
+            return
+        success = self._result_status(result) == "succeeded"
+        self.pm.hooks.fire(
+            "dispatch_result",
+            source=str(task_ctx.ingress_metadata.get("source_ref", "") or task_ctx.source_channel),
+            title=str(task_ctx.ingress_metadata.get("title", "") or task_ctx.ingress_metadata.get("schedule_job_name", "") or task_ctx.task_id),
+            result_text=result.text or "",
+            success=success,
+            error=None if success else (result.text or ""),
+            notify=notify,
+            metadata={
+                "task_id": task_ctx.task_id,
+                "step_attempt_id": task_ctx.step_attempt_id,
+                "started_at": started_at,
+                "source_channel": task_ctx.source_channel,
+            },
+            settings=getattr(self.pm, "settings", None),
+        )
+
+    def _record_scheduler_execution(
+        self,
+        task_ctx: TaskExecutionContext,
+        result: AgentResult,
+        *,
+        started_at: float,
+    ) -> None:
+        job_id = str(task_ctx.ingress_metadata.get("schedule_job_id", "") or "")
+        if not job_id:
+            return
+        from hermit.builtin.scheduler.models import JobExecutionRecord
+
+        settings = getattr(self.pm, "settings", None)
+        if settings is None:
+            return
+        job_name = str(task_ctx.ingress_metadata.get("schedule_job_name", "") or "") or job_id
+        finished_at = time.time()
+        record = JobExecutionRecord(
+            job_id=job_id,
+            job_name=job_name,
+            started_at=started_at,
+            finished_at=finished_at,
+            success=self._result_status(result) == "succeeded",
+            result_text=result.text or "",
+            error=None if self._result_status(result) == "succeeded" else (result.text or ""),
+        )
+        self.task_controller.store.append_schedule_history(record)
+        history = self.task_controller.store.list_schedule_history(limit=200)
+        history_path = Path(settings.base_dir) / "schedules" / "history.json"
+        logs_dir = Path(settings.base_dir) / "schedules" / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write(
+            history_path,
+            json.dumps({"records": [item.to_dict() for item in history]}, ensure_ascii=False, indent=2),
+        )
+        timestamp = datetime.datetime.fromtimestamp(record.started_at).strftime("%Y%m%d_%H%M%S")
+        log_name = f"{timestamp}_{record.job_id}.log"
+        lines = [
+            f"Job: {record.job_name} ({record.job_id})",
+            f"Started: {datetime.datetime.fromtimestamp(record.started_at).isoformat()}",
+            f"Finished: {datetime.datetime.fromtimestamp(record.finished_at).isoformat()}",
+            f"Duration: {record.finished_at - record.started_at:.1f}s",
+            f"Success: {record.success}",
+        ]
+        if record.error:
+            lines.append(f"Error: {record.error}")
+        lines.extend(["", "--- Result ---", record.result_text])
+        atomic_write(logs_dir / log_name, "\n".join(lines))
 
     # ------------------------------------------------------------------
     # Public dispatch entry point
@@ -180,32 +572,12 @@ class AgentRunner:
         on_tool_start: Optional[ToolStartCallback] = None,
     ) -> AgentResult:
         """Process a single user message within a session."""
-        session = self.session_manager.get_or_create(session_id)
-        sanitized_messages = sanitize_session_messages(session.messages)
-        if sanitized_messages != session.messages:
-            session.messages = sanitized_messages
-            self.session_manager.save(session)
         source_channel = self.task_controller.source_from_session(session_id) if self.task_controller else "chat"
-
-        if session_id not in self._session_started:
-            self.pm.on_session_start(session_id)
-            self._session_started.add(session_id)
-
-        prompt, run_opts = self.pm.on_pre_run(
-            text, session_id=session_id, session=session, messages=list(session.messages),
-            runner=self,
+        session, prompt, run_opts, task_goal = self._prepare_prompt_context(
+            session_id,
+            text,
+            source_channel=source_channel,
         )
-
-        now = datetime.datetime.now()
-        session_started = datetime.datetime.fromtimestamp(session.created_at)
-        time_ctx = (
-            f"<session_time>"
-            f"session_started_at={session_started.strftime('%Y-%m-%d %H:%M:%S')} "
-            f"message_sent_at={now.strftime('%Y-%m-%d %H:%M:%S')}"
-            f"</session_time>\n\n"
-        )
-        prompt = time_ctx + prompt
-        task_goal = _strip_internal_markup(text) or _strip_internal_markup(prompt) or text.strip() or prompt.strip()
 
         if self.task_controller is not None and hasattr(self.task_controller, "decide_ingress"):
             ingress = self.task_controller.decide_ingress(
@@ -240,6 +612,10 @@ class AgentRunner:
                 policy_profile="readonly" if run_opts.get("readonly_only", False) else "default",
                 workspace_root=str(getattr(self.agent, "workspace_root", "") or ""),
             )
+            if run_opts.get("planning_mode", False):
+                planning = PlanningService(self.task_controller.store, getattr(self.agent, "artifact_store", None))
+                planning.set_pending_for_conversation(session_id, enabled=False)
+                planning.enter_planning(task_ctx.task_id)
 
         result = self.agent.run(
             prompt,
@@ -270,8 +646,13 @@ class AgentRunner:
                 else:
                     self.task_controller.mark_blocked(task_ctx)
             else:
+                planning_captured = self._maybe_capture_planning_result(
+                    task_ctx,
+                    result,
+                    readonly_only=bool(run_opts.get("readonly_only", False)),
+                )
                 status = self._result_status(result)
-                if not getattr(result, "status_managed_by_kernel", False):
+                if not getattr(result, "status_managed_by_kernel", False) and not planning_captured:
                     self.task_controller.finalize_result(
                         task_ctx,
                         status=status,

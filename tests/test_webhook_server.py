@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from hermit.builtin.webhook.models import WebhookConfig, WebhookRoute, load_config
 from hermit.builtin.webhook.server import WebhookServer
+from hermit.core.runner import AgentRunner
 from hermit.kernel.store import KernelStore
 from hermit.plugin.base import HookEvent
 from hermit.plugin.hooks import HooksEngine
@@ -79,6 +80,15 @@ def _make_server(config: WebhookConfig, hooks: HooksEngine) -> WebhookServer:
     mock_runner.dispatch.return_value = mock_result
     server._runner = mock_runner
     return server
+
+
+def _make_real_runner() -> AgentRunner:
+    return AgentRunner(
+        agent=SimpleNamespace(workspace_root="/tmp/workspace"),
+        session_manager=SimpleNamespace(),
+        plugin_manager=SimpleNamespace(settings=SimpleNamespace(locale="en-US")),
+        task_controller=SimpleNamespace(source_from_session=lambda _session_id: "webhook"),
+    )
 
 
 def _seed_kernel_records(store: KernelStore) -> tuple[str, str]:
@@ -183,6 +193,28 @@ class TestWebhookServerEndpoints:
         payload = {"action": "opened", "repository": {"full_name": "org/repo"}}
         resp = client.post("/webhook/test", json=payload)
         assert resp.status_code == 202
+
+    def test_process_enqueues_async_ingress_for_agent_runner(self, simple_config, hooks) -> None:
+        server = WebhookServer(simple_config, hooks)
+        runner = _make_real_runner()
+        enqueue_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        dispatch_events: list[dict[str, Any]] = []
+        hooks.register(str(HookEvent.DISPATCH_RESULT), lambda **kw: dispatch_events.append(kw))
+        runner.enqueue_ingress = lambda *args, **kwargs: enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_1")  # type: ignore[method-assign]
+        server._runner = runner
+
+        payload = {"action": "opened", "repository": {"full_name": "org/repo"}}
+        server._process(simple_config.routes[0], payload)
+
+        assert len(enqueue_calls) == 1
+        args, kwargs = enqueue_calls[0]
+        assert args[1] == "Event: opened on org/repo"
+        assert kwargs["source_channel"] == "webhook"
+        assert kwargs["notify"] == {"feishu_chat_id": "oc_abc"}
+        assert kwargs["source_ref"] == "webhook/test"
+        assert kwargs["ingress_metadata"]["webhook_route"] == "test"
+        assert kwargs["ingress_metadata"]["payload_keys"] == ["action", "repository"]
+        assert dispatch_events == []
 
 
 # ---------------------------------------------------------------------------

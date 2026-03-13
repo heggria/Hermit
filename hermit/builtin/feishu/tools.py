@@ -607,7 +607,7 @@ def _build_bitable_query_tool() -> ToolSpec:
             )
 
             client = build_lark_client()
-            body_builder = SearchAppTableRecordRequestBody.builder().page_size(page_size)
+            body_builder = SearchAppTableRecordRequestBody.builder()
 
             if filter_field and filter_value is not None:
                 condition = (
@@ -629,6 +629,7 @@ def _build_bitable_query_tool() -> ToolSpec:
                 SearchAppTableRecordRequest.builder()
                 .app_token(app_token)
                 .table_id(table_id)
+                .page_size(page_size)
                 .request_body(body_builder.build())
                 .build()
             )

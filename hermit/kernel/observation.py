@@ -259,7 +259,8 @@ class ObservationService:
                     continue
                 self._resuming.add(attempt.step_attempt_id)
             try:
-                self._runner.resume_attempt(attempt.step_attempt_id)
+                self._runner.task_controller.enqueue_resume(attempt.step_attempt_id)
+                self._runner.wake_dispatcher()
             finally:
                 with self._lock:
                     self._resuming.discard(attempt.step_attempt_id)

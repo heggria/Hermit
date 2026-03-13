@@ -70,6 +70,7 @@ def build_action_request(
     workspace_root = attempt_ctx.workspace_root if attempt_ctx else ""
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     contract = contract_for(action_class)
+    ingress = dict(attempt_ctx.ingress_metadata or {}) if attempt_ctx else {}
     return ActionRequest(
         request_id=request_id,
         idempotency_key=request_id,
@@ -91,5 +92,8 @@ def build_action_request(
             "source_ingress": attempt_ctx.source_channel if attempt_ctx else "unknown",
             "policy_profile": attempt_ctx.policy_profile if attempt_ctx else "default",
             "workspace_root": workspace_root,
+            "selected_plan_ref": str(ingress.get("selected_plan_ref", "") or ""),
+            "plan_status": str(ingress.get("plan_status", "") or ""),
+            "planning_required": bool(ingress.get("planning_required", False)),
         },
     )
