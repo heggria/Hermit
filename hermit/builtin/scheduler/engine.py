@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
+from hermit.i18n import resolve_locale, tr
 from hermit.kernel.store import KernelStore
 from hermit.plugin.base import HookEvent
 from hermit.storage import atomic_write
@@ -27,7 +28,7 @@ _HISTORY_MAX_RECORDS = 200
 _POLL_INTERVAL = 60
 
 
-def _build_execution_prompt(task_prompt: str) -> str:
+def _build_execution_prompt(task_prompt: str, *, locale: str | None = None) -> str:
     """Wrap a scheduled task prompt so the agent returns only the final deliverable.
 
     Scheduled jobs are already fully configured before they fire. When executed,
@@ -36,17 +37,10 @@ def _build_execution_prompt(task_prompt: str) -> str:
     user conversation). The scheduler itself handles delivery to Feishu.
     """
     clean_prompt = task_prompt.strip()
-    return (
-        "你正在执行一个已经创建好的定时任务。\n"
-        "当前目标是直接产出这次任务的最终结果，用于随后发送给用户。\n"
-        "不要把当前触发当成新的需求受理流程。\n"
-        "不要询问澄清问题，不要索要 chat_id、open_id、群聊 ID、消息目标或权限信息。\n"
-        "不要调用任何创建、修改、删除定时任务的工具，也不要建议用户重新设置提醒。\n"
-        "如果原任务是提醒类，直接写出要发送给用户的提醒内容。\n"
-        "如果原任务是报告、总结、搜索或整理类，直接给出完成后的内容。\n"
-        "输出中不要包含过程说明，除非原任务明确要求。\n\n"
-        "任务内容如下：\n"
-        f"{clean_prompt}"
+    return tr(
+        "prompt.scheduler.execution",
+        locale=resolve_locale(locale),
+        task_prompt=clean_prompt,
     )
 
 
@@ -250,7 +244,10 @@ class SchedulerEngine:
         self._persist_jobs()
 
     def _run_agent(self, prompt: str) -> Any:
-        execution_prompt = _build_execution_prompt(prompt)
+        execution_prompt = _build_execution_prompt(
+            prompt,
+            locale=getattr(self._settings, "locale", None),
+        )
         if self._runner is not None:
             return self._run_agent_via_runner(execution_prompt)
         return self._run_agent_standalone(execution_prompt)

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterator
 
 from hermit.executables import resolve_uv_bin
+from hermit.i18n import catalog_locales, tr
 from hermit.provider.profiles import load_profile_catalog
 
 
@@ -25,6 +26,10 @@ class ServiceStatus:
     running: bool
     autostart_installed: bool
     autostart_loaded: bool
+
+
+def _t(message_key: str, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, default=default, **kwargs)
 
 
 def hermit_base_dir() -> Path:
@@ -163,7 +168,14 @@ def set_default_profile(profile_name: str, *, base_dir: Path | None = None) -> P
     resolved_base_dir = (base_dir or hermit_base_dir()).expanduser()
     catalog = load_profile_catalog(resolved_base_dir)
     if profile_name not in catalog.profiles:
-        raise RuntimeError(f"Profile '{profile_name}' is not defined in {catalog.path}.")
+        raise RuntimeError(
+            _t(
+                "companion.control.profile.not_defined",
+                "Profile '{profile_name}' is not defined in {path}.",
+                profile_name=profile_name,
+                path=catalog.path,
+            )
+        )
 
     path = ensure_config_file(resolved_base_dir)
     text = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -379,7 +391,12 @@ def start_service(
     resolved_base_dir = base_dir or hermit_base_dir()
     status = service_status(adapter, base_dir=resolved_base_dir)
     if status.running:
-        return f"Hermit service is already running for '{adapter}' (PID {status.pid})."
+        return _t(
+            "companion.control.service.already_running",
+            "Hermit service is already running for '{adapter}' (PID {pid}).",
+            adapter=adapter,
+            pid=status.pid,
+        )
 
     log_dir = hermit_log_dir(resolved_base_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -403,16 +420,30 @@ def start_service(
         time.sleep(0.1)
         current_status = service_status(adapter, base_dir=resolved_base_dir)
         if current_status.running:
-            return f"Started Hermit service for '{adapter}' (PID {current_status.pid}). Logs: {log_dir}"
+            return _t(
+                "companion.control.service.started",
+                "Started Hermit service for '{adapter}' (PID {pid}). Logs: {log_dir}",
+                adapter=adapter,
+                pid=current_status.pid,
+                log_dir=log_dir,
+            )
 
     failure_detail = _extract_preflight_failure(stdout_path)
     if failure_detail:
-        return (
-            f"Failed to start Hermit service for '{adapter}'. "
-            f"{failure_detail} Logs: {stdout_path} / {stderr_path}"
+        return _t(
+            "companion.control.service.start_failed_with_detail",
+            "Failed to start Hermit service for '{adapter}'. {detail} Logs: {stdout_path} / {stderr_path}",
+            adapter=adapter,
+            detail=failure_detail,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
         )
-    return (
-        f"Failed to start Hermit service for '{adapter}'. Check logs: {stdout_path} / {stderr_path}"
+    return _t(
+        "companion.control.service.start_failed",
+        "Failed to start Hermit service for '{adapter}'. Check logs: {stdout_path} / {stderr_path}",
+        adapter=adapter,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
     )
 
 
@@ -421,9 +452,17 @@ def _extract_preflight_failure(stdout_path: Path) -> str | None:
         text = stdout_path.read_text(encoding="utf-8")
     except OSError:
         return None
-    marker = "启动前检查未通过："
-    index = text.rfind(marker)
-    if index == -1:
+    marker = None
+    index = -1
+    for locale in catalog_locales():
+        candidate = tr("cli.preflight.failed", locale=locale, default="")
+        if not candidate:
+            continue
+        found = text.rfind(candidate)
+        if found > index:
+            marker = candidate
+            index = found
+    if marker is None or index == -1:
         return None
     tail = text[index + len(marker) :]
     lines: list[str] = []
@@ -440,22 +479,39 @@ def _extract_preflight_failure(stdout_path: Path) -> str | None:
         lines.append(stripped.removeprefix("-").strip())
     if not lines:
         return None
-    return "Preflight failed: " + " ".join(lines)
+    return _t(
+        "companion.control.service.preflight_failed",
+        "Preflight failed: {messages}",
+        messages=" ".join(lines),
+    )
 
 
 def stop_service(adapter: str, *, base_dir: Path | None = None) -> str:
     current_status = service_status(adapter, base_dir=base_dir)
     if not current_status.running or current_status.pid is None:
-        return f"Hermit service is not running for '{adapter}'."
+        return _t(
+            "companion.control.service.not_running",
+            "Hermit service is not running for '{adapter}'.",
+            adapter=adapter,
+        )
     os.kill(current_status.pid, signal.SIGTERM)
-    return f"Sent SIGTERM to Hermit service for '{adapter}' (PID {current_status.pid})."
+    return _t(
+        "companion.control.service.sigterm_sent",
+        "Sent SIGTERM to Hermit service for '{adapter}' (PID {pid}).",
+        adapter=adapter,
+        pid=current_status.pid,
+    )
 
 
 def reload_service(
     adapter: str, *, base_dir: Path | None = None, profile: str | None = None
 ) -> str:
     run_hermit_command(["reload", "--adapter", adapter], base_dir=base_dir, profile=profile)
-    return f"Reload signal sent for '{adapter}'."
+    return _t(
+        "companion.control.service.reload_sent",
+        "Reload signal sent for '{adapter}'.",
+        adapter=adapter,
+    )
 
 
 def switch_profile(adapter: str, profile_name: str, *, base_dir: Path | None = None) -> str:
@@ -464,9 +520,12 @@ def switch_profile(adapter: str, profile_name: str, *, base_dir: Path | None = N
     status = service_status(adapter, base_dir=resolved_base_dir)
     if status.autostart_loaded:
         reload_service(adapter, base_dir=resolved_base_dir)
-        return (
-            f"Switched default profile to '{profile_name}' in {resolved_base_dir / 'config.toml'} "
-            f"and reloaded launchd-managed '{adapter}'."
+        return _t(
+            "companion.control.profile.switched_and_reloaded",
+            "Switched default profile to '{profile_name}' in {config_path} and reloaded launchd-managed '{adapter}'.",
+            profile_name=profile_name,
+            config_path=resolved_base_dir / "config.toml",
+            adapter=adapter,
         )
     if status.running:
         stop_service(adapter, base_dir=resolved_base_dir)
@@ -475,8 +534,18 @@ def switch_profile(adapter: str, profile_name: str, *, base_dir: Path | None = N
             if not service_status(adapter, base_dir=resolved_base_dir).running:
                 break
         start_message = start_service(adapter, base_dir=resolved_base_dir)
-        return f"Switched default profile to '{profile_name}'. {start_message}"
-    return f"Switched default profile to '{profile_name}' in {resolved_base_dir / 'config.toml'}."
+        return _t(
+            "companion.control.profile.switched_with_restart",
+            "Switched default profile to '{profile_name}'. {start_message}",
+            profile_name=profile_name,
+            start_message=start_message,
+        )
+    return _t(
+        "companion.control.profile.switched",
+        "Switched default profile to '{profile_name}' in {config_path}.",
+        profile_name=profile_name,
+        config_path=resolved_base_dir / "config.toml",
+    )
 
 
 def update_profile_bool_and_restart(
@@ -490,12 +559,20 @@ def update_profile_bool_and_restart(
     resolved_base_dir = (base_dir or hermit_base_dir()).expanduser()
     update_profile_setting(profile_name, key, enabled, base_dir=resolved_base_dir)
     status = service_status(adapter, base_dir=resolved_base_dir)
-    state_text = "enabled" if enabled else "disabled"
+    state_text = (
+        _t("companion.control.state.enabled", "enabled")
+        if enabled
+        else _t("companion.control.state.disabled", "disabled")
+    )
     if status.autostart_loaded:
         reload_service(adapter, base_dir=resolved_base_dir)
-        return (
-            f"Set '{key}' to {state_text} for profile '{profile_name}' "
-            f"and reloaded launchd-managed '{adapter}'."
+        return _t(
+            "companion.control.profile_setting.updated_and_reloaded",
+            "Set '{key}' to {state_text} for profile '{profile_name}' and reloaded launchd-managed '{adapter}'.",
+            key=key,
+            state_text=state_text,
+            profile_name=profile_name,
+            adapter=adapter,
         )
     if status.running:
         stop_service(adapter, base_dir=resolved_base_dir)
@@ -504,10 +581,21 @@ def update_profile_bool_and_restart(
             if not service_status(adapter, base_dir=resolved_base_dir).running:
                 break
         start_message = start_service(adapter, base_dir=resolved_base_dir)
-        return f"Set '{key}' to {state_text} for profile '{profile_name}'. {start_message}"
-    return (
-        f"Set '{key}' to {state_text} for profile '{profile_name}' in "
-        f"{resolved_base_dir / 'config.toml'}."
+        return _t(
+            "companion.control.profile_setting.updated_with_restart",
+            "Set '{key}' to {state_text} for profile '{profile_name}'. {start_message}",
+            key=key,
+            state_text=state_text,
+            profile_name=profile_name,
+            start_message=start_message,
+        )
+    return _t(
+        "companion.control.profile_setting.updated",
+        "Set '{key}' to {state_text} for profile '{profile_name}' in {config_path}.",
+        key=key,
+        state_text=state_text,
+        profile_name=profile_name,
+        config_path=resolved_base_dir / "config.toml",
     )
 
 
@@ -518,7 +606,12 @@ def open_path(path: Path) -> None:
             ["open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         return
-    raise RuntimeError("Opening paths is only implemented for macOS.")
+    raise RuntimeError(
+        _t(
+            "companion.control.open_path.mac_only",
+            "Opening paths is only implemented for macOS.",
+        )
+    )
 
 
 def open_in_textedit(path: Path) -> None:
@@ -529,11 +622,21 @@ def open_in_textedit(path: Path) -> None:
             stderr=subprocess.DEVNULL,
         )
         return
-    raise RuntimeError("Opening TextEdit is only implemented for macOS.")
+    raise RuntimeError(
+        _t(
+            "companion.control.open_textedit.mac_only",
+            "Opening TextEdit is only implemented for macOS.",
+        )
+    )
 
 
 def open_url(url: str) -> None:
     if sys.platform == "darwin":
         subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
-    raise RuntimeError("Opening URLs is only implemented for macOS.")
+    raise RuntimeError(
+        _t(
+            "companion.control.open_url.mac_only",
+            "Opening URLs is only implemented for macOS.",
+        )
+    )

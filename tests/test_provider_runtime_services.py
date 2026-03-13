@@ -19,12 +19,19 @@ from hermit.provider.contracts import (
 )
 from hermit.provider.runtime import AgentRuntime
 from hermit.provider.services import (
+    LLMProgressSummarizer,
     StructuredExtractionService,
     VisionAnalysisService,
     build_approval_copy_service,
     build_provider,
     build_provider_client_kwargs,
+    build_progress_summarizer,
 )
+
+
+@pytest.fixture(autouse=True)
+def _force_provider_services_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
 
 class FakeProvider:
@@ -291,8 +298,8 @@ def test_build_approval_copy_service_returns_template_when_disabled() -> None:
         "approval_demo",
     )
 
-    assert copy.title == "确认文件修改"
-    assert "准备修改 1 个文件" in copy.summary
+    assert copy.title == "Confirm File Change"
+    assert "modify 1 file" in copy.summary
 
 
 def test_llm_approval_formatter_output_is_used_when_enabled(monkeypatch) -> None:
@@ -302,7 +309,7 @@ def test_llm_approval_formatter_output_is_used_when_enabled(monkeypatch) -> None
                 content=[
                     {
                         "type": "text",
-                        "text": '{"title":"确认修改代码","summary":"准备修改 1 个文件 `src/app.py`。","detail":"这是一次本地代码变更，请确认后继续。"}',
+                        "text": '{"title":"Confirm Code Change","summary":"The agent is about to modify 1 file `src/app.py`.","detail":"This is a local code change. Confirm to continue."}',
                     }
                 ]
             )
@@ -331,8 +338,8 @@ def test_llm_approval_formatter_output_is_used_when_enabled(monkeypatch) -> None
         "approval_demo",
     )
 
-    assert copy.title == "确认修改代码"
-    assert copy.summary == "准备修改 1 个文件 `src/app.py`。"
+    assert copy.title == "Confirm Code Change"
+    assert copy.summary == "The agent is about to modify 1 file `src/app.py`."
     assert provider.requests[0].system_prompt is not None
 
 
@@ -359,7 +366,30 @@ def test_llm_approval_formatter_falls_back_when_provider_init_fails(monkeypatch)
         "approval_demo",
     )
 
-    assert copy.summary == "准备执行一条会修改当前环境的命令。"
+    assert copy.summary == "The agent is about to run a command that changes the current environment."
+
+
+def test_build_approval_copy_service_can_render_zh_cn(monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+
+    service = build_approval_copy_service(
+        SimpleNamespace(
+            approval_copy_formatter_enabled=False,
+            locale="zh-CN",
+        )
+    )
+
+    copy = service.resolve_copy(
+        {
+            "tool_name": "write_file",
+            "target_paths": ["src/app.py"],
+            "risk_level": "high",
+        },
+        "approval_demo",
+    )
+
+    assert copy.title == "确认文件修改"
+    assert "准备修改 1 个文件" in copy.summary
 
 
 def test_build_provider_supports_claude_codex_and_oauth(monkeypatch, tmp_path: Path) -> None:
@@ -634,3 +664,43 @@ def test_llm_approval_formatter_requires_complete_fields() -> None:
     )
 
     assert formatter.format({"tool_name": "bash"}) is None
+
+
+def test_llm_progress_summarizer_requires_summary_field() -> None:
+    summarizer = LLMProgressSummarizer(
+        FakeProvider(responses=[ProviderResponse(content=[{"type": "text", "text": '{"detail":"waiting"}'}])]),
+        model="fake",
+    )
+
+    assert summarizer.summarize(facts={"task": {"title": "Watch logs"}}) is None
+
+
+def test_build_progress_summarizer_uses_provider_clone_and_locale() -> None:
+    provider = FakeProvider(
+        responses=[
+            ProviderResponse(
+                content=[
+                    {
+                        "type": "text",
+                        "text": '{"summary":"正在等待 dev server 就绪","detail":"下一步会做健康检查","phase":"starting","progress_percent":30}',
+                    }
+                ]
+            )
+        ]
+    )
+    settings = SimpleNamespace(
+        progress_summary_enabled=True,
+        progress_summary_model="gpt-progress",
+        progress_summary_max_tokens=88,
+        locale="zh-CN",
+    )
+
+    summarizer = build_progress_summarizer(settings, provider=provider, model="fallback-model")
+
+    assert summarizer is not None
+    summary = summarizer.summarize(facts={"task": {"title": "Watch dev"}})
+    assert summary is not None
+    assert summary.summary == "正在等待 dev server 就绪"
+    assert summary.phase == "starting"
+    assert provider.requests[0].model == "gpt-progress"
+    assert "Simplified Chinese" in provider.requests[0].system_prompt

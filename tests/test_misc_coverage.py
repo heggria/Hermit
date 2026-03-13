@@ -21,6 +21,11 @@ from hermit.provider import messages
 from hermit.storage.atomic import atomic_write
 
 
+@pytest.fixture(autouse=True)
+def _force_misc_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
+
+
 def test_compat_plugin_modules_load_skills_rules_and_hooks(tmp_path: Path) -> None:
     skills_dir = tmp_path / "skills"
     rules_dir = tmp_path / "rules"
@@ -82,8 +87,8 @@ def test_usage_command_registers_and_formats_session_totals() -> None:
 
     assert ctx.commands[0].name == "/usage"
     assert result.is_command is True
-    assert "输入：1,200" in result.text
-    assert "消息轮次：2" in result.text
+    assert "Input: 1,200" in result.text
+    assert "User turns: 2" in result.text
 
 
 def test_webhook_hooks_register_and_manage_server_lifecycle(monkeypatch) -> None:

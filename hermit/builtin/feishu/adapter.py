@@ -20,6 +20,7 @@ from hermit.builtin.feishu.reply import (
     build_error_card,
     build_progress_card,
     build_result_card_with_process,
+    build_task_topic_card,
     build_thinking_card,
     format_tool_start_hint,
     make_tool_step,
@@ -29,7 +30,9 @@ from hermit.builtin.feishu.reply import (
     send_text_reply,
     smart_reply,
 )
+from hermit.i18n import resolve_locale, tr
 from hermit.kernel.approval_copy import ApprovalCopyService
+from hermit.kernel.projections import ProjectionService
 from hermit.plugin.base import AdapterSpec
 
 if TYPE_CHECKING:
@@ -39,6 +42,7 @@ log = logging.getLogger(__name__)
 
 # How often (seconds) to check for idle sessions and fire SESSION_END.
 _SWEEP_INTERVAL_SECONDS = 300  # 5 minutes
+_TOPIC_REFRESH_INTERVAL_SECONDS = 5
 
 # Minimum seconds between consecutive PATCH calls on the progress card.
 _PATCH_MIN_INTERVAL = 1.0
@@ -83,11 +87,18 @@ class FeishuAdapter:
         self._seen_lock = threading.Lock()
         self._stopped = False
         self._sweep_timer: threading.Timer | None = None
+        self._topic_timer: threading.Timer | None = None
         self._ws_thread: threading.Thread | None = None
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._ws_exited = threading.Event()
         self._ws_error: BaseException | None = None
         self._approval_copy = ApprovalCopyService()
+
+    def _locale(self) -> str:
+        return resolve_locale(getattr(self._settings, "locale", None))
+
+    def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+        return tr(message_key, locale=self._locale(), default=default, **kwargs)
 
     async def start(self, runner: AgentRunner) -> None:
         if not self._app_id or not self._app_secret:
@@ -102,6 +113,7 @@ class FeishuAdapter:
         self._ws_loop = None
         self._ws_exited.clear()
         self._schedule_sweep()
+        self._schedule_topic_refresh()
 
         # The Feishu SDK exposes a blocking start() call, so we keep it on a
         # dedicated daemon thread and shut it down explicitly on Ctrl+C.
@@ -171,6 +183,9 @@ class FeishuAdapter:
         if self._sweep_timer is not None:
             self._sweep_timer.cancel()
             self._sweep_timer = None
+        if self._topic_timer is not None:
+            self._topic_timer.cancel()
+            self._topic_timer = None
 
         # Fire SESSION_END for all sessions that were ever started so that
         # memories are saved before the process exits.
@@ -219,6 +234,16 @@ class FeishuAdapter:
         self._sweep_timer.daemon = True
         self._sweep_timer.start()
 
+    def _schedule_topic_refresh(self) -> None:
+        if self._stopped:
+            return
+        self._topic_timer = threading.Timer(
+            _TOPIC_REFRESH_INTERVAL_SECONDS,
+            self._refresh_task_topics,
+        )
+        self._topic_timer.daemon = True
+        self._topic_timer.start()
+
     def _sweep_idle_sessions(self) -> None:
         """Close sessions that have been idle past the timeout, firing SESSION_END."""
         if self._runner is None or self._stopped:
@@ -236,6 +261,102 @@ class FeishuAdapter:
             except Exception:
                 log.exception("sweep close_session error for %s", sid)
         self._schedule_sweep()
+
+    def _refresh_task_topics(self) -> None:
+        if self._runner is None or self._client is None or self._stopped:
+            return
+        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
+        if store is None:
+            return
+        try:
+            for conversation_id in store.list_conversations():
+                conversation = store.get_conversation(conversation_id)
+                if conversation is None:
+                    continue
+                metadata = dict(conversation.metadata or {})
+                mappings = dict(metadata.get("feishu_task_topics", {}) or {})
+                for task_id, mapping in list(mappings.items()):
+                    if not isinstance(mapping, dict):
+                        continue
+                    task = store.get_task(task_id)
+                    if task is None or task.source_channel != "feishu":
+                        continue
+                    message_id = str(mapping.get("root_message_id", "") or "")
+                    if not message_id:
+                        continue
+                    self._patch_task_topic(task_id, message_id=message_id)
+        finally:
+            self._schedule_topic_refresh()
+
+    def _bind_task_topic(self, conversation_id: str, task_id: str, *, chat_id: str, root_message_id: str) -> None:
+        if self._runner is None:
+            return
+        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
+        if store is None:
+            return
+        conversation = store.get_conversation(conversation_id)
+        metadata = dict(conversation.metadata if conversation is not None else {})
+        mappings = dict(metadata.get("feishu_task_topics", {}) or {})
+        mappings[task_id] = {
+            "chat_id": chat_id,
+            "root_message_id": root_message_id,
+        }
+        metadata["feishu_task_topics"] = mappings
+        store.update_conversation_metadata(conversation_id, metadata)
+
+    def _task_topic_mapping(self, conversation_id: str, task_id: str) -> dict[str, Any]:
+        if self._runner is None:
+            return {}
+        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
+        if store is None:
+            return {}
+        conversation = store.get_conversation(conversation_id)
+        if conversation is None:
+            return {}
+        metadata = dict(conversation.metadata or {})
+        mappings = dict(metadata.get("feishu_task_topics", {}) or {})
+        value = mappings.get(task_id, {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _unbind_task_topic(self, conversation_id: str, task_id: str) -> None:
+        if self._runner is None:
+            return
+        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
+        if store is None:
+            return
+        conversation = store.get_conversation(conversation_id)
+        if conversation is None:
+            return
+        metadata = dict(conversation.metadata or {})
+        mappings = dict(metadata.get("feishu_task_topics", {}) or {})
+        if task_id not in mappings:
+            return
+        mappings.pop(task_id, None)
+        metadata["feishu_task_topics"] = mappings
+        store.update_conversation_metadata(conversation_id, metadata)
+
+    def _patch_task_topic(self, task_id: str, *, message_id: str | None = None) -> None:
+        if self._runner is None or self._client is None:
+            return
+        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
+        if store is None:
+            return
+        task = store.get_task(task_id)
+        if task is None:
+            return
+        mapping = self._task_topic_mapping(task.conversation_id, task_id)
+        root_message_id = message_id or str(mapping.get("root_message_id", "") or "")
+        if not root_message_id:
+            return
+        projection = ProjectionService(store).ensure_task_projection(task_id)
+        topic = dict(projection.get("topic", {}) or {})
+        default_title = self._t("feishu.adapter.topic.default_title")
+        title = str(projection.get("task", {}).get("title", "") or default_title)
+        patch_card(
+            self._client,
+            root_message_id,
+            build_task_topic_card(topic, title=title[:40] or default_title, locale=self._locale()),
+        )
 
     def _flush_all_sessions(self) -> None:
         """Close every active session on shutdown so SESSION_END fires for each."""
@@ -315,60 +436,66 @@ class FeishuAdapter:
 
         if value.get("kind") != "approval" or action_type not in {"approve_once", "approve_always_directory", "deny"} or not approval_id:
             return self._card_action_response(
-                "暂不支持这个按钮操作。",
+                self._t("feishu.adapter.card_action.unsupported"),
                 level="info",
             )
         if self._runner is None or self._client is None:
             return self._card_action_response(
-                "Hermit 当前不可用，请稍后重试。",
+                self._t("feishu.adapter.card_action.unavailable"),
                 level="error",
             )
 
         store = getattr(getattr(self._runner, "task_controller", None), "store", None)
         if store is None:
             return self._card_action_response(
-                "审批内核未启用。",
+                self._t("feishu.adapter.card_action.kernel_disabled"),
                 level="error",
             )
 
         approval = store.get_approval(approval_id)
         if approval is None:
             return self._card_action_response(
-                f"未找到审批：{approval_id}",
+                self._t("feishu.adapter.card_action.not_found", approval_id=approval_id),
                 level="error",
             )
         if approval.status != "pending":
-            status_text = f"该审批已处理：{approval.status}"
+            status_text = self._t("feishu.adapter.card_action.already_handled", status=approval.status)
             return self._card_action_response(
                 status_text,
                 level="info",
-                card=build_approval_resolution_card(approval.status, approval_id, status_text),
+                card=build_approval_resolution_card(
+                    approval.status,
+                    approval_id,
+                    status_text,
+                    locale=self._locale(),
+                ),
             )
 
         try:
             self._executor.submit(self._handle_approval_action, approval_id, action_type, message_id)
         except RuntimeError:
             return self._card_action_response(
-                "后台处理器已停止，审批未提交。",
+                self._t("feishu.adapter.card_action.executor_stopped"),
                 level="error",
             )
 
         if action_type in {"approve_once", "approve_always_directory"}:
-            action_text = "已通过，正在继续执行。"
+            action_text = self._t("feishu.adapter.card_action.approved_once")
             if action_type == "approve_always_directory":
-                action_text = "已通过，并记住此目录授权，正在继续执行。"
+                action_text = self._t("feishu.adapter.card_action.approved_always")
             return self._card_action_response(
                 action_text,
                 level="success",
-                card=build_thinking_card(action_text),
+                card=build_thinking_card(action_text, locale=self._locale()),
             )
         return self._card_action_response(
-            "已拒绝，本次操作不会继续执行。",
+            self._t("feishu.adapter.card_action.denied"),
             level="success",
             card=build_approval_resolution_card(
                 "deny",
                 approval_id,
-                "本次审批已拒绝，当前操作不会继续。\n如需继续，请重新发起请求；届时你可以对新的审批请求再次进行批准。",
+                self._t("feishu.adapter.card_action.denied_detail"),
+                locale=self._locale(),
             ),
         )
 
@@ -435,9 +562,9 @@ class FeishuAdapter:
 
             approval_copy = self._approval_copy.resolve_copy(approval.requested_action, approval.approval_id)
             command_preview = str(approval.requested_action.get("command_preview", "") or "").strip() or None
-            recovery_hint = (
-                "服务恢复后，旧审批卡片的按钮可能已失效；"
-                f"请使用这张新卡片，或直接回复“批准 {approval.approval_id}”/“拒绝 {approval.approval_id}”。"
+            recovery_hint = self._t(
+                "feishu.adapter.reissue.recovery_hint",
+                approval_id=approval.approval_id,
             )
             detail = approval_copy.detail.strip()
             detail = f"{detail}\n{recovery_hint}" if detail else recovery_hint
@@ -447,10 +574,17 @@ class FeishuAdapter:
                 title=approval_copy.title,
                 detail=detail,
                 command_preview=command_preview,
+                locale=self._locale(),
                 **self._approval_card_kwargs(approval),
             )
             message_id = send_card(self._client, chat_id, card)
             if message_id:
+                self._bind_task_topic(
+                    task.conversation_id,
+                    approval.task_id,
+                    chat_id=chat_id,
+                    root_message_id=message_id,
+                )
                 log.info("reissued_pending_approval_card approval_id=%s chat_id=%s", approval.approval_id, chat_id)
 
     def _should_dispatch_raw(self, session_id: str, raw_text: str) -> bool:
@@ -523,7 +657,7 @@ class FeishuAdapter:
                 card_msg_id[0] = reply_card_return_id(
                     self._client,
                     msg.message_id,
-                    build_thinking_card("思考中..."),
+                    build_thinking_card(self._t("feishu.adapter.progress.thinking"), locale=self._locale()),
                 )
 
         def _patch_progress(hint: str, throttle: bool = True) -> None:
@@ -535,7 +669,7 @@ class FeishuAdapter:
                 return
             patch_card(
                 self._client, card_msg_id[0],
-                build_progress_card(steps, hint),
+                build_progress_card(steps, hint, locale=self._locale()),
             )
             last_patch_time[0] = now
 
@@ -543,9 +677,9 @@ class FeishuAdapter:
             """Called immediately before each tool executes — updates card hint."""
             if name in _SKIP_TOOLS:
                 return
-            _ensure_card(hint="思考中...")
+            _ensure_card(hint=self._t("feishu.adapter.progress.thinking"))
             # Show what we're about to do; never throttle (user is waiting).
-            _patch_progress(format_tool_start_hint(name, tool_input), throttle=False)
+            _patch_progress(format_tool_start_hint(name, tool_input, locale=self._locale()), throttle=False)
             step_start_time[0] = time.monotonic()
 
         def on_tool_call(name: str, tool_input: dict, result: str) -> None:
@@ -555,9 +689,9 @@ class FeishuAdapter:
             elapsed_ms = int((time.monotonic() - step_start_time[0]) * 1000)
             step_start_time[0] = time.monotonic()
 
-            step = make_tool_step(name, tool_input, result, elapsed_ms)
+            step = make_tool_step(name, tool_input, result, elapsed_ms, locale=self._locale())
             steps.append(step)
-            _patch_progress("正在继续处理...", throttle=True)
+            _patch_progress(self._t("feishu.adapter.progress.continue"), throttle=True)
 
         # ── Run agent ────────────────────────────────────────────────────────
         try:
@@ -573,17 +707,20 @@ class FeishuAdapter:
                 if card_msg_id[0]:
                     patch_card(
                         self._client, card_msg_id[0],
-                        build_error_card("Agent 处理出错，请稍后重试"),
+                        build_error_card(self._t("feishu.adapter.error.agent_failed"), locale=self._locale()),
                     )
                 else:
                     send_text_reply(
-                        self._client, msg.message_id, "[Error] Agent failed to process."
+                        self._client,
+                        msg.message_id,
+                        self._t("feishu.adapter.error.agent_failed_text"),
                     )
             return
 
         # ── Final result ─────────────────────────────────────────────────────
         if result.text and self._client and msg.message_id:
-            blocked = bool(result.agent_result and result.agent_result.blocked)
+            blocked = bool(result.agent_result and (result.agent_result.blocked or result.agent_result.suspended))
+            task_id = str(getattr(result.agent_result, "task_id", "") or "")
             approval_id = str(getattr(result.agent_result, "approval_id", "") or "")
             if blocked and approval_id:
                 approval = None
@@ -608,17 +745,32 @@ class FeishuAdapter:
                     title=approval_title,
                     detail=approval_detail,
                     command_preview=command_preview,
+                    locale=self._locale(),
                     **self._approval_card_kwargs(approval),
                 )
                 if card_msg_id[0]:
                     patch_card(self._client, card_msg_id[0], approval_card)
                 else:
-                    reply_card_return_id(self._client, msg.message_id, approval_card)
+                    card_msg_id[0] = reply_card_return_id(self._client, msg.message_id, approval_card)
             elif card_msg_id[0]:
-                final_card = build_result_card_with_process(result.text, steps)
+                final_card = build_result_card_with_process(result.text, steps, locale=self._locale())
                 patch_card(self._client, card_msg_id[0], final_card)
             else:
-                smart_reply(self._client, msg.message_id, result.text)
+                smart_reply(self._client, msg.message_id, result.text, locale=self._locale())
+
+            if task_id and card_msg_id[0]:
+                if blocked:
+                    self._bind_task_topic(
+                        session_id,
+                        task_id,
+                        chat_id=msg.chat_id,
+                        root_message_id=card_msg_id[0],
+                    )
+                    self._patch_task_topic(task_id, message_id=card_msg_id[0])
+                else:
+                    self._unbind_task_topic(session_id, task_id)
+            elif task_id and getattr(result.agent_result, "execution_status", "") == "note_appended":
+                self._patch_task_topic(task_id)
 
             send_done(self._client, msg.message_id, self._settings)
 
@@ -648,7 +800,10 @@ class FeishuAdapter:
                 patch_card(
                     self._client,
                     message_id,
-                    build_error_card(f"审批不存在：{approval_id}"),
+                    build_error_card(
+                        self._t("feishu.adapter.approval.missing", approval_id=approval_id),
+                        locale=self._locale(),
+                    ),
                 )
             return
 
@@ -658,7 +813,10 @@ class FeishuAdapter:
                 patch_card(
                     self._client,
                     message_id,
-                    build_error_card(f"审批关联任务不存在：{approval.task_id}"),
+                    build_error_card(
+                        self._t("feishu.adapter.approval.task_missing", task_id=approval.task_id),
+                        locale=self._locale(),
+                    ),
                 )
             return
 
@@ -672,13 +830,13 @@ class FeishuAdapter:
             now = time.monotonic()
             if throttle and now - last_patch_time[0] < _PATCH_MIN_INTERVAL:
                 return
-            patch_card(self._client, message_id, build_progress_card(steps, hint))
+            patch_card(self._client, message_id, build_progress_card(steps, hint, locale=self._locale()))
             last_patch_time[0] = now
 
         def on_tool_start(name: str, tool_input: dict[str, Any]) -> None:
             if name in _SKIP_TOOLS:
                 return
-            _patch_progress(format_tool_start_hint(name, tool_input), throttle=False)
+            _patch_progress(format_tool_start_hint(name, tool_input, locale=self._locale()), throttle=False)
             step_start_time[0] = time.monotonic()
 
         def on_tool_call(name: str, tool_input: dict[str, Any], result: str) -> None:
@@ -686,8 +844,8 @@ class FeishuAdapter:
                 return
             elapsed_ms = int((time.monotonic() - step_start_time[0]) * 1000)
             step_start_time[0] = time.monotonic()
-            steps.append(make_tool_step(name, tool_input, result, elapsed_ms))
-            _patch_progress("正在继续处理...", throttle=True)
+            steps.append(make_tool_step(name, tool_input, result, elapsed_ms, locale=self._locale()))
+            _patch_progress(self._t("feishu.adapter.progress.continue"), throttle=True)
 
         try:
             if action == "deny":
@@ -700,7 +858,12 @@ class FeishuAdapter:
                     patch_card(
                         self._client,
                         message_id,
-                        build_approval_resolution_card("deny", approval_id, result.text),
+                        build_approval_resolution_card(
+                            "deny",
+                            approval_id,
+                            result.text,
+                            locale=self._locale(),
+                        ),
                     )
                 return
 
@@ -723,6 +886,7 @@ class FeishuAdapter:
                             result.text,
                             next_approval_id,
                             steps,
+                            locale=self._locale(),
                             **self._approval_card_kwargs(next_approval),
                         ),
                     )
@@ -730,13 +894,19 @@ class FeishuAdapter:
                     patch_card(
                         self._client,
                         message_id,
-                        build_result_card_with_process(result.text, steps),
+                        build_result_card_with_process(result.text, steps, locale=self._locale()),
                     )
+                    self._unbind_task_topic(task.conversation_id, task.task_id)
                 else:
                     patch_card(
                         self._client,
                         message_id,
-                        build_approval_resolution_card("approve", approval_id, "已通过并执行完成。"),
+                        build_approval_resolution_card(
+                            "approve",
+                            approval_id,
+                            self._t("feishu.adapter.approval.done"),
+                            locale=self._locale(),
+                        ),
                     )
         except Exception:
             log.exception("Failed to resolve approval %s from Feishu card action", approval_id)
@@ -744,7 +914,7 @@ class FeishuAdapter:
                 patch_card(
                     self._client,
                     message_id,
-                    build_error_card("审批处理失败，请稍后重试"),
+                    build_error_card(self._t("feishu.adapter.approval.failed"), locale=self._locale()),
                 )
 
     def _build_prompt(self, session_id: str, msg: FeishuMessage) -> str:
@@ -763,18 +933,26 @@ class FeishuAdapter:
 
     def _build_image_prompt(self, session_id: str, msg: FeishuMessage) -> str:
         if self._runner is None:
-            return "用户发送了图片。"
+            return self._t("feishu.adapter.image_prompt.single")
 
         records = self._ingest_image_records(session_id, msg)
 
-        lines = [f"用户发送了 {len(msg.image_keys)} 张图片。"]
+        lines = [self._t("feishu.adapter.image_prompt.multi", count=len(msg.image_keys))]
         if not records:
             return "\n".join(lines)
         for index, record in enumerate(records, start=1):
-            summary = str(record.get("summary", "")).strip() or "暂无摘要"
+            summary = str(record.get("summary", "")).strip() or self._t("feishu.adapter.image_prompt.empty_summary")
             image_id = str(record.get("image_id", "")).strip() or "unknown"
-            tags = ", ".join(record.get("tags", [])[:5]) or "无标签"
-            lines.append(f"图片{index}（image_id={image_id}）：{summary}；标签：{tags}")
+            tags = ", ".join(record.get("tags", [])[:5]) or self._t("feishu.adapter.image_prompt.no_tags")
+            lines.append(
+                self._t(
+                    "feishu.adapter.image_prompt.entry",
+                    index=index,
+                    image_id=image_id,
+                    summary=summary,
+                    tags=tags,
+                )
+            )
         return "\n".join(lines)
 
     def _ingest_image_records(self, session_id: str, msg: FeishuMessage) -> list[dict[str, Any]]:

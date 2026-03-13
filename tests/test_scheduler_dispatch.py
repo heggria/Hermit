@@ -18,6 +18,7 @@ from hermit.plugin.hooks import HooksEngine
 def tmp_settings(tmp_path: Path) -> Any:
     settings = MagicMock()
     settings.base_dir = tmp_path
+    settings.locale = "zh-CN"
     settings.sandbox_mode = "l0"
     settings.command_timeout_seconds = 30
     settings.model = "test-model"

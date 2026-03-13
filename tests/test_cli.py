@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+import importlib
 import json
 from types import SimpleNamespace
 
+import pytest
 from typer.testing import CliRunner
 
+from hermit.i18n import tr
 from hermit.kernel.proofs import ProofService
 from hermit.kernel.store import KernelStore
 from hermit.main import _build_serve_preflight, _notify_reload, app
+
+
+@pytest.fixture(autouse=True)
+def _force_cli_locale(monkeypatch):
+    from hermit.config import get_settings
+
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def test_init_creates_workspace(tmp_path, monkeypatch) -> None:
@@ -64,6 +77,24 @@ def test_setup_shows_adapter_flag_in_next_steps(tmp_path, monkeypatch) -> None:
     assert "hermit serve --adapter feishu" in result.output
 
 
+def test_task_help_uses_locale_at_import_time(monkeypatch) -> None:
+    import hermit.main as main_mod
+
+    runner = CliRunner()
+
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    main_mod = importlib.reload(main_mod)
+    zh_result = runner.invoke(main_mod.app, ["task", "--help"])
+    assert zh_result.exit_code == 0
+    assert "任务内核查看与审批命令" in zh_result.output
+
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
+    main_mod = importlib.reload(main_mod)
+    en_result = runner.invoke(main_mod.app, ["task", "--help"])
+    assert en_result.exit_code == 0
+    assert "Task kernel inspection and approval commands." in en_result.output
+
+
 def test_serve_preflight_reports_missing_feishu_env(tmp_path, monkeypatch) -> None:
     from hermit.config import get_settings
 
@@ -81,8 +112,8 @@ def test_serve_preflight_reports_missing_feishu_env(tmp_path, monkeypatch) -> No
     assert result.exit_code == 1
     assert "Hermit 启动前环境自检" in result.output
     assert "[OK] LLM 鉴权" in result.output
-    assert "[MISSING] 飞书 App ID" in result.output
-    assert "[MISSING] 飞书 App Secret" in result.output
+    assert "[缺失] 飞书 App ID" in result.output
+    assert "[缺失] 飞书 App Secret" in result.output
     assert "启动前检查未通过" in result.output
 
 
@@ -108,8 +139,8 @@ def test_serve_preflight_shows_resolved_env_sources(tmp_path, monkeypatch) -> No
 
     assert result.exit_code == 0
     assert "Hermit 启动前环境自检" in result.output
-    assert "[OK] 飞书 App ID: HERMIT_FEISHU_APP_ID (shell env)" in result.output
-    assert "[OK] 飞书 App Secret: HERMIT_FEISHU_APP_SECRET (shell env)" in result.output
+    assert "[OK] 飞书 App ID: HERMIT_FEISHU_APP_ID (shell 环境变量)" in result.output
+    assert "[OK] 飞书 App Secret: HERMIT_FEISHU_APP_SECRET (shell 环境变量)" in result.output
     assert serve_calls and serve_calls[0][0] == "feishu"
 
 
@@ -205,8 +236,8 @@ model = "claude-3-7-sonnet-latest"
     result = runner.invoke(app, ["profiles", "list"])
 
     assert result.exit_code == 0
-    assert "codex-local (default) provider=codex-oauth model=gpt-5.4" in result.output
-    assert "claude-work provider=claude model=claude-3-7-sonnet-latest" in result.output
+    assert "codex-local（默认） 提供方=codex-oauth 模型=gpt-5.4" in result.output
+    assert "claude-work 提供方=claude 模型=claude-3-7-sonnet-latest" in result.output
 
 
 def test_profiles_list_reports_missing_config_toml(tmp_path, monkeypatch) -> None:
@@ -221,7 +252,11 @@ def test_profiles_list_reports_missing_config_toml(tmp_path, monkeypatch) -> Non
     result = runner.invoke(app, ["profiles", "list"])
 
     assert result.exit_code == 0
-    assert f"No config.toml found at {base_dir / 'config.toml'}" in result.output
+    assert tr(
+        "cli.profiles_list.no_config",
+        locale="zh-CN",
+        path=base_dir / "config.toml",
+    ) in result.output
 
 
 def test_config_show_includes_profile_and_auth_summary(tmp_path, monkeypatch) -> None:
@@ -323,12 +358,35 @@ def test_build_serve_preflight_uses_profile_feishu_settings(tmp_path, monkeypatc
     details = {item.label: item.detail for item in items}
 
     assert errors == []
-    assert details["Profile"] == "local (config.toml)"
-    assert details["LLM 鉴权"] == "config.toml profile"
-    assert details["飞书 App ID"] == "config.toml profile"
-    assert details["飞书 App Secret"] == "config.toml profile"
-    assert details["飞书进度卡片"] == "false"
+    assert details["配置档"] == "local（config.toml）"
+    assert details["LLM 鉴权"] == "来自 config.toml 配置档"
+    assert details["飞书 App ID"] == "来自 config.toml 配置档"
+    assert details["飞书 App Secret"] == "来自 config.toml 配置档"
+    assert details["飞书进度卡片"] == "关闭"
     assert details["Scheduler 飞书通知"] == "已配置"
+
+
+def test_setup_next_steps_stay_localized_but_commands_remain_literal(tmp_path, monkeypatch) -> None:
+    import hermit.main as main_mod
+    from hermit.config import get_settings
+
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
+    get_settings.cache_clear()
+
+    confirm_answers = iter([False, True])
+    prompt_answers = iter(["sk-ant-test", "cli_xxx", "secret"])
+
+    monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
+    monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["setup"])
+
+    assert result.exit_code == 0
+    assert "Next steps:" in result.output
+    assert "  hermit chat" in result.output
+    assert "  hermit serve --adapter feishu" in result.output
 
 
 def test_task_list_show_and_receipts_commands_read_kernel_state(tmp_path, monkeypatch) -> None:
@@ -692,6 +750,57 @@ def test_task_show_displays_approval_canonical_summary(monkeypatch, tmp_path) ->
     assert "准备修改 1 个文件" in result.output
 
 
+def test_task_list_and_show_use_localized_cli_copy(monkeypatch, tmp_path) -> None:
+    from hermit.config import get_settings
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-task-list", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-task-list",
+        title="Localized Task",
+        goal="Inspect CLI localization",
+        source_channel="chat",
+    )
+
+    runner = CliRunner()
+    list_result = runner.invoke(app, ["task", "list"])
+    show_result = runner.invoke(app, ["task", "show", task.task_id])
+
+    assert list_result.exit_code == 0
+    assert f"[{task.task_id}] {task.status} chat Localized Task" in list_result.output
+    assert show_result.exit_code == 0
+    assert "最近的审批记录：" not in show_result.output
+
+
+def test_task_list_uses_english_cli_copy(monkeypatch, tmp_path) -> None:
+    from hermit.config import get_settings
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-task-list-en", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-task-list-en",
+        title="English Task",
+        goal="Inspect CLI localization",
+        source_channel="chat",
+    )
+
+    runner = CliRunner()
+    list_result = runner.invoke(app, ["task", "list"])
+
+    assert list_result.exit_code == 0
+    assert f"[{task.task_id}] {task.status} chat English Task" in list_result.output
+
+
 def test_task_grant_subcommands_list_and_revoke(monkeypatch, tmp_path) -> None:
     from hermit.config import get_settings
     from hermit.kernel.store import KernelStore
@@ -720,7 +829,7 @@ def test_task_grant_subcommands_list_and_revoke(monkeypatch, tmp_path) -> None:
     assert list_result.exit_code == 0
     assert grant.grant_id in list_result.output
     assert revoke_result.exit_code == 0
-    assert f"Revoked grant '{grant.grant_id}'." in revoke_result.output
+    assert f"已撤销授权 '{grant.grant_id}'。" in revoke_result.output
     assert store.get_path_grant(grant.grant_id).status == "revoked"
 
 
@@ -769,5 +878,5 @@ def test_reload_removes_stale_pid_file(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["reload"])
 
     assert result.exit_code == 1
-    assert "stale PID file" in result.output
+    assert "PID 文件已过期" in result.output
     assert not pid_path.exists()

@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from hermit.core.tools import ToolRegistry, ToolSpec
+from hermit.core.tools import ToolRegistry, ToolSpec, localize_tool_spec
+from hermit.i18n import resolve_locale, tr
 from hermit.plugin.base import (
     AdapterProtocol,
     AdapterSpec,
@@ -87,9 +88,10 @@ class PluginManager:
 
     def setup_tools(self, registry: ToolRegistry) -> None:
         self._registry = registry
+        locale = resolve_locale(getattr(self.settings, "locale", None))
         for tool in self._all_tools:
             try:
-                registry.register(tool)
+                registry.register(localize_tool_spec(tool, locale=locale))
             except ValueError:
                 log.warning("duplicate_tool", name=tool.name)
 
@@ -102,18 +104,19 @@ class PluginManager:
 
         if self._all_skills:
             skill_names = [s.name for s in self._all_skills]
-            registry.register(ToolSpec(
+            registry.register(localize_tool_spec(ToolSpec(
                 name="read_skill",
                 description=(
                     "Load a skill's full instructions into context. "
                     "Use when a task matches a skill's description from the catalog."
                 ),
+                description_key="prompt.available_skills.read_skill.description",
                 input_schema={
                     "type": "object",
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "Skill name from the available_skills catalog",
+                            "description_key": "prompt.available_skills.read_skill.name",
                             "enum": skill_names,
                         },
                     },
@@ -125,17 +128,24 @@ class PluginManager:
                 idempotent=True,
                 risk_hint="low",
                 requires_receipt=False,
-            ))
+            ), locale=locale))
 
         self.hooks.fire(HookEvent.REGISTER_TOOLS, registry=registry)
 
     def _read_skill_handler(self, payload: dict) -> str:
         name = str(payload.get("name", ""))
+        locale = resolve_locale(getattr(self.settings, "locale", None))
         for skill in self._all_skills:
             if skill.name == name:
                 return f'<skill_content name="{name}">\n{skill.content}\n</skill_content>'
         available = ", ".join(s.name for s in self._all_skills)
-        return f"Skill '{name}' not found. Available: {available}"
+        return tr(
+            "prompt.available_skills.read_skill.not_found",
+            locale=locale,
+            default=f"Skill '{name}' not found. Available: {available}",
+            name=name,
+            available=available,
+        )
 
     def configure_subagent_runtime(self, runtime: Any, on_tool_call: Any = None) -> None:
         self._runtime = runtime
@@ -149,6 +159,7 @@ class PluginManager:
         base_prompt: str,
         preloaded_skills: Optional[List[str]] = None,
     ) -> str:
+        locale = resolve_locale(getattr(self.settings, "locale", None))
         parts: List[str] = [base_prompt]
 
         if self._all_rules_parts:
@@ -167,8 +178,8 @@ class PluginManager:
         if catalog_skills:
             lines = [
                 "<available_skills>",
-                "The following skills provide specialized instructions.",
-                "When a task matches a skill's description, call read_skill to load its full instructions.",
+                tr("prompt.available_skills.intro", locale=locale),
+                tr("prompt.available_skills.guidance", locale=locale),
                 "",
             ]
             for skill in catalog_skills:
@@ -233,23 +244,41 @@ class PluginManager:
         return list(self._manifests)
 
     def _build_delegation_tool(self, spec: SubagentSpec) -> ToolSpec:
+        locale = resolve_locale(getattr(self.settings, "locale", None))
         def handler(payload: dict[str, Any]) -> str:
             return self._run_subagent(spec, str(payload.get("task", "")))
 
-        return ToolSpec(
+        return localize_tool_spec(ToolSpec(
             name=f"delegate_{spec.name}",
-            description=f"Delegate a task to the {spec.name} subagent. {spec.description}",
+            description=tr(
+                "prompt.delegation.description",
+                locale=locale,
+                default=f"Delegate a task to the {spec.name} subagent. {spec.description}",
+                name=spec.name,
+                description=spec.description,
+            ),
             input_schema={
                 "type": "object",
-                "properties": {"task": {"type": "string", "description": "Task description"}},
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description_key": "prompt.delegation.task",
+                    }
+                },
                 "required": ["task"],
             },
             handler=handler,
-        )
+        ), locale=locale)
 
     def _run_subagent(self, spec: SubagentSpec, task: str) -> str:
         if not self._runtime or not self._registry:
-            return f"[Subagent '{spec.name}' unavailable: agent runner not configured]"
+            locale = resolve_locale(getattr(self.settings, "locale", None))
+            return tr(
+                "prompt.delegation.unavailable",
+                locale=locale,
+                default=f"[Subagent '{spec.name}' unavailable: agent runner not configured]",
+                name=spec.name,
+            )
 
         import sys
 

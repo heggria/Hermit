@@ -9,6 +9,11 @@ import pytest
 from hermit.companion import appbundle
 
 
+@pytest.fixture(autouse=True)
+def _force_appbundle_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
+
+
 def test_install_app_bundle_creates_expected_structure(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(appbundle, "_bundle_python_target", lambda: Path("/usr/local/bin/python3"))
     monkeypatch.setattr(appbundle, "_project_root", lambda: None)
@@ -281,3 +286,16 @@ def test_main_rejects_non_macos(monkeypatch, capsys) -> None:
 
     assert appbundle.main([]) == 1
     assert "only supported on macOS" in capsys.readouterr().err
+
+
+def test_appbundle_main_and_login_item_can_render_zh_cn(monkeypatch, capsys, tmp_path: Path) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    monkeypatch.setattr(appbundle.sys, "platform", "linux")
+
+    assert appbundle.main([]) == 1
+    assert "仅支持 macOS" in capsys.readouterr().err
+
+    bundle = tmp_path / "Hermit Dev.app"
+    bundle.mkdir()
+    monkeypatch.setattr(appbundle, "_run_osascript", lambda script: "ok")
+    assert appbundle.enable_login_item(bundle) == "已为 Hermit Dev 启用登录项。"

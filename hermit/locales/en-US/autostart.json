@@ -1,0 +1,14 @@
+{
+  "autostart.common.mac_only": "Auto-start via launchd is only supported on macOS.",
+  "autostart.enable.missing_executable": "Cannot find the hermit executable. Make sure it is installed and available in PATH.",
+  "autostart.enable.load_failed": "launchctl load failed:\n{stderr}",
+  "autostart.enable.done": "Auto-start enabled for adapter '{adapter}'.\n  Label : {label}\n  Plist : {plist}\n  Logs  : {logs}/{adapter}-{{stdout,stderr}}.log\nHermit will start automatically at next login.",
+  "autostart.enable.removed_legacy": "\nRemoved legacy LaunchAgents: {paths}",
+  "autostart.disable.not_configured": "Auto-start for '{adapter}' is not configured (plist not found).",
+  "autostart.disable.unload_failed": "launchctl unload failed:\n{stderr}",
+  "autostart.disable.done": "Auto-start disabled for '{adapter}'.  Plist removed: {plist}",
+  "autostart.status.empty": "Auto-start: no agents configured for {scope}.",
+  "autostart.status.state.running": "running",
+  "autostart.status.state.not_loaded": "NOT loaded",
+  "autostart.status.header": "Auto-start agents:\n"
+}

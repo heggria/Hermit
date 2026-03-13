@@ -2,17 +2,61 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, Optional
 
 from hermit.core.session import SessionManager, sanitize_session_messages
+from hermit.i18n import resolve_locale, tr
 from hermit.kernel.controller import TaskController
+from hermit.kernel.observation import ObservationService
 from hermit.provider.runtime import AgentResult, AgentRuntime, ToolCallback, ToolStartCallback
 
 if TYPE_CHECKING:
     from hermit.plugin.manager import PluginManager
 
 CommandHandler = Callable[["AgentRunner", str, str], "DispatchResult"]
+
+_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
+_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
+
+
+def _strip_internal_markup(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = _SESSION_TIME_RE.sub("", text)
+    cleaned = _FEISHU_META_RE.sub("", cleaned)
+    cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
+    return cleaned.strip()
+
+
+def _result_preview(text: str, *, limit: int = 280) -> str:
+    cleaned = _strip_internal_markup(text)
+    if not cleaned:
+        return ""
+    cleaned = " ".join(cleaned.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
+def _locale_for_runner(runner: "AgentRunner" | None = None) -> str:
+    settings = getattr(getattr(runner, "pm", None), "settings", None)
+    return resolve_locale(getattr(settings, "locale", None))
+
+
+def _t(
+    message_key: str,
+    *,
+    runner: "AgentRunner" | None = None,
+    default: str | None = None,
+    **kwargs: object,
+) -> str:
+    return tr(message_key, locale=_locale_for_runner(runner), default=default, **kwargs)
+
+
+def _resolve_help_text(help_text: str, *, runner: "AgentRunner" | None = None) -> str:
+    return tr(help_text, locale=_locale_for_runner(runner), default=help_text)
 
 
 @dataclass
@@ -61,8 +105,18 @@ class AgentRunner:
         self.serve_mode = serve_mode
         self.task_controller = task_controller
         self._session_started: set[str] = set()
+        self._observation_service: ObservationService | None = None
         # Instance-level copy: core commands + plugin commands added later via add_command()
         self._commands: Dict[str, tuple[CommandHandler, str, bool]] = dict(self._core_commands)
+
+    def start_background_services(self) -> None:
+        if self._observation_service is None:
+            self._observation_service = ObservationService(self)
+        self._observation_service.start()
+
+    def stop_background_services(self) -> None:
+        if self._observation_service is not None:
+            self._observation_service.stop()
 
     def add_command(
         self, name: str, handler: CommandHandler, help_text: str, cli_only: bool = False,
@@ -104,7 +158,7 @@ class AgentRunner:
                 handler, _help, _cli = entry
                 return handler(self, session_id, stripped)
             return DispatchResult(
-                text=f"未知命令：{cmd}。输入 /help 查看可用命令。",
+                text=_t("kernel.runner.unknown_command", runner=self, cmd=cmd),
                 is_command=True,
             )
 
@@ -151,13 +205,36 @@ class AgentRunner:
             f"</session_time>\n\n"
         )
         prompt = time_ctx + prompt
+        task_goal = _strip_internal_markup(text) or _strip_internal_markup(prompt) or text.strip() or prompt.strip()
+
+        if self.task_controller is not None and hasattr(self.task_controller, "decide_ingress"):
+            ingress = self.task_controller.decide_ingress(
+                conversation_id=session_id,
+                source_channel=source_channel,
+                raw_text=text,
+                prompt=prompt,
+            )
+            if ingress.mode == "append_note":
+                return AgentResult(
+                    text=_t(
+                        "kernel.runner.note_appended",
+                        runner=self,
+                        default="Attached to the current task. It will be applied at the next durable boundary.",
+                    ),
+                    turns=0,
+                    tool_calls=0,
+                    messages=list(session.messages),
+                    task_id=ingress.task_id,
+                    execution_status="note_appended",
+                    status_managed_by_kernel=True,
+                )
 
         task_ctx = None
         if self.task_controller is not None:
             task_kind = "plan" if run_opts.get("readonly_only", False) else "respond"
             task_ctx = self.task_controller.start_task(
                 conversation_id=session_id,
-                goal=prompt,
+                goal=task_goal,
                 source_channel=source_channel,
                 kind=task_kind,
                 policy_profile="readonly" if run_opts.get("readonly_only", False) else "default",
@@ -182,15 +259,25 @@ class AgentRunner:
         session.messages = result.messages
         self.session_manager.save(session)
         if self.task_controller is not None and task_ctx is not None:
-            if result.blocked:
+            if result.suspended or result.blocked:
                 if getattr(result, "status_managed_by_kernel", False):
                     return result
-                self.task_controller.mark_blocked(task_ctx)
+                if hasattr(self.task_controller, "mark_suspended"):
+                    self.task_controller.mark_suspended(
+                        task_ctx,
+                        waiting_kind=str(getattr(result, "waiting_kind", "") or "awaiting_approval"),
+                    )
+                else:
+                    self.task_controller.mark_blocked(task_ctx)
             else:
                 status = self._result_status(result)
                 if not getattr(result, "status_managed_by_kernel", False):
-                    self.task_controller.finalize_result(task_ctx, status=status)
-        if not result.blocked:
+                    self.task_controller.finalize_result(
+                        task_ctx,
+                        status=status,
+                        result_preview=_result_preview(result.text or ""),
+                    )
+        if not (result.suspended or result.blocked):
             self.pm.on_post_run(result, session_id=session_id, session=session, runner=self)
         return result
 
@@ -212,6 +299,48 @@ class AgentRunner:
         self.pm.on_session_end(session_id, session.messages)
         self.session_manager.close(session_id)
         self._session_started.discard(session_id)
+
+    def resume_attempt(
+        self,
+        step_attempt_id: str,
+        *,
+        on_tool_call: Optional[ToolCallback] = None,
+        on_tool_start: Optional[ToolStartCallback] = None,
+    ) -> AgentResult:
+        resume_attempt = getattr(self.task_controller, "resume_attempt", None)
+        task_ctx = resume_attempt(step_attempt_id) if callable(resume_attempt) else self.task_controller.context_for_attempt(step_attempt_id)
+        session = self.session_manager.get_or_create(task_ctx.conversation_id)
+        result = self.agent.resume(
+            step_attempt_id=step_attempt_id,
+            task_context=task_ctx,
+            on_tool_call=on_tool_call,
+            on_tool_start=on_tool_start,
+        )
+        session.total_input_tokens += result.input_tokens
+        session.total_output_tokens += result.output_tokens
+        session.total_cache_read_tokens += result.cache_read_tokens
+        session.total_cache_creation_tokens += result.cache_creation_tokens
+        session.messages = result.messages
+        self.session_manager.save(session)
+        if result.suspended or result.blocked:
+            if not getattr(result, "status_managed_by_kernel", False):
+                if hasattr(self.task_controller, "mark_suspended"):
+                    self.task_controller.mark_suspended(
+                        task_ctx,
+                        waiting_kind=str(getattr(result, "waiting_kind", "") or "awaiting_approval"),
+                    )
+                else:
+                    self.task_controller.mark_blocked(task_ctx)
+        else:
+            status = self._result_status(result)
+            if not getattr(result, "status_managed_by_kernel", False):
+                self.task_controller.finalize_result(
+                    task_ctx,
+                    status=status,
+                    result_preview=_result_preview(result.text or ""),
+                )
+            self.pm.on_post_run(result, session_id=task_ctx.conversation_id, session=session, runner=self)
+        return result
 
     def reset_session(self, session_id: str) -> None:
         """Close current session and start a fresh one."""
@@ -241,23 +370,34 @@ class AgentRunner:
             )
         if action == "new_session":
             self.reset_session(session_id)
-            return DispatchResult("已开启新会话。", is_command=True)
+            return DispatchResult(_t("kernel.runner.new_session", runner=self), is_command=True)
         if action == "show_history":
             session = self.session_manager.get_or_create(session_id)
             user_turns = sum(1 for m in session.messages if m.get("role") == "user")
             total = len(session.messages)
-            return DispatchResult(f"当前会话：{user_turns} 轮用户消息，共 {total} 条记录。", is_command=True)
+            return DispatchResult(
+                _t(
+                    "kernel.runner.history_summary",
+                    runner=self,
+                    user_turns=user_turns,
+                    total=total,
+                ),
+                is_command=True,
+            )
         if action == "show_help":
-            lines = ["**可用命令**"]
+            lines = [_t("kernel.runner.help.title", runner=self)]
             for cmd, (_fn, help_text, cli_only) in sorted(self._commands.items()):
                 if self.serve_mode and cli_only:
                     continue
-                lines.append(f"- `{cmd}` — {help_text}")
+                lines.append(f"- `{cmd}` — {_resolve_help_text(help_text, runner=self)}")
             return DispatchResult("\n".join(lines), is_command=True)
 
         store = getattr(getattr(self, "agent", None), "kernel_store", None)
         if store is None:
-            return DispatchResult(text="Task kernel is not available.", is_command=True)
+            return DispatchResult(
+                text=_t("kernel.runner.task_kernel_unavailable", runner=self),
+                is_command=True,
+            )
 
         if action == "task_list":
             payload = [task.__dict__ for task in store.list_tasks(limit=20)]
@@ -311,7 +451,10 @@ class AgentRunner:
         if action == "grant_revoke":
             grant = store.get_path_grant(target_id)
             if grant is None:
-                return DispatchResult(text=f"Grant not found: {target_id}", is_command=True)
+                return DispatchResult(
+                    text=_t("kernel.runner.grant_not_found", runner=self, grant_id=target_id),
+                    is_command=True,
+                )
             store.update_path_grant(
                 target_id,
                 status="revoked",
@@ -319,7 +462,10 @@ class AgentRunner:
                 event_type="grant.revoked",
                 payload={"status": "revoked"},
             )
-            return DispatchResult(text=f"Revoked grant '{target_id}'.", is_command=True)
+            return DispatchResult(
+                text=_t("kernel.runner.grant_revoked", runner=self, grant_id=target_id),
+                is_command=True,
+            )
         if action == "schedule_list":
             payload = [job.to_dict() for job in store.list_schedules()]
             return DispatchResult(text=json.dumps(payload, ensure_ascii=False, indent=2), is_command=True)
@@ -330,17 +476,32 @@ class AgentRunner:
             return DispatchResult(text=json.dumps(payload, ensure_ascii=False, indent=2), is_command=True)
         if action == "schedule_enable":
             job = store.update_schedule(target_id, enabled=True)
-            message = f"Enabled task '{target_id}'." if job is not None else f"Error: no task with id '{target_id}' found."
+            message = (
+                _t("kernel.runner.schedule.enabled", runner=self, job_id=target_id)
+                if job is not None
+                else _t("kernel.runner.schedule.not_found", runner=self, job_id=target_id)
+            )
             return DispatchResult(text=message, is_command=True)
         if action == "schedule_disable":
             job = store.update_schedule(target_id, enabled=False)
-            message = f"Disabled task '{target_id}'." if job is not None else f"Error: no task with id '{target_id}' found."
+            message = (
+                _t("kernel.runner.schedule.disabled", runner=self, job_id=target_id)
+                if job is not None
+                else _t("kernel.runner.schedule.not_found", runner=self, job_id=target_id)
+            )
             return DispatchResult(text=message, is_command=True)
         if action == "schedule_remove":
             deleted = store.delete_schedule(target_id)
-            message = f"Removed task '{target_id}'." if deleted else f"Error: no task with id '{target_id}' found."
+            message = (
+                _t("kernel.runner.schedule.removed", runner=self, job_id=target_id)
+                if deleted
+                else _t("kernel.runner.schedule.not_found", runner=self, job_id=target_id)
+            )
             return DispatchResult(text=message, is_command=True)
-        return DispatchResult(text=f"Unsupported control action: {action}", is_command=True)
+        return DispatchResult(
+            text=_t("kernel.runner.unsupported_control_action", runner=self, action=action),
+            is_command=True,
+        )
 
     def _resolve_approval(
         self,
@@ -354,7 +515,10 @@ class AgentRunner:
     ) -> DispatchResult:
         approval = self.task_controller.store.get_approval(approval_id)
         if approval is None:
-            return DispatchResult(f"未知 approval：{approval_id}", is_command=True)
+            return DispatchResult(
+                _t("kernel.runner.approval_not_found", runner=self, approval_id=approval_id),
+                is_command=True,
+            )
 
         session = self.session_manager.get_or_create(session_id)
         if action == "deny":
@@ -364,10 +528,7 @@ class AgentRunner:
                 resolved_by="user",
                 resolution={"status": "denied", "mode": "denied", "reason": reason},
             )
-            text = (
-                "本次审批已拒绝，当前操作不会继续。"
-                "\n如需继续，请重新发起请求；届时你可以对新的审批请求再次进行批准。"
-            )
+            text = _t("kernel.runner.approval_denied", runner=self)
             messages = list(session.messages)
             messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
             session.messages = messages
@@ -401,13 +562,23 @@ class AgentRunner:
         session.total_cache_creation_tokens += result.cache_creation_tokens
         session.messages = result.messages
         self.session_manager.save(session)
-        if result.blocked:
+        if result.suspended or result.blocked:
             if not getattr(result, "status_managed_by_kernel", False):
-                self.task_controller.mark_blocked(task_ctx)
+                if hasattr(self.task_controller, "mark_suspended"):
+                    self.task_controller.mark_suspended(
+                        task_ctx,
+                        waiting_kind=str(getattr(result, "waiting_kind", "") or "awaiting_approval"),
+                    )
+                else:
+                    self.task_controller.mark_blocked(task_ctx)
         else:
             status = self._result_status(result)
             if not getattr(result, "status_managed_by_kernel", False):
-                self.task_controller.finalize_result(task_ctx, status=status)
+                self.task_controller.finalize_result(
+                    task_ctx,
+                    status=status,
+                    result_preview=_result_preview(result.text or ""),
+                )
             self.pm.on_post_run(result, session_id=session_id, session=session, runner=self)
         return DispatchResult(
             text=result.text or "",
@@ -420,44 +591,53 @@ class AgentRunner:
 # Core slash commands (always available, not from plugins)
 # ------------------------------------------------------------------
 
-@AgentRunner.register_command("/new", "开启新会话，清空当前上下文")
+@AgentRunner.register_command("/new", "kernel.runner.command.new.help")
 def _cmd_new(runner: AgentRunner, session_id: str, _text: str) -> DispatchResult:
     runner.reset_session(session_id)
-    return DispatchResult("已开启新会话。", is_command=True)
+    return DispatchResult(_t("kernel.runner.new_session", runner=runner), is_command=True)
 
 
-@AgentRunner.register_command("/history", "显示当前会话的消息轮次统计")
+@AgentRunner.register_command("/history", "kernel.runner.command.history.help")
 def _cmd_history(runner: AgentRunner, session_id: str, _text: str) -> DispatchResult:
     session = runner.session_manager.get_or_create(session_id)
     user_turns = sum(1 for m in session.messages if m.get("role") == "user")
     total = len(session.messages)
     return DispatchResult(
-        f"当前会话：{user_turns} 轮用户消息，共 {total} 条记录。",
+        _t(
+            "kernel.runner.history_summary",
+            runner=runner,
+            user_turns=user_turns,
+            total=total,
+        ),
         is_command=True,
     )
 
 
-@AgentRunner.register_command("/quit", "退出（仅 CLI 模式）", cli_only=True)
+@AgentRunner.register_command("/quit", "kernel.runner.command.quit.help", cli_only=True)
 def _cmd_quit(_runner: AgentRunner, _session_id: str, _text: str) -> DispatchResult:
-    return DispatchResult("Bye.", is_command=True, should_exit=True)
+    return DispatchResult(
+        _t("kernel.runner.quit", runner=_runner),
+        is_command=True,
+        should_exit=True,
+    )
 
 
-@AgentRunner.register_command("/help", "显示所有可用命令")
+@AgentRunner.register_command("/help", "kernel.runner.command.help.help")
 def _cmd_help(runner: AgentRunner, _session_id: str, _text: str) -> DispatchResult:
-    lines = ["**可用命令**"]
+    lines = [_t("kernel.runner.help.title", runner=runner)]
     for cmd, (_fn, help_text, cli_only) in sorted(runner._commands.items()):
         if runner.serve_mode and cli_only:
             continue
-        lines.append(f"- `{cmd}` — {help_text}")
+        lines.append(f"- `{cmd}` — {_resolve_help_text(help_text, runner=runner)}")
     return DispatchResult("\n".join(lines), is_command=True)
 
 
-@AgentRunner.register_command("/task", "任务控制；支持 approve/deny/case/rollback")
+@AgentRunner.register_command("/task", "kernel.runner.command.task.help")
 def _cmd_task(runner: AgentRunner, session_id: str, text: str) -> DispatchResult:
     parts = text.strip().split(maxsplit=2)
     if len(parts) < 3 or parts[1] not in {"approve", "deny", "case", "rollback"}:
         return DispatchResult(
-            "用法：/task approve <approval_id> | /task deny <approval_id> | /task case <task_id> | /task rollback <receipt_id>",
+            _t("kernel.runner.task_usage", runner=runner),
             is_command=True,
         )
     action = parts[1]

@@ -12,9 +12,14 @@ from pathlib import Path
 
 from hermit import __version__
 from hermit.companion.control import hermit_base_dir
+from hermit.i18n import tr
 
 APP_NAME = "Hermit"
 BUNDLE_ID = "com.hermit.menubar"
+
+
+def _t(message_key: str, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, default=default, **kwargs)
 
 
 def _base_dir_slug(base_dir: Path) -> str:
@@ -299,7 +304,13 @@ def login_item_enabled(name: str | None = None) -> bool:
 def enable_login_item(target: Path | None = None) -> str:
     bundle = app_path(target)
     if not bundle.exists():
-        raise RuntimeError(f"App bundle not found: {bundle}")
+        raise RuntimeError(
+            _t(
+                "companion.appbundle.login_item.bundle_missing",
+                "App bundle not found: {bundle}",
+                bundle=bundle,
+            )
+        )
     resolved_name = bundle.stem
     script = (
         'tell application "System Events"\n'
@@ -308,7 +319,11 @@ def enable_login_item(target: Path | None = None) -> str:
         "end tell"
     )
     _run_osascript(script)
-    return f"Enabled login item for {resolved_name}."
+    return _t(
+        "companion.appbundle.login_item.enabled",
+        "Enabled login item for {name}.",
+        name=resolved_name,
+    )
 
 
 def disable_login_item(name: str | None = None) -> str:
@@ -319,29 +334,83 @@ def disable_login_item(name: str | None = None) -> str:
         "end tell"
     )
     _run_osascript(script)
-    return f"Disabled login item for {resolved_name}."
+    return _t(
+        "companion.appbundle.login_item.disabled",
+        "Disabled login item for {name}.",
+        name=resolved_name,
+    )
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Install Hermit menu bar app bundle")
-    parser.add_argument("--target", default=None, help="Custom .app target path.")
-    parser.add_argument("--adapter", default="feishu", help="Adapter to manage.")
-    parser.add_argument("--profile", default=None, help="Optional HERMIT_PROFILE override.")
-    parser.add_argument("--base-dir", default=None, help="Optional HERMIT_BASE_DIR override.")
-    parser.add_argument("--open", action="store_true", help="Open the installed app.")
-    parser.add_argument("--enable-login-item", action="store_true", help="Enable companion login item.")
+    parser = argparse.ArgumentParser(
+        description=_t(
+            "companion.appbundle.argparse.description",
+            "Install Hermit menu bar app bundle",
+        )
+    )
+    parser.add_argument(
+        "--target",
+        default=None,
+        help=_t("companion.appbundle.argparse.target", "Custom .app target path."),
+    )
+    parser.add_argument(
+        "--adapter",
+        default="feishu",
+        help=_t("companion.appbundle.argparse.adapter", "Adapter to manage."),
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help=_t(
+            "companion.appbundle.argparse.profile",
+            "Optional HERMIT_PROFILE override.",
+        ),
+    )
+    parser.add_argument(
+        "--base-dir",
+        default=None,
+        help=_t(
+            "companion.appbundle.argparse.base_dir",
+            "Optional HERMIT_BASE_DIR override.",
+        ),
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help=_t("companion.appbundle.argparse.open", "Open the installed app."),
+    )
+    parser.add_argument(
+        "--enable-login-item",
+        action="store_true",
+        help=_t(
+            "companion.appbundle.argparse.enable_login_item",
+            "Enable companion login item.",
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     if sys.platform != "darwin":
-        print("Hermit menu bar app bundle is only supported on macOS.", file=sys.stderr)
+        print(
+            _t(
+                "companion.appbundle.main.mac_only",
+                "Hermit menu bar app bundle is only supported on macOS.",
+            ),
+            file=sys.stderr,
+        )
         return 1
     args = _parse_args(argv or sys.argv[1:])
     target = Path(args.target).expanduser() if args.target else None
     base_dir = Path(args.base_dir).expanduser() if args.base_dir else None
     bundle = install_app_bundle(target=target, adapter=args.adapter, profile=args.profile, base_dir=base_dir)
-    print(f"Installed app bundle: {bundle}")
+    print(
+        _t(
+            "companion.appbundle.main.installed",
+            "Installed app bundle: {bundle}",
+            bundle=bundle,
+        )
+    )
     if args.enable_login_item:
         print(enable_login_item(bundle))
     if args.open:

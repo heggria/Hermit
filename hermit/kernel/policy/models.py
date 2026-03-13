@@ -17,6 +17,14 @@ class PolicyReason:
             "severity": self.severity,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PolicyReason":
+        return cls(
+            code=str(data.get("code", "")),
+            message=str(data.get("message", "")),
+            severity=str(data.get("severity", "info")),
+        )
+
 
 @dataclass
 class PolicyObligations:
@@ -34,6 +42,16 @@ class PolicyObligations:
             "require_evidence": self.require_evidence,
             "approval_risk_level": self.approval_risk_level,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PolicyObligations":
+        return cls(
+            require_receipt=bool(data.get("require_receipt", False)),
+            require_preview=bool(data.get("require_preview", False)),
+            require_approval=bool(data.get("require_approval", False)),
+            require_evidence=bool(data.get("require_evidence", False)),
+            approval_risk_level=str(data.get("approval_risk_level", "") or "") or None,
+        )
 
 
 @dataclass
@@ -115,3 +133,23 @@ class PolicyDecision:
             "normalized_constraints": dict(self.normalized_constraints),
             "approval_packet": dict(self.approval_packet) if self.approval_packet else None,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PolicyDecision":
+        verdict = str(data.get("verdict", data.get("decision", "")) or "")
+        obligations = data.get("obligations", {})
+        reasons = data.get("reasons", [])
+        approval_packet = data.get("approval_packet")
+        return cls(
+            verdict=verdict,
+            action_class=str(data.get("action_class", "unknown")),
+            reasons=[
+                PolicyReason.from_dict(item)
+                for item in reasons
+                if isinstance(item, dict)
+            ],
+            obligations=PolicyObligations.from_dict(obligations if isinstance(obligations, dict) else {}),
+            normalized_constraints=dict(data.get("normalized_constraints", {}) or {}),
+            approval_packet=dict(approval_packet) if isinstance(approval_packet, dict) else None,
+            risk_level=str(data.get("risk_level", "low")),
+        )

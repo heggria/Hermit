@@ -4,8 +4,9 @@ from typing import Any
 
 from hermit.kernel.proofs import ProofService
 from hermit.kernel.store import KernelStore
+from hermit.kernel.topics import build_task_topic
 
-_PROJECTION_SCHEMA_VERSION = "tail-v1"
+_PROJECTION_SCHEMA_VERSION = "tail-v4"
 
 
 class ProjectionService:
@@ -19,6 +20,7 @@ class ProjectionService:
             raise KeyError(f"Task not found: {task_id}")
         proof = self.proofs.build_proof_summary(task_id)
         projection = self.store.build_task_projection(task_id)
+        events = self.store.list_events(task_id=task_id, limit=500)
         beliefs = [belief.__dict__ for belief in self.store.list_beliefs(task_id=task_id, limit=200)]
         knowledge = [
             record.__dict__
@@ -33,6 +35,7 @@ class ProjectionService:
             "task": task.__dict__,
             "projection": projection,
             "proof": proof,
+            "topic": build_task_topic(events),
             "beliefs": beliefs,
             "knowledge": knowledge,
             "rollbacks": rollbacks,

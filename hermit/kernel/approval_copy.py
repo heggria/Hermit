@@ -4,6 +4,8 @@ import concurrent.futures
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from hermit.i18n import resolve_locale, tr
+
 Formatter = Callable[[dict[str, Any]], dict[str, str] | str | None]
 
 
@@ -21,9 +23,19 @@ class ApprovalCopyService:
     preserving deterministic template fallback today.
     """
 
-    def __init__(self, formatter: Formatter | None = None, *, formatter_timeout_ms: int = 500) -> None:
+    def __init__(
+        self,
+        formatter: Formatter | None = None,
+        *,
+        formatter_timeout_ms: int = 500,
+        locale: str | None = None,
+    ) -> None:
         self._formatter = formatter
         self._formatter_timeout_ms = formatter_timeout_ms
+        self._locale = resolve_locale(locale) if locale else None
+
+    def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+        return tr(message_key, locale=resolve_locale(self._locale), default=default, **kwargs)
 
     def build_canonical_copy(self, requested_action: dict[str, Any], approval_id: str | None = None) -> dict[str, str]:
         copy = self.describe(requested_action, approval_id=approval_id)
@@ -52,14 +64,19 @@ class ApprovalCopyService:
         copy = self.describe(requested_action, approval_id=approval_id)
         detail = copy.detail.strip()
         detail_block = f"\n{detail}" if detail and detail != copy.summary else ""
-        return f"{copy.summary}{detail_block}\n\n审批编号：`{approval_id}`。确认后将从当前步骤继续执行。"
+        return self._t(
+            "kernel.approval.blocked_message",
+            summary=copy.summary,
+            detail_block=detail_block,
+            approval_id=approval_id,
+        )
 
     def model_prompt(self, requested_action: dict[str, Any], approval_id: str) -> str:
         copy = self.describe(requested_action, approval_id=approval_id)
-        return (
-            f"{copy.summary}（审批编号：{approval_id}）。"
-            f"请使用 `/task approve {approval_id}`、`/task approve-always-directory {approval_id}`，"
-            f"或直接回复“批准一次 {approval_id}”/“始终允许此目录 {approval_id}”。"
+        return self._t(
+            "kernel.approval.model_prompt",
+            summary=copy.summary,
+            approval_id=approval_id,
         )
 
     def _format_with_optional_formatter(self, facts: dict[str, Any]) -> ApprovalCopy | None:
@@ -118,48 +135,72 @@ class ApprovalCopyService:
 
         if command:
             if "git push" in command.lower():
-                summary = "准备把当前仓库的本地提交推送到远端仓库。"
-                detail = "这会更新远端代码状态，可能影响协作者或部署流程；原始命令可在详情中查看。"
-                return ApprovalCopy(title="确认推送远端", summary=summary, detail=detail)
+                return ApprovalCopy(
+                    title=self._t("kernel.approval.template.push.title"),
+                    summary=self._t("kernel.approval.template.push.summary"),
+                    detail=self._t("kernel.approval.template.push.detail"),
+                )
             if any(token in command.lower() for token in ("rm ", "trash ", "del ")):
-                summary = "准备删除本地文件或目录。"
-                detail = "这个操作可能不可恢复，建议先确认删除范围；原始命令可在详情中查看。"
-                return ApprovalCopy(title="确认删除操作", summary=summary, detail=detail)
-            summary = "准备执行一条会修改当前环境的命令。"
-            detail = "这条命令会产生副作用，需要你确认后继续；原始命令可在详情中查看。"
-            return ApprovalCopy(title="确认执行命令", summary=summary, detail=detail)
+                return ApprovalCopy(
+                    title=self._t("kernel.approval.template.delete.title"),
+                    summary=self._t("kernel.approval.template.delete.summary"),
+                    detail=self._t("kernel.approval.template.delete.detail"),
+                )
+            return ApprovalCopy(
+                title=self._t("kernel.approval.template.command.title"),
+                summary=self._t("kernel.approval.template.command.summary"),
+                detail=self._t("kernel.approval.template.command.detail"),
+            )
 
         if paths:
             if len(paths) == 1:
                 path = paths[0]
                 if any(token in path for token in (".env", "/.ssh/", "/.gnupg/", "/Library/")):
-                    summary = f"准备修改敏感文件：`{path}`。"
-                    detail = "这可能影响本地配置、凭据或系统行为，需要你确认。"
-                    return ApprovalCopy(title="确认修改敏感文件", summary=summary, detail=detail)
+                    return ApprovalCopy(
+                        title=self._t("kernel.approval.template.sensitive_file.title"),
+                        summary=self._t("kernel.approval.template.sensitive_file.summary", path=path),
+                        detail=self._t("kernel.approval.template.sensitive_file.detail"),
+                    )
                 if facts.get("outside_workspace"):
-                    summary = f"准备写入 workspace 外文件：`{path}`。"
-                    detail = "你可以仅批准这一次，或始终允许此目录在当前会话中写入。"
-                    return ApprovalCopy(title="确认写入 workspace 外目录", summary=summary, detail=detail)
-                summary = f"准备修改 1 个文件：`{path}`。"
-                detail = "变更预览已生成；确认后将继续执行。"
-                return ApprovalCopy(title="确认文件修改", summary=summary, detail=detail)
-            summary = f"准备修改 {len(paths)} 个文件。"
-            detail = "这是一次批量本地变更，建议先确认影响范围。"
-            return ApprovalCopy(title="确认批量文件修改", summary=summary, detail=detail)
+                    return ApprovalCopy(
+                        title=self._t("kernel.approval.template.outside_workspace.title"),
+                        summary=self._t("kernel.approval.template.outside_workspace.summary", path=path),
+                        detail=self._t("kernel.approval.template.outside_workspace.detail"),
+                    )
+                return ApprovalCopy(
+                    title=self._t("kernel.approval.template.single_file.title"),
+                    summary=self._t("kernel.approval.template.single_file.summary", path=path),
+                    detail=self._t("kernel.approval.template.single_file.detail"),
+                )
+            return ApprovalCopy(
+                title=self._t("kernel.approval.template.multi_file.title"),
+                summary=self._t("kernel.approval.template.multi_file.summary", count=len(paths)),
+                detail=self._t("kernel.approval.template.multi_file.detail"),
+            )
 
         if hosts:
             if len(hosts) == 1:
-                summary = f"准备调用外部服务 `{hosts[0]}` 并修改远端状态。"
+                summary = self._t("kernel.approval.template.network.summary.single", host=hosts[0])
             else:
-                summary = f"准备调用 {len(hosts)} 个外部服务并修改远端状态。"
-            detail = "这会影响外部系统，需要你明确确认。"
-            return ApprovalCopy(title="确认外部系统变更", summary=summary, detail=detail)
+                summary = self._t("kernel.approval.template.network.summary.multiple", count=len(hosts))
+            return ApprovalCopy(
+                title=self._t("kernel.approval.template.network.title"),
+                summary=summary,
+                detail=self._t("kernel.approval.template.network.detail"),
+            )
 
         if packet_title:
-            summary = facts["packet_summary"] or "准备执行一个需要确认的操作。"
-            detail = f"风险等级：{risk}。请确认后继续执行。"
+            summary = facts["packet_summary"] or self._t("kernel.approval.template.packet.summary_default")
+            detail = self._t("kernel.approval.template.packet.detail", risk=risk)
             return ApprovalCopy(title=packet_title, summary=summary, detail=detail)
 
-        summary = f"准备执行操作 `{facts['tool_name'] or 'unknown'}`。"
-        detail = f"该操作风险等级为 {risk}，需要你确认后继续。"
-        return ApprovalCopy(title="确认继续执行", summary=summary, detail=detail)
+        summary = self._t(
+            "kernel.approval.template.fallback.summary",
+            tool_name=facts["tool_name"] or self._t("kernel.approval.template.fallback.unknown_tool"),
+        )
+        detail = self._t("kernel.approval.template.fallback.detail", risk=risk)
+        return ApprovalCopy(
+            title=self._t("kernel.approval.template.fallback.title"),
+            summary=summary,
+            detail=detail,
+        )

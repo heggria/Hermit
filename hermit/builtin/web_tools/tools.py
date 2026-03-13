@@ -22,37 +22,31 @@ def register(ctx: PluginContext) -> None:
             "For recent events or breaking news, set search_type='news' and/or time_filter='day' or 'week' "
             "to filter results by recency and get the latest information."
         ),
+        description_key="tools.web.search.description",
         input_schema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The search query",
+                    "description_key": "tools.web.search.query",
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum number of results (default: 8, max: 20)",
+                    "description_key": "tools.web.search.max_results",
                 },
                 "region": {
                     "type": "string",
-                    "description": "Region code, e.g. 'us-en', 'cn-zh', 'wt-wt' (worldwide, default)",
+                    "description_key": "tools.web.search.region",
                 },
                 "time_filter": {
                     "type": "string",
                     "enum": ["day", "week", "month", "year"],
-                    "description": (
-                        "Filter results by recency. Use 'day' for news from the past 24 hours, "
-                        "'week' for the past 7 days, 'month' for the past 30 days, "
-                        "'year' for the past year. Omit for all-time results."
-                    ),
+                    "description_key": "tools.web.search.time_filter",
                 },
                 "search_type": {
                     "type": "string",
                     "enum": ["web", "news"],
-                    "description": (
-                        "Search mode. Use 'news' to search the news index for current events "
-                        "and breaking news (recommended for recent events). Default is 'web'."
-                    ),
+                    "description_key": "tools.web.search.search_type",
                 },
             },
             "required": ["query"],
@@ -72,16 +66,17 @@ def register(ctx: PluginContext) -> None:
             "Strips HTML tags, scripts, styles, and extracts the main text. "
             "Useful for reading articles, documentation, API references, blog posts, etc."
         ),
+        description_key="tools.web.fetch.description",
         input_schema={
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to fetch",
+                    "description_key": "tools.web.fetch.url",
                 },
                 "max_length": {
                     "type": "integer",
-                    "description": "Max characters to return (default: 20000)",
+                    "description_key": "tools.web.fetch.max_length",
                 },
             },
             "required": ["url"],

@@ -23,6 +23,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
+from hermit.core.budgets import get_runtime_budget
 from hermit.core.tools import ToolSpec
 from hermit.plugin.base import McpServerSpec
 
@@ -130,7 +131,7 @@ class McpClientManager:
                 ready.set()
 
         self._lifecycle_future = asyncio.run_coroutine_threadsafe(lifecycle(), self._loop)
-        ready.wait(timeout=60)
+        ready.wait(timeout=get_runtime_budget().provider_read_timeout)
 
     def get_tool_specs(self) -> list[ToolSpec]:
         """Return ToolSpec instances for all discovered MCP tools."""
@@ -141,8 +142,10 @@ class McpClientManager:
 
                 def _make_handler(sn: str, tn: str):
                     def handler(payload: dict[str, Any]) -> str:
+                        budget = get_runtime_budget()
                         return self._run_async(
-                            self._call_tool(sn, tn, payload), timeout=120,
+                            self._call_tool(sn, tn, payload),
+                            timeout=budget.tool_hard_deadline,
                         )
                     return handler
 
@@ -234,7 +237,7 @@ class McpClientManager:
 
     async def _call_tool(
         self, server_name: str, tool_name: str, arguments: dict[str, Any],
-    ) -> str:
+    ) -> Any:
         conn = self._connections.get(server_name)
         if conn is None or conn.session is None:
             return f"Error: MCP server '{server_name}' not connected"
@@ -249,7 +252,10 @@ class McpClientManager:
                 return f"Error: {' '.join(parts)}" if parts else "Error: MCP tool failed"
 
             if result.structuredContent is not None:
-                return json.dumps(result.structuredContent, ensure_ascii=False, indent=2)
+                structured = result.structuredContent
+                if isinstance(structured, dict) and "_hermit_observation" in structured:
+                    return structured
+                return json.dumps(structured, ensure_ascii=True, indent=2)
             parts = []
             for block in result.content:
                 text = getattr(block, "text", None)

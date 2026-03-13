@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import time
+
 from hermit.core.sandbox import CommandSandbox
 from hermit.core.tools import create_builtin_tool_registry
 
@@ -74,3 +77,99 @@ def test_read_hermit_file_returns_message_for_missing_file(tmp_path) -> None:
     content = registry.call("read_hermit_file", {"path": "memory/session_state.json"})
 
     assert content == "File not found: memory/session_state.json"
+
+
+def test_builtin_tools_localize_descriptions_and_messages(tmp_path) -> None:
+    registry = create_builtin_tool_registry(
+        tmp_path,
+        CommandSandbox(mode="l0", cwd=tmp_path),
+        config_root_dir=tmp_path / ".hermit",
+        locale="zh-CN",
+    )
+
+    read_tool = registry.get("read_file")
+    missing = registry.call("read_hermit_file", {"path": "memory/session_state.json"})
+
+    assert read_tool.description == "读取工作区内的 UTF-8 文本文件。"
+    assert read_tool.input_schema["properties"]["path"]["description"] == "要读取的工作区相对路径。"
+    assert missing == "未找到文件：memory/session_state.json"
+
+
+def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
+    sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
+    command = (
+        f"{sys.executable} -u -c "
+        "\"import sys,time; "
+        "print('Booting server'); sys.stdout.flush(); "
+        "time.sleep(0.25); "
+        "print('READY http://127.0.0.1:3000'); sys.stdout.flush(); "
+        "time.sleep(0.4)\""
+    )
+
+    result = sandbox.run(
+        {
+            "command": command,
+            "display_name": "Dev Server",
+            "ready_return": True,
+            "ready_patterns": [
+                {
+                    "pattern": r"READY (?P<url>https?://\S+)",
+                    "summary": "{display_name} ready at {url}",
+                    "detail": "{line}",
+                }
+            ],
+            "progress_patterns": [
+                {
+                    "pattern": r"Booting server",
+                    "phase": "starting",
+                    "summary": "{display_name} is starting",
+                    "progress_percent": 10,
+                }
+            ],
+        }
+    )
+
+    assert "_hermit_observation" in result
+    ticket = result["_hermit_observation"]
+
+    deadline = time.time() + 0.4
+    starting = None
+    while time.time() < deadline:
+        poll = sandbox.poll(ticket["job_id"])
+        if poll.get("progress", {}).get("phase") == "starting":
+            starting = poll
+            break
+        time.sleep(0.02)
+    assert starting is not None
+    assert starting["status"] == "observing"
+    assert starting["progress"]["phase"] == "starting"
+    assert starting["progress"]["summary"] == "Dev Server is starting"
+
+    ready = None
+    while time.time() < deadline + 0.5:
+        poll = sandbox.poll(ticket["job_id"])
+        if poll.get("progress", {}).get("ready") is True:
+            ready = poll
+            break
+        time.sleep(0.02)
+    assert ready is not None
+    assert ready["status"] == "observing"
+    assert ready["progress"]["ready"] is True
+    assert ready["progress"]["summary"] == "Dev Server ready at http://127.0.0.1:3000"
+    assert ready["result"]["ready"] is True
+
+
+def test_command_sandbox_observation_uses_coarse_running_progress_without_metadata(tmp_path) -> None:
+    sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
+    command = f"{sys.executable} -u -c \"import time; time.sleep(0.2)\""
+
+    result = sandbox.run({"command": command, "display_name": "Background Task"})
+
+    assert "_hermit_observation" in result
+    ticket = result["_hermit_observation"]
+
+    time.sleep(0.06)
+    poll = sandbox.poll(ticket["job_id"])
+    assert poll["status"] == "observing"
+    assert poll["progress"]["phase"] == "running"
+    assert poll["progress"]["summary"] == "Background Task is still running."

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from hermit.builtin.planner.commands import (
     _cmd_plan,
     _planner_state,
@@ -10,6 +12,11 @@ from hermit.builtin.planner.commands import (
 )
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.store import KernelStore
+
+
+@pytest.fixture(autouse=True)
+def _force_planner_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
 
 def _make_runner(tmp_path):
@@ -28,6 +35,7 @@ def test_plan_mode_state_lives_in_kernel_metadata(tmp_path) -> None:
     result = _cmd_plan(runner, "chat-1", "/plan")
 
     assert result.is_command is True
+    assert "Entered plan mode" in result.text
     state = _planner_state(store, "chat-1")
     assert state["mode"] is True
     assert state["plan_artifact_id"] is None
@@ -80,3 +88,12 @@ def test_plan_confirm_replays_saved_plan(tmp_path) -> None:
     assert "<execution_plan>" in captured["prompt"]
     assert "Ship it" in captured["prompt"]
     assert _planner_state(store, "chat-2")["plan_artifact_id"] is None
+
+
+def test_plan_messages_can_render_zh_cn(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    runner, _store = _make_runner(tmp_path)
+
+    result = _cmd_plan(runner, "chat-zh", "/plan")
+
+    assert "已进入规划模式" in result.text

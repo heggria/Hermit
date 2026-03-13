@@ -3,7 +3,14 @@ from __future__ import annotations
 import plistlib
 from pathlib import Path
 
+import pytest
+
 from hermit import autostart
+
+
+@pytest.fixture(autouse=True)
+def _force_autostart_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
 
 def _write_plist(path: Path, label: str, args: list[str]) -> None:
@@ -298,3 +305,10 @@ def test_public_functions_return_non_macos_message(monkeypatch) -> None:
 
     assert autostart.disable() == "Auto-start via launchd is only supported on macOS."
     assert autostart.status() == "Auto-start via launchd is only supported on macOS."
+
+
+def test_public_functions_can_render_zh_cn(monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    monkeypatch.setattr(autostart.sys, "platform", "linux")
+
+    assert autostart.enable() == "launchd 自启动仅支持 macOS。"

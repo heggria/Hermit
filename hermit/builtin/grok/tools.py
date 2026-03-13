@@ -17,27 +17,22 @@ def register(ctx: PluginContext) -> None:
             "Returns a comprehensive answer with inline citations. "
             "Requires XAI_API_KEY to be set."
         ),
+        description_key="tools.grok.search.description",
         input_schema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": (
-                        "The question or search query. Can be a natural-language question "
-                        "like 'Why did MiniMax stock surge today?' or a search phrase."
-                    ),
+                    "description_key": "tools.grok.search.query",
                 },
                 "search_mode": {
                     "type": "string",
                     "enum": ["auto", "on", "off"],
-                    "description": (
-                        "Live search mode. 'auto' (default) lets Grok decide when to search; "
-                        "'on' forces live search; 'off' uses Grok's training data only."
-                    ),
+                    "description_key": "tools.grok.search.search_mode",
                 },
                 "max_tokens": {
                     "type": "integer",
-                    "description": "Maximum tokens in response (default: 2048).",
+                    "description_key": "tools.grok.search.max_tokens",
                 },
             },
             "required": ["query"],

@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-import sys
-import types
 from types import SimpleNamespace
 
-if "hermit.kernel.permits" not in sys.modules:
-    permits_module = types.ModuleType("hermit.kernel.permits")
-
-    class ExecutionPermitService:  # pragma: no cover - test import shim
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-    permits_module.ExecutionPermitService = ExecutionPermitService
-    sys.modules["hermit.kernel.permits"] = permits_module
+import pytest
 
 from hermit.core.runner import AgentRunner, DispatchResult
 from hermit.provider.runtime import AgentResult
+
+
+@pytest.fixture(autouse=True)
+def _force_runner_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
 
 class _FakeSessionManager:
@@ -123,8 +118,8 @@ class _FakeTaskController:
         self.started.append({"kwargs": kwargs, "ctx": ctx})
         return ctx
 
-    def finalize_result(self, ctx, status: str) -> None:
-        self.finalized.append((ctx, status))
+    def finalize_result(self, ctx, status: str, result_preview: str | None = None) -> None:
+        self.finalized.append((ctx, status, result_preview))
 
     def mark_blocked(self, ctx) -> None:
         self.blocked.append(ctx)
@@ -152,12 +147,12 @@ def test_runner_dispatch_commands_help_history_task_and_unknown() -> None:
     quit_result = runner.dispatch("session", "/quit")
     new_result = runner.dispatch("session", "/new")
 
-    assert unknown.is_command is True and "未知命令" in unknown.text
-    assert "1 轮用户消息，共 2 条记录" in history.text
+    assert unknown.is_command is True and "Unknown command" in unknown.text
+    assert "1 user turns, 2 messages total" in history.text
     assert "`/help`" in help_result.text and "`/quit`" in help_result.text
-    assert "用法" in task_usage.text
+    assert "Usage:" in task_usage.text
     assert quit_result.should_exit is True
-    assert new_result.text == "已开启新会话。"
+    assert new_result.text == "Started a new session."
     assert session_manager.closed == ["session"]
 
 
@@ -169,6 +164,7 @@ def test_runner_handle_and_status_paths() -> None:
     assert result.text == "answer"
     assert controller.started[0]["kwargs"]["policy_profile"] == "readonly"
     assert controller.finalized[0][1] == "succeeded"
+    assert controller.finalized[0][2] == "answer"
     assert plugin_manager.started == ["session"]
     assert plugin_manager.post_run == ["answer"]
     assert "<session_time>" in agent.run_calls[0]["prompt"]
@@ -184,17 +180,28 @@ def test_runner_handle_and_status_paths() -> None:
     assert runner._result_status(AgentResult(text="ok", turns=1, tool_calls=0, execution_status="custom")) == "custom"
 
 
+def test_runner_uses_clean_task_goal_for_kernel_records() -> None:
+    runner, _agent, _session_manager, _plugin_manager, controller = _make_runner()
+
+    runner.handle(
+        "session",
+        "<feishu_msg_id>om_1</feishu_msg_id>\n<session_time>ts</session_time>\n查询一下北京天气",
+    )
+
+    assert controller.started[0]["kwargs"]["goal"] == "查询一下北京天气"
+
+
 def test_runner_resolve_approval_handles_missing_deny_and_approve_paths() -> None:
     missing_runner, *_ = _make_runner()
     missing = missing_runner._resolve_approval("session", action="approve", approval_id="missing")
-    assert missing.text == "未知 approval：missing"
+    assert missing.text == "Approval not found: missing"
 
     approval = SimpleNamespace(approval_id="approval-1", step_attempt_id="attempt-1")
     runner, agent, session_manager, plugin_manager, controller = _make_runner(approval)
 
     denied = runner._resolve_approval("session", action="deny", approval_id="approval-1", reason="nope")
     assert denied.is_command is True
-    assert "审批已拒绝" in denied.text
+    assert "This approval was denied" in denied.text
     assert controller.store.resolved[0]["resolution"]["reason"] == "nope"
 
     agent.resume_result = AgentResult(
@@ -208,6 +215,7 @@ def test_runner_resolve_approval_handles_missing_deny_and_approve_paths() -> Non
     assert approved.text == "approved"
     assert controller.store.resolved[-1]["resolution"]["mode"] == "always_directory"
     assert controller.finalized[-1][1] == "failed"
+    assert controller.finalized[-1][2] == "approved"
     assert plugin_manager.post_run[-1] == "approved"
 
     agent.resume_result = AgentResult(
@@ -233,3 +241,18 @@ def test_runner_add_command_and_register_command_decorator() -> None:
     assert runner.dispatch("session", "/plugin").text == "plugin"
     fresh_runner, *_ = _make_runner()
     assert fresh_runner.dispatch("session", "/extra-test").text == "extra"
+
+
+def test_runner_messages_can_render_zh_cn(monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    runner, *_ = _make_runner()
+
+    unknown = runner.dispatch("session", "/missing")
+    history = runner.dispatch("session", "/history")
+    task_usage = runner.dispatch("session", "/task approve")
+    new_result = runner.dispatch("session", "/new")
+
+    assert "未知命令" in unknown.text
+    assert "1 轮用户消息，共 2 条记录" in history.text
+    assert "用法：" in task_usage.text
+    assert new_result.text == "已开启新会话。"

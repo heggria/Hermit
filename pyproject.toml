@@ -78,4 +78,5 @@ include = ["hermit*"]
   "builtin/**/skills/**/*.md",
   "builtin/**/rules/**/*.md",
   "locales/*.json",
+  "locales/**/*.json",
 ]

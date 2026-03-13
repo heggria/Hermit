@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
+import pytest
+
 from hermit.builtin.feishu.normalize import FeishuMessage, normalize_event
+from hermit.builtin.feishu.reply import build_task_topic_card
 from hermit.core.runner import AgentRunner
 from hermit.core.session import SessionManager
 from hermit.core.tools import ToolRegistry, ToolSpec
@@ -22,6 +25,11 @@ from hermit.kernel.store import KernelStore
 from hermit.plugin.manager import PluginManager
 from hermit.provider.providers.claude import ClaudeProvider
 from hermit.provider.runtime import AgentRuntime
+
+
+@pytest.fixture(autouse=True)
+def _force_feishu_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
 
 
 @dataclass
@@ -215,6 +223,38 @@ def test_runner_close_session(tmp_path) -> None:
 
     fresh = runner.session_manager.get_or_create("s2")
     assert len(fresh.messages) == 0
+
+
+def test_build_task_topic_card_renders_current_phase_and_recent_milestones() -> None:
+    card = build_task_topic_card(
+        {
+            "status": "running",
+            "current_hint": "dev server 已就绪，下一步会继续 smoke test。",
+            "current_phase": "ready",
+            "current_progress_percent": 100,
+            "items": [
+                {
+                    "kind": "tool.progressed",
+                    "text": "Booting dev server",
+                    "phase": "starting",
+                    "progress_percent": 10,
+                },
+                {
+                    "kind": "task.progress.summarized",
+                    "text": "dev server 已就绪，下一步会继续 smoke test。\n服务已经可以访问。",
+                    "phase": "ready",
+                    "progress_percent": 100,
+                },
+            ],
+        },
+        title="Dev Task",
+        locale="zh-CN",
+    )
+
+    elements = card["body"]["elements"]
+    assert elements[0]["content"].startswith("**ready · 100%**")
+    assert "下一步会继续 smoke test" in elements[0]["content"]
+    assert "服务已经可以访问" in elements[1]["content"]
 
 
 def test_feishu_adapter_accepts_legacy_env_names(monkeypatch) -> None:
@@ -436,6 +476,63 @@ def test_feishu_adapter_replies_with_approval_card_for_blocked_result(monkeypatc
     assert done_calls == ["done"]
 
 
+def test_feishu_adapter_keeps_terminal_result_card_without_overwriting_with_topic(monkeypatch) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+    from hermit.core.runner import DispatchResult
+
+    patched_cards: list[dict[str, Any]] = []
+    bind_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    topic_patch_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=True))
+    adapter._client = object()
+
+    def fake_dispatch(**kwargs: Any) -> DispatchResult:
+        on_tool_start = kwargs.get("on_tool_start")
+        on_tool_call = kwargs.get("on_tool_call")
+        assert callable(on_tool_start)
+        assert callable(on_tool_call)
+        on_tool_start("web_search", {"query": "北京天气"})
+        on_tool_call("web_search", {"query": "北京天气"}, {"forecast": "晴"})
+        return DispatchResult(
+            text="北京今天晴，最高 16°C。",
+            agent_result=SimpleNamespace(
+                task_id="task_1",
+                blocked=False,
+                suspended=False,
+                execution_status="succeeded",
+            ),
+        )
+
+    adapter._runner = SimpleNamespace(
+        task_controller=SimpleNamespace(resolve_text_command=lambda *_a, **_kw: None),
+        dispatch=fake_dispatch,
+    )
+
+    monkeypatch.setattr("hermit.builtin.feishu.adapter.send_ack", lambda *_a, **_kw: None)
+    monkeypatch.setattr("hermit.builtin.feishu.adapter.send_done", lambda *_a, **_kw: None)
+    monkeypatch.setattr("hermit.builtin.feishu.adapter.reply_card_return_id", lambda *_a, **_kw: "om_card")
+    monkeypatch.setattr("hermit.builtin.feishu.adapter.patch_card", lambda _client, _message_id, card: patched_cards.append(card))
+    monkeypatch.setattr(adapter, "_bind_task_topic", lambda *args, **kwargs: bind_calls.append((args, kwargs)))
+    monkeypatch.setattr(adapter, "_patch_task_topic", lambda *args, **kwargs: topic_patch_calls.append((args, kwargs)))
+
+    msg = FeishuMessage(
+        chat_id="oc_1",
+        message_id="om_1",
+        sender_id="user-1",
+        text="查询一下北京天气",
+        message_type="text",
+        chat_type="p2p",
+        image_keys=[],
+    )
+    adapter._process_message(msg)
+
+    assert bind_calls == []
+    assert topic_patch_calls == []
+    assert patched_cards
+    assert "北京今天晴" in json.dumps(patched_cards[-1], ensure_ascii=False)
+
+
 def test_feishu_adapter_card_action_submits_approval_job(monkeypatch) -> None:
     from hermit.builtin.feishu.adapter import FeishuAdapter
 
@@ -457,7 +554,7 @@ def test_feishu_adapter_card_action_submits_approval_job(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "hermit.builtin.feishu.adapter.build_thinking_card",
-        lambda hint: {"hint": hint},
+        lambda hint, **kwargs: {"hint": hint, "locale": kwargs.get("locale")},
     )
 
     event = SimpleNamespace(
@@ -473,6 +570,9 @@ def test_feishu_adapter_card_action_submits_approval_job(monkeypatch) -> None:
     assert submitted[0][1] == ("approval_123", "approve_once", "om_card_1")
     assert response.toast is not None
     assert response.toast.content == "已通过，正在继续执行。"
+    assert response.card is not None
+    assert response.card.type == "raw"
+    assert response.card.data == {"hint": "已通过，正在继续执行。", "locale": "zh-CN"}
 
 
 def test_feishu_adapter_reissues_pending_approval_cards_on_startup(monkeypatch) -> None:
@@ -512,6 +612,7 @@ def test_feishu_adapter_reissues_pending_approval_cards_on_startup(monkeypatch) 
         "hermit.builtin.feishu.adapter.send_card",
         lambda _client, chat_id, card: sent_cards.append((chat_id, card)) or "om_new",
     )
+    monkeypatch.setattr(adapter, "_bind_task_topic", lambda *args, **kwargs: None)
 
     adapter._reissue_pending_approval_cards()
 
@@ -522,6 +623,46 @@ def test_feishu_adapter_reissues_pending_approval_cards_on_startup(monkeypatch) 
     text_blocks = [element["content"] for element in body if element.get("tag") == "markdown"]
     assert any("准备删除本地文件或目录。" in block for block in text_blocks)
     assert any("旧审批卡片的按钮可能已失效" in block for block in text_blocks)
+
+
+def test_feishu_adapter_card_action_uses_english_locale(monkeypatch) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    submitted: list[tuple[Any, tuple[Any, ...]]] = []
+
+    class FakeExecutor:
+        def submit(self, fn, *args):
+            submitted.append((fn, args))
+            return None
+
+    store = SimpleNamespace(
+        get_approval=lambda approval_id: SimpleNamespace(approval_id=approval_id, status="pending")
+    )
+    runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
+    adapter = FeishuAdapter(settings=SimpleNamespace(locale="en-US"))
+    adapter._runner = runner  # type: ignore[assignment]
+    adapter._client = object()
+    adapter._executor = FakeExecutor()  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.build_thinking_card",
+        lambda hint, **kwargs: {"hint": hint, "locale": kwargs.get("locale")},
+    )
+
+    event = SimpleNamespace(
+        event=SimpleNamespace(
+            action=SimpleNamespace(value={"kind": "approval", "action": "approve_once", "approval_id": "approval_123"}),
+            context=SimpleNamespace(open_message_id="om_card_1"),
+        )
+    )
+
+    response = adapter._on_card_action(event)
+
+    assert submitted[0][1] == ("approval_123", "approve_once", "om_card_1")
+    assert response.toast.content == "Approved. Continuing execution."
+    assert response.card is not None
+    assert response.card.type == "raw"
+    assert response.card.data == {"hint": "Approved. Continuing execution.", "locale": "en-US"}
 
 
 def test_feishu_adapter_stop_shuts_down_background_resources(monkeypatch) -> None:

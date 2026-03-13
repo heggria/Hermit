@@ -138,7 +138,7 @@ class ReconcileService:
             return None
         request = urllib.request.Request(probe_url, method="HEAD")
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=get_runtime_budget().provider_read_timeout) as response:
                 status = getattr(response, "status", 200)
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -239,3 +239,4 @@ class ReconcileService:
         except OSError:
             return None
         return {"head": head, "dirty": dirty}
+from hermit.core.budgets import get_runtime_budget

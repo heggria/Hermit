@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import re
 import subprocess
-from dataclasses import dataclass
+import threading
+import time
+import uuid
+from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, TextIO
+
+from hermit.core.budgets import Deadline, ExecutionBudget, get_runtime_budget
+from hermit.kernel.observation import observation_envelope
+
+_RECENT_LINE_BUFFER = 200
 
 
 @dataclass
@@ -15,39 +25,506 @@ class CommandResult:
     timed_out: bool = False
 
 
-class CommandSandbox:
-    """Minimal command executor for L0/L1 modes."""
+@dataclass
+class _ObservedProcess:
+    job_id: str
+    command: str
+    cwd: Path | None
+    proc: subprocess.Popen[str]
+    deadline: Deadline
+    created_at: float
+    display_name: str
+    ready_patterns: list[dict[str, Any]] = field(default_factory=list)
+    failure_patterns: list[dict[str, Any]] = field(default_factory=list)
+    progress_patterns: list[dict[str, Any]] = field(default_factory=list)
+    ready_return: bool = False
+    cancelled: bool = False
+    completed: bool = False
+    returncode: int | None = None
+    stdout_chunks: list[str] = field(default_factory=list)
+    stderr_chunks: list[str] = field(default_factory=list)
+    pending_events: list[tuple[str, str]] = field(default_factory=list)
+    recent_events: deque[tuple[str, str]] = field(default_factory=lambda: deque(maxlen=_RECENT_LINE_BUFFER))
+    reader_threads: list[threading.Thread] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def __init__(self, mode: str = "l0", timeout_seconds: int = 30, cwd: Optional[Path] = None) -> None:
+
+class CommandSandbox:
+    """Budget-aware command executor for L0/L1 modes."""
+
+    def __init__(
+        self,
+        mode: str = "l0",
+        timeout_seconds: int = 30,
+        cwd: Path | None = None,
+        budget: ExecutionBudget | None = None,
+    ) -> None:
         if mode not in {"l0", "l1"}:
             raise ValueError(f"Unsupported sandbox mode: {mode}")
         self.mode = mode
-        self.timeout_seconds = timeout_seconds
+        base_budget = budget or get_runtime_budget()
+        soft = float(timeout_seconds or 0) or base_budget.tool_soft_deadline
+        self.budget = ExecutionBudget(
+            ingress_ack_deadline=base_budget.ingress_ack_deadline,
+            provider_connect_timeout=base_budget.provider_connect_timeout,
+            provider_read_timeout=base_budget.provider_read_timeout,
+            provider_stream_idle_timeout=base_budget.provider_stream_idle_timeout,
+            tool_soft_deadline=soft,
+            tool_hard_deadline=max(base_budget.tool_hard_deadline, soft),
+            observation_window=base_budget.observation_window,
+            observation_poll_interval=base_budget.observation_poll_interval,
+        )
+        self.timeout_seconds = int(soft)
         self.cwd = cwd
+        self._jobs: dict[str, _ObservedProcess] = {}
+        self._lock = threading.Lock()
 
-    def run(self, command: str) -> CommandResult:
+    def run(self, command: str | dict[str, Any]) -> CommandResult | dict[str, Any]:
+        payload = self._normalize_payload(command)
+        command_text = str(payload["command"])
+        deadline = self.budget.tool_deadline()
+        proc = subprocess.Popen(
+            command_text,
+            shell=True,
+            cwd=self.cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        observed = _ObservedProcess(
+            job_id=f"proc_{uuid.uuid4().hex[:10]}",
+            command=command_text,
+            cwd=self.cwd,
+            proc=proc,
+            deadline=deadline,
+            created_at=time.time(),
+            display_name=str(payload.get("display_name", "") or self._default_display_name(command_text)),
+            ready_patterns=self._normalize_pattern_rules(payload.get("ready_patterns")),
+            failure_patterns=self._normalize_pattern_rules(payload.get("failure_patterns")),
+            progress_patterns=self._normalize_progress_rules(payload.get("progress_patterns")),
+            ready_return=bool(payload.get("ready_return", False)),
+        )
+        self._start_reader_threads(observed)
+
         try:
-            completed = subprocess.run(
-                command,
-                shell=True,
-                cwd=self.cwd,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as exc:
-            return CommandResult(
-                command=command,
-                returncode=124,
-                stdout=exc.stdout or "",
-                stderr=exc.stderr or "",
-                timed_out=True,
+            proc.wait(timeout=max(deadline.soft_remaining(), 0.1))
+        except subprocess.TimeoutExpired:
+            with self._lock:
+                self._jobs[observed.job_id] = observed
+            summary = f"{observed.display_name} is still running."
+            return observation_envelope(
+                {
+                    "observer_kind": "local_process",
+                    "job_id": observed.job_id,
+                    "status_ref": observed.job_id,
+                    "poll_after_seconds": self.budget.observation_poll_interval,
+                    "cancel_supported": True,
+                    "resume_token": observed.job_id,
+                    "topic_summary": summary,
+                    "display_name": observed.display_name,
+                    "ready_patterns": observed.ready_patterns,
+                    "failure_patterns": observed.failure_patterns,
+                    "progress_patterns": observed.progress_patterns,
+                    "ready_return": observed.ready_return,
+                    "started_at": deadline.started_at,
+                    "hard_deadline_at": deadline.hard_at,
+                }
             )
 
+        observed.returncode = proc.returncode
+        observed.completed = True
+        self._join_reader_threads(observed)
+        stdout, stderr = self._output_text(observed)
         return CommandResult(
-            command=command,
-            returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            command=command_text,
+            returncode=proc.returncode,
+            stdout=stdout,
+            stderr=stderr,
             timed_out=False,
         )
+
+    def poll(self, job_id: str) -> dict[str, Any]:
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if job is None:
+            return {
+                "status": "failed",
+                "topic_summary": f"Observed command {job_id} is no longer available.",
+                "result": {
+                    "returncode": 1,
+                    "stdout": "",
+                    "stderr": f"Observation job not found: {job_id}",
+                    "timed_out": False,
+                },
+                "is_error": True,
+            }
+
+        now = time.time()
+        new_events = self._drain_pending_events(job)
+        matched_progress: dict[str, Any] | None = None
+        failure_progress: dict[str, Any] | None = None
+        ready_progress: dict[str, Any] | None = None
+
+        for stream_name, line in new_events:
+            outcome = self._match_output_rules(job, stream_name, line)
+            if outcome is None:
+                continue
+            progress = dict(outcome["progress"])
+            if outcome.get("failed"):
+                failure_progress = progress
+                break
+            matched_progress = progress
+            if outcome.get("ready"):
+                ready_progress = progress
+                if job.ready_return:
+                    break
+
+        if job.cancelled:
+            return {
+                "status": "cancelled",
+                "topic_summary": f"{job.display_name} was cancelled.",
+                "progress": {
+                    "phase": "cancelled",
+                    "summary": f"{job.display_name} was cancelled.",
+                },
+                "result": {
+                    "returncode": 130,
+                    "stdout": self._output_text(job)[0],
+                    "stderr": self._output_text(job)[1] or "cancelled",
+                    "timed_out": False,
+                },
+                "is_error": True,
+            }
+
+        if failure_progress is not None:
+            self._terminate_job(job)
+            stdout, stderr = self._output_text(job)
+            with self._lock:
+                self._jobs.pop(job_id, None)
+            return {
+                "status": "failed",
+                "topic_summary": failure_progress["summary"],
+                "progress": failure_progress,
+                "result": {
+                    "returncode": job.returncode if job.returncode is not None else 1,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "timed_out": False,
+                },
+                "is_error": True,
+            }
+
+        if ready_progress is not None and job.ready_return:
+            with self._lock:
+                self._jobs.pop(job_id, None)
+            return {
+                "status": "observing",
+                "topic_summary": ready_progress["summary"],
+                "progress": ready_progress,
+                "result": {
+                    "job_id": job.job_id,
+                    "pid": job.proc.pid,
+                    "ready": True,
+                    "running": job.proc.poll() is None,
+                },
+                "is_error": False,
+            }
+
+        if job.proc.poll() is None:
+            if now >= job.deadline.hard_at:
+                self._terminate_job(job, force=True)
+                stdout, stderr = self._output_text(job)
+                with self._lock:
+                    self._jobs.pop(job_id, None)
+                timeout_progress = {
+                    "phase": "timeout",
+                    "summary": f"{job.display_name} timed out.",
+                }
+                return {
+                    "status": "timeout",
+                    "topic_summary": timeout_progress["summary"],
+                    "progress": timeout_progress,
+                    "result": {
+                        "returncode": 124,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "timed_out": True,
+                    },
+                    "is_error": True,
+                }
+            progress = matched_progress or {
+                "phase": "running",
+                "summary": f"{job.display_name} is still running.",
+            }
+            return {
+                "status": "observing",
+                "topic_summary": str(progress.get("summary", "") or f"{job.display_name} is still running."),
+                "progress": progress,
+                "poll_after_seconds": self.budget.observation_poll_interval,
+            }
+
+        job.returncode = job.proc.returncode
+        job.completed = True
+        self._join_reader_threads(job)
+        stdout, stderr = self._output_text(job)
+        with self._lock:
+            self._jobs.pop(job_id, None)
+        status = "completed" if job.proc.returncode == 0 else "failed"
+        progress = matched_progress
+        topic_summary = f"{job.display_name} finished ({status})."
+        if progress and progress.get("summary"):
+            topic_summary = str(progress["summary"])
+        return {
+            "status": status,
+            "topic_summary": topic_summary,
+            "progress": progress,
+            "result": {
+                "returncode": job.proc.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "timed_out": False,
+            },
+            "is_error": job.proc.returncode != 0,
+        }
+
+    def cancel(self, job_id: str) -> bool:
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if job is None:
+            return False
+        try:
+            job.proc.terminate()
+        except OSError:
+            return False
+        job.cancelled = True
+        return True
+
+    def _normalize_payload(self, command: str | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(command, dict):
+            payload = dict(command)
+        else:
+            payload = {"command": str(command)}
+        if not str(payload.get("command", "") or "").strip():
+            raise ValueError("CommandSandbox requires a non-empty command")
+        return payload
+
+    def _default_display_name(self, command: str) -> str:
+        snippet = command.strip().splitlines()[0][:80]
+        return snippet or "Command"
+
+    def _normalize_pattern_rules(self, value: Any) -> list[dict[str, Any]]:
+        rules: list[dict[str, Any]] = []
+        for item in list(value or []):
+            if isinstance(item, str) and item.strip():
+                rules.append({"pattern": item.strip()})
+            elif isinstance(item, dict) and str(item.get("pattern", "") or "").strip():
+                rules.append(dict(item))
+        return rules
+
+    def _normalize_progress_rules(self, value: Any) -> list[dict[str, Any]]:
+        rules: list[dict[str, Any]] = []
+        for item in list(value or []):
+            if not isinstance(item, dict):
+                continue
+            pattern = str(item.get("pattern", "") or "").strip()
+            if not pattern:
+                continue
+            rules.append(dict(item))
+        return rules
+
+    def _start_reader_threads(self, job: _ObservedProcess) -> None:
+        if job.proc.stdout is not None:
+            thread = threading.Thread(
+                target=self._reader_loop,
+                args=(job, "stdout", job.proc.stdout),
+                daemon=True,
+                name=f"{job.job_id}-stdout",
+            )
+            thread.start()
+            job.reader_threads.append(thread)
+        if job.proc.stderr is not None:
+            thread = threading.Thread(
+                target=self._reader_loop,
+                args=(job, "stderr", job.proc.stderr),
+                daemon=True,
+                name=f"{job.job_id}-stderr",
+            )
+            thread.start()
+            job.reader_threads.append(thread)
+
+    def _reader_loop(self, job: _ObservedProcess, stream_name: str, stream: TextIO) -> None:
+        try:
+            for raw in iter(stream.readline, ""):
+                if raw == "":
+                    break
+                line = raw.rstrip("\r\n")
+                with job.lock:
+                    if stream_name == "stdout":
+                        job.stdout_chunks.append(raw)
+                    else:
+                        job.stderr_chunks.append(raw)
+                    if line:
+                        job.pending_events.append((stream_name, line))
+                        job.recent_events.append((stream_name, line))
+        finally:
+            stream.close()
+
+    def _join_reader_threads(self, job: _ObservedProcess) -> None:
+        for thread in job.reader_threads:
+            thread.join(timeout=0.5)
+
+    def _output_text(self, job: _ObservedProcess) -> tuple[str, str]:
+        with job.lock:
+            stdout = "".join(job.stdout_chunks)
+            stderr = "".join(job.stderr_chunks)
+        return stdout, stderr
+
+    def _drain_pending_events(self, job: _ObservedProcess) -> list[tuple[str, str]]:
+        with job.lock:
+            events = list(job.pending_events)
+            job.pending_events.clear()
+        return events
+
+    def _pattern_match(self, rule: dict[str, Any], line: str) -> re.Match[str] | None:
+        pattern = str(rule.get("pattern", "") or "")
+        if not pattern:
+            return None
+        try:
+            return re.search(pattern, line)
+        except re.error:
+            return None
+
+    def _render_text(
+        self,
+        template: str | None,
+        *,
+        match: re.Match[str] | None,
+        line: str,
+        stream_name: str,
+        display_name: str,
+    ) -> str:
+        text = str(template or "").strip()
+        if not text:
+            return line
+        fields = {"line": line, "stream": stream_name, "display_name": display_name}
+        if match is not None:
+            fields.update({key: value for key, value in match.groupdict().items() if value is not None})
+        try:
+            return text.format(**fields)
+        except Exception:
+            return text
+
+    def _progress_from_rule(
+        self,
+        job: _ObservedProcess,
+        rule: dict[str, Any],
+        *,
+        match: re.Match[str] | None,
+        line: str,
+        stream_name: str,
+        default_phase: str,
+        default_summary: str,
+        ready: bool = False,
+    ) -> dict[str, Any]:
+        percent_value = rule.get("progress_percent")
+        try:
+            progress_percent = int(percent_value) if percent_value is not None else None
+        except (TypeError, ValueError):
+            progress_percent = None
+        detail = self._render_text(
+            str(rule.get("detail", "") or "") or None,
+            match=match,
+            line=line,
+            stream_name=stream_name,
+            display_name=job.display_name,
+        )
+        if not detail:
+            detail = line
+        return {
+            "phase": str(rule.get("phase", "") or default_phase),
+            "summary": self._render_text(
+                str(rule.get("summary", "") or "") or default_summary,
+                match=match,
+                line=line,
+                stream_name=stream_name,
+                display_name=job.display_name,
+            ),
+            "detail": detail,
+            "progress_percent": progress_percent,
+            "ready": bool(rule.get("ready", ready) or ready),
+        }
+
+    def _match_output_rules(
+        self,
+        job: _ObservedProcess,
+        stream_name: str,
+        line: str,
+    ) -> dict[str, Any] | None:
+        for rule in job.failure_patterns:
+            match = self._pattern_match(rule, line)
+            if match is None:
+                continue
+            return {
+                "failed": True,
+                "progress": self._progress_from_rule(
+                    job,
+                    rule,
+                    match=match,
+                    line=line,
+                    stream_name=stream_name,
+                    default_phase="failed",
+                    default_summary=f"{job.display_name} reported a failure.",
+                ),
+            }
+        for rule in job.ready_patterns:
+            match = self._pattern_match(rule, line)
+            if match is None:
+                continue
+            return {
+                "ready": True,
+                "progress": self._progress_from_rule(
+                    job,
+                    rule,
+                    match=match,
+                    line=line,
+                    stream_name=stream_name,
+                    default_phase="ready",
+                    default_summary=f"{job.display_name} is ready.",
+                    ready=True,
+                ),
+            }
+        for rule in job.progress_patterns:
+            match = self._pattern_match(rule, line)
+            if match is None:
+                continue
+            progress = self._progress_from_rule(
+                job,
+                rule,
+                match=match,
+                line=line,
+                stream_name=stream_name,
+                default_phase="running",
+                default_summary=line,
+            )
+            return {
+                "ready": bool(progress.get("ready", False)),
+                "progress": progress,
+            }
+        return None
+
+    def _terminate_job(self, job: _ObservedProcess, *, force: bool = False) -> None:
+        try:
+            if force:
+                job.proc.kill()
+            else:
+                job.proc.terminate()
+                try:
+                    job.proc.wait(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    job.proc.kill()
+        except OSError:
+            pass
+        job.returncode = job.proc.poll()
+        job.completed = True
+        self._join_reader_threads(job)

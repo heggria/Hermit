@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from hermit.i18n import resolve_locale, tr
 from hermit.kernel.store import KernelStore
 from hermit.plugin.base import CommandSpec, HookEvent
 
@@ -15,19 +16,23 @@ _EXECUTE_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
-_PLAN_MODE_PROMPT = (
-    "\n\n<plan_mode>\n"
-    "你当前处于规划模式。只读工具（搜索、读取文件等）可正常使用，以便收集制定计划所需的信息；"
-    "有副作用的工具（写文件、执行命令、创建定时任务等）已禁用。\n"
-    "请输出结构化的执行计划（Markdown 格式），包含：\n"
-    "1. 任务概述\n"
-    "2. 分步计划（每步说明操作和依据）\n"
-    "3. 风险与注意事项\n"
-    "可以先用只读工具调研，再输出最终计划；但不要执行任何有副作用的操作。\n"
-    "</plan_mode>"
-)
-
 _PLANNER_KEY = "planner"
+
+
+def _locale_for_runner(runner: Any = None) -> str:
+    settings = getattr(getattr(runner, "pm", None), "settings", None)
+    return resolve_locale(getattr(settings, "locale", None))
+
+
+def _t(
+    message_key: str,
+    *,
+    runner: Any = None,
+    locale: str | None = None,
+    default: str | None = None,
+    **kwargs: object,
+) -> str:
+    return tr(message_key, locale=locale or _locale_for_runner(runner), default=default, **kwargs)
 
 
 def _store_from_runner(runner: Any) -> KernelStore | None:
@@ -94,12 +99,16 @@ def _pre_run_hook(prompt: str, **kwargs: Any) -> str | dict[str, Any]:
     plan_content = _load_plan_text(store, runner, state["plan_artifact_id"])
     if plan_content and _EXECUTE_INTENT_RE.search(prompt):
         _set_planner_state(store, session_id, mode=False, plan_artifact_id=None)
-        return (
-            f"<execution_plan>\n{plan_content}\n</execution_plan>\n\n"
-            "用户已确认执行。请严格按照以上计划逐步执行。每完成一步，简要报告结果后继续下一步。"
+        return _t(
+            "kernel.planner.execute_confirmed_prompt",
+            runner=runner,
+            plan_content=plan_content,
         )
 
-    return {"prompt": prompt + _PLAN_MODE_PROMPT, "readonly_only": True}
+    return {
+        "prompt": prompt + _t("kernel.planner.mode.prompt", runner=runner),
+        "readonly_only": True,
+    }
 
 
 def _post_run_hook(result: Any, **kwargs: Any) -> None:
@@ -140,20 +149,21 @@ def _cmd_plan(runner: Any, session_id: str, text: str) -> Any:
 
     if subcommand == "off":
         _set_planner_state(store, session_id, mode=False, plan_artifact_id=None)
-        return DispatchResult("规划模式已关闭，所有工具已恢复。", is_command=True)
+        return DispatchResult(_t("kernel.planner.closed", runner=runner), is_command=True)
 
     if subcommand == "confirm":
         plan_content = _load_plan_text(store, runner, state["plan_artifact_id"])
         if not plan_content:
             return DispatchResult(
-                "没有可执行的计划文件。请先在规划模式下发送任务生成计划，再使用 /plan confirm。",
+                _t("kernel.planner.confirm_missing_plan", runner=runner),
                 is_command=True,
             )
         _set_planner_state(store, session_id, mode=False, plan_artifact_id=None)
 
-        execution_prompt = (
-            f"<execution_plan>\n{plan_content}\n</execution_plan>\n\n"
-            "请严格按照以上计划逐步执行。每完成一步，简要报告结果后继续下一步。"
+        execution_prompt = _t(
+            "kernel.planner.execution_prompt",
+            runner=runner,
+            plan_content=plan_content,
         )
         result = runner.handle(session_id, execution_prompt)
         return DispatchResult(
@@ -164,10 +174,9 @@ def _cmd_plan(runner: Any, session_id: str, text: str) -> Any:
 
     if state["mode"]:
         artifact = store.get_artifact(state["plan_artifact_id"]) if store and state["plan_artifact_id"] else None
-        plan_path_str = artifact.uri if artifact is not None else "（尚未生成）"
+        plan_path_str = artifact.uri if artifact is not None else _t("kernel.planner.plan_path.pending", runner=runner)
         return DispatchResult(
-            f"规划模式已开启。\n计划文件：{plan_path_str}\n\n"
-            '发送任务即可生成计划；计划生成后，说"开始执行"或 /plan confirm 均可启动执行，/plan off 退出。',
+            _t("kernel.planner.status", runner=runner, plan_path=plan_path_str),
             is_command=True,
         )
 
@@ -175,10 +184,7 @@ def _cmd_plan(runner: Any, session_id: str, text: str) -> Any:
     plans_dir = getattr(getattr(runner, "agent", None), "artifact_store", None)
     plans_hint = getattr(plans_dir, "root_dir", "kernel artifact store")
     return DispatchResult(
-        f"已进入规划模式。只读工具（搜索、读文件等）仍可使用，有副作用的操作已禁用。\n"
-        f"计划将保存至 {plans_hint}\n\n"
-        "发送你的任务，我将调研后输出结构化计划但不执行任何写操作。\n"
-        '计划生成后，直接说"开始执行"或使用 /plan confirm 均可启动执行，/plan off 退出规划模式。',
+        _t("kernel.planner.entered", runner=runner, plans_hint=plans_hint),
         is_command=True,
     )
 
@@ -188,6 +194,6 @@ def register(ctx: Any) -> None:
     ctx.add_hook(HookEvent.POST_RUN, _post_run_hook, priority=100)
     ctx.add_command(CommandSpec(
         name="/plan",
-        help_text="进入/退出规划模式；/plan off 退出；/plan confirm 按计划执行",
+        help_text="kernel.planner.command.help",
         handler=_cmd_plan,
     ))

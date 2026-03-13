@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from hermit.core.budgets import get_runtime_budget
 from hermit.core.tools import ToolSpec, serialize_tool_result
 from hermit.provider.contracts import (
     Provider,
@@ -334,6 +335,8 @@ class CodexProvider(Provider):
         system_prompt: Optional[str] = None,
         base_url: str = _DEFAULT_BASE_URL,
         default_headers: Optional[dict[str, str]] = None,
+        connect_timeout: float | None = None,
+        read_timeout: float | None = None,
     ) -> None:
         if not api_key.strip():
             raise ValueError("OpenAI API key is required for the Codex Responses provider")
@@ -343,6 +346,9 @@ class CodexProvider(Provider):
         self.system_prompt = system_prompt
         self.base_url = base_url or _DEFAULT_BASE_URL
         self.default_headers = default_headers or {}
+        budget = get_runtime_budget()
+        self.connect_timeout = float(connect_timeout or budget.provider_connect_timeout)
+        self.read_timeout = float(read_timeout or budget.provider_read_timeout)
 
     def clone(self, *, model: Optional[str] = None, system_prompt: Optional[str] = None) -> "CodexProvider":
         return CodexProvider(
@@ -352,6 +358,8 @@ class CodexProvider(Provider):
             system_prompt=self.system_prompt if system_prompt is None else system_prompt,
             base_url=self.base_url,
             default_headers=dict(self.default_headers),
+            connect_timeout=self.connect_timeout,
+            read_timeout=self.read_timeout,
         )
 
     def _payload(self, request: ProviderRequest) -> dict[str, Any]:
@@ -387,7 +395,7 @@ class CodexProvider(Provider):
             headers=self._headers(),
             method="POST",
         )
-        with urllib.request.urlopen(http_request, timeout=120) as response:
+        with urllib.request.urlopen(http_request, timeout=self.read_timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def generate(self, request: ProviderRequest) -> ProviderResponse:
@@ -431,8 +439,10 @@ def _decode_unverified_jwt_claims(token: str) -> dict[str, Any]:
 
 
 class CodexOAuthTokenManager:
-    def __init__(self, *, auth_path: Path) -> None:
+    def __init__(self, *, auth_path: Path, timeout_seconds: float | None = None) -> None:
         self.auth_path = auth_path
+        budget = get_runtime_budget()
+        self.timeout_seconds = float(timeout_seconds or budget.provider_read_timeout)
 
     def _read(self) -> dict[str, Any]:
         data = json.loads(self.auth_path.read_text(encoding="utf-8"))
@@ -472,7 +482,7 @@ class CodexOAuthTokenManager:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 refreshed = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
@@ -532,12 +542,17 @@ class CodexOAuthProvider(Provider):
         system_prompt: Optional[str] = None,
         base_url: str = _CODEX_OAUTH_BASE_URL,
         default_headers: Optional[dict[str, str]] = None,
+        connect_timeout: float | None = None,
+        read_timeout: float | None = None,
     ) -> None:
         self.token_manager = token_manager
         self.model = model
         self.system_prompt = system_prompt
         self.base_url = base_url
         self.default_headers = default_headers or {}
+        budget = get_runtime_budget()
+        self.connect_timeout = float(connect_timeout or budget.provider_connect_timeout)
+        self.read_timeout = float(read_timeout or budget.provider_read_timeout)
 
     def clone(self, *, model: Optional[str] = None, system_prompt: Optional[str] = None) -> "CodexOAuthProvider":
         return CodexOAuthProvider(
@@ -546,6 +561,8 @@ class CodexOAuthProvider(Provider):
             system_prompt=self.system_prompt if system_prompt is None else system_prompt,
             base_url=self.base_url,
             default_headers=dict(self.default_headers),
+            connect_timeout=self.connect_timeout,
+            read_timeout=self.read_timeout,
         )
 
     def _payload(self, request: ProviderRequest) -> dict[str, Any]:
@@ -583,7 +600,7 @@ class CodexOAuthProvider(Provider):
             headers=self._headers(),
             method="POST",
         )
-        return urllib.request.urlopen(http_request, timeout=120)
+        return urllib.request.urlopen(http_request, timeout=self.read_timeout)
 
     def _stream_impl(self, request: ProviderRequest) -> Iterable[ProviderEvent]:
         current_text: dict[str, str] = {}

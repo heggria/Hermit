@@ -191,7 +191,7 @@ class KernelTaskStoreMixin:
             rows = self._rows(query, params)
         return [self._task_from_row(row) for row in rows]
 
-    def update_task_status(self, task_id: str, status: str) -> None:
+    def update_task_status(self, task_id: str, status: str, *, payload: dict[str, Any] | None = None) -> None:
         now = time.time()
         with self._lock, self._conn:
             self._conn.execute(
@@ -205,7 +205,7 @@ class KernelTaskStoreMixin:
                 entity_id=task_id,
                 task_id=task_id,
                 actor="kernel",
-                payload={"status": status},
+                payload={"status": status, **(payload or {})},
             )
 
     def get_last_task_for_conversation(self, conversation_id: str) -> TaskRecord | None:
@@ -359,6 +359,32 @@ class KernelTaskStoreMixin:
             row = self._row("SELECT * FROM step_attempts WHERE step_attempt_id = ?", (step_attempt_id,))
         return self._step_attempt_from_row(row) if row is not None else None
 
+    def list_step_attempts(
+        self,
+        *,
+        task_id: str | None = None,
+        step_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[StepAttemptRecord]:
+        clauses = []
+        params: list[Any] = []
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if step_id:
+            clauses.append("step_id = ?")
+            params.append(step_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT * FROM step_attempts {where} ORDER BY started_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._rows(query, tuple(params))
+        return [self._step_attempt_from_row(row) for row in rows]
+
     def update_step_attempt(
         self,
         step_attempt_id: str,
@@ -449,15 +475,30 @@ class KernelTaskStoreMixin:
             )
         return event_id
 
-    def list_events(self, *, task_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_events(
+        self,
+        *,
+        task_id: str | None = None,
+        after_event_seq: int | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = []
+        params: list[Any] = []
         if task_id:
-            query = "SELECT * FROM events WHERE task_id = ? ORDER BY event_seq ASC LIMIT ?"
-            params: tuple[Any, ...] = (task_id, limit)
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if after_event_seq is not None:
+            clauses.append("event_seq > ?")
+            params.append(after_event_seq)
+        if clauses:
+            where = f"WHERE {' AND '.join(clauses)}"
+            query = f"SELECT * FROM events {where} ORDER BY event_seq ASC LIMIT ?"
+            params.append(limit)
         else:
             query = "SELECT * FROM events ORDER BY event_seq DESC LIMIT ?"
-            params = (limit,)
+            params = [limit]
         with self._lock:
-            rows = self._rows(query, params)
+            rows = self._rows(query, tuple(params))
         return [
             {
                 "event_seq": int(row["event_seq"]),

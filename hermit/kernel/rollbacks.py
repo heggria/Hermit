@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from hermit.i18n import resolve_locale, tr
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.decisions import DecisionService
 from hermit.kernel.models import ReceiptRecord
@@ -27,7 +28,7 @@ class RollbackService:
             raise KeyError(f"Receipt not found: {receipt_id}")
         strategy = str(receipt.rollback_strategy or "").strip()
         if not receipt.rollback_supported or not strategy:
-            return self._mark_unsupported(receipt, "Rollback is not supported for this receipt.")
+            return self._mark_unsupported(receipt, self._t("kernel.rollback.unsupported"))
 
         step = self.store.create_step(task_id=receipt.task_id, kind="rollback", status="running")
         attempt = self.store.create_step_attempt(
@@ -141,23 +142,28 @@ class RollbackService:
                 target_path.write_text(str(prestate.get("content", "")), encoding="utf-8")
             elif target_path.exists():
                 target_path.unlink()
-            return {"result_summary": f"Restored file state for {target_path}."}
+            return {"result_summary": self._t("kernel.rollback.result.file_restore", target_path=target_path)}
         if receipt.action_type == "vcs_mutation" and strategy == "git_revert_or_reset":
             prestate = self._prestate_payload(receipt)
             repo_path = Path(str(prestate["repo_path"]))
             head = str(prestate["head"])
             if bool(prestate.get("dirty")):
-                raise RuntimeError("Rollback is unsupported for dirty repository prestate.")
+                raise RuntimeError(self._t("kernel.rollback.error.dirty_repo"))
             subprocess.run(["git", "reset", "--hard", head], cwd=repo_path, check=True, capture_output=True, text=True)
-            return {"result_summary": f"Reset repository to {head}."}
+            return {"result_summary": self._t("kernel.rollback.result.git_reset", head=head)}
         if receipt.action_type == "memory_write" and strategy == "supersede_or_invalidate":
             targets = self._prestate_payload(receipt)
             for memory_id in targets.get("memory_ids", []):
                 self.store.update_memory_record(memory_id, status="invalidated")
             for belief_id in targets.get("belief_ids", []):
                 self.store.update_belief(belief_id, status="invalidated")
-            return {"result_summary": f"Invalidated {len(targets.get('memory_ids', []))} memory records."}
-        raise RuntimeError(f"Rollback strategy is not executable: {strategy}")
+            return {
+                "result_summary": self._t(
+                    "kernel.rollback.result.memory_invalidate",
+                    count=len(targets.get("memory_ids", [])),
+                )
+            }
+        raise RuntimeError(self._t("kernel.rollback.error.strategy_not_executable", strategy=strategy))
 
     def _mark_unsupported(self, receipt: ReceiptRecord, summary: str) -> dict[str, Any]:
         if receipt.rollback_status != "unsupported":
@@ -169,8 +175,11 @@ class RollbackService:
 
     def _prestate_payload(self, receipt: ReceiptRecord) -> dict[str, Any]:
         if not receipt.rollback_artifact_refs:
-            raise RuntimeError("Rollback prestate is missing.")
+            raise RuntimeError(self._t("kernel.rollback.error.prestate_missing"))
         artifact = self.store.get_artifact(receipt.rollback_artifact_refs[0])
         if artifact is None:
-            raise RuntimeError("Rollback artifact could not be loaded.")
+            raise RuntimeError(self._t("kernel.rollback.error.artifact_missing"))
         return json.loads(self.artifact_store.read_text(artifact.uri))
+
+    def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+        return tr(message_key, locale=resolve_locale(), default=default, **kwargs)

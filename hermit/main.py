@@ -70,15 +70,41 @@ from hermit.provider.services import build_provider_client_kwargs, build_runtime
 
 CLI_LOCALE = resolve_locale()
 
-app = typer.Typer(help=tr("cli.app.help", locale=CLI_LOCALE))
-plugin_app = typer.Typer(help=tr("cli.plugin.help", locale=CLI_LOCALE))
-autostart_app = typer.Typer(help=tr("cli.autostart.help", locale=CLI_LOCALE))
-schedule_app = typer.Typer(help=tr("cli.schedule.help", locale=CLI_LOCALE))
-config_app = typer.Typer(help=tr("cli.config.help", locale=CLI_LOCALE))
-profiles_app = typer.Typer(help=tr("cli.profiles.help", locale=CLI_LOCALE))
-auth_app = typer.Typer(help=tr("cli.auth.help", locale=CLI_LOCALE))
-task_app = typer.Typer(help="Task kernel inspection and approval commands.")
-task_grant_app = typer.Typer(help="Path grant inspection and revocation commands.")
+
+def _current_locale() -> str:
+    try:
+        return resolve_locale(get_settings().locale)
+    except Exception:
+        return resolve_locale()
+
+
+def _cli_t(message_key: str, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, locale=CLI_LOCALE, default=default, **kwargs)
+
+
+def _t(message_key: str, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, locale=_current_locale(), default=default, **kwargs)
+
+
+app = typer.Typer(help=_cli_t("cli.app.help"))
+plugin_app = typer.Typer(help=_cli_t("cli.plugin.help"))
+autostart_app = typer.Typer(help=_cli_t("cli.autostart.help"))
+schedule_app = typer.Typer(help=_cli_t("cli.schedule.help"))
+config_app = typer.Typer(help=_cli_t("cli.config.help"))
+profiles_app = typer.Typer(help=_cli_t("cli.profiles.help"))
+auth_app = typer.Typer(help=_cli_t("cli.auth.help"))
+task_app = typer.Typer(
+    help=_cli_t(
+        "cli.task.help",
+        "Task kernel inspection and approval commands.",
+    )
+)
+task_grant_app = typer.Typer(
+    help=_cli_t(
+        "cli.task_grant.help",
+        "Path grant inspection and revocation commands.",
+    )
+)
 app.add_typer(plugin_app, name="plugin")
 app.add_typer(autostart_app, name="autostart")
 app.add_typer(schedule_app, name="schedule")
@@ -152,6 +178,12 @@ class _StreamPrinter:
 
 def _build_anthropic_client_kwargs(settings: Settings) -> dict:
     return build_provider_client_kwargs(settings, "claude")
+
+
+def _stop_runner_background_services(runner: Any) -> None:
+    stopper = getattr(runner, "stop_background_services", None)
+    if callable(stopper):
+        stopper()
 
 
 def _auth_status_summary(settings: Settings) -> dict[str, str | bool | None]:
@@ -251,7 +283,10 @@ def _ensure_workspace(settings: Settings) -> None:
         settings.kernel_artifacts_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True)
-    ensure_default_context_file(settings.context_file)
+    try:
+        ensure_default_context_file(settings.context_file, locale=getattr(settings, "locale", None))
+    except TypeError:
+        ensure_default_context_file(settings.context_file)
     if not settings.memory_file.exists():
         from hermit.builtin.memory.engine import MemoryEngine
 
@@ -288,19 +323,36 @@ def _require_auth(settings: Settings) -> None:
             if settings.codex_auth_file_exists:
                 auth_mode = settings.codex_auth_mode or "unknown"
                 raise typer.BadParameter(
-                    "Codex provider now uses the OpenAI Responses API, but the local "
-                    f"~/.codex/auth.json login (auth_mode={auth_mode}) does not expose an OpenAI API key. "
-                    "ChatGPT/Codex desktop login alone cannot call /v1/responses. "
-                    "Set HERMIT_OPENAI_API_KEY / OPENAI_API_KEY, or switch your local Codex auth to an API-key-backed login."
+                    _t(
+                        "cli.auth_error.codex.local_login_missing_api_key",
+                        (
+                            "Codex provider now uses the OpenAI Responses API, but the local "
+                            "~/.codex/auth.json login (auth_mode={auth_mode}) does not expose an OpenAI API key. "
+                            "ChatGPT/Codex desktop login alone cannot call /v1/responses. "
+                            "Set HERMIT_OPENAI_API_KEY / OPENAI_API_KEY, or switch your local Codex auth to an API-key-backed login."
+                        ),
+                        auth_mode=auth_mode,
+                    )
                 )
             raise typer.BadParameter(
-                "Codex provider now uses the OpenAI Responses API and requires HERMIT_OPENAI_API_KEY / OPENAI_API_KEY."
+                _t(
+                    "cli.auth_error.codex.requires_api_key",
+                    "Codex provider now uses the OpenAI Responses API and requires HERMIT_OPENAI_API_KEY / OPENAI_API_KEY.",
+                )
             )
         if settings.provider == "codex-oauth":
             raise typer.BadParameter(
-                "Codex OAuth provider requires a local Codex login with ~/.codex/auth.json."
+                _t(
+                    "cli.auth_error.codex_oauth.requires_local_login",
+                    "Codex OAuth provider requires a local Codex login with ~/.codex/auth.json.",
+                )
             )
-        raise typer.BadParameter("Missing authentication for the selected provider.")
+        raise typer.BadParameter(
+            _t(
+                "cli.auth_error.missing_provider_auth",
+                "Missing authentication for the selected provider.",
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -335,12 +387,15 @@ def _resolve_env_key(*keys: str) -> str | None:
 
 def _describe_env_source(key: str, env_file_keys: set[str]) -> str:
     if key in env_file_keys:
-        return "~/.hermit/.env"
-    return "shell env"
+        return _t("cli.preflight.source.env_file", "~/.hermit/.env")
+    return _t("cli.preflight.source.shell", "shell env")
 
 
 def _format_preflight_item(item: _PreflightItem) -> str:
-    prefix = "[OK]" if item.ok else "[MISSING]"
+    prefix = _t("cli.preflight.prefix.ok", "[OK]") if item.ok else _t(
+        "cli.preflight.prefix.missing",
+        "[MISSING]",
+    )
     return f"  {prefix} {item.label}: {item.detail}"
 
 
@@ -351,9 +406,19 @@ def _build_serve_preflight(
     env_file_keys = _read_env_file_keys()
     items: list[_PreflightItem] = [
         _PreflightItem(
-            label="配置文件",
+            label=_t("cli.preflight.item.config_file.label", "Config file"),
             ok=env_path.exists(),
-            detail=f"{env_path} ({'已找到' if env_path.exists() else '未找到，将只读取当前 shell 环境变量'})",
+            detail=_t(
+                "cli.preflight.item.config_file.detail.found"
+                if env_path.exists()
+                else "cli.preflight.item.config_file.detail.missing",
+                (
+                    "{path} (found)"
+                    if env_path.exists()
+                    else "{path} (not found; only current shell environment variables will be used)"
+                ),
+                path=env_path,
+            ),
         )
     ]
     errors: list[str] = []
@@ -363,23 +428,31 @@ def _build_serve_preflight(
     if settings.resolved_profile:
         items.append(
             _PreflightItem(
-                label="Profile",
+                label=_t("cli.preflight.item.profile.label", "Profile"),
                 ok=True,
                 detail=(
                     f"{settings.resolved_profile} ({_describe_env_source(profile_key, env_file_keys)})"
                     if profile_key
-                    else f"{settings.resolved_profile} (config.toml)"
+                    else _t(
+                        "cli.preflight.item.profile.detail.config",
+                        "{profile} (config.toml)",
+                        profile=settings.resolved_profile,
+                    )
                 ),
             )
         )
     items.append(
         _PreflightItem(
-            label="Provider",
+            label=_t("cli.preflight.item.provider.label", "Provider"),
             ok=True,
             detail=(
                 f"{settings.provider} ({_describe_env_source(provider_key, env_file_keys)})"
                 if provider_key
-                else f"{settings.provider} (默认值)"
+                else _t(
+                    "cli.preflight.item.provider.detail.default",
+                    "{provider} (default)",
+                    provider=settings.provider,
+                )
             ),
         )
     )
@@ -397,28 +470,54 @@ def _build_serve_preflight(
                 detail += (
                     f", {base_url_key} ({_describe_env_source(base_url_key, env_file_keys)})"
                     if base_url_key
-                    else ", 未设置 Claude base URL"
+                    else _t(
+                        "cli.preflight.item.auth.detail.missing_base_url",
+                        ", Claude base URL is not set",
+                    )
                 )
-            items.append(_PreflightItem(label="LLM 鉴权", ok=True, detail=detail))
+            items.append(
+                _PreflightItem(
+                    label=_t("cli.preflight.item.auth.label", "LLM auth"),
+                    ok=True,
+                    detail=detail,
+                )
+            )
         elif settings.claude_api_key or settings.claude_auth_token:
-            detail = "config.toml profile"
+            detail = _t("cli.preflight.item.auth.detail.profile", "config.toml profile")
             if settings.claude_auth_token:
                 detail += (
-                    ", config.toml profile base_url"
+                    _t(
+                        "cli.preflight.item.auth.detail.profile_base_url",
+                        ", config.toml profile base_url",
+                    )
                     if settings.claude_base_url
-                    else ", 未设置 Claude base URL"
+                    else _t(
+                        "cli.preflight.item.auth.detail.missing_base_url",
+                        ", Claude base URL is not set",
+                    )
                 )
-            items.append(_PreflightItem(label="LLM 鉴权", ok=True, detail=detail))
+            items.append(
+                _PreflightItem(
+                    label=_t("cli.preflight.item.auth.label", "LLM auth"),
+                    ok=True,
+                    detail=detail,
+                )
+            )
         else:
             errors.append(
-                "缺少 Claude 鉴权。请设置 `HERMIT_CLAUDE_API_KEY` / `ANTHROPIC_API_KEY`，"
-                "或设置 `HERMIT_CLAUDE_AUTH_TOKEN`（通常还需要 `HERMIT_CLAUDE_BASE_URL`）。"
+                _t(
+                    "cli.preflight.error.claude_auth_missing",
+                    "Missing Claude auth. Set `HERMIT_CLAUDE_API_KEY` / `ANTHROPIC_API_KEY`, or set `HERMIT_CLAUDE_AUTH_TOKEN` (usually together with `HERMIT_CLAUDE_BASE_URL`).",
+                )
             )
             items.append(
                 _PreflightItem(
-                    label="LLM 鉴权",
+                    label=_t("cli.preflight.item.auth.label", "LLM auth"),
                     ok=False,
-                    detail="未找到 Claude API Key / Auth Token",
+                    detail=_t(
+                        "cli.preflight.item.auth.detail.missing",
+                        "Claude API key / auth token not found",
+                    ),
                 )
             )
     elif settings.provider == "codex":
@@ -436,29 +535,43 @@ def _build_serve_preflight(
                 _PreflightItem(
                     label="Codex 鉴权",
                     ok=True,
-                    detail="~/.codex/auth.json (包含本地 OpenAI API Key)",
+                    detail=_t(
+                        "cli.preflight.item.codex_auth.detail.local_api_key",
+                        "~/.codex/auth.json (contains a local OpenAI API key)",
+                    ),
                 )
             )
         elif settings.codex_auth_file_exists:
             auth_mode = settings.codex_auth_mode or "unknown"
             errors.append(
-                "检测到 `~/.codex/auth.json`，但当前登录态不包含 OpenAI API Key。"
-                "ChatGPT/Codex Desktop 登录本身不能直接调用 OpenAI Responses API；"
-                "请设置 `HERMIT_OPENAI_API_KEY` / `OPENAI_API_KEY`，或使用带 API key 的本机 Codex auth。"
+                _t(
+                    "cli.preflight.error.codex_auth_missing_api_key",
+                    "Detected `~/.codex/auth.json`, but the current login does not expose an OpenAI API key. ChatGPT/Codex Desktop login alone cannot call the OpenAI Responses API; set `HERMIT_OPENAI_API_KEY` / `OPENAI_API_KEY`, or use a local Codex auth state backed by an API key.",
+                )
             )
             items.append(
                 _PreflightItem(
                     label="Codex 鉴权",
                     ok=False,
-                    detail=f"检测到本机 Codex 登录态 (auth_mode={auth_mode})，但无可用 OpenAI API Key",
+                    detail=f"检测到本机 Codex 登录态（auth_mode={auth_mode}），但无可用 OpenAI API Key",
                 )
             )
         else:
             errors.append(
-                "缺少 Codex/OpenAI 鉴权。请设置 `HERMIT_OPENAI_API_KEY` 或 `OPENAI_API_KEY`。"
+                _t(
+                    "cli.preflight.error.codex_auth_missing",
+                    "Missing Codex/OpenAI auth. Set `HERMIT_OPENAI_API_KEY` or `OPENAI_API_KEY`.",
+                )
             )
             items.append(
-                _PreflightItem(label="Codex 鉴权", ok=False, detail="未找到 OpenAI API Key")
+                _PreflightItem(
+                    label="Codex 鉴权",
+                    ok=False,
+                    detail=_t(
+                        "cli.preflight.item.codex_auth.detail.no_api_key",
+                        "OpenAI API key not found",
+                    ),
+                )
             )
     elif settings.provider == "codex-oauth":
         if (
@@ -469,40 +582,74 @@ def _build_serve_preflight(
             auth_mode = settings.codex_auth_mode or "unknown"
             items.append(
                 _PreflightItem(
-                    label="Codex OAuth 鉴权",
+                    label=_t(
+                        "cli.preflight.item.codex_oauth.label",
+                        "Codex OAuth auth",
+                    ),
                     ok=True,
-                    detail=f"~/.codex/auth.json (auth_mode={auth_mode})",
+                    detail=_t(
+                        "cli.preflight.item.codex_oauth.detail.ready",
+                        "~/.codex/auth.json (auth_mode={auth_mode})",
+                        auth_mode=auth_mode,
+                    ),
                 )
             )
         elif settings.codex_auth_file_exists:
             auth_mode = settings.codex_auth_mode or "unknown"
             errors.append(
-                "检测到 `~/.codex/auth.json`，但其中缺少可用的 access_token / refresh_token。"
+                _t(
+                    "cli.preflight.error.codex_oauth_incomplete",
+                    "Detected `~/.codex/auth.json`, but it does not contain a usable access_token / refresh_token.",
+                )
             )
             items.append(
                 _PreflightItem(
-                    label="Codex OAuth 鉴权",
+                    label=_t(
+                        "cli.preflight.item.codex_oauth.label",
+                        "Codex OAuth auth",
+                    ),
                     ok=False,
-                    detail=f"检测到本机 Codex 登录态 (auth_mode={auth_mode})，但 token 不完整",
+                    detail=_t(
+                        "cli.preflight.item.codex_oauth.detail.incomplete",
+                        "Detected local Codex login (auth_mode={auth_mode}), but tokens are incomplete",
+                        auth_mode=auth_mode,
+                    ),
                 )
             )
         else:
-            errors.append("缺少 Codex OAuth 鉴权。请先在本机完成 Codex 登录。")
+            errors.append(
+                _t(
+                    "cli.preflight.error.codex_oauth_missing",
+                    "Missing Codex OAuth auth. Complete local Codex login first.",
+                )
+            )
             items.append(
                 _PreflightItem(
-                    label="Codex OAuth 鉴权", ok=False, detail="未找到 ~/.codex/auth.json"
+                    label=_t(
+                        "cli.preflight.item.codex_oauth.label",
+                        "Codex OAuth auth",
+                    ),
+                    ok=False,
+                    detail=_t(
+                        "cli.preflight.item.codex_oauth.detail.missing",
+                        "~/.codex/auth.json not found",
+                    ),
                 )
             )
 
     model_key = _resolve_env_key("HERMIT_MODEL")
     items.append(
         _PreflightItem(
-            label="模型",
+            label=_t("cli.preflight.item.model.label", "Model"),
             ok=True,
             detail=(
                 f"{settings.model} ({_describe_env_source(model_key, env_file_keys)})"
                 if model_key
-                else f"{settings.model} (默认值)"
+                else _t(
+                    "cli.preflight.item.model.detail.default",
+                    "{model} (default)",
+                    model=settings.model,
+                )
             ),
         )
     )
@@ -513,68 +660,108 @@ def _build_serve_preflight(
         if app_id_key or settings.feishu_app_id:
             items.append(
                 _PreflightItem(
-                    label="飞书 App ID",
+                    label=_t("cli.preflight.item.feishu_app_id.label", "Feishu App ID"),
                     ok=True,
                     detail=(
                         f"{app_id_key} ({_describe_env_source(app_id_key, env_file_keys)})"
                         if app_id_key
-                        else "config.toml profile"
+                        else _t(
+                            "cli.preflight.item.profile_source.config",
+                            "config.toml profile",
+                        )
                     ),
                 )
             )
         else:
             errors.append(
-                "缺少飞书 App ID。请设置 `HERMIT_FEISHU_APP_ID` （兼容旧变量名 `FEISHU_APP_ID`）。"
+                _t(
+                    "cli.preflight.error.feishu_app_id_missing",
+                    "Missing Feishu App ID. Set `HERMIT_FEISHU_APP_ID` (legacy `FEISHU_APP_ID` is also supported).",
+                )
             )
             items.append(
                 _PreflightItem(
-                    label="飞书 App ID",
+                    label=_t("cli.preflight.item.feishu_app_id.label", "Feishu App ID"),
                     ok=False,
-                    detail="未找到 HERMIT_FEISHU_APP_ID / FEISHU_APP_ID",
+                    detail=_t(
+                        "cli.preflight.item.feishu_app_id.detail.missing",
+                        "HERMIT_FEISHU_APP_ID / FEISHU_APP_ID not found",
+                    ),
                 )
             )
 
         if app_secret_key or settings.feishu_app_secret:
             items.append(
                 _PreflightItem(
-                    label="飞书 App Secret",
+                    label=_t(
+                        "cli.preflight.item.feishu_app_secret.label",
+                        "Feishu App Secret",
+                    ),
                     ok=True,
                     detail=(
                         f"{app_secret_key} ({_describe_env_source(app_secret_key, env_file_keys)})"
                         if app_secret_key
-                        else "config.toml profile"
+                        else _t(
+                            "cli.preflight.item.profile_source.config",
+                            "config.toml profile",
+                        )
                     ),
                 )
             )
         else:
             errors.append(
-                "缺少飞书 App Secret。请设置 `HERMIT_FEISHU_APP_SECRET` "
-                "（兼容旧变量名 `FEISHU_APP_SECRET`）。"
+                _t(
+                    "cli.preflight.error.feishu_app_secret_missing",
+                    "Missing Feishu App Secret. Set `HERMIT_FEISHU_APP_SECRET` (legacy `FEISHU_APP_SECRET` is also supported).",
+                )
             )
             items.append(
                 _PreflightItem(
-                    label="飞书 App Secret",
+                    label=_t(
+                        "cli.preflight.item.feishu_app_secret.label",
+                        "Feishu App Secret",
+                    ),
                     ok=False,
-                    detail="未找到 HERMIT_FEISHU_APP_SECRET / FEISHU_APP_SECRET",
+                    detail=_t(
+                        "cli.preflight.item.feishu_app_secret.detail.missing",
+                        "HERMIT_FEISHU_APP_SECRET / FEISHU_APP_SECRET not found",
+                    ),
                 )
             )
 
         items.append(
             _PreflightItem(
-                label="飞书进度卡片",
+                label=_t(
+                    "cli.preflight.item.feishu_progress.label",
+                    "Feishu progress cards",
+                ),
                 ok=True,
-                detail=str(settings.feishu_thread_progress).lower(),
+                detail=_t(
+                    "cli.preflight.item.boolean.enabled"
+                    if settings.feishu_thread_progress
+                    else "cli.preflight.item.boolean.disabled",
+                    "enabled" if settings.feishu_thread_progress else "disabled",
+                ),
             )
         )
 
         items.append(
             _PreflightItem(
-                label="Scheduler 飞书通知",
+                label=_t(
+                    "cli.preflight.item.scheduler_feishu.label",
+                    "Scheduler Feishu notifications",
+                ),
                 ok=True,
                 detail=(
-                    "已配置"
+                    _t(
+                        "cli.preflight.item.scheduler_feishu.detail.configured",
+                        "configured",
+                    )
                     if settings.scheduler_feishu_chat_id
-                    else "未设置（可选；reload/scheduler 不会主动发飞书通知）"
+                    else _t(
+                        "cli.preflight.item.scheduler_feishu.detail.missing",
+                        "not set (optional; reload and scheduler will not proactively send Feishu notifications)",
+                    )
                 ),
             )
         )
@@ -589,7 +776,7 @@ def _run_serve_preflight(adapter: str, settings: Settings) -> None:
         typer.echo(_format_preflight_item(item))
     typer.echo("")
     if errors:
-        typer.echo("启动前检查未通过：")
+        typer.echo(_t("cli.preflight.failed", "Pre-start checks failed:"))
         for message in errors:
             typer.echo(f"  - {message}")
         typer.echo("")
@@ -602,30 +789,59 @@ def setup() -> None:
     GREEN = "\033[32m"
     BOLD = "\033[1m"
 
-    typer.echo(f"\n{BOLD}Hermit Setup{RESET}\n")
+    typer.echo(f"\n{BOLD}{_t('cli.setup.title', 'Hermit Setup')}{RESET}\n")
 
     settings = get_settings()
     env_path = settings.base_dir / ".env"
     if env_path.exists():
-        overwrite = typer.confirm(f"Config already exists at {env_path}. Overwrite?", default=False)
+        overwrite = typer.confirm(
+            _t(
+                "cli.setup.confirm_overwrite",
+                "Config already exists at {path}. Overwrite?",
+                path=env_path,
+            ),
+            default=False,
+        )
         if not overwrite:
-            typer.echo("Setup cancelled.")
+            typer.echo(_t("cli.setup.cancelled", "Setup cancelled."))
             raise typer.Exit()
 
     lines: list[str] = []
 
     # --- API credentials ---
-    typer.echo("Step 1/2  API credentials\n")
+    typer.echo(_t("cli.setup.step1", "Step 1/2  API credentials") + "\n")
     use_proxy = typer.confirm(
-        "Use Claude-compatible proxy/gateway instead of Anthropic API directly?", default=False
+        _t(
+            "cli.setup.use_proxy",
+            "Use Claude-compatible proxy/gateway instead of Anthropic API directly?",
+        ),
+        default=False,
     )
     if use_proxy:
-        auth_token = typer.prompt("  HERMIT_CLAUDE_AUTH_TOKEN (Bearer token)", hide_input=True)
-        base_url = typer.prompt("  HERMIT_CLAUDE_BASE_URL  (proxy endpoint URL)")
-        custom_headers = typer.prompt(
-            "  HERMIT_CLAUDE_HEADERS (optional, e.g. 'X-Biz-Id: foo')", default=""
+        auth_token = typer.prompt(
+            _t(
+                "cli.setup.prompt.auth_token",
+                "  HERMIT_CLAUDE_AUTH_TOKEN (Bearer token)",
+            ),
+            hide_input=True,
         )
-        model = typer.prompt("  HERMIT_MODEL", default="claude-3-7-sonnet-latest")
+        base_url = typer.prompt(
+            _t(
+                "cli.setup.prompt.base_url",
+                "  HERMIT_CLAUDE_BASE_URL  (proxy endpoint URL)",
+            )
+        )
+        custom_headers = typer.prompt(
+            _t(
+                "cli.setup.prompt.custom_headers",
+                "  HERMIT_CLAUDE_HEADERS (optional, e.g. 'X-Biz-Id: foo')",
+            ),
+            default="",
+        )
+        model = typer.prompt(
+            _t("cli.setup.prompt.model", "  HERMIT_MODEL"),
+            default="claude-3-7-sonnet-latest",
+        )
         lines += [
             f"HERMIT_AUTH_TOKEN={auth_token}",
             f"HERMIT_BASE_URL={base_url}",
@@ -634,15 +850,21 @@ def setup() -> None:
             lines.append(f"HERMIT_CUSTOM_HEADERS={custom_headers}")
         lines.append(f"HERMIT_MODEL={model}")
     else:
-        api_key = typer.prompt("  ANTHROPIC_API_KEY", hide_input=True)
+        api_key = typer.prompt(
+            _t("cli.setup.prompt.anthropic_api_key", "  ANTHROPIC_API_KEY"),
+            hide_input=True,
+        )
         lines.append(f"ANTHROPIC_API_KEY={api_key}")
 
     # --- Feishu (optional) ---
-    typer.echo("\nStep 2/2  Feishu bot adapter (optional)\n")
-    use_feishu = typer.confirm("Configure Feishu bot?", default=False)
+    typer.echo("\n" + _t("cli.setup.step2", "Step 2/2  Feishu bot adapter (optional)") + "\n")
+    use_feishu = typer.confirm(_t("cli.setup.use_feishu", "Configure Feishu bot?"), default=False)
     if use_feishu:
-        app_id = typer.prompt("  HERMIT_FEISHU_APP_ID")
-        app_secret = typer.prompt("  HERMIT_FEISHU_APP_SECRET", hide_input=True)
+        app_id = typer.prompt(_t("cli.setup.prompt.feishu_app_id", "  HERMIT_FEISHU_APP_ID"))
+        app_secret = typer.prompt(
+            _t("cli.setup.prompt.feishu_app_secret", "  HERMIT_FEISHU_APP_SECRET"),
+            hide_input=True,
+        )
         lines += [
             f"HERMIT_FEISHU_APP_ID={app_id}",
             f"HERMIT_FEISHU_APP_SECRET={app_secret}",
@@ -657,13 +879,19 @@ def setup() -> None:
     settings = get_settings()
     _ensure_workspace(settings)
 
-    typer.echo(f"\n{GREEN}Done!{RESET}")
-    typer.echo(f"  Config  → {env_path}")
-    typer.echo(f"  Workspace → {settings.base_dir}")
-    typer.echo("\nNext steps:")
-    typer.echo("  hermit chat")
+    typer.echo(f"\n{GREEN}{_t('cli.setup.done', 'Done!')}{RESET}")
+    typer.echo(_t("cli.setup.output.config", "  Config  -> {path}", path=env_path))
+    typer.echo(
+        _t(
+            "cli.setup.output.workspace",
+            "  Workspace -> {path}",
+            path=settings.base_dir,
+        )
+    )
+    typer.echo("\n" + _t("cli.setup.next_steps", "Next steps:"))
+    typer.echo(_t("cli.setup.next_step.chat", "  hermit chat"))
     if use_feishu:
-        typer.echo("  hermit serve --adapter feishu")
+        typer.echo(_t("cli.setup.next_step.serve_feishu", "  hermit serve --adapter feishu"))
     typer.echo("")
 
 
@@ -681,17 +909,42 @@ def profiles_list() -> None:
     settings = get_settings()
     catalog = load_profile_catalog(settings.base_dir)
     if not catalog.exists:
-        typer.echo(f"No config.toml found at {catalog.path}")
+        typer.echo(
+            _t(
+                "cli.profiles_list.no_config",
+                "No config.toml found at {path}",
+                path=catalog.path,
+            )
+        )
         raise typer.Exit()
     if not catalog.profiles:
-        typer.echo(f"No profiles defined in {catalog.path}")
+        typer.echo(
+            _t(
+                "cli.profiles_list.no_profiles",
+                "No profiles defined in {path}",
+                path=catalog.path,
+            )
+        )
         raise typer.Exit()
 
     for name, values in sorted(catalog.profiles.items()):
-        marker = " (default)" if name == catalog.default_profile else ""
+        marker = (
+            _t("cli.profiles_list.default_marker", " (default)")
+            if name == catalog.default_profile
+            else ""
+        )
         provider = values.get("provider", "claude")
         model = values.get("model", "")
-        suffix = f" provider={provider}" + (f" model={model}" if model else "")
+        suffix = _t(
+            "cli.profiles_list.item",
+            " provider={provider}{model_suffix}",
+            provider=provider,
+            model_suffix=(
+                _t("cli.profiles_list.model_suffix", " model={model}", model=model)
+                if model
+                else ""
+            ),
+        )
         typer.echo(f"{name}{marker}{suffix}")
 
 
@@ -727,7 +980,13 @@ def init(base_dir: Optional[Path] = None) -> None:
     if base_dir is not None:
         settings.base_dir = base_dir
     _ensure_workspace(settings)
-    typer.echo(f"Initialized Hermit workspace at {settings.base_dir}")
+    typer.echo(
+        _t(
+            "cli.init.done",
+            "Initialized Hermit workspace at {path}",
+            path=settings.base_dir,
+        )
+    )
 
 
 @app.command()
@@ -772,6 +1031,7 @@ def _build_runner(
         task_controller=TaskController(store),
     )
     pm.setup_commands(runner)
+    runner.start_background_services()
     return runner, pm
 
 
@@ -790,6 +1050,7 @@ def run(prompt: str) -> None:
             runner.close_session("cli-oneshot")
             _print_result(result)
         finally:
+            _stop_runner_background_services(runner)
             pm.stop_mcp_servers()
 
 
@@ -802,7 +1063,13 @@ def chat(session_id: str = "cli", debug: bool = False) -> None:
     _require_auth(settings)
 
     runner, pm = _build_runner(settings)
-    typer.echo(f"Hermit chat (session={session_id}). Type /help for commands.")
+    typer.echo(
+        _t(
+            "cli.chat.banner",
+            "Hermit chat (session={session_id}). Type /help for commands.",
+            session_id=session_id,
+        )
+    )
 
     with _caffeinate(settings):
         try:
@@ -810,7 +1077,7 @@ def chat(session_id: str = "cli", debug: bool = False) -> None:
                 try:
                     user_input = input("\n> ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    typer.echo("\nBye.")
+                    typer.echo("\n" + _t("cli.chat.bye", "Bye."))
                     break
 
                 if not user_input:
@@ -827,6 +1094,7 @@ def chat(session_id: str = "cli", debug: bool = False) -> None:
             # Always close the session so SESSION_END hook fires and memories are saved,
             # even if the user hits Ctrl+C during an LLM generation turn.
             runner.close_session(session_id)
+            _stop_runner_background_services(runner)
             pm.stop_mcp_servers()
 
 
@@ -1021,8 +1289,12 @@ def _notify_reload(settings: Any, adapter: str) -> None:
         pm.hooks.fire(
             HookEvent.DISPATCH_RESULT,
             source="system",
-            title="Hermit Reloaded",
-            result_text=(f"Hermit (`{adapter}`) 已成功重新加载。\n\n配置、插件、工具已全部重建。"),
+            title=_t("cli.reload.notify.title", "Hermit Reloaded"),
+            result_text=_t(
+                "cli.reload.notify.body",
+                "Hermit (`{adapter}`) has been reloaded successfully.\n\nConfiguration, plugins, and tools were rebuilt.",
+                adapter=adapter,
+            ),
             success=True,
             notify={"feishu_chat_id": chat_id},
         )
@@ -1105,7 +1377,13 @@ def _serve_loop(adapter: str, pid_file: Path) -> None:
             run_started_at=cycle_started_at,
         )
 
-        typer.echo(f"Starting Hermit with '{adapter}' adapter...")
+        typer.echo(
+            _t(
+                "cli.serve.starting",
+                "Starting Hermit with '{adapter}' adapter...",
+                adapter=adapter,
+            )
+        )
 
         run_result = _ServeRunResult(
             reload_requested=False,
@@ -1116,7 +1394,7 @@ def _serve_loop(adapter: str, pid_file: Path) -> None:
             try:
                 run_result = asyncio.run(_serve_with_signals(adapter_instance, runner))
             except KeyboardInterrupt:
-                typer.echo("\nShutting down...")
+                typer.echo("\n" + _t("cli.serve.shutting_down", "Shutting down..."))
                 asyncio.run(adapter_instance.stop())
                 run_result = _ServeRunResult(
                     reload_requested=False,
@@ -1126,11 +1404,17 @@ def _serve_loop(adapter: str, pid_file: Path) -> None:
                 )
             finally:
                 pm.hooks.fire(HookEvent.SERVE_STOP)
+                _stop_runner_background_services(runner)
                 pm.stop_mcp_servers()
 
         if run_result.reload_requested:
             _serve_log.info("Reloading Hermit...")
-            typer.echo("Reloading Hermit — rebuilding config, plugins, tools...")
+            typer.echo(
+                _t(
+                    "cli.serve.reloading",
+                    "Reloading Hermit - rebuilding config, plugins, tools...",
+                )
+            )
             _write_serve_status(
                 settings,
                 adapter,
@@ -1166,7 +1450,12 @@ def reload(adapter: str = "feishu") -> None:
     losing the PID.
     """
     if sys.platform == "win32":
-        typer.echo("Reload via signal is not supported on Windows.")
+        typer.echo(
+            _t(
+                "cli.reload.windows_unsupported",
+                "Reload via signal is not supported on Windows.",
+            )
+        )
         raise typer.Exit(1)
 
     settings = get_settings()
@@ -1175,22 +1464,51 @@ def reload(adapter: str = "feishu") -> None:
 
     if pid is None:
         typer.echo(
-            f"No running serve process found for adapter '{adapter}'.\n  PID file: {pid_file}"
+            _t(
+                "cli.reload.no_process",
+                "No running serve process found for adapter '{adapter}'.\n  PID file: {pid_file}",
+                adapter=adapter,
+                pid_file=pid_file,
+            )
         )
         raise typer.Exit(1)
 
     try:
         os.kill(pid, signal.SIGHUP)
     except ProcessLookupError:
-        typer.echo(f"Process {pid} not found (stale PID file). Cleaning up.")
+        typer.echo(
+            _t(
+                "cli.reload.process_missing",
+                "Process {pid} not found (stale PID file). Cleaning up.",
+                pid=pid,
+            )
+        )
         _remove_pid(pid_file)
         raise typer.Exit(1)
     except PermissionError:
-        typer.echo(f"Permission denied sending SIGHUP to PID {pid}.")
+        typer.echo(
+            _t(
+                "cli.reload.permission_denied",
+                "Permission denied sending SIGHUP to PID {pid}.",
+                pid=pid,
+            )
+        )
         raise typer.Exit(1)
 
-    typer.echo(f"Sent SIGHUP to Hermit serve (PID {pid}, adapter='{adapter}').")
-    typer.echo("The service will reload configuration, plugins, and tools.")
+    typer.echo(
+        _t(
+            "cli.reload.sent",
+            "Sent SIGHUP to Hermit serve (PID {pid}, adapter='{adapter}').",
+            pid=pid,
+            adapter=adapter,
+        )
+    )
+    typer.echo(
+        _t(
+            "cli.reload.followup",
+            "The service will reload configuration, plugins, and tools.",
+        )
+    )
 
 
 @app.command()
@@ -1210,56 +1528,115 @@ def _get_kernel_store() -> KernelStore:
 
 
 @task_app.command("list")
-def task_list(limit: int = typer.Option(20, help="Maximum number of tasks to show.")) -> None:
+def task_list(
+    limit: int = typer.Option(
+        20,
+        help=_cli_t("cli.task.list.limit", "Maximum number of tasks to show."),
+    )
+) -> None:
     """List recent tasks from the kernel ledger."""
     store = _get_kernel_store()
     tasks = store.list_tasks(limit=limit)
     if not tasks:
-        typer.echo("No tasks found.")
+        typer.echo(_t("cli.task.list.empty", "No tasks found."))
         return
     for task in tasks:
-        typer.echo(f"[{task.task_id}] {task.status} {task.source_channel} {task.title}")
+        typer.echo(
+            _t(
+                "cli.task.list.item",
+                "[{task_id}] {status} {source_channel} {title}",
+                task_id=task.task_id,
+                status=task.status,
+                source_channel=task.source_channel,
+                title=task.title,
+            )
+        )
 
 
 @task_app.command("show")
-def task_show(task_id: str = typer.Argument(..., help="Task ID.")) -> None:
+def task_show(
+    task_id: str = typer.Argument(..., help=_cli_t("cli.task.common.task_id", "Task ID."))
+) -> None:
     """Show one task and its pending approvals."""
     store = _get_kernel_store()
     task = store.get_task(task_id)
     if task is None:
-        typer.echo(f"Task not found: {task_id}")
+        typer.echo(_t("cli.task.show.not_found", "Task not found: {task_id}", task_id=task_id))
         raise typer.Exit(1)
     typer.echo(json.dumps(task.__dict__, ensure_ascii=False, indent=2))
     approvals = store.list_approvals(task_id=task_id, limit=20)
     if approvals:
-        typer.echo("\nPending/Recent approvals:")
+        typer.echo("\n" + _t("cli.task.show.approvals", "Pending/Recent approvals:"))
         copy_service = ApprovalCopyService()
         for approval in approvals:
-            typer.echo(f"  [{approval.approval_id}] {approval.status} {approval.approval_type}")
+            typer.echo(
+                _t(
+                    "cli.task.show.approval_item",
+                    "  [{approval_id}] {status} {approval_type}",
+                    approval_id=approval.approval_id,
+                    status=approval.status,
+                    approval_type=approval.approval_type,
+                )
+            )
             summary = copy_service.resolve_copy(
                 approval.requested_action, approval.approval_id
             ).summary
-            typer.echo(f"    {summary}")
+            typer.echo(_t("cli.task.show.indented", "    {value}", value=summary))
             if approval.decision_ref:
-                typer.echo(f"    decision_ref={approval.decision_ref}")
+                typer.echo(
+                    _t(
+                        "cli.task.show.decision_ref",
+                        "    decision_ref={decision_ref}",
+                        decision_ref=approval.decision_ref,
+                    )
+                )
             if approval.state_witness_ref:
-                typer.echo(f"    witness_ref={approval.state_witness_ref}")
+                typer.echo(
+                    _t(
+                        "cli.task.show.witness_ref",
+                        "    witness_ref={witness_ref}",
+                        witness_ref=approval.state_witness_ref,
+                    )
+                )
 
     decisions = store.list_decisions(task_id=task_id, limit=20)
     if decisions:
-        typer.echo("\nRecent decisions:")
+        typer.echo("\n" + _t("cli.task.show.decisions", "Recent decisions:"))
         for decision in decisions:
             typer.echo(
-                f"  [{decision.decision_id}] {decision.verdict} {decision.decision_type} action={decision.action_type}"
+                _t(
+                    "cli.task.show.decision_item",
+                    "  [{decision_id}] {verdict} {decision_type} action={action_type}",
+                    decision_id=decision.decision_id,
+                    verdict=decision.verdict,
+                    decision_type=decision.decision_type,
+                    action_type=decision.action_type,
+                )
             )
-            typer.echo(f"    {decision.reason}")
+            typer.echo(_t("cli.task.show.indented", "    {value}", value=decision.reason))
 
     permits = store.list_execution_permits(task_id=task_id, limit=20)
     if permits:
-        typer.echo("\nRecent execution permits:")
+        typer.echo(
+            "\n" + _t("cli.task.show.permits", "Recent execution permits:")
+        )
         for permit in permits:
-            typer.echo(f"  [{permit.permit_id}] {permit.status} {permit.action_class}")
-            typer.echo(f"    decision_ref={permit.decision_ref}")
+            typer.echo(
+                _t(
+                    "cli.task.show.permit_item",
+                    "  [{permit_id}] {status} {action_class}",
+                    permit_id=permit.permit_id,
+                    status=permit.status,
+                    action_class=permit.action_class,
+                )
+            )
+            typer.echo(
+                _t(
+                    "cli.task.show.decision_ref",
+                    "    decision_ref={decision_ref}",
+                    decision_ref=permit.decision_ref,
+                )
+            )
 
     if task is not None:
         grants = store.list_path_grants(
@@ -1268,13 +1645,24 @@ def task_show(task_id: str = typer.Argument(..., help="Task ID.")) -> None:
             limit=20,
         )
         if grants:
-            typer.echo("\nRecent path grants:")
+            typer.echo("\n" + _t("cli.task.show.grants", "Recent path grants:"))
             for grant in grants:
-                typer.echo(f"  [{grant.grant_id}] {grant.status} {grant.path_display}")
+                typer.echo(
+                    _t(
+                        "cli.task.show.grant_item",
+                        "  [{grant_id}] {status} {path_display}",
+                        grant_id=grant.grant_id,
+                        status=grant.status,
+                        path_display=grant.path_display,
+                    )
+                )
 
 
 @task_app.command("events")
-def task_events(task_id: str = typer.Argument(..., help="Task ID."), limit: int = 100) -> None:
+def task_events(
+    task_id: str = typer.Argument(..., help=_cli_t("cli.task.common.task_id", "Task ID.")),
+    limit: int = 100,
+) -> None:
     """Show task events."""
     store = _get_kernel_store()
     typer.echo(
@@ -1284,7 +1672,11 @@ def task_events(task_id: str = typer.Argument(..., help="Task ID."), limit: int 
 
 @task_app.command("receipts")
 def task_receipts(
-    task_id: Optional[str] = typer.Option(None, help="Optional task ID filter."), limit: int = 50
+    task_id: Optional[str] = typer.Option(
+        None,
+        help=_cli_t("cli.task.receipts.task_id", "Optional task ID filter."),
+    ),
+    limit: int = 50,
 ) -> None:
     """Show receipts."""
     store = _get_kernel_store()
@@ -1293,21 +1685,27 @@ def task_receipts(
 
 
 @task_app.command("explain")
-def task_explain(task_id: str = typer.Argument(..., help="Task ID.")) -> None:
+def task_explain(
+    task_id: str = typer.Argument(..., help=_cli_t("cli.task.common.task_id", "Task ID."))
+) -> None:
     """Explain why a task executed, under what authority, and what changed."""
     store = _get_kernel_store()
     typer.echo(json.dumps(SupervisionService(store).build_task_case(task_id), ensure_ascii=False, indent=2))
 
 
 @task_app.command("case")
-def task_case(task_id: str = typer.Argument(..., help="Task ID.")) -> None:
+def task_case(
+    task_id: str = typer.Argument(..., help=_cli_t("cli.task.common.task_id", "Task ID."))
+) -> None:
     """Show unified operator case view for one task."""
     store = _get_kernel_store()
     typer.echo(json.dumps(SupervisionService(store).build_task_case(task_id), ensure_ascii=False, indent=2))
 
 
 @task_app.command("proof")
-def task_proof(task_id: str = typer.Argument(..., help="Task ID.")) -> None:
+def task_proof(
+    task_id: str = typer.Argument(..., help=_cli_t("cli.task.common.task_id", "Task ID."))
+) -> None:
     """Show proof summary for one task."""
     store = _get_kernel_store()
     summary = ProofService(store).build_proof_summary(task_id)
@@ -1316,8 +1714,14 @@ def task_proof(task_id: str = typer.Argument(..., help="Task ID.")) -> None:
 
 @task_app.command("proof-export")
 def task_proof_export(
-    task_id: str = typer.Argument(..., help="Task ID."),
-    output: Optional[Path] = typer.Option(None, help="Optional path to write the exported proof bundle."),
+    task_id: str = typer.Argument(..., help=_cli_t("cli.task.common.task_id", "Task ID.")),
+    output: Optional[Path] = typer.Option(
+        None,
+        help=_cli_t(
+            "cli.task.proof_export.output",
+            "Optional path to write the exported proof bundle.",
+        ),
+    ),
 ) -> None:
     """Export one task's proof bundle."""
     store = _get_kernel_store()
@@ -1330,7 +1734,9 @@ def task_proof_export(
 
 
 @task_app.command("rollback")
-def task_rollback(receipt_id: str = typer.Argument(..., help="Receipt ID.")) -> None:
+def task_rollback(
+    receipt_id: str = typer.Argument(..., help=_cli_t("cli.task.rollback.receipt_id", "Receipt ID."))
+) -> None:
     """Execute a supported rollback for one receipt."""
     store = _get_kernel_store()
     payload = RollbackService(store).execute(receipt_id)
@@ -1339,8 +1745,15 @@ def task_rollback(receipt_id: str = typer.Argument(..., help="Receipt ID.")) -> 
 
 @task_app.command("projections-rebuild")
 def task_projections_rebuild(
-    task_id: Optional[str] = typer.Argument(None, help="Optional task ID."),
-    all_tasks: bool = typer.Option(False, "--all", help="Rebuild all task projections."),
+    task_id: Optional[str] = typer.Argument(
+        None,
+        help=_cli_t("cli.task.projections.task_id", "Optional task ID."),
+    ),
+    all_tasks: bool = typer.Option(
+        False,
+        "--all",
+        help=_cli_t("cli.task.projections.all", "Rebuild all task projections."),
+    ),
 ) -> None:
     """Rebuild operator projection cache."""
     store = _get_kernel_store()
@@ -1357,7 +1770,13 @@ def _task_resolution(action: str, approval_id: str, reason: str = "") -> None:
         store = _get_kernel_store()
         approval = store.get_approval(approval_id)
         if approval is None:
-            typer.echo(f"Approval not found: {approval_id}")
+            typer.echo(
+                _t(
+                    "cli.task.approval.not_found",
+                    "Approval not found: {approval_id}",
+                    approval_id=approval_id,
+                )
+            )
             raise typer.Exit(1)
         task = store.get_task(approval.task_id)
         conversation_id = task.conversation_id if task is not None else "cli"
@@ -1369,39 +1788,67 @@ def _task_resolution(action: str, approval_id: str, reason: str = "") -> None:
         )
         typer.echo(result.text)
     finally:
+        _stop_runner_background_services(runner)
         pm.stop_mcp_servers()
 
 
 @task_app.command("approve")
-def task_approve(approval_id: str = typer.Argument(..., help="Approval ID.")) -> None:
+def task_approve(
+    approval_id: str = typer.Argument(
+        ...,
+        help=_cli_t("cli.task.common.approval_id", "Approval ID."),
+    )
+) -> None:
     """Approve once and resume a blocked task."""
     _task_resolution("approve_once", approval_id)
 
 
 @task_app.command("approve-always-directory")
-def task_approve_always_directory(approval_id: str = typer.Argument(..., help="Approval ID.")) -> None:
+def task_approve_always_directory(
+    approval_id: str = typer.Argument(
+        ...,
+        help=_cli_t("cli.task.common.approval_id", "Approval ID."),
+    )
+) -> None:
     """Approve and always allow this directory for the current conversation."""
     _task_resolution("approve_always_directory", approval_id)
 
 
 @task_app.command("deny")
 def task_deny(
-    approval_id: str = typer.Argument(..., help="Approval ID."),
-    reason: str = typer.Option("", help="Optional deny reason."),
+    approval_id: str = typer.Argument(
+        ...,
+        help=_cli_t("cli.task.common.approval_id", "Approval ID."),
+    ),
+    reason: str = typer.Option(
+        "",
+        help=_cli_t("cli.task.deny.reason", "Optional deny reason."),
+    ),
 ) -> None:
     """Deny a blocked task."""
     _task_resolution("deny", approval_id, reason=reason)
 
 
 @task_app.command("resume")
-def task_resume(approval_id: str = typer.Argument(..., help="Approval ID to resume.")) -> None:
+def task_resume(
+    approval_id: str = typer.Argument(
+        ...,
+        help=_cli_t("cli.task.resume.approval_id", "Approval ID to resume."),
+    )
+) -> None:
     """Resume a blocked task by approving its latest pending approval."""
     _task_resolution("approve_once", approval_id)
 
 
 def _task_grant_list(
-    conversation_id: Optional[str] = typer.Option(None, help="Optional conversation ID filter."),
-    limit: int = typer.Option(50, help="Maximum number of grants to show."),
+    conversation_id: Optional[str] = typer.Option(
+        None,
+        help=_cli_t("cli.task.grant.conversation_id", "Optional conversation ID filter."),
+    ),
+    limit: int = typer.Option(
+        50,
+        help=_cli_t("cli.task.grant.limit", "Maximum number of grants to show."),
+    ),
 ) -> None:
     """Show active and recent path grants."""
     store = _get_kernel_store()
@@ -1416,12 +1863,14 @@ def _task_grant_list(
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def _task_grant_revoke(grant_id: str = typer.Argument(..., help="Grant ID.")) -> None:
+def _task_grant_revoke(
+    grant_id: str = typer.Argument(..., help=_cli_t("cli.task.grant.grant_id", "Grant ID."))
+) -> None:
     """Revoke a path grant."""
     store = _get_kernel_store()
     grant = store.get_path_grant(grant_id)
     if grant is None:
-        typer.echo(f"Grant not found: {grant_id}")
+        typer.echo(_t("cli.task.grant.not_found", "Grant not found: {grant_id}", grant_id=grant_id))
         raise typer.Exit(1)
     store.update_path_grant(
         grant_id,
@@ -1430,20 +1879,28 @@ def _task_grant_revoke(grant_id: str = typer.Argument(..., help="Grant ID.")) ->
         event_type="grant.revoked",
         payload={"status": "revoked"},
     )
-    typer.echo(f"Revoked grant '{grant_id}'.")
+    typer.echo(_t("cli.task.grant.revoked", "Revoked grant '{grant_id}'.", grant_id=grant_id))
 
 
 @task_grant_app.command("list")
 def task_grant_list(
-    conversation_id: Optional[str] = typer.Option(None, help="Optional conversation ID filter."),
-    limit: int = typer.Option(50, help="Maximum number of grants to show."),
+    conversation_id: Optional[str] = typer.Option(
+        None,
+        help=_cli_t("cli.task.grant.conversation_id", "Optional conversation ID filter."),
+    ),
+    limit: int = typer.Option(
+        50,
+        help=_cli_t("cli.task.grant.limit", "Maximum number of grants to show."),
+    ),
 ) -> None:
     """Show active and recent path grants."""
     _task_grant_list(conversation_id=conversation_id, limit=limit)
 
 
 @task_grant_app.command("revoke")
-def task_grant_revoke(grant_id: str = typer.Argument(..., help="Grant ID.")) -> None:
+def task_grant_revoke(
+    grant_id: str = typer.Argument(..., help=_cli_t("cli.task.grant.grant_id", "Grant ID."))
+) -> None:
     """Revoke a path grant."""
     _task_grant_revoke(grant_id)
 
@@ -1462,7 +1919,7 @@ def plugin_list() -> None:
     pm.discover_and_load(builtin_dir, settings.plugins_dir)
 
     if not pm.manifests:
-        typer.echo("No plugins found.")
+        typer.echo(_t("cli.plugin.list.empty", "No plugins found."))
         return
 
     for m in pm.manifests:
@@ -1479,24 +1936,42 @@ def plugin_install(url: str) -> None:
     name = url.rstrip("/").split("/")[-1].removesuffix(".git")
     target = settings.plugins_dir / name
     if target.exists():
-        typer.echo(f"Plugin directory already exists: {target}")
+        typer.echo(
+            _t(
+                "cli.plugin.install.exists",
+                "Plugin directory already exists: {path}",
+                path=target,
+            )
+        )
         raise typer.Exit(1)
 
-    typer.echo(f"Cloning {url} → {target}")
+    typer.echo(_t("cli.plugin.install.cloning", "Cloning {url} -> {path}", url=url, path=target))
     result = subprocess.run(
         ["git", "clone", "--depth", "1", url, str(target)],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        typer.echo(f"git clone failed:\n{result.stderr}")
+        typer.echo(
+            _t(
+                "cli.plugin.install.clone_failed",
+                "git clone failed:\n{stderr}",
+                stderr=result.stderr,
+            )
+        )
         raise typer.Exit(1)
 
     toml_path = target / "plugin.toml"
     if not toml_path.exists():
-        typer.echo(f"Warning: No plugin.toml found in {target}")
+        typer.echo(
+            _t(
+                "cli.plugin.install.missing_manifest",
+                "Warning: No plugin.toml found in {path}",
+                path=target,
+            )
+        )
 
-    typer.echo(f"Installed plugin '{name}'.")
+    typer.echo(_t("cli.plugin.install.done", "Installed plugin '{name}'.", name=name))
 
 
 @plugin_app.command("remove")
@@ -1507,11 +1982,11 @@ def plugin_remove(name: str) -> None:
 
     target = settings.plugins_dir / name
     if not target.exists():
-        typer.echo(f"Plugin not found: {name}")
+        typer.echo(_t("cli.plugin.common.not_found", "Plugin not found: {name}", name=name))
         raise typer.Exit(1)
 
     shutil.rmtree(target)
-    typer.echo(f"Removed plugin '{name}'.")
+    typer.echo(_t("cli.plugin.remove.done", "Removed plugin '{name}'.", name=name))
 
 
 @plugin_app.command("info")
@@ -1539,7 +2014,7 @@ def plugin_info(name: str) -> None:
                 typer.echo(f"Deps:        {manifest.dependencies}")
             return
 
-    typer.echo(f"Plugin not found: {name}")
+    typer.echo(_t("cli.plugin.common.not_found", "Plugin not found: {name}", name=name))
     raise typer.Exit(1)
 
 
@@ -1548,7 +2023,10 @@ def plugin_info(name: str) -> None:
 
 @autostart_app.command("enable")
 def autostart_enable(
-    adapter: str = typer.Option("feishu", help="Adapter to run (e.g. feishu)."),
+    adapter: str = typer.Option(
+        "feishu",
+        help=_cli_t("cli.autostart.enable.adapter", "Adapter to run (e.g. feishu)."),
+    ),
 ) -> None:
     """Install a per-adapter launchd LaunchAgent (macOS only).
 
@@ -1561,7 +2039,10 @@ def autostart_enable(
 
 @autostart_app.command("disable")
 def autostart_disable(
-    adapter: str = typer.Option("feishu", help="Adapter whose agent to remove."),
+    adapter: str = typer.Option(
+        "feishu",
+        help=_cli_t("cli.autostart.disable.adapter", "Adapter whose agent to remove."),
+    ),
 ) -> None:
     """Remove the launchd LaunchAgent for a specific adapter."""
     from hermit import autostart as _autostart
@@ -1571,7 +2052,10 @@ def autostart_disable(
 
 @autostart_app.command("status")
 def autostart_status(
-    adapter: Optional[str] = typer.Option(None, help="Show only this adapter; omit for all."),
+    adapter: Optional[str] = typer.Option(
+        None,
+        help=_cli_t("cli.autostart.status.adapter", "Show only this adapter; omit for all."),
+    ),
 ) -> None:
     """Show auto-start state for one adapter or all configured agents."""
     from hermit import autostart as _autostart
@@ -1595,40 +2079,61 @@ def schedule_list() -> None:
     store = _get_schedule_store()
     jobs = store.list_schedules()
     if not jobs:
-        typer.echo("No scheduled tasks.")
+        typer.echo(_t("cli.schedule.list.empty", "No scheduled tasks."))
         return
 
     def fmt(ts: float | None) -> str:
         if ts is None:
-            return "N/A"
+            return _t("cli.schedule.common.not_available", "N/A")
         return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
     for j in jobs:
-        status = "enabled" if j.enabled else "disabled"
+        status = (
+            _t("cli.schedule.status.enabled", "enabled")
+            if j.enabled
+            else _t("cli.schedule.status.disabled", "disabled")
+        )
         schedule_info = j.cron_expr or (
-            f"once at {fmt(j.once_at)}"
+            _t("cli.schedule.list.once_at", "once at {time}", time=fmt(j.once_at))
             if j.once_at
-            else f"every {j.interval_seconds}s"
+            else _t(
+                "cli.schedule.list.every_seconds",
+                "every {seconds}s",
+                seconds=j.interval_seconds,
+            )
             if j.interval_seconds
-            else "unknown"
+            else _t("cli.schedule.list.unknown", "unknown")
         )
         typer.echo(
             f"  [{j.id}] {j.name} ({status})\n"
-            f"    Schedule: {schedule_info}\n"
-            f"    Next run: {fmt(j.next_run_at)}\n"
-            f"    Last run: {fmt(j.last_run_at)}"
+            f"    {_t('cli.schedule.list.schedule', 'Schedule')}: {schedule_info}\n"
+            f"    {_t('cli.schedule.list.next_run', 'Next run')}: {fmt(j.next_run_at)}\n"
+            f"    {_t('cli.schedule.list.last_run', 'Last run')}: {fmt(j.last_run_at)}"
         )
 
 
 @schedule_app.command("add")
 def schedule_add(
-    name: str = typer.Option(..., help="Task name."),
-    prompt: str = typer.Option(..., help="Agent prompt to execute."),
-    cron: Optional[str] = typer.Option(None, help="Cron expression (e.g. '0 9 * * 1-5')."),
-    once: Optional[str] = typer.Option(
-        None, help="One-time datetime (ISO format, e.g. '2026-03-15T14:00')."
+    name: str = typer.Option(..., help=_cli_t("cli.schedule.add.name", "Task name.")),
+    prompt: str = typer.Option(
+        ...,
+        help=_cli_t("cli.schedule.add.prompt", "Agent prompt to execute."),
     ),
-    interval: Optional[int] = typer.Option(None, help="Interval in seconds (minimum 60)."),
+    cron: Optional[str] = typer.Option(
+        None,
+        help=_cli_t("cli.schedule.add.cron", "Cron expression (e.g. '0 9 * * 1-5')."),
+    ),
+    once: Optional[str] = typer.Option(
+        None,
+        help=_cli_t(
+            "cli.schedule.add.once",
+            "One-time datetime (ISO format, e.g. '2026-03-15T14:00').",
+        ),
+    ),
+    interval: Optional[int] = typer.Option(
+        None,
+        help=_cli_t("cli.schedule.add.interval", "Interval in seconds (minimum 60)."),
+    ),
 ) -> None:
     """Add a new scheduled task."""
     import datetime as dt
@@ -1636,7 +2141,12 @@ def schedule_add(
     from hermit.builtin.scheduler.models import ScheduledJob
 
     if sum(x is not None for x in (cron, once, interval)) != 1:
-        typer.echo("Error: specify exactly one of --cron, --once, or --interval.")
+        typer.echo(
+            _t(
+                "cli.schedule.add.error.schedule_choice",
+                "Error: specify exactly one of --cron, --once, or --interval.",
+            )
+        )
         raise typer.Exit(1)
 
     schedule_type = "cron" if cron else "once" if once else "interval"
@@ -1648,16 +2158,32 @@ def schedule_add(
 
             croniter(cron)
         except (ValueError, KeyError) as exc:
-            typer.echo(f"Error: invalid cron expression: {exc}")
+            typer.echo(
+                _t(
+                    "cli.schedule.add.error.invalid_cron",
+                    "Error: invalid cron expression: {error}",
+                    error=exc,
+                )
+            )
             raise typer.Exit(1)
     elif once:
         try:
             once_at = dt.datetime.fromisoformat(once).timestamp()
         except ValueError:
-            typer.echo("Error: invalid datetime format. Use ISO format.")
+            typer.echo(
+                _t(
+                    "cli.schedule.add.error.invalid_datetime",
+                    "Error: invalid datetime format. Use ISO format.",
+                )
+            )
             raise typer.Exit(1)
     elif interval is not None and interval < 60:
-        typer.echo("Error: interval must be >= 60 seconds.")
+        typer.echo(
+            _t(
+                "cli.schedule.add.error.invalid_interval",
+                "Error: interval must be >= 60 seconds.",
+            )
+        )
         raise typer.Exit(1)
 
     job = ScheduledJob.create(
@@ -1671,46 +2197,98 @@ def schedule_add(
 
     store = _get_schedule_store()
     store.create_schedule(job)
-    typer.echo(f"Added task [{job.id}] '{job.name}' ({schedule_type}).")
-    typer.echo("Task is now stored in the kernel ledger and will be picked up by `hermit serve`.")
+    typer.echo(
+        _t(
+            "cli.schedule.add.done",
+            "Added task [{job_id}] '{name}' ({schedule_type}).",
+            job_id=job.id,
+            name=job.name,
+            schedule_type=schedule_type,
+        )
+    )
+    typer.echo(
+        _t(
+            "cli.schedule.add.followup",
+            "Task is now stored in the kernel ledger and will be picked up by `hermit serve`.",
+        )
+    )
 
 
 @schedule_app.command("remove")
-def schedule_remove(job_id: str = typer.Argument(..., help="Task ID to remove.")) -> None:
+def schedule_remove(
+    job_id: str = typer.Argument(
+        ...,
+        help=_cli_t("cli.schedule.common.job_id_remove", "Task ID to remove."),
+    )
+) -> None:
     """Remove a scheduled task."""
     store = _get_schedule_store()
     if not store.delete_schedule(job_id):
-        typer.echo(f"Error: no task with id '{job_id}' found.")
+        typer.echo(
+            _t(
+                "cli.schedule.common.job_not_found",
+                "Error: no task with id '{job_id}' found.",
+                job_id=job_id,
+            )
+        )
         raise typer.Exit(1)
-    typer.echo(f"Removed task '{job_id}'.")
+    typer.echo(_t("cli.schedule.remove.done", "Removed task '{job_id}'.", job_id=job_id))
 
 
 @schedule_app.command("enable")
-def schedule_enable(job_id: str = typer.Argument(..., help="Task ID to enable.")) -> None:
+def schedule_enable(
+    job_id: str = typer.Argument(
+        ...,
+        help=_cli_t("cli.schedule.common.job_id_enable", "Task ID to enable."),
+    )
+) -> None:
     """Enable a scheduled task."""
     store = _get_schedule_store()
     if store.update_schedule(job_id, enabled=True):
-        typer.echo(f"Enabled task '{job_id}'.")
+        typer.echo(_t("cli.schedule.enable.done", "Enabled task '{job_id}'.", job_id=job_id))
         return
-    typer.echo(f"Error: no task with id '{job_id}' found.")
+    typer.echo(
+        _t(
+            "cli.schedule.common.job_not_found",
+            "Error: no task with id '{job_id}' found.",
+            job_id=job_id,
+        )
+    )
     raise typer.Exit(1)
 
 
 @schedule_app.command("disable")
-def schedule_disable(job_id: str = typer.Argument(..., help="Task ID to disable.")) -> None:
+def schedule_disable(
+    job_id: str = typer.Argument(
+        ...,
+        help=_cli_t("cli.schedule.common.job_id_disable", "Task ID to disable."),
+    )
+) -> None:
     """Disable a scheduled task."""
     store = _get_schedule_store()
     if store.update_schedule(job_id, enabled=False):
-        typer.echo(f"Disabled task '{job_id}'.")
+        typer.echo(_t("cli.schedule.disable.done", "Disabled task '{job_id}'.", job_id=job_id))
         return
-    typer.echo(f"Error: no task with id '{job_id}' found.")
+    typer.echo(
+        _t(
+            "cli.schedule.common.job_not_found",
+            "Error: no task with id '{job_id}' found.",
+            job_id=job_id,
+        )
+    )
     raise typer.Exit(1)
 
 
 @schedule_app.command("history")
 def schedule_history(
-    job_id: Optional[str] = typer.Option(None, help="Filter by task ID."),
-    limit: int = typer.Option(10, help="Number of records to show."),
+    job_id: Optional[str] = typer.Option(
+        None,
+        help=_cli_t("cli.schedule.history.job_id", "Filter by task ID."),
+    ),
+    limit: int = typer.Option(
+        10,
+        help=_cli_t("cli.schedule.history.limit", "Number of records to show."),
+    ),
 ) -> None:
     """Show execution history for scheduled tasks."""
     import datetime
@@ -1721,11 +2299,15 @@ def schedule_history(
     ]
 
     if not records:
-        typer.echo("No execution history.")
+        typer.echo(_t("cli.schedule.history.empty", "No execution history."))
         return
 
     for r in records:
-        status = "OK" if r.get("success") else "FAIL"
+        status = (
+            _t("cli.schedule.history.status.ok", "OK")
+            if r.get("success")
+            else _t("cli.schedule.history.status.fail", "FAIL")
+        )
         started = datetime.datetime.fromtimestamp(r.get("started_at", 0)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
@@ -1735,7 +2317,13 @@ def schedule_history(
         if preview:
             typer.echo(f"    {preview}")
         if r.get("error"):
-            typer.echo(f"    Error: {r['error']}")
+            typer.echo(
+                _t(
+                    "cli.schedule.history.error",
+                    "    Error: {error}",
+                    error=r["error"],
+                )
+            )
 
 
 if __name__ == "__main__":

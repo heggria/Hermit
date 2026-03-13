@@ -132,6 +132,18 @@ def test_runtime_run_raises_when_tool_use_has_no_blocks() -> None:
         runtime.run("hello")
 
 
+def test_runtime_errors_are_localized_when_locale_is_set() -> None:
+    provider = FakeProvider(responses=[ProviderResponse(content=[], stop_reason="tool_use")])
+    runtime = AgentRuntime(provider=provider, registry=ToolRegistry(), model="fake", locale="zh-CN")
+
+    with pytest.raises(RuntimeError, match="Provider 请求了 tool_use，但响应中没有对应的 tool block"):
+        runtime.run("hello")
+
+    runtime = AgentRuntime(provider=FakeProvider(), registry=ToolRegistry(), model="fake", locale="zh-CN")
+    with pytest.raises(RuntimeError, match="恢复任务执行需要已配置的 ToolExecutor"):
+        runtime.resume(step_attempt_id="attempt", task_context=SimpleNamespace())
+
+
 def test_runtime_run_max_turns_final_summary_success() -> None:
     provider = FakeProvider(
         responses=[
@@ -234,6 +246,25 @@ def test_execute_tool_turn_handles_callbacks_unknown_tools_and_failures() -> Non
     assert "Unknown tool" in called[0][2]
     assert "Unknown tool" in result_blocks[1]["content"]
     assert call_names == ["missing", "explode"]
+
+
+def test_run_stream_serializes_localized_tool_execution_errors() -> None:
+    provider = FakeProvider(
+        features=ProviderFeatures(supports_streaming=True),
+        stream_events=[
+            [
+                SimpleNamespace(type="block_end", block={"type": "tool_use", "id": "1", "name": "write_file", "input": {}}),
+                SimpleNamespace(type="message_end", stop_reason="tool_use", usage=UsageMetrics()),
+            ]
+        ],
+    )
+    runtime = AgentRuntime(provider=provider, registry=ToolRegistry(), model="fake", locale="zh-CN")
+
+    result = runtime.run_stream("hello")
+
+    assert result.messages[-1]["content"][0]["content"] == (
+        "执行 write_file 出错：RuntimeError: 流式执行工具需要任务作用域的 kernel executor。"
+    )
 
 
 def test_execute_tool_turn_handles_blocked_and_denied_results() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
+from hermit.core.budgets import ExecutionBudget, get_runtime_budget
 from hermit.core.tools import ToolSpec
 from hermit.provider.contracts import (
     Provider,
@@ -262,11 +263,29 @@ def build_claude_provider(
         kwargs["base_url"] = settings.claude_base_url
     if settings.parsed_claude_headers:
         kwargs["default_headers"] = settings.parsed_claude_headers
-    # Use command_timeout_seconds only as the connect timeout.
-    # Read/write timeouts are left at the Anthropic SDK default (600s)
-    # to avoid spurious timeouts on long LLM responses.
-    connect_timeout = getattr(settings, "command_timeout_seconds", 5) or 5
+    if hasattr(settings, "execution_budget"):
+        budget = settings.execution_budget()
+    elif hasattr(settings, "command_timeout_seconds"):
+        legacy = max(float(getattr(settings, "command_timeout_seconds", 30) or 30), 1.0)
+        budget = ExecutionBudget(
+            ingress_ack_deadline=5.0,
+            provider_connect_timeout=legacy,
+            provider_read_timeout=600.0,
+            provider_stream_idle_timeout=600.0,
+            tool_soft_deadline=legacy,
+            tool_hard_deadline=max(legacy, 600.0),
+            observation_window=600.0,
+            observation_poll_interval=5.0,
+        )
+    else:
+        budget = get_runtime_budget()
     import httpx
-    kwargs["timeout"] = httpx.Timeout(600.0, connect=connect_timeout)
+    kwargs["timeout"] = httpx.Timeout(
+        budget.provider_read_timeout,
+        connect=budget.provider_connect_timeout,
+        read=budget.provider_stream_idle_timeout,
+        write=budget.provider_read_timeout,
+        pool=budget.provider_read_timeout,
+    )
     client = Anthropic(**kwargs)
     return ClaudeProvider(client, model=model, system_prompt=system_prompt)

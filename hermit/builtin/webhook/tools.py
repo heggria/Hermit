@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from hermit.core.tools import ToolSpec
+from hermit.i18n import resolve_locale, tr
 from hermit.plugin.base import PluginContext
 
 _settings: Any = None
@@ -19,6 +20,14 @@ def set_settings(settings: Any) -> None:
 def _config_path() -> Path:
     base = Path(getattr(_settings, "base_dir", None) or Path.home() / ".hermit")
     return base / "webhooks.json"
+
+
+def _locale() -> str:
+    return resolve_locale(getattr(_settings, "locale", None))
+
+
+def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, locale=_locale(), default=default, **kwargs)
 
 
 def _load_raw() -> dict[str, Any]:
@@ -41,25 +50,31 @@ def _handle_list(payload: dict[str, Any]) -> str:
     raw = _load_raw()
     routes = raw.get("routes", {})
     if not routes:
-        return (
-            f"No webhook routes configured.\n"
-            f"Config file: {_config_path()}\n"
-            "Use `webhook_add` to create a route."
+        return _t(
+            "tools.webhook.list.empty",
+            config_path=_config_path(),
         )
 
     port = raw.get("port", 8321)
-    lines = [f"Webhook server port: {port}", f"Routes ({len(routes)}):"]
+    lines = [
+        _t("tools.webhook.list.port", port=port),
+        _t("tools.webhook.list.title", count=len(routes)),
+    ]
     for name, r in routes.items():
-        secret_info = f"  (signed: {r.get('signature_header', 'X-Hub-Signature-256')})" if r.get("secret") else ""
+        secret_info = (
+            _t("tools.webhook.list.signed", signature_header=r.get("signature_header", "X-Hub-Signature-256"))
+            if r.get("secret")
+            else ""
+        )
         notify_info = r.get("notify", {})
         feishu = notify_info.get("feishu_chat_id", "")
         lines.append(
             f"  [{name}]\n"
-            f"    Path:     {r.get('path', f'/webhook/{name}')}{secret_info}\n"
-            f"    Template: {str(r.get('prompt_template', ''))[:80]}\n"
-            f"    Feishu:   {feishu or '(none)'}"
+            f"    {_t('tools.webhook.list.path_label')}:     {r.get('path', f'/webhook/{name}')}{secret_info}\n"
+            f"    {_t('tools.webhook.list.template_label')}: {str(r.get('prompt_template', ''))[:80]}\n"
+            f"    {_t('tools.webhook.list.feishu_label')}:   {feishu or _t('tools.webhook.common.none')}"
         )
-    lines.append("\nNote: Restart `hermit serve` to pick up config changes.")
+    lines.append("\n" + _t("tools.webhook.common.restart_note"))
     return "\n".join(lines)
 
 
@@ -68,18 +83,15 @@ def _handle_add(payload: dict[str, Any]) -> str:
     prompt_template = str(payload.get("prompt_template", "")).strip()
 
     if not name:
-        return "Error: name is required."
+        return _t("tools.webhook.add.error.name_required")
     if not prompt_template:
-        return "Error: prompt_template is required."
+        return _t("tools.webhook.add.error.prompt_required")
 
     raw = _load_raw()
     routes = raw.setdefault("routes", {})
 
     if name in routes and not payload.get("overwrite"):
-        return (
-            f"Error: route '{name}' already exists. "
-            "Pass overwrite=true to replace it."
-        )
+        return _t("tools.webhook.add.error.exists", name=name)
 
     path = str(payload.get("path", f"/webhook/{name}")).strip()
     secret = str(payload.get("secret", "")).strip() or None
@@ -99,45 +111,42 @@ def _handle_add(payload: dict[str, Any]) -> str:
     routes[name] = route
     _save_raw(raw)
 
-    return (
-        f"Webhook route '{name}' added:\n"
-        f"  Path:     {path}\n"
-        f"  Template: {prompt_template[:80]}\n"
-        f"  Signed:   {'yes' if secret else 'no'}\n"
-        f"  Feishu:   {feishu_chat_id or '(none)'}\n\n"
-        "Restart `hermit serve` for the change to take effect."
+    return _t(
+        "tools.webhook.add.success",
+        name=name,
+        path=path,
+        prompt_template=prompt_template[:80],
+        signed=_t("tools.webhook.common.yes") if secret else _t("tools.webhook.common.no"),
+        feishu_chat_id=feishu_chat_id or _t("tools.webhook.common.none"),
     )
 
 
 def _handle_delete(payload: dict[str, Any]) -> str:
     name = str(payload.get("name", "")).strip()
     if not name:
-        return "Error: name is required."
+        return _t("tools.webhook.delete.error.name_required")
 
     raw = _load_raw()
     routes = raw.get("routes", {})
     if name not in routes:
-        existing = ", ".join(routes.keys()) or "(none)"
-        return f"Error: route '{name}' not found. Existing routes: {existing}"
+        existing = ", ".join(routes.keys()) or _t("tools.webhook.common.none")
+        return _t("tools.webhook.common.not_found", name=name, existing=existing)
 
     del routes[name]
     _save_raw(raw)
-    return (
-        f"Webhook route '{name}' deleted.\n"
-        "Restart `hermit serve` for the change to take effect."
-    )
+    return _t("tools.webhook.delete.success", name=name)
 
 
 def _handle_update(payload: dict[str, Any]) -> str:
     name = str(payload.get("name", "")).strip()
     if not name:
-        return "Error: name is required."
+        return _t("tools.webhook.update.error.name_required")
 
     raw = _load_raw()
     routes = raw.get("routes", {})
     if name not in routes:
-        existing = ", ".join(routes.keys()) or "(none)"
-        return f"Error: route '{name}' not found. Existing routes: {existing}"
+        existing = ", ".join(routes.keys()) or _t("tools.webhook.common.none")
+        return _t("tools.webhook.common.not_found", name=name, existing=existing)
 
     route = routes[name]
     changed: list[str] = []
@@ -166,14 +175,11 @@ def _handle_update(payload: dict[str, Any]) -> str:
         changed.append("feishu_chat_id")
 
     if not changed:
-        return "Error: no fields to update. Provide prompt_template, path, secret, or feishu_chat_id."
+        return _t("tools.webhook.update.error.no_fields")
 
     routes[name] = route
     _save_raw(raw)
-    return (
-        f"Webhook route '{name}' updated: {', '.join(changed)}.\n"
-        "Restart `hermit serve` for the change to take effect."
-    )
+    return _t("tools.webhook.update.success", name=name, changed=", ".join(changed))
 
 
 def register(ctx: PluginContext) -> None:
@@ -186,6 +192,7 @@ def register(ctx: PluginContext) -> None:
             "List all configured webhook routes from ~/.hermit/webhooks.json. "
             "Use to show the user what webhooks are set up, their paths, templates, and notification targets."
         ),
+        description_key="tools.webhook.list.description",
         input_schema={"type": "object", "properties": {}},
         handler=_handle_list,
         readonly=True,
@@ -202,42 +209,37 @@ def register(ctx: PluginContext) -> None:
             "The route receives HTTP POST events and triggers an agent task using the prompt_template. "
             "Requires restarting `hermit serve` to take effect."
         ),
+        description_key="tools.webhook.add.description",
         input_schema={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Short identifier for the route (e.g. 'github', 'zendesk'). Used in the URL path.",
+                    "description_key": "tools.webhook.add.name",
                 },
                 "prompt_template": {
                     "type": "string",
-                    "description": (
-                        "Template for the agent prompt. Use {field} to inject payload values, "
-                        "{nested.field} for nested JSON. E.g. 'PR: {pull_request.title} on {repository.full_name}'"
-                    ),
+                    "description_key": "tools.webhook.add.prompt_template",
                 },
                 "path": {
                     "type": "string",
-                    "description": "HTTP path override. Defaults to /webhook/{name}.",
+                    "description_key": "tools.webhook.add.path",
                 },
                 "secret": {
                     "type": "string",
-                    "description": "HMAC-SHA256 secret for signature verification. Leave empty to skip verification.",
+                    "description_key": "tools.webhook.add.secret",
                 },
                 "signature_header": {
                     "type": "string",
-                    "description": "Header name containing the signature. Defaults to X-Hub-Signature-256.",
+                    "description_key": "tools.webhook.add.signature_header",
                 },
                 "feishu_chat_id": {
                     "type": "string",
-                    "description": (
-                        "Feishu chat_id to push results to (oc_xxx for groups, ou_xxx for DMs). "
-                        "Read from <feishu_chat_id>...</feishu_chat_id> in the current message context when in Feishu."
-                    ),
+                    "description_key": "tools.webhook.add.feishu_chat_id",
                 },
                 "overwrite": {
                     "type": "boolean",
-                    "description": "Replace existing route with the same name. Default false.",
+                    "description_key": "tools.webhook.add.overwrite",
                 },
             },
             "required": ["name", "prompt_template"],
@@ -251,12 +253,13 @@ def register(ctx: PluginContext) -> None:
     ctx.add_tool(ToolSpec(
         name="webhook_delete",
         description="Delete a webhook route from ~/.hermit/webhooks.json by name. Requires restarting serve.",
+        description_key="tools.webhook.delete.description",
         input_schema={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name of the webhook route to delete.",
+                    "description_key": "tools.webhook.delete.name",
                 },
             },
             "required": ["name"],
@@ -273,28 +276,29 @@ def register(ctx: PluginContext) -> None:
             "Update an existing webhook route's prompt_template, path, secret, or feishu_chat_id. "
             "Requires restarting serve."
         ),
+        description_key="tools.webhook.update.description",
         input_schema={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name of the webhook route to update.",
+                    "description_key": "tools.webhook.update.name",
                 },
                 "prompt_template": {
                     "type": "string",
-                    "description": "New prompt template.",
+                    "description_key": "tools.webhook.update.prompt_template",
                 },
                 "path": {
                     "type": "string",
-                    "description": "New HTTP path.",
+                    "description_key": "tools.webhook.update.path",
                 },
                 "secret": {
                     "type": "string",
-                    "description": "New HMAC secret. Pass empty string to remove signature verification.",
+                    "description_key": "tools.webhook.update.secret",
                 },
                 "feishu_chat_id": {
                     "type": "string",
-                    "description": "New Feishu chat_id. Pass empty string to disable push.",
+                    "description_key": "tools.webhook.update.feishu_chat_id",
                 },
             },
             "required": ["name"],

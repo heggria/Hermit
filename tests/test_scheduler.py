@@ -22,6 +22,7 @@ def tmp_settings(tmp_path: Path) -> Any:
     """Minimal settings-like object for scheduler engine tests."""
     settings = MagicMock()
     settings.base_dir = tmp_path
+    settings.locale = "zh-CN"
     settings.sandbox_mode = "l0"
     settings.command_timeout_seconds = 30
     settings.model = "test-model"
@@ -160,13 +161,21 @@ class TestEngineNextRun:
 
 class TestExecutionPrompt:
     def test_wraps_prompt_as_final_deliverable(self) -> None:
-        wrapped = _build_execution_prompt("请用中文提醒用户现在是11:30，该喝水了。保持简短友好。")
+        wrapped = _build_execution_prompt("请用中文提醒用户现在是11:30，该喝水了。保持简短友好。", locale="zh-CN")
 
         assert "已经创建好的定时任务" in wrapped
         assert "不要询问澄清问题" in wrapped
         assert "不要索要 chat_id、open_id" in wrapped
         assert "直接写出要发送给用户的提醒内容" in wrapped
         assert "请用中文提醒用户现在是11:30，该喝水了。保持简短友好。" in wrapped
+
+    def test_wraps_prompt_as_final_deliverable_in_english(self) -> None:
+        wrapped = _build_execution_prompt("Remind the user to stretch now.", locale="en-US")
+
+        assert "already-configured scheduled task" in wrapped
+        assert "Do not ask clarifying questions" in wrapped
+        assert "Do not request chat_id, open_id" in wrapped
+        assert "Remind the user to stretch now." in wrapped
 
 
 # ---------------------------------------------------------------------------

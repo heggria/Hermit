@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hermit.companion import control
+
+
+@pytest.fixture(autouse=True)
+def _force_companion_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
 
 def test_command_prefix_uses_resolved_uv_bin_when_repo_available(monkeypatch) -> None:
@@ -385,3 +392,25 @@ scheduler_enabled = true
     assert "Set 'scheduler_enabled' to disabled for profile 'claude-code'." in message
     assert "Started Hermit service for 'feishu' (PID 456)." in message
     assert "scheduler_enabled = false" in config_path.read_text(encoding="utf-8")
+
+
+def test_control_messages_can_render_zh_cn(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    base_dir = tmp_path / ".hermit-dev"
+    base_dir.mkdir()
+    monkeypatch.setattr(
+        control,
+        "service_status",
+        lambda adapter, base_dir=None: control.ServiceStatus(
+            adapter=adapter,
+            pid_file=Path(base_dir or tmp_path) / f"serve-{adapter}.pid",
+            pid=123,
+            running=True,
+            autostart_installed=False,
+            autostart_loaded=False,
+        ),
+    )
+
+    message = control.start_service("feishu", base_dir=base_dir)
+
+    assert "Hermit 服务已在运行" in message

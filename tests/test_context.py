@@ -6,6 +6,7 @@ from hermit.config import Settings
 from hermit.context import (
     DEFAULT_CONTEXT_TEMPLATE,
     build_base_context,
+    default_context_template,
     ensure_default_context_file,
     load_context_text,
 )
@@ -45,3 +46,8 @@ def test_build_base_context_without_user_context(tmp_path: Path) -> None:
 
 def test_load_context_text_returns_empty_when_missing(tmp_path: Path) -> None:
     assert load_context_text(tmp_path / "missing.md") == ""
+
+
+def test_default_context_template_switches_by_locale() -> None:
+    assert default_context_template(locale="en-US") == DEFAULT_CONTEXT_TEMPLATE
+    assert "你是一个偏个人使用场景的 AI Agent" in default_context_template(locale="zh-CN")

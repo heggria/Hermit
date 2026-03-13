@@ -1,0 +1,14 @@
+{
+  "autostart.common.mac_only": "launchd 自启动仅支持 macOS。",
+  "autostart.enable.missing_executable": "找不到 hermit 可执行文件。请确认它已安装并且在 PATH 中可用。",
+  "autostart.enable.load_failed": "launchctl load 失败：\n{stderr}",
+  "autostart.enable.done": "已为 adapter '{adapter}' 启用自启动。\n  Label : {label}\n  Plist : {plist}\n  Logs  : {logs}/{adapter}-{{stdout,stderr}}.log\nHermit 将在下次登录时自动启动。",
+  "autostart.enable.removed_legacy": "\n已移除旧版 LaunchAgents：{paths}",
+  "autostart.disable.not_configured": "adapter '{adapter}' 尚未配置自启动（未找到 plist）。",
+  "autostart.disable.unload_failed": "launchctl unload 失败：\n{stderr}",
+  "autostart.disable.done": "已禁用 adapter '{adapter}' 的自启动。已移除 plist：{plist}",
+  "autostart.status.empty": "自启动：{scope} 没有已配置的 agent。",
+  "autostart.status.state.running": "运行中",
+  "autostart.status.state.not_loaded": "未加载",
+  "autostart.status.header": "自启动 agents：\n"
+}

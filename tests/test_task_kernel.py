@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from hermit.core.runner import AgentRunner
 from hermit.core.session import SessionManager
 from hermit.core.tools import ToolRegistry, ToolSpec
@@ -19,12 +21,15 @@ from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.controller import TaskController
 from hermit.kernel.executor import ToolExecutor
 from hermit.kernel.policy import PolicyEngine
+from hermit.kernel.policy.models import ActionRequest
+from hermit.kernel.progress_summary import ProgressSummary
 from hermit.kernel.proofs import ProofService
 from hermit.kernel.projections import ProjectionService
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.rollbacks import RollbackService
 from hermit.kernel.store import KernelSchemaError, KernelStore
 from hermit.kernel.permits import CapabilityGrantError
+from hermit.kernel.topics import build_task_topic
 from hermit.plugin.base import PluginContext
 from hermit.plugin.hooks import HooksEngine
 from hermit.plugin.manager import PluginManager
@@ -36,6 +41,11 @@ from hermit.provider.contracts import (
     UsageMetrics,
 )
 from hermit.provider.runtime import AgentResult, AgentRuntime
+
+
+@pytest.fixture(autouse=True)
+def _force_task_kernel_locale(monkeypatch):
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
 
 class FakeProvider:
@@ -54,6 +64,31 @@ class FakeProvider:
 
     def clone(self, *, model: str | None = None, system_prompt: str | None = None) -> "FakeProvider":
         return self
+
+
+class _FakeProgressSummarizer:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def summarize(self, *, facts: dict[str, Any]) -> ProgressSummary | None:
+        self.calls.append(facts)
+        progress = dict(facts.get("progress", {}) or {})
+        phase = str(progress.get("phase", "") or "running")
+        percent = progress.get("progress_percent")
+        summary = str(progress.get("summary", "") or "").strip() or "Still working"
+        if phase == "ready":
+            return ProgressSummary(
+                summary=f"{summary}，现在可以继续后续步骤了。",
+                detail="下一步会恢复同一个 task 并继续推理。",
+                phase=phase,
+                progress_percent=percent if isinstance(percent, int) else None,
+            )
+        return ProgressSummary(
+            summary=f"{summary}，正在收敛上下文。",
+            detail="还没有看到明确阻塞。",
+            phase=phase,
+            progress_percent=percent if isinstance(percent, int) else None,
+        )
 
 
 def _write_registry(root: Path) -> ToolRegistry:
@@ -154,6 +189,58 @@ def _attachment_registry() -> ToolRegistry:
             action_class="attachment_ingest",
             risk_hint="high",
             requires_receipt=True,
+        )
+    )
+    return registry
+
+
+def _observation_registry(status_responses: list[dict[str, Any]]) -> ToolRegistry:
+    registry = ToolRegistry()
+
+    def observe_start(_payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "_hermit_observation": {
+                "observer_kind": "tool_call",
+                "job_id": "job-1",
+                "status_ref": "job-1",
+                "poll_after_seconds": 0.0,
+                "cancel_supported": False,
+                "resume_token": "job-1",
+                "topic_summary": "Observation submitted.",
+                "display_name": "Observed Search",
+                "tool_name": "observe_start",
+                "status_tool_name": "observe_status",
+                "ready_return": True,
+            }
+        }
+
+    def observe_status(_payload: dict[str, Any]) -> dict[str, Any]:
+        return status_responses.pop(0)
+
+    registry.register(
+        ToolSpec(
+            name="observe_start",
+            description="Submit a long-running observed task.",
+            input_schema={"type": "object", "properties": {}, "required": []},
+            handler=observe_start,
+            readonly=True,
+            action_class="network_read",
+            risk_hint="low",
+            requires_receipt=False,
+            idempotent=True,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="observe_status",
+            description="Poll observed task status.",
+            input_schema={"type": "object", "properties": {}, "required": []},
+            handler=observe_status,
+            readonly=True,
+            action_class="network_read",
+            risk_hint="low",
+            requires_receipt=False,
+            idempotent=True,
         )
     )
     return registry
@@ -301,8 +388,8 @@ def test_tool_executor_blocks_sensitive_mutation_and_creates_preview_artifact(tm
     assert approval is not None
     assert approval.status == "pending"
     assert approval.request_packet_ref is not None
-    assert approval.requested_action["display_copy"]["title"] == "确认修改敏感文件"
-    assert "准备修改敏感文件" in approval.requested_action["display_copy"]["summary"]
+    assert approval.requested_action["display_copy"]["title"] == "Confirm Sensitive File Change"
+    assert "modify a sensitive file" in approval.requested_action["display_copy"]["summary"]
 
     artifact = store.get_artifact(approval.request_packet_ref)
     assert artifact is not None
@@ -500,9 +587,9 @@ def test_approval_copy_service_uses_display_copy_and_falls_back_for_legacy_recor
     canonical = service.resolve_copy(
         {
             "display_copy": {
-                "title": "确认命令执行",
-                "summary": "准备执行命令：`git push origin main`。",
-                "detail": "这个操作会影响远程仓库，需要你明确确认。",
+                "title": "Confirm Command Execution",
+                "summary": "The agent is about to run `git push origin main`.",
+                "detail": "This action affects the remote repository and needs explicit confirmation.",
             }
         },
         "approval_x",
@@ -516,10 +603,10 @@ def test_approval_copy_service_uses_display_copy_and_falls_back_for_legacy_recor
         "approval_y",
     )
 
-    assert canonical.summary == "准备执行命令：`git push origin main`。"
-    assert canonical.detail == "这个操作会影响远程仓库，需要你明确确认。"
-    assert legacy.summary == "准备执行一条会修改当前环境的命令。"
-    assert "原始命令可在详情中查看" in legacy.detail
+    assert canonical.summary == "The agent is about to run `git push origin main`."
+    assert canonical.detail == "This action affects the remote repository and needs explicit confirmation."
+    assert legacy.summary == "The agent is about to run a command that changes the current environment."
+    assert "original command is available in the details" in legacy.detail
 
 
 def test_approval_copy_service_formatter_timeout_falls_back_to_template() -> None:
@@ -541,6 +628,23 @@ def test_approval_copy_service_formatter_timeout_falls_back_to_template() -> Non
             "risk_level": "high",
         },
         "approval_slow",
+    )
+
+    assert copy.title == "Confirm File Change"
+    assert "modify 1 file" in copy.summary
+
+
+def test_approval_copy_service_can_render_zh_cn(monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+    service = ApprovalCopyService(locale="zh-CN")
+
+    copy = service.resolve_copy(
+        {
+            "tool_name": "write_file",
+            "target_paths": ["/tmp/demo.txt"],
+            "risk_level": "high",
+        },
+        "approval_zh",
     )
 
     assert copy.title == "确认文件修改"
@@ -916,6 +1020,156 @@ def test_agent_runtime_resume_supports_legacy_v1_runtime_snapshot(tmp_path: Path
     assert resumed.blocked is False
     assert resumed.text == "done"
     assert (Path(ctx.workspace_root) / ".env").read_text(encoding="utf-8") == "legacy\n"
+
+
+def test_observation_progress_events_are_deduped_and_ready_return_resumes_attempt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    artifacts = ArtifactStore(tmp_path / "kernel" / "artifacts")
+    controller = TaskController(store)
+    ctx = controller.start_task(
+        conversation_id="chat-observation",
+        goal="Watch a long search",
+        source_channel="chat",
+        kind="respond",
+        workspace_root=str(workspace),
+    )
+    responses = [
+        {
+            "status": "observing",
+            "topic_summary": "Checking first source",
+            "progress": {
+                "phase": "probing",
+                "summary": "Checking first source",
+                "progress_percent": 15,
+            },
+        },
+        {
+            "status": "observing",
+            "topic_summary": "Checking first source",
+            "progress": {
+                "phase": "probing",
+                "summary": "Checking first source",
+                "progress_percent": 15,
+            },
+        },
+        {
+            "status": "observing",
+            "topic_summary": "Search context is ready",
+            "progress": {
+                "phase": "ready",
+                "summary": "Search context is ready",
+                "progress_percent": 100,
+                "ready": True,
+            },
+            "result": {"ready": True, "source_count": 3},
+        },
+    ]
+    registry = _observation_registry(responses)
+    summarizer = _FakeProgressSummarizer()
+    executor = ToolExecutor(
+        registry=registry,
+        store=store,
+        artifact_store=artifacts,
+        policy_engine=PolicyEngine(),
+        approval_service=ApprovalService(store),
+        receipt_service=ReceiptService(store),
+        progress_summarizer=summarizer,
+        tool_output_limit=2000,
+    )
+    runtime = AgentRuntime(
+        provider=FakeProvider(
+            responses=[
+                ProviderResponse(
+                    content=[
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "observe_start",
+                            "input": {},
+                        }
+                    ],
+                    stop_reason="tool_use",
+                    usage=UsageMetrics(input_tokens=2, output_tokens=1),
+                ),
+                ProviderResponse(
+                    content=[{"type": "text", "text": "done"}],
+                    stop_reason="end_turn",
+                    usage=UsageMetrics(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        registry=registry,
+        model="fake",
+        tool_executor=executor,
+    )
+
+    blocked = runtime.run("watch it", task_context=ctx)
+
+    assert blocked.suspended is True
+    assert blocked.waiting_kind == "observing"
+
+    first_poll = executor.poll_observation(ctx.step_attempt_id, now=time.time())
+    second_poll = executor.poll_observation(ctx.step_attempt_id, now=time.time())
+    third_poll = executor.poll_observation(ctx.step_attempt_id, now=time.time())
+
+    assert first_poll is not None and first_poll.should_resume is False
+    assert second_poll is not None and second_poll.should_resume is False
+    assert third_poll is not None and third_poll.should_resume is True
+
+    progress_events = [
+        event for event in store.list_events(task_id=ctx.task_id, limit=50)
+        if event["event_type"] == "tool.progressed"
+    ]
+    summary_events = [
+        event for event in store.list_events(task_id=ctx.task_id, limit=50)
+        if event["event_type"] == "task.progress.summarized"
+    ]
+    assert len(progress_events) == 2
+    assert len(summary_events) == 2
+    assert progress_events[0]["payload"]["summary"] == "Checking first source"
+    assert progress_events[1]["payload"]["ready"] is True
+    assert "正在收敛上下文" in summary_events[0]["payload"]["summary"]
+    assert "现在可以继续后续步骤了" in summary_events[1]["payload"]["summary"]
+    assert len(summarizer.calls) == 2
+
+    resumed = runtime.resume(step_attempt_id=ctx.step_attempt_id, task_context=ctx)
+
+    assert resumed.text == "done"
+    assert resumed.blocked is False
+    attempt = store.get_step_attempt(ctx.step_attempt_id)
+    assert attempt is not None
+    assert "runtime_snapshot" not in attempt.context
+
+
+def test_task_topic_projection_prefers_progress_milestones() -> None:
+    topic = build_task_topic(
+        [
+            {
+                "event_seq": 1,
+                "event_type": "task.created",
+                "payload": {
+                    "title": "<session_time>ts</session_time>\n<feishu_msg_id>om_1</feishu_msg_id>\nRun dev server",
+                },
+            },
+            {"event_seq": 2, "event_type": "tool.submitted", "payload": {"topic_summary": "Submitting dev server"}},
+            {"event_seq": 3, "event_type": "tool.progressed", "payload": {"phase": "starting", "summary": "Booting dev server", "progress_percent": 10}},
+            {"event_seq": 4, "event_type": "tool.status.changed", "payload": {"status": "observing", "topic_summary": "Booting dev server"}},
+            {"event_seq": 5, "event_type": "task.progress.summarized", "payload": {"phase": "starting", "summary": "正在启动 dev server，并等待首个 ready 信号。", "detail": "暂时没有阻塞。", "progress_percent": 10}},
+            {"event_seq": 6, "event_type": "tool.progressed", "payload": {"phase": "ready", "summary": "Dev server ready", "detail": "READY http://127.0.0.1:3000", "progress_percent": 100, "ready": True}},
+            {"event_seq": 7, "event_type": "task.progress.summarized", "payload": {"phase": "ready", "summary": "dev server 已就绪，接下来可以继续 smoke test。", "detail": "服务已经可访问。", "progress_percent": 100}},
+            {"event_seq": 8, "event_type": "task.completed", "payload": {"result_preview": "北京今天晴，最高 16°C。"}},
+        ]
+    )
+
+    assert topic["status"] == "completed"
+    assert topic["current_hint"] == "北京今天晴，最高 16°C。"
+    assert topic["current_phase"] == "completed"
+    assert topic["current_progress_percent"] == 100
+    assert topic["items"][0]["text"] == "Run dev server"
+    assert topic["items"][-1]["text"] == "北京今天晴，最高 16°C。"
+    assert topic["items"][-1]["kind"] == "task.completed"
 
 
 def test_tool_executor_denied_action_records_failure_without_approval(tmp_path: Path) -> None:
@@ -1404,11 +1658,11 @@ def test_runner_deny_approval_persists_denial_message_in_session(tmp_path: Path)
     result = runner._resolve_approval("chat-deny", action="deny", approval_id=approval.approval_id, reason="not now")
 
     assert result.is_command is True
-    assert "本次审批已拒绝，当前操作不会继续。" in result.text
+    assert "This approval was denied" in result.text
     assert store.get_approval(approval.approval_id).status == "denied"
     reloaded = runner.session_manager.get_or_create("chat-deny")
     assert reloaded.messages[-1]["role"] == "assistant"
-    assert "如需继续，请重新发起请求；届时你可以对新的审批请求再次进行批准。" in reloaded.messages[-1]["content"][0]["text"]
+    assert "start a new request" in reloaded.messages[-1]["content"][0]["text"]
 
 
 def test_runner_approve_resumes_attempt_and_finalizes_task(tmp_path: Path) -> None:
@@ -1531,7 +1785,7 @@ def test_runner_dispatches_natural_language_case_and_rollback_without_slash(tmp_
     assert rollback_result.is_command is True
     assert json.loads(rollback_result.text)["status"] == "succeeded"
     assert help_result.is_command is True and "/task" in help_result.text
-    assert history_result.is_command is True and "当前会话" in history_result.text
+    assert history_result.is_command is True and "Current session" in history_result.text
     assert list_result.is_command is True and json.loads(list_result.text)[0]["task_id"] == ctx.task_id
     assert proof_result.is_command is True and json.loads(proof_result.text)["task"]["task_id"] == ctx.task_id
     assert grant_result.is_command is True and json.loads(grant_result.text)[0]["grant_id"] == grant.grant_id
@@ -1566,6 +1820,82 @@ def test_rollback_service_restores_local_write_from_prestate(tmp_path: Path) -> 
     assert payload["status"] == "succeeded"
     assert target.read_text(encoding="utf-8") == "before\n"
     assert store.get_receipt(receipt.receipt_id).rollback_status == "succeeded"
+
+
+def test_executor_and_rollback_localize_core_copy(monkeypatch, tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    target = workspace / "localized.txt"
+    target.write_text("before\n", encoding="utf-8")
+
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+
+    store, artifacts, _controller, executor, ctx = _kernel_runtime(tmp_path)
+    ctx.workspace_root = str(workspace)
+
+    preview = executor._preview_text(  # type: ignore[attr-defined]
+        executor.registry.get("write_file"),
+        {"path": "localized.txt", "content": "after\n"},
+    )
+    auth_reason = executor._authorization_reason(  # type: ignore[attr-defined]
+        policy=SimpleNamespace(reason=""), approval_mode="once", grant_id=None
+    )
+    success_summary = executor._successful_result_summary(  # type: ignore[attr-defined]
+        tool_name="write_file", approval_mode="once", grant_id=None
+    )
+
+    result = executor.execute(
+        ctx,
+        "write_file",
+        {"path": "localized.txt", "content": "after\n"},
+    )
+    receipt = store.get_receipt(result.receipt_id or "")
+    payload = RollbackService(store, artifacts).execute(receipt.receipt_id)  # type: ignore[union-attr]
+
+    assert "# 写入预览" in preview
+    assert "路径：`localized.txt`" in preview
+    assert auth_reason == "用户批准了这一次写入执行。"
+    assert success_summary == "write_file 已在一次性批准后成功执行。"
+    assert payload["result_summary"] == f"已恢复 {target} 的文件状态。"
+
+
+def test_controller_and_executor_localize_core_errors(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
+
+    _store, _artifacts, controller, executor, _ctx = _kernel_runtime(tmp_path)
+
+    with pytest.raises(KeyError, match="未找到 step attempt：attempt-missing"):
+        controller.context_for_attempt("attempt-missing")
+
+    with pytest.raises(KeyError, match="未找到任务：task-missing"):
+        controller.append_note(
+            task_id="task-missing",
+            source_channel="chat",
+            raw_text="hi",
+            prompt="hi",
+        )
+
+    with pytest.raises(KeyError, match="未找到 step attempt：attempt-missing"):
+        executor.load_suspended_state("attempt-missing")
+
+    with pytest.raises(RuntimeError, match="不支持的 runtime snapshot schema version"):
+        executor._runtime_snapshot_payload(  # type: ignore[attr-defined]
+            {
+                "schema_version": 99,
+                "kind": "runtime_snapshot",
+                "expires_at": time.time() + 60,
+                "payload": {},
+            }
+        )
+
+    with pytest.raises(RuntimeError, match="未找到 resume messages artifact：artifact-missing"):
+        executor._load_resume_messages("artifact-missing")  # type: ignore[attr-defined]
+
+    with pytest.raises(RuntimeError, match="request_overrides.actor 必须是 dict"):
+        executor._apply_request_overrides(  # type: ignore[attr-defined]
+            ActionRequest(request_id="req-1"),
+            {"actor": "user"},
+        )
 
 
 def test_projection_service_rebuilds_and_caches_task_case(tmp_path: Path) -> None:

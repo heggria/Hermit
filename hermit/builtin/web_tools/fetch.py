@@ -7,13 +7,20 @@ import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 
+from hermit.core.budgets import get_runtime_budget
+from hermit.i18n import resolve_locale, tr
+
 _MAX_CONTENT_LENGTH = 50_000
+
+
+def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
 
 
 def handle_fetch(payload: dict[str, Any]) -> str:
     url = str(payload.get("url", "")).strip()
     if not url:
-        return "Error: empty URL"
+        return _t("tools.web.fetch.error.empty_url")
 
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
@@ -30,15 +37,15 @@ def handle_fetch(payload: dict[str, Any]) -> str:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
         })
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
             content_type = resp.headers.get("Content-Type", "")
             raw = resp.read(200_000)
     except urllib.error.HTTPError as exc:
-        return f"HTTP error {exc.code}: {exc.reason}"
+        return _t("tools.web.fetch.error.http", code=exc.code, reason=exc.reason)
     except urllib.error.URLError as exc:
-        return f"URL error: {exc.reason}"
+        return _t("tools.web.fetch.error.url", reason=exc.reason)
     except Exception as exc:
-        return f"Fetch error: {exc}"
+        return _t("tools.web.fetch.error.fetch", error=exc)
 
     encoding = _detect_encoding(content_type, raw)
     try:
@@ -54,12 +61,16 @@ def handle_fetch(payload: dict[str, Any]) -> str:
         text = _html_to_text(html)
 
     if not text.strip():
-        return f"Fetched {url} but could not extract text content (page may require JavaScript)."
+        return _t("tools.web.fetch.no_content", url=url)
 
     if len(text) > max_length:
-        text = text[:max_length] + f"\n\n... [truncated at {max_length} chars, full page is {len(text)} chars]"
+        text = text[:max_length] + _t(
+            "tools.web.fetch.truncated",
+            max_length=max_length,
+            full_length=len(text),
+        )
 
-    return f"# Content from {url}\n\n{text}"
+    return _t("tools.web.fetch.content.title", url=url, text=text)
 
 
 def _detect_encoding(content_type: str, raw: bytes) -> str:

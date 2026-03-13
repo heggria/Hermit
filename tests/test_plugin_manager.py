@@ -275,7 +275,7 @@ def test_sanitize_for_feishu_preserves_valid_hr() -> None:
 def test_sanitize_for_feishu_truncates_oversized() -> None:
     from hermit.builtin.feishu.reply import sanitize_for_feishu
     text = "x" * 30_000
-    result = sanitize_for_feishu(text)
+    result = sanitize_for_feishu(text, locale="zh-CN")
     assert len(result.encode("utf-8")) < 28_000
     assert "已截断" in result
 
@@ -371,11 +371,26 @@ def test_build_result_card_adds_header_tags_for_structured_image_content() -> No
     from hermit.builtin.feishu.reply import build_result_card
 
     card = build_result_card(
-        "# 处理结果\n\n概览说明\n\n## 步骤\n1. 第一项\n\n<feishu_image key='img_v2_xxx'/>"
+        "# 处理结果\n\n概览说明\n\n## 步骤\n1. 第一项\n\n<feishu_image key='img_v2_xxx'/>",
+        locale="zh-CN",
     )
 
     assert "subtitle" in card["header"]
     assert [tag["text"]["content"] for tag in card["header"]["text_tag_list"]] == [
         "图文",
         "列表",
+    ]
+
+
+def test_build_result_card_uses_english_tags_when_locale_is_en_us() -> None:
+    from hermit.builtin.feishu.reply import build_result_card
+
+    card = build_result_card(
+        "# Result\n\nOverview\n\n## Steps\n1. First item\n\n<feishu_image key='img_v2_xxx'/>",
+        locale="en-US",
+    )
+
+    assert [tag["text"]["content"] for tag in card["header"]["text_tag_list"]] == [
+        "Media",
+        "List",
     ]

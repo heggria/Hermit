@@ -1,0 +1,18 @@
+{
+  "prompt.context.self_configuration.line_1": "- If a request depends on current external information, verify it before answering.",
+  "prompt.context.self_configuration.line_2": "- Prefer existing skills, rules, and local project conventions before inventing new workflows.",
+  "prompt.context.self_configuration.line_3": "- For code tasks, inspect the codebase first and make concrete changes when appropriate.",
+  "prompt.context.self_configuration.line_4": "- Keep user-facing responses concise, accurate, and collaborative.",
+  "prompt.context.self_configuration.line_5": "- If your changes need a running local service to take effect, restart the relevant development environment before reporting completion.",
+  "prompt.runtime.max_turns_exceeded": "You have reached the maximum turn limit. Stop using tools and provide the best possible final answer based on the work completed so far.",
+  "prompt.runtime.final_summary_failed": "Reached the maximum turn limit ({max_turns}) and the final summary request failed: {error}. Respond with a brief explanation of what was completed and what remains blocked.",
+  "prompt.available_skills.read_skill.description": "Load a skill's full instructions into context. Use when a task matches a skill's description from the catalog.",
+  "prompt.available_skills.read_skill.name": "Skill name to load into the current context.",
+  "prompt.available_skills.read_skill.not_found": "Skill '{name}' not found. Available: {available}",
+  "prompt.available_skills.intro": "The following optional skills are available in this workspace.",
+  "prompt.available_skills.guidance": "Load one only when the task clearly matches its description or the user explicitly asks for it. Use the read_skill tool to load it.",
+  "prompt.delegation.description": "Delegate a task to the {name} subagent. {description}",
+  "prompt.delegation.task": "Task to delegate to the subagent.",
+  "prompt.delegation.unavailable": "[Subagent '{name}' unavailable: agent runner not configured]",
+  "prompt.scheduler.execution": "This is an already-configured scheduled task. Do not ask clarifying questions. Do not request chat_id, open_id, or any delivery metadata. Do not create another schedule. Return only the final user-facing message that should be delivered.\n\nScheduled task prompt:\n{task_prompt}"
+}
