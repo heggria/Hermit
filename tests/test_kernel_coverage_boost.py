@@ -245,12 +245,23 @@ def test_task_controller_decide_ingress_persists_raw_reply_and_quote_refs(tmp_pa
     store = KernelStore(tmp_path / "kernel.db")
     controller = TaskController(store)
     ctx = _start_task(controller, conversation_id="conv-reply-evidence", goal="整理文档")
+    artifact = store.create_artifact(
+        task_id=ctx.task_id,
+        step_id=ctx.step_id,
+        kind="notes",
+        uri="memory://artifact-evidence",
+        content_hash="hash-evidence",
+        producer="test",
+        retention_class="task",
+        trust_tier="observed",
+        metadata={},
+    )
 
     decision = controller.decide_ingress(
         conversation_id="conv-reply-evidence",
         source_channel="feishu",
-        raw_text="继续这个",
-        prompt="继续这个",
+        raw_text=f"继续这个，并参考 {artifact.artifact_id}",
+        prompt=f"继续这个，并参考 {artifact.artifact_id}",
         reply_to_task_id=ctx.task_id,
         reply_to_ref="om_root",
         quoted_message_ref="om_quote",
@@ -260,6 +271,7 @@ def test_task_controller_decide_ingress_persists_raw_reply_and_quote_refs(tmp_pa
     assert ingress is not None
     assert ingress.reply_to_ref == "om_root"
     assert ingress.quoted_message_ref == "om_quote"
+    assert ingress.referenced_artifact_refs == [artifact.artifact_id]
     assert ingress.chosen_task_id == ctx.task_id
 
 
@@ -513,6 +525,79 @@ def test_ingress_router_returns_new_root_when_no_open_task_or_match_is_weak(tmp_
     )
     assert weak.resolution == "start_new_root"
     assert weak.reason_codes in (["weak_candidate_match"], ["no_candidate_match"])
+
+
+def test_ingress_router_binds_artifact_receipt_and_workspace_signals(tmp_path: Path) -> None:
+    store = KernelStore(tmp_path / "kernel.db")
+    controller = TaskController(store)
+    router = IngressRouter(store)
+
+    docs = controller.start_task(
+        conversation_id="conv-structural-router",
+        goal="整理产品文档",
+        source_channel="chat",
+        kind="respond",
+        workspace_root=str(tmp_path / "workspace-docs"),
+    )
+    report = controller.start_task(
+        conversation_id="conv-structural-router",
+        goal="生成测试报告",
+        source_channel="chat",
+        kind="respond",
+        workspace_root=str(tmp_path / "workspace-report"),
+    )
+    artifact = store.create_artifact(
+        task_id=report.task_id,
+        step_id=report.step_id,
+        kind="report",
+        uri="memory://report-artifact",
+        content_hash="hash-report",
+        producer="test",
+        retention_class="task",
+        trust_tier="observed",
+        metadata={},
+    )
+    receipt = store.create_receipt(
+        task_id=report.task_id,
+        step_id=report.step_id,
+        step_attempt_id=report.step_attempt_id,
+        action_type="write_local",
+        input_refs=[],
+        environment_ref=None,
+        policy_result={},
+        approval_ref=None,
+        output_refs=[artifact.artifact_id],
+        result_summary="wrote report",
+    )
+    conversation = store.get_conversation("conv-structural-router")
+    open_tasks = store.list_open_tasks_for_conversation(conversation_id="conv-structural-router", limit=10)
+
+    artifact_decision = router.bind(
+        conversation=conversation,
+        open_tasks=open_tasks,
+        normalized_text=f"请继续处理 {artifact.artifact_id}",
+    )
+    assert artifact_decision.resolution == "append_note"
+    assert artifact_decision.chosen_task_id == report.task_id
+    assert artifact_decision.reason_codes == ["artifact_ref_match"]
+
+    receipt_decision = router.bind(
+        conversation=conversation,
+        open_tasks=open_tasks,
+        normalized_text=f"把 {receipt.receipt_id} 里的产物发出来",
+    )
+    assert receipt_decision.resolution == "append_note"
+    assert receipt_decision.chosen_task_id == report.task_id
+    assert receipt_decision.reason_codes == ["receipt_ref_match"]
+
+    workspace_decision = router.bind(
+        conversation=conversation,
+        open_tasks=open_tasks,
+        normalized_text=f"修改 {tmp_path / 'workspace-docs' / 'README.md'} 里的文案",
+    )
+    assert workspace_decision.resolution == "append_note"
+    assert workspace_decision.chosen_task_id == docs.task_id
+    assert workspace_decision.reason_codes == ["workspace_path_match"]
 
 
 def test_task_controller_helper_predicates_cover_followup_and_terminal_candidates(tmp_path: Path) -> None:

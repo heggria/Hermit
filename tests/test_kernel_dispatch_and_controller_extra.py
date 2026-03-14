@@ -265,6 +265,11 @@ def test_task_controller_prefers_focus_task_when_multiple_open_tasks_exist(tmp_p
     assert decision.task_id == first.task_id
     assert decision.reason_codes == ["focus_followup_marker"]
     assert second.task_id != decision.task_id
+    ingress = store.get_ingress(decision.ingress_id or "")
+    assert ingress is not None
+    assert ingress.rationale["shadow_binding"]["match_actual"] is False
+    assert ingress.rationale["shadow_binding"]["chosen_task_id"] == second.task_id
+    assert ingress.rationale["actual_binding"]["chosen_task_id"] == first.task_id
 
 
 def test_task_controller_resolve_text_command_can_switch_focus_task(tmp_path) -> None:

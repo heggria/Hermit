@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from hermit.builtin.memory.engine import MemoryEngine
@@ -45,6 +47,9 @@ _AMBIGUOUS_MARKERS = (
     "上一条",
     "刚才",
 )
+_ARTIFACT_REF_RE = re.compile(r"\bartifact_[a-z0-9]{6,}\b", re.IGNORECASE)
+_RECEIPT_REF_RE = re.compile(r"\breceipt_[a-z0-9]{6,}\b", re.IGNORECASE)
+_ABSOLUTE_PATH_RE = re.compile(r"(?:~|/)[\w./-]+")
 
 
 @dataclass(frozen=True)
@@ -112,6 +117,9 @@ class IngressRouter:
                 margin=0.98,
                 reason_codes=["pending_approval_correlation"],
             )
+        structural = self._resolve_structural_binding(open_tasks=open_tasks, text=cleaned)
+        if structural is not None:
+            return structural
         if not open_tasks:
             return BindingDecision(
                 resolution="start_new_root",
@@ -210,12 +218,86 @@ class IngressRouter:
     def _has_branch_marker(text: str) -> bool:
         return any(marker in text for marker in _BRANCH_MARKERS)
 
+    def _resolve_structural_binding(self, *, open_tasks: list[TaskRecord], text: str) -> BindingDecision | None:
+        task_ids = {task.task_id for task in open_tasks}
+        artifact_targets = {
+            artifact.task_id
+            for artifact_id in self._artifact_refs(text)
+            if (artifact := self.store.get_artifact(artifact_id)) is not None
+            and artifact.task_id in task_ids
+        }
+        receipt_targets = {
+            receipt.task_id
+            for receipt_id in self._receipt_refs(text)
+            if (receipt := self.store.get_receipt(receipt_id)) is not None
+            and receipt.task_id in task_ids
+        }
+        direct_targets = {str(task_id) for task_id in artifact_targets | receipt_targets if task_id}
+        if len(direct_targets) == 1:
+            chosen = next(iter(direct_targets))
+            reason_codes: list[str] = []
+            if artifact_targets:
+                reason_codes.append("artifact_ref_match")
+            if receipt_targets:
+                reason_codes.append("receipt_ref_match")
+            return BindingDecision(
+                resolution="append_note",
+                chosen_task_id=chosen,
+                confidence=1.0,
+                margin=1.0,
+                reason_codes=reason_codes,
+            )
+        if len(direct_targets) > 1:
+            return BindingDecision(
+                resolution="pending_disambiguation",
+                confidence=0.99,
+                margin=0.0,
+                candidates=[
+                    CandidateScore(task_id=task_id, score=1.0, reason_codes=["conflicting_reference_target"])
+                    for task_id in sorted(direct_targets)
+                ],
+                reason_codes=["conflicting_reference_targets"],
+            )
+
+        workspace_targets = self._workspace_targets(open_tasks=open_tasks, text=text)
+        if len(workspace_targets) == 1:
+            task_id, score = workspace_targets[0]
+            return BindingDecision(
+                resolution="append_note",
+                chosen_task_id=task_id,
+                confidence=score,
+                margin=score,
+                reason_codes=["workspace_path_match"],
+            )
+        if len(workspace_targets) > 1:
+            workspace_targets.sort(key=lambda item: item[1], reverse=True)
+            best_task_id, best_score = workspace_targets[0]
+            runner_up_score = workspace_targets[1][1]
+            if best_score - runner_up_score >= 0.1:
+                return BindingDecision(
+                    resolution="append_note",
+                    chosen_task_id=best_task_id,
+                    confidence=best_score,
+                    margin=best_score - runner_up_score,
+                    reason_codes=["workspace_path_match"],
+                )
+        return None
+
     def _score_task(self, task: TaskRecord, text: str, *, focus_task_id: str | None) -> tuple[float, list[str]]:
         reasons: list[str] = []
         score = 0.0
         if focus_task_id and task.task_id == focus_task_id:
             score += 0.35
             reasons.append("focus_task")
+        if self._task_references_artifact(task.task_id, text):
+            score += 0.75
+            reasons.append("artifact_ref_match")
+        if self._task_references_receipt(task.task_id, text):
+            score += 0.75
+            reasons.append("receipt_ref_match")
+        if self._task_matches_workspace_path(task.task_id, text):
+            score += 0.55
+            reasons.append("workspace_path_match")
         context_texts = [str(task.title or ""), str(task.goal or "")]
         for event in reversed(self.store.list_events(task_id=task.task_id, limit=50)):
             if event["event_type"] != "task.note.appended":
@@ -252,6 +334,99 @@ class IngressRouter:
                 reasons.append("substring_overlap")
                 break
         return min(score, 1.0), reasons
+
+    @staticmethod
+    def _artifact_refs(text: str) -> list[str]:
+        return list(dict.fromkeys(match.lower() for match in _ARTIFACT_REF_RE.findall(text)))
+
+    @staticmethod
+    def _receipt_refs(text: str) -> list[str]:
+        return list(dict.fromkeys(match.lower() for match in _RECEIPT_REF_RE.findall(text)))
+
+    @staticmethod
+    def _path_refs(text: str) -> list[str]:
+        refs = []
+        for match in _ABSOLUTE_PATH_RE.findall(text):
+            candidate = str(match or "").strip().rstrip(".,:;)]}>\"'")
+            if candidate:
+                refs.append(candidate)
+        return list(dict.fromkeys(refs))
+
+    def _workspace_targets(self, *, open_tasks: list[TaskRecord], text: str) -> list[tuple[str, float]]:
+        paths = self._path_refs(text)
+        if not paths:
+            return []
+        targets: list[tuple[str, float]] = []
+        for task in open_tasks:
+            workspace_root = self._task_workspace_root(task.task_id)
+            if not workspace_root:
+                continue
+            root = self._normalized_path(workspace_root)
+            if not root:
+                continue
+            root_prefix = f"{root.rstrip('/')}/"
+            best_score = 0.0
+            for path in paths:
+                normalized = self._normalized_path(path)
+                if not normalized:
+                    continue
+                if normalized == root or normalized.startswith(root_prefix):
+                    # Prefer the most specific workspace root when multiple tasks share a prefix.
+                    best_score = max(best_score, min(0.97, 0.82 + min(len(root), 200) / 1000))
+            if best_score > 0:
+                targets.append((task.task_id, best_score))
+        return targets
+
+    def _task_references_artifact(self, task_id: str, text: str) -> bool:
+        refs = set(self._artifact_refs(text))
+        if not refs:
+            return False
+        for artifact in self.store.list_artifacts(task_id=task_id, limit=40):
+            if artifact.artifact_id.lower() in refs:
+                return True
+        return False
+
+    def _task_references_receipt(self, task_id: str, text: str) -> bool:
+        refs = set(self._receipt_refs(text))
+        if not refs:
+            return False
+        for receipt in self.store.list_receipts(task_id=task_id, limit=20):
+            if receipt.receipt_id.lower() in refs:
+                return True
+        return False
+
+    def _task_matches_workspace_path(self, task_id: str, text: str) -> bool:
+        workspace_root = self._task_workspace_root(task_id)
+        if not workspace_root:
+            return False
+        root = self._normalized_path(workspace_root)
+        if not root:
+            return False
+        root_prefix = f"{root.rstrip('/')}/"
+        for path in self._path_refs(text):
+            normalized = self._normalized_path(path)
+            if not normalized:
+                continue
+            if normalized == root or normalized.startswith(root_prefix):
+                return True
+        return False
+
+    def _task_workspace_root(self, task_id: str) -> str:
+        for attempt in self.store.list_step_attempts(task_id=task_id, limit=5):
+            workspace_root = str((attempt.context or {}).get("workspace_root", "") or "").strip()
+            if workspace_root:
+                return workspace_root
+        return ""
+
+    @staticmethod
+    def _normalized_path(path: str) -> str:
+        raw = str(path or "").strip()
+        if not raw:
+            return ""
+        try:
+            return str(Path(raw).expanduser().resolve()).replace("\\", "/")
+        except OSError:
+            return raw.replace("\\", "/")
 
 
 __all__ = ["BindingDecision", "CandidateScore", "IngressRouter"]

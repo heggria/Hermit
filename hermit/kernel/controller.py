@@ -18,6 +18,7 @@ _AUTO_PARENT = object()
 _LOW_SIGNAL_RE = re.compile(r"^[\s\?\uff1f!！,，。\.~～…]+$")
 _SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
 _FEISHU_TAG_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
+_ARTIFACT_REF_RE = re.compile(r"\bartifact_[a-z0-9]{6,}\b", re.IGNORECASE)
 _GREETING_TEXTS = {
     "hi",
     "hello",
@@ -486,15 +487,35 @@ class TaskController:
             explicit_task_ref=explicit_task_ref,
             reply_to_ref=reply_to_ref,
             quoted_message_ref=quoted_message_ref,
+            referenced_artifact_refs=self._extract_artifact_refs(raw_text, prompt),
         )
         planning = PlanningService(self.store)
         latest = self.store.get_last_task_for_conversation(conversation_id)
+        conversation = self.store.get_conversation(conversation_id)
+        open_tasks = self.store.list_open_tasks_for_conversation(conversation_id=conversation_id, limit=10)
+        pending_approval = self.store.get_latest_pending_approval(conversation_id)
+        shadow_binding = self._legacy_shadow_binding(
+            normalized_text=normalized,
+            open_tasks=open_tasks,
+            explicit_task_ref=explicit_task_ref,
+            reply_to_task_id=reply_to_task_id,
+            pending_approval_task_id=pending_approval.task_id if pending_approval is not None else None,
+        )
         if self._is_chat_only_message(normalized):
             self.store.update_ingress(
                 ingress.ingress_id,
                 status="bound",
                 resolution="chat_only",
-                rationale={"reason_codes": ["chat_only_message"]},
+                rationale=self._augment_ingress_rationale(
+                    {"reason_codes": ["chat_only_message"]},
+                    resolution="chat_only",
+                    chosen_task_id=None,
+                    parent_task_id=None,
+                    confidence=None,
+                    margin=None,
+                    reason_codes=["chat_only_message"],
+                    shadow_binding=shadow_binding,
+                ),
             )
             return IngressDecision(
                 mode="start",
@@ -510,7 +531,16 @@ class TaskController:
                 ingress.ingress_id,
                 status="bound",
                 resolution="start_new_root",
-                rationale={"reason_codes": ["explicit_new_task_marker"]},
+                rationale=self._augment_ingress_rationale(
+                    {"reason_codes": ["explicit_new_task_marker"]},
+                    resolution="start_new_root",
+                    chosen_task_id=None,
+                    parent_task_id=None,
+                    confidence=None,
+                    margin=None,
+                    reason_codes=["explicit_new_task_marker"],
+                    shadow_binding=shadow_binding,
+                ),
             )
             return IngressDecision(
                 mode="start",
@@ -521,9 +551,6 @@ class TaskController:
                 parent_task_id=None,
             )
 
-        conversation = self.store.get_conversation(conversation_id)
-        open_tasks = self.store.list_open_tasks_for_conversation(conversation_id=conversation_id, limit=10)
-        pending_approval = self.store.get_latest_pending_approval(conversation_id)
         binding = self.ingress_router.bind(
             conversation=conversation,
             open_tasks=open_tasks,
@@ -541,10 +568,20 @@ class TaskController:
                 chosen_task_id=binding.chosen_task_id,
                 confidence=binding.confidence,
                 margin=binding.margin,
-                rationale={
-                    "reason_codes": list(binding.reason_codes),
-                    "candidates": self._serialize_binding_candidates(binding),
-                },
+                rationale=self._augment_ingress_rationale(
+                    {
+                        "reason_codes": list(binding.reason_codes),
+                        "candidates": self._serialize_binding_candidates(binding),
+                    },
+                    resolution="append_note",
+                    chosen_task_id=binding.chosen_task_id,
+                    parent_task_id=None,
+                    confidence=binding.confidence,
+                    margin=binding.margin,
+                    reason_codes=list(binding.reason_codes),
+                    shadow_binding=shadow_binding,
+                    candidates=self._serialize_binding_candidates(binding),
+                ),
             )
             note_event_seq = self.append_note(
                 task_id=binding.chosen_task_id,
@@ -571,10 +608,20 @@ class TaskController:
                 resolution="pending_disambiguation",
                 confidence=binding.confidence,
                 margin=binding.margin,
-                rationale={
-                    "reason_codes": list(binding.reason_codes),
-                    "candidates": self._serialize_binding_candidates(binding),
-                },
+                rationale=self._augment_ingress_rationale(
+                    {
+                        "reason_codes": list(binding.reason_codes),
+                        "candidates": self._serialize_binding_candidates(binding),
+                    },
+                    resolution="pending_disambiguation",
+                    chosen_task_id=None,
+                    parent_task_id=None,
+                    confidence=binding.confidence,
+                    margin=binding.margin,
+                    reason_codes=list(binding.reason_codes),
+                    shadow_binding=shadow_binding,
+                    candidates=self._serialize_binding_candidates(binding),
+                ),
             )
             return self._binding_to_ingress_decision(
                 ingress_id=ingress.ingress_id,
@@ -592,10 +639,20 @@ class TaskController:
                 parent_task_id=binding.parent_task_id,
                 confidence=binding.confidence,
                 margin=binding.margin,
-                rationale={
-                    "reason_codes": list(binding.reason_codes),
-                    "candidates": self._serialize_binding_candidates(binding),
-                },
+                rationale=self._augment_ingress_rationale(
+                    {
+                        "reason_codes": list(binding.reason_codes),
+                        "candidates": self._serialize_binding_candidates(binding),
+                    },
+                    resolution="fork_child",
+                    chosen_task_id=None,
+                    parent_task_id=binding.parent_task_id,
+                    confidence=binding.confidence,
+                    margin=binding.margin,
+                    reason_codes=list(binding.reason_codes),
+                    shadow_binding=shadow_binding,
+                    candidates=self._serialize_binding_candidates(binding),
+                ),
             )
             return self._binding_to_ingress_decision(
                 ingress_id=ingress.ingress_id,
@@ -613,10 +670,19 @@ class TaskController:
                 resolution="start_new_root",
                 confidence=binding.confidence,
                 margin=binding.margin,
-                rationale={
-                    "reason_codes": ["matched_terminal_task"],
-                    "anchor_task_id": anchor.get("anchor_task_id"),
-                },
+                rationale=self._augment_ingress_rationale(
+                    {
+                        "reason_codes": ["matched_terminal_task"],
+                        "anchor_task_id": anchor.get("anchor_task_id"),
+                    },
+                    resolution="start_new_root",
+                    chosen_task_id=None,
+                    parent_task_id=None,
+                    confidence=binding.confidence,
+                    margin=binding.margin,
+                    reason_codes=["matched_terminal_task"],
+                    shadow_binding=shadow_binding,
+                ),
             )
             return IngressDecision(
                 mode="start",
@@ -640,7 +706,16 @@ class TaskController:
                     ingress.ingress_id,
                     status="bound",
                     resolution="start_new_root",
-                    rationale={"reason_codes": ["planning_confirmation_gate"]},
+                    rationale=self._augment_ingress_rationale(
+                        {"reason_codes": ["planning_confirmation_gate"]},
+                        resolution="start_new_root",
+                        chosen_task_id=None,
+                        parent_task_id=None,
+                        confidence=None,
+                        margin=None,
+                        reason_codes=["planning_confirmation_gate"],
+                        shadow_binding=shadow_binding,
+                    ),
                 )
                 return IngressDecision(
                     mode="start",
@@ -656,10 +731,20 @@ class TaskController:
             resolution="start_new_root",
             confidence=binding.confidence,
             margin=binding.margin,
-            rationale={
-                "reason_codes": list(binding.reason_codes),
-                "candidates": self._serialize_binding_candidates(binding),
-            },
+            rationale=self._augment_ingress_rationale(
+                {
+                    "reason_codes": list(binding.reason_codes),
+                    "candidates": self._serialize_binding_candidates(binding),
+                },
+                resolution="start_new_root",
+                chosen_task_id=None,
+                parent_task_id=None,
+                confidence=binding.confidence,
+                margin=binding.margin,
+                reason_codes=list(binding.reason_codes),
+                shadow_binding=shadow_binding,
+                candidates=self._serialize_binding_candidates(binding),
+            ),
         )
         return IngressDecision(
             mode="start",
@@ -1012,6 +1097,142 @@ class TaskController:
             parent_task_id=binding.parent_task_id if binding.parent_task_id is not None else None,
         )
 
+    def _legacy_shadow_binding(
+        self,
+        *,
+        normalized_text: str,
+        open_tasks: list[Any],
+        explicit_task_ref: str | None,
+        reply_to_task_id: str | None,
+        pending_approval_task_id: str | None,
+    ) -> BindingDecision:
+        cleaned = self._normalize_ingress_text(normalized_text)
+        if self._is_chat_only_message(cleaned):
+            return BindingDecision(
+                resolution="chat_only",
+                confidence=0.95,
+                margin=0.95,
+                reason_codes=["legacy_chat_only_message"],
+            )
+        if self._is_explicit_new_task_message(cleaned):
+            return BindingDecision(
+                resolution="start_new_root",
+                confidence=0.95,
+                margin=0.95,
+                reason_codes=["legacy_explicit_new_task_marker"],
+            )
+        if explicit_task_ref:
+            return BindingDecision(
+                resolution="append_note",
+                chosen_task_id=explicit_task_ref,
+                confidence=1.0,
+                margin=1.0,
+                reason_codes=["legacy_explicit_task_ref"],
+            )
+        if reply_to_task_id:
+            return BindingDecision(
+                resolution="append_note",
+                chosen_task_id=reply_to_task_id,
+                confidence=1.0,
+                margin=1.0,
+                reason_codes=["legacy_reply_target"],
+            )
+        if pending_approval_task_id and self.ingress_router._looks_like_approval_followup(cleaned):
+            return BindingDecision(
+                resolution="append_note",
+                chosen_task_id=pending_approval_task_id,
+                confidence=0.98,
+                margin=0.98,
+                reason_codes=["legacy_pending_approval_correlation"],
+            )
+        latest_open = open_tasks[0] if open_tasks else None
+        if latest_open is None:
+            return BindingDecision(
+                resolution="start_new_root",
+                confidence=0.2,
+                margin=0.2,
+                reason_codes=["legacy_no_open_tasks"],
+            )
+        if self._looks_like_task_followup(cleaned, task_id=latest_open.task_id):
+            return BindingDecision(
+                resolution="append_note",
+                chosen_task_id=latest_open.task_id,
+                confidence=0.85,
+                margin=0.85,
+                reason_codes=["legacy_latest_open_followup"],
+            )
+        return BindingDecision(
+            resolution="start_new_root",
+            confidence=0.4,
+            margin=0.4,
+            reason_codes=["legacy_latest_open_no_match"],
+        )
+
+    @staticmethod
+    def _binding_snapshot(
+        *,
+        resolution: str,
+        chosen_task_id: str | None,
+        parent_task_id: str | None,
+        confidence: float | None,
+        margin: float | None,
+        reason_codes: list[str] | None,
+        candidates: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "resolution": resolution,
+            "chosen_task_id": chosen_task_id,
+            "parent_task_id": parent_task_id,
+            "confidence": confidence,
+            "margin": margin,
+            "reason_codes": list(reason_codes or []),
+        }
+        if candidates:
+            payload["candidates"] = list(candidates)
+        return payload
+
+    def _augment_ingress_rationale(
+        self,
+        base: dict[str, Any],
+        *,
+        resolution: str,
+        chosen_task_id: str | None,
+        parent_task_id: str | None,
+        confidence: float | None,
+        margin: float | None,
+        reason_codes: list[str] | None,
+        shadow_binding: BindingDecision | None,
+        candidates: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        rationale = dict(base or {})
+        actual_binding = self._binding_snapshot(
+            resolution=resolution,
+            chosen_task_id=chosen_task_id,
+            parent_task_id=parent_task_id,
+            confidence=confidence,
+            margin=margin,
+            reason_codes=reason_codes,
+            candidates=candidates,
+        )
+        rationale["actual_binding"] = actual_binding
+        if shadow_binding is not None:
+            shadow_payload = self._binding_snapshot(
+                resolution=shadow_binding.resolution,
+                chosen_task_id=shadow_binding.chosen_task_id,
+                parent_task_id=shadow_binding.parent_task_id,
+                confidence=shadow_binding.confidence,
+                margin=shadow_binding.margin,
+                reason_codes=list(shadow_binding.reason_codes),
+                candidates=self._serialize_binding_candidates(shadow_binding),
+            )
+            shadow_payload["match_actual"] = (
+                shadow_payload["resolution"] == actual_binding["resolution"]
+                and shadow_payload["chosen_task_id"] == actual_binding["chosen_task_id"]
+                and shadow_payload["parent_task_id"] == actual_binding["parent_task_id"]
+            )
+            rationale["shadow_binding"] = shadow_payload
+        return rationale
+
     @staticmethod
     def _serialize_binding_candidates(binding: BindingDecision) -> list[dict[str, Any]]:
         return [
@@ -1166,6 +1387,16 @@ class TaskController:
     @staticmethod
     def _normalize_ingress_text(text: str) -> str:
         return " ".join(str(text or "").split()).strip()
+
+    @staticmethod
+    def _extract_artifact_refs(*values: str | None) -> list[str]:
+        refs: list[str] = []
+        for value in values:
+            for match in _ARTIFACT_REF_RE.findall(str(value or "")):
+                artifact_id = str(match or "").strip().lower()
+                if artifact_id and artifact_id not in refs:
+                    refs.append(artifact_id)
+        return refs
 
     @classmethod
     def _is_chat_only_message(cls, text: str) -> bool:

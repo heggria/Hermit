@@ -58,6 +58,15 @@ class ConversationProjectionService:
         continuation_candidates: list[dict[str, Any]] = []
         open_loops: list[str] = []
         open_tasks: list[dict[str, Any]] = []
+        ingress_metrics = {
+            "total": 0,
+            "resolution_counts": {},
+            "shadow_compared_count": 0,
+            "shadow_match_count": 0,
+            "shadow_disagreement_count": 0,
+            "user_disambiguation_count": 0,
+        }
+        recent_ingresses: list[dict[str, Any]] = []
         last_event_seq = 0
 
         for task in tasks:
@@ -117,6 +126,34 @@ class ConversationProjectionService:
                     break
 
         summary_parts: list[str] = []
+        for ingress in self.store.list_ingresses(conversation_id=conversation_id, limit=50):
+            ingress_metrics["total"] += 1
+            resolution = str(ingress.resolution or ingress.status or "none")
+            resolution_counts = dict(ingress_metrics["resolution_counts"])
+            resolution_counts[resolution] = int(resolution_counts.get(resolution, 0)) + 1
+            ingress_metrics["resolution_counts"] = resolution_counts
+            rationale = dict(ingress.rationale or {})
+            shadow = dict(rationale.get("shadow_binding", {}) or {})
+            if shadow:
+                ingress_metrics["shadow_compared_count"] += 1
+                if bool(shadow.get("match_actual")):
+                    ingress_metrics["shadow_match_count"] += 1
+                else:
+                    ingress_metrics["shadow_disagreement_count"] += 1
+            if str(rationale.get("resolved_by", "") or "").strip() == "explicit_task_switch":
+                ingress_metrics["user_disambiguation_count"] += 1
+            if len(recent_ingresses) < 5:
+                recent_ingresses.append(
+                    {
+                        "ingress_id": ingress.ingress_id,
+                        "status": ingress.status,
+                        "resolution": ingress.resolution,
+                        "chosen_task_id": ingress.chosen_task_id,
+                        "parent_task_id": ingress.parent_task_id,
+                        "shadow_match_actual": shadow.get("match_actual") if shadow else None,
+                        "reason_codes": list(rationale.get("reason_codes", []) or []),
+                    }
+                )
         if active_task is not None:
             summary_parts.append(f"Active task: {active_task.title} [{active_task.status}]")
         elif latest_task is not None:
@@ -141,6 +178,8 @@ class ConversationProjectionService:
             "recent_notes": recent_notes[:5],
             "continuation_candidates": continuation_candidates[:5],
             "pending_ingress_count": self.store.count_pending_ingresses(conversation_id=conversation_id),
+            "ingress_metrics": ingress_metrics,
+            "recent_ingresses": recent_ingresses,
             "last_event_seq": last_event_seq,
         }
 

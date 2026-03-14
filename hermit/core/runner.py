@@ -177,7 +177,9 @@ class AgentRunner:
             messages=list(session.messages),
             runner=self,
         )
-        now = datetime.datetime.now().astimezone()
+        now = datetime.datetime.now()
+        if now.tzinfo is None or now.utcoffset() is None:
+            now = now.astimezone()
         offset = now.strftime("%z")
         offset_label = (
             f"UTC{offset[:3]}:{offset[3:]}"

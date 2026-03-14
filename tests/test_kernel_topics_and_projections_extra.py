@@ -345,6 +345,12 @@ def test_conversation_projection_exposes_focus_open_tasks_and_pending_ingresses(
         normalized_text="这个改成 Markdown",
         actor="user",
     )
+    decision = controller.decide_ingress(
+        conversation_id="oc_focus_projection",
+        source_channel="feishu",
+        raw_text="补充一点说明",
+        prompt="补充一点说明",
+    )
 
     payload = ConversationProjectionService(store).rebuild("oc_focus_projection")
 
@@ -354,6 +360,11 @@ def test_conversation_projection_exposes_focus_open_tasks_and_pending_ingresses(
     assert len(payload["open_tasks"]) == 2
     assert payload["open_tasks"][0]["task_id"] == second.task_id
     assert any(item["task_id"] == first.task_id and item["is_focus"] for item in payload["open_tasks"])
+    assert payload["ingress_metrics"]["total"] >= 2
+    assert payload["ingress_metrics"]["resolution_counts"]["append_note"] >= 1
+    assert payload["ingress_metrics"]["shadow_disagreement_count"] >= 1
+    assert payload["recent_ingresses"][0]["ingress_id"] == decision.ingress_id
+    assert payload["recent_ingresses"][0]["shadow_match_actual"] is False
 
 
 def test_projection_service_key_input_prefers_first_value() -> None:
