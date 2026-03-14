@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from hermit.builtin.feishu._client import build_lark_client
-from hermit.builtin.feishu.reaction import EMOJI_ALIASES, add_reaction, resolve_emoji
+from hermit.builtin.feishu.reaction import add_reaction
 from hermit.builtin.feishu.tools import register_tools
 from hermit.core.tools import ToolSpec
 from hermit.plugin.base import HookEvent, PluginContext
@@ -61,19 +61,15 @@ def register(ctx: PluginContext) -> None:
 
 
 def _build_react_tool(settings: Any = None) -> ToolSpec:
-    alias_examples = ", ".join(
-        f'"{k}"' for k in list(EMOJI_ALIASES)[:12]
-    )
-
     def handler(payload: dict[str, Any]) -> dict[str, Any]:
         message_id = str(payload.get("message_id", "")).strip()
-        emoji_raw = str(payload.get("emoji", "")).strip()
+        emoji_raw = str(payload.get("emoji_type", "") or payload.get("emoji", "")).strip()
         if not message_id:
             return {"success": False, "error": "message_id is required"}
         if not emoji_raw:
-            return {"success": False, "error": "emoji is required"}
+            return {"success": False, "error": "emoji_type is required"}
 
-        emoji_type = resolve_emoji(emoji_raw)
+        emoji_type = emoji_raw
         try:
             client = build_lark_client(settings) if settings is not None else build_lark_client()
         except RuntimeError as exc:
@@ -88,8 +84,8 @@ def _build_react_tool(settings: Any = None) -> ToolSpec:
             "Add an emoji reaction to a Feishu message. "
             "Use this to make the bot feel more human — react to the user's message "
             "when there's a clear emotional signal (celebration, agreement, surprise, etc.). "
-            f"Supported emoji aliases: {alias_examples}, ... "
-            "You can also pass a raw Feishu emoji_type like 'THUMBSUP' or 'FIRE'."
+            "Pass the native Feishu emoji_type from the official docs, for example "
+            "'Get', 'THUMBSUP', 'OK', 'THINKING', or 'Fire'."
         ),
         input_schema={
             "type": "object",
@@ -101,16 +97,22 @@ def _build_react_tool(settings: Any = None) -> ToolSpec:
                         "Found in <feishu_msg_id>...</feishu_msg_id> at the top of the user message."
                     ),
                 },
+                "emoji_type": {
+                    "type": "string",
+                    "description": (
+                        "The native Feishu emoji_type to react with, such as "
+                        "'Get', 'THUMBSUP', 'OK', 'THINKING', or 'Fire'."
+                    ),
+                },
                 "emoji": {
                     "type": "string",
                     "description": (
-                        "Emoji to react with. Use friendly aliases like 'thumbsup', 'fire', "
-                        "'clap', 'congrats', 'heart', 'eyes', 'thinking', 'ok', 'surprised', "
-                        "'cry', 'smile', or a raw Feishu emoji_type string."
+                        "Deprecated compatibility field. Prefer 'emoji_type' and pass a native "
+                        "Feishu emoji_type value."
                     ),
                 },
             },
-            "required": ["message_id", "emoji"],
+            "required": ["message_id"],
         },
         handler=handler,
         # Internal UX affordance: this is an ephemeral reaction, not a durable

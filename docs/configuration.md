@@ -140,9 +140,6 @@ If you use `autostart`, non-default base directories also get their own label au
 | `HERMIT_FEISHU_APP_ID` / `FEISHU_APP_ID` | empty | Feishu App ID |
 | `HERMIT_FEISHU_APP_SECRET` / `FEISHU_APP_SECRET` | empty | Feishu App Secret |
 | `HERMIT_FEISHU_THREAD_PROGRESS` | `true` | enable thread progress cards |
-| `HERMIT_FEISHU_REACTION_ENABLED` | `true` | enable automatic reactions |
-| `HERMIT_FEISHU_REACTION_ACK` | `EYES` | reaction used for acknowledgment |
-| `HERMIT_FEISHU_REACTION_DONE` | empty | reaction used for completion |
 | `HERMIT_SCHEDULER_ENABLED` | `true` | scheduler master switch |
 | `HERMIT_SCHEDULER_CATCH_UP` | `true` | run missed jobs when the service starts |
 | `HERMIT_SCHEDULER_FEISHU_CHAT_ID` | empty | default scheduler / reload notification target |

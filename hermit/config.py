@@ -141,9 +141,6 @@ class Settings(BaseSettings):
     feishu_app_id: Optional[str] = None
     feishu_app_secret: Optional[str] = None
     feishu_thread_progress: bool = True
-    feishu_reaction_enabled: bool = True
-    feishu_reaction_ack: str = "EYES"
-    feishu_reaction_done: str = ""
     scheduler_enabled: bool = True
     scheduler_catch_up: bool = True
     scheduler_feishu_chat_id: Optional[str] = None
@@ -198,9 +195,6 @@ class Settings(BaseSettings):
         _set_if_present(values, "feishu_app_id", env_file_values.get("HERMIT_FEISHU_APP_ID") or env_file_values.get("FEISHU_APP_ID"))
         _set_if_present(values, "feishu_app_secret", env_file_values.get("HERMIT_FEISHU_APP_SECRET") or env_file_values.get("FEISHU_APP_SECRET"))
         _set_if_present(values, "feishu_thread_progress", env_file_values.get("HERMIT_FEISHU_THREAD_PROGRESS"))
-        _set_if_present(values, "feishu_reaction_enabled", env_file_values.get("HERMIT_FEISHU_REACTION_ENABLED"))
-        _set_if_present(values, "feishu_reaction_ack", env_file_values.get("HERMIT_FEISHU_REACTION_ACK"))
-        _set_if_present(values, "feishu_reaction_done", env_file_values.get("HERMIT_FEISHU_REACTION_DONE"))
         _set_if_present(values, "scheduler_enabled", env_file_values.get("HERMIT_SCHEDULER_ENABLED"))
         _set_if_present(values, "scheduler_catch_up", env_file_values.get("HERMIT_SCHEDULER_CATCH_UP"))
         _set_if_present(values, "scheduler_feishu_chat_id", env_file_values.get("HERMIT_SCHEDULER_FEISHU_CHAT_ID"))
@@ -227,9 +221,6 @@ class Settings(BaseSettings):
         _override_if_present(values, "feishu_app_id", os.environ.get("HERMIT_FEISHU_APP_ID") or os.environ.get("FEISHU_APP_ID"))
         _override_if_present(values, "feishu_app_secret", os.environ.get("HERMIT_FEISHU_APP_SECRET") or os.environ.get("FEISHU_APP_SECRET"))
         _override_if_present(values, "feishu_thread_progress", os.environ.get("HERMIT_FEISHU_THREAD_PROGRESS"))
-        _override_if_present(values, "feishu_reaction_enabled", os.environ.get("HERMIT_FEISHU_REACTION_ENABLED"))
-        _override_if_present(values, "feishu_reaction_ack", os.environ.get("HERMIT_FEISHU_REACTION_ACK"))
-        _override_if_present(values, "feishu_reaction_done", os.environ.get("HERMIT_FEISHU_REACTION_DONE"))
         _override_if_present(values, "scheduler_enabled", os.environ.get("HERMIT_SCHEDULER_ENABLED"))
         _override_if_present(values, "scheduler_catch_up", os.environ.get("HERMIT_SCHEDULER_CATCH_UP"))
         _override_if_present(values, "scheduler_feishu_chat_id", os.environ.get("HERMIT_SCHEDULER_FEISHU_CHAT_ID"))

@@ -31,24 +31,3 @@ env = ["HERMIT_FEISHU_THREAD_PROGRESS"]
 default = true
 description_key = "plugin.feishu.variable.thread_progress"
 description = "Enable progress card patching in Feishu threads"
-
-[variables.feishu_reaction_enabled]
-setting = "feishu_reaction_enabled"
-env = ["HERMIT_FEISHU_REACTION_ENABLED"]
-default = true
-description_key = "plugin.feishu.variable.reaction_enabled"
-description = "Enable automatic emoji reactions"
-
-[variables.feishu_reaction_ack]
-setting = "feishu_reaction_ack"
-env = ["HERMIT_FEISHU_REACTION_ACK"]
-default = "EYES"
-description_key = "plugin.feishu.variable.reaction_ack"
-description = "Emoji reaction for acknowledgement"
-
-[variables.feishu_reaction_done]
-setting = "feishu_reaction_done"
-env = ["HERMIT_FEISHU_REACTION_DONE"]
-default = ""
-description_key = "plugin.feishu.variable.reaction_done"
-description = "Emoji reaction for completion"
