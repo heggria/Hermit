@@ -9,8 +9,9 @@ import sys
 import time
 from pathlib import Path
 
-from hermit.executables import resolve_uv_bin
 from watchfiles import Change, watch
+
+from hermit.executables import resolve_uv_bin
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_WATCH_PATHS = ["hermit", "scripts", "pyproject.toml"]

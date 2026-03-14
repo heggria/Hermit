@@ -770,6 +770,8 @@ def test_feishu_adapter_process_message_passes_reply_bound_task_id(monkeypatch, 
     )
 
     assert captured and captured[0]["reply_to_task_id"] == task.task_id
+    assert captured[0]["reply_to_ref"] == "om_root"
+    assert captured[0]["quoted_message_ref"] is None
 
 
 def test_build_approval_card_renders_structured_sections() -> None:

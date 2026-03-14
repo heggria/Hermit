@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional
 from hermit.core.session import SessionManager, sanitize_session_messages
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.context import TaskExecutionContext
-from hermit.kernel.planning import PlanningService
 from hermit.kernel.controller import TaskController
 from hermit.kernel.observation import ObservationService
+from hermit.kernel.planning import PlanningService
 from hermit.kernel.provider_input import ProviderInputCompiler
 from hermit.provider.runtime import AgentResult, AgentRuntime, ToolCallback, ToolStartCallback
 from hermit.storage import atomic_write

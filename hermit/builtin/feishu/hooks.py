@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from hermit.builtin.feishu._client import build_lark_client
-from hermit.builtin.feishu.reaction import add_reaction
+from hermit.builtin.feishu.reaction import add_reaction, resolve_emoji_type
 from hermit.builtin.feishu.tools import register_tools
 from hermit.core.tools import ToolSpec
 from hermit.plugin.base import HookEvent, PluginContext
@@ -63,13 +63,14 @@ def register(ctx: PluginContext) -> None:
 def _build_react_tool(settings: Any = None) -> ToolSpec:
     def handler(payload: dict[str, Any]) -> dict[str, Any]:
         message_id = str(payload.get("message_id", "")).strip()
-        emoji_raw = str(payload.get("emoji_type", "") or payload.get("emoji", "")).strip()
+        emoji_type_raw = str(payload.get("emoji_type", "")).strip()
+        emoji_alias = str(payload.get("emoji", "")).strip()
         if not message_id:
             return {"success": False, "error": "message_id is required"}
-        if not emoji_raw:
-            return {"success": False, "error": "emoji_type is required"}
+        if not emoji_type_raw and not emoji_alias:
+            return {"success": False, "error": "emoji is required"}
 
-        emoji_type = emoji_raw
+        emoji_type = emoji_type_raw or resolve_emoji_type(emoji_alias)
         try:
             client = build_lark_client(settings) if settings is not None else build_lark_client()
         except RuntimeError as exc:

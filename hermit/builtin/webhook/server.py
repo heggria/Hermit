@@ -14,8 +14,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 
 from hermit.builtin.webhook.models import WebhookConfig, WebhookRoute
-from hermit.kernel.proofs import ProofService
 from hermit.kernel.projections import ProjectionService
+from hermit.kernel.proofs import ProofService
 from hermit.kernel.rollbacks import RollbackService
 from hermit.kernel.supervision import SupervisionService
 from hermit.plugin.base import HookEvent

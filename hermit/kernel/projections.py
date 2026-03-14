@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from hermit.kernel.outcomes import build_task_outcome
-from hermit.kernel.proofs import ProofService
 from hermit.kernel.planning import PlanningService
+from hermit.kernel.proofs import ProofService
 from hermit.kernel.store import KernelStore
 from hermit.kernel.topics import build_task_topic
 

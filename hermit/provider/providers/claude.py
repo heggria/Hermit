@@ -13,7 +13,11 @@ from hermit.provider.contracts import (
     UsageMetrics,
 )
 from hermit.provider.images import prepare_messages_for_provider
-from hermit.provider.messages import append_internal_tool_context, normalize_block, split_internal_tool_context
+from hermit.provider.messages import (
+    append_internal_tool_context,
+    normalize_block,
+    split_internal_tool_context,
+)
 
 _CACHE_CONTROL_EPHEMERAL: Dict[str, str] = {"type": "ephemeral"}
 

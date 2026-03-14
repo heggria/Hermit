@@ -1,10 +1,10 @@
 from __future__ import annotations
-import httpx
 
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
 
+import httpx
 import pytest
 
 from hermit.core.tools import ToolRegistry, ToolSpec
@@ -23,9 +23,9 @@ from hermit.provider.services import (
     StructuredExtractionService,
     VisionAnalysisService,
     build_approval_copy_service,
+    build_progress_summarizer,
     build_provider,
     build_provider_client_kwargs,
-    build_progress_summarizer,
 )
 
 

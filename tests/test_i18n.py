@@ -5,9 +5,9 @@ from pathlib import Path
 
 from jsonschema.validators import Draft202012Validator
 
+from hermit.builtin.feishu.tools import _all_tools as all_feishu_tools
 from hermit.config import Settings
 from hermit.i18n import catalog_locales, load_catalog, localize_schema, normalize_locale, tr
-from hermit.builtin.feishu.tools import _all_tools as all_feishu_tools
 from hermit.plugin.loader import parse_manifest
 
 

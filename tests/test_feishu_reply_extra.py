@@ -7,8 +7,8 @@ import pytest
 from hermit.builtin.feishu.reply import (
     RichCardBuilder,
     ToolStep,
-    _extract_key_input,
     _extract_balanced_json,
+    _extract_key_input,
     _extract_notes,
     _parse_table_tag,
     _render_table_as_markdown,

@@ -7,7 +7,6 @@ from typing import Any
 
 from hermit.core.budgets import ExecutionBudget, get_runtime_budget
 
-
 _OBSERVATION_ENVELOPE_KEY = "_hermit_observation"
 
 

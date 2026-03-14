@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from hermit.kernel.artifacts import ArtifactStore
-from hermit.kernel.proofs import ProofService
 from typing import Any
 
+from hermit.kernel.artifacts import ArtifactStore
+from hermit.kernel.proofs import ProofService
 from hermit.kernel.store import KernelStore
 
 

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hermit.core.budgets import get_runtime_budget
+
 
 @dataclass
 class ReconcileOutcome:
@@ -239,4 +241,3 @@ class ReconcileService:
         except OSError:
             return None
         return {"head": head, "dirty": dirty}
-from hermit.core.budgets import get_runtime_budget

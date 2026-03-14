@@ -180,6 +180,8 @@ class ProviderInputCompiler:
             recent_notes=notes,
             relevant_artifact_refs=self._relevant_artifact_refs(task_context, normalized["ingress_artifact_refs"]),
             ingress_artifact_refs=list(normalized["ingress_artifact_refs"]),
+            focus_summary=self._focus_summary(task_context, projection_payload),
+            bound_ingress_deltas=self._bound_ingress_deltas(task_context),
             session_projection_ref=projection_payload.get("artifact_ref"),
         )
         context_pack_ref = self._store_context_pack(task_context=task_context, pack=pack)
@@ -216,6 +218,72 @@ class ProviderInputCompiler:
             if len(items) >= 5:
                 break
         return items
+
+    def _focus_summary(self, task_context: TaskExecutionContext, projection_payload: dict[str, Any]) -> dict[str, Any] | None:
+        focus_task_id = str(projection_payload.get("focus_task_id", "") or "").strip()
+        if not focus_task_id:
+            return None
+        focus_reason = str(projection_payload.get("focus_reason", "") or "").strip()
+        open_tasks = list(projection_payload.get("open_tasks", []) or [])
+        focus_entry = next(
+            (
+                dict(item)
+                for item in open_tasks
+                if str(dict(item).get("task_id", "") or "").strip() == focus_task_id
+            ),
+            None,
+        )
+        if focus_entry is None:
+            task = self.store.get_task(focus_task_id)
+            if task is None:
+                return None
+            focus_entry = {
+                "task_id": task.task_id,
+                "title": str(task.title or ""),
+                "status": str(task.status or ""),
+            }
+        return {
+            "task_id": focus_task_id,
+            "title": str(focus_entry.get("title", "") or ""),
+            "status": str(focus_entry.get("status", "") or ""),
+            "reason": focus_reason,
+            "is_current_task": focus_task_id == task_context.task_id,
+        }
+
+    def _bound_ingress_deltas(self, task_context: TaskExecutionContext) -> list[dict[str, Any]]:
+        attempt = self.store.get_step_attempt(task_context.step_attempt_id)
+        if attempt is None:
+            return []
+        context = dict(attempt.context or {})
+        latest_bound_ingress_id = str(context.get("latest_bound_ingress_id", "") or "").strip()
+        last_compiled_ingress_id = str(context.get("last_compiled_ingress_id", "") or "").strip()
+        if latest_bound_ingress_id and latest_bound_ingress_id == last_compiled_ingress_id:
+            return []
+        deltas: list[dict[str, Any]] = []
+        for ingress in self.store.list_ingresses(task_id=task_context.task_id, limit=20):
+            if ingress.status != "bound":
+                continue
+            if last_compiled_ingress_id and ingress.ingress_id == last_compiled_ingress_id:
+                break
+            deltas.append(
+                {
+                    "ingress_id": ingress.ingress_id,
+                    "resolution": ingress.resolution,
+                    "actor": ingress.actor,
+                    "source_channel": ingress.source_channel,
+                    "raw_excerpt": _trim(ingress.raw_text, 240),
+                    "prompt_excerpt": _trim(str(ingress.prompt_ref or ""), 240),
+                    "reply_to_ref": ingress.reply_to_ref,
+                    "quoted_message_ref": ingress.quoted_message_ref,
+                    "referenced_artifact_refs": list(ingress.referenced_artifact_refs),
+                    "confidence": ingress.confidence,
+                    "margin": ingress.margin,
+                }
+            )
+            if len(deltas) >= 5:
+                break
+        deltas.reverse()
+        return deltas
 
     @staticmethod
     def _carry_forward(task_context: TaskExecutionContext, task_projection: dict[str, Any]) -> dict[str, Any] | None:
@@ -353,6 +421,8 @@ class ProviderInputCompiler:
             f"retrieval_memory={context_pack.get('retrieval_memory', [])}",
             f"relevant_artifact_refs={context_pack.get('relevant_artifact_refs', [])}",
             f"ingress_artifact_refs={context_pack.get('ingress_artifact_refs', [])}",
+            f"focus_summary={context_pack.get('focus_summary')}",
+            f"bound_ingress_deltas={context_pack.get('bound_ingress_deltas', [])}",
             f"session_projection_ref={context_pack.get('session_projection_ref')}",
             "</context_pack>",
             "",

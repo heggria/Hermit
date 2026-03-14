@@ -13,8 +13,8 @@ from hermit.builtin.memory.types import MemoryEntry
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.context import TaskExecutionContext, WorkingStateSnapshot
 from hermit.kernel.context_compiler import ContextCompiler
-from hermit.kernel.planning import PlanningService
 from hermit.kernel.memory_governance import MemoryGovernanceService
+from hermit.kernel.planning import PlanningService
 from hermit.plugin.base import HookEvent, PluginContext
 from hermit.provider.services import StructuredExtractionService, build_provider
 from hermit.storage import JsonStore

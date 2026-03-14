@@ -61,6 +61,8 @@ class ContextPack:
     recent_notes: list[dict[str, Any]] = field(default_factory=list)
     relevant_artifact_refs: list[str] = field(default_factory=list)
     ingress_artifact_refs: list[str] = field(default_factory=list)
+    focus_summary: dict[str, Any] | None = None
+    bound_ingress_deltas: list[dict[str, Any]] = field(default_factory=list)
     session_projection_ref: str | None = None
     artifact_uri: str | None = None
     artifact_hash: str | None = None
@@ -80,6 +82,8 @@ class ContextPack:
             "recent_notes": self.recent_notes,
             "relevant_artifact_refs": self.relevant_artifact_refs,
             "ingress_artifact_refs": self.ingress_artifact_refs,
+            "focus_summary": self.focus_summary,
+            "bound_ingress_deltas": self.bound_ingress_deltas,
             "session_projection_ref": self.session_projection_ref,
             "selection_reasons": self.selection_reasons,
             "excluded_memory_ids": self.excluded_memory_ids,
@@ -115,6 +119,8 @@ class ContextCompiler:
         recent_notes: list[dict[str, Any]] | None = None,
         relevant_artifact_refs: list[str] | None = None,
         ingress_artifact_refs: list[str] | None = None,
+        focus_summary: dict[str, Any] | None = None,
+        bound_ingress_deltas: list[dict[str, Any]] | None = None,
         session_projection_ref: str | None = None,
     ) -> ContextPack:
         selection_reasons: dict[str, str] = {}
@@ -193,6 +199,8 @@ class ContextCompiler:
             "recent_notes": list(recent_notes or []),
             "relevant_artifact_refs": list(relevant_artifact_refs or []),
             "ingress_artifact_refs": list(ingress_artifact_refs or []),
+            "focus_summary": dict(focus_summary or {}) or None,
+            "bound_ingress_deltas": list(bound_ingress_deltas or []),
             "session_projection_ref": session_projection_ref,
             "selection_reasons": selection_reasons,
             "excluded_memory_ids": sorted(excluded_reasons),
@@ -217,6 +225,8 @@ class ContextCompiler:
             recent_notes=list(recent_notes or []),
             relevant_artifact_refs=list(relevant_artifact_refs or []),
             ingress_artifact_refs=list(ingress_artifact_refs or []),
+            focus_summary=dict(focus_summary or {}) or None,
+            bound_ingress_deltas=list(bound_ingress_deltas or []),
             session_projection_ref=session_projection_ref,
             selection_reasons=selection_reasons,
             excluded_memory_ids=sorted(excluded_reasons),

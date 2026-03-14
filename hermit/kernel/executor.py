@@ -14,29 +14,28 @@ from hermit.i18n import resolve_locale, tr
 from hermit.kernel.approval_copy import ApprovalCopyService
 from hermit.kernel.approvals import ApprovalService
 from hermit.kernel.artifacts import ArtifactStore
-from hermit.kernel.contracts import contract_for
 from hermit.kernel.context import TaskExecutionContext, capture_execution_environment
+from hermit.kernel.contracts import contract_for
 from hermit.kernel.decisions import DecisionService
-from hermit.kernel.path_grants import PathGrantService
-from hermit.kernel.permits import CapabilityGrantError, ExecutionPermitService
 from hermit.kernel.observation import (
-    ObservationProgress,
     ObservationPollResult,
+    ObservationProgress,
     ObservationTicket,
     normalize_observation_progress,
     normalize_observation_ticket,
 )
-from hermit.kernel.progress_summary import (
-    ProgressSummary,
-    ProgressSummaryFormatter,
-    normalize_progress_summary,
-)
+from hermit.kernel.path_grants import PathGrantService
+from hermit.kernel.permits import CapabilityGrantError, ExecutionPermitService
 from hermit.kernel.policy import (
     POLICY_RULES_VERSION,
     ActionRequest,
     PolicyDecision,
     PolicyEngine,
     build_action_fingerprint,
+)
+from hermit.kernel.progress_summary import (
+    ProgressSummaryFormatter,
+    normalize_progress_summary,
 )
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.reconcile import ReconcileService

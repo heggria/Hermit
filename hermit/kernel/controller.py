@@ -471,6 +471,8 @@ class TaskController:
         requested_by: str | None = "user",
         explicit_task_ref: str | None = None,
         reply_to_task_id: str | None = None,
+        reply_to_ref: str | None = None,
+        quoted_message_ref: str | None = None,
     ) -> IngressDecision:
         normalized = self._normalize_ingress_text(raw_text)
         self.ensure_conversation(conversation_id, source_channel=source_channel)
@@ -482,7 +484,8 @@ class TaskController:
             actor=requested_by,
             prompt_ref=prompt,
             explicit_task_ref=explicit_task_ref,
-            reply_to_ref=reply_to_task_id,
+            reply_to_ref=reply_to_ref,
+            quoted_message_ref=quoted_message_ref,
         )
         planning = PlanningService(self.store)
         latest = self.store.get_last_task_for_conversation(conversation_id)

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hermit.i18n import DEFAULT_LOCALE, catalog_locales, load_catalog
+from hermit.i18n import DEFAULT_LOCALE, catalog_locales, load_catalog  # noqa: E402
 
 
 def _fields(template: str) -> set[str]:

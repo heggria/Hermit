@@ -10,14 +10,14 @@ import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from hermit.builtin.feishu.normalize import FeishuMessage, normalize_event
-from hermit.builtin.feishu.reaction import add_reaction
+from hermit.builtin.feishu.reaction import add_reaction, send_ack, send_done
 from hermit.builtin.feishu.reply import (
     _SKIP_TOOLS,
-    _tool_display,
     ToolStep,
+    _tool_display,
     build_approval_card,
     build_approval_resolution_card,
     build_completion_status_card,
@@ -31,8 +31,8 @@ from hermit.builtin.feishu.reply import (
     reply_card_return_id,
     send_card,
     send_text_reply,
-    smart_send_message,
     smart_reply,
+    smart_send_message,
 )
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.approval_copy import ApprovalCopyService
@@ -1277,6 +1277,8 @@ class FeishuAdapter:
             dispatch_text = raw_text
         else:
             dispatch_text = self._build_prompt(session_id, msg)
+        if self._client is not None and msg.message_id:
+            send_ack(self._client, msg.message_id, self._settings)
         if self._should_dispatch_raw(session_id, raw_text):
             control = self._runner.task_controller.resolve_text_command(session_id, raw_text)
             if control is not None and control[0] in {"approve_once", "approve_always_directory", "deny"}:
@@ -1304,9 +1306,11 @@ class FeishuAdapter:
 
         task_controller = getattr(self._runner, "task_controller", None)
         ingress = None
+        reply_to_ref = str(getattr(msg, "reply_to_message_id", "") or "").strip() or None
+        quoted_message_ref = str(getattr(msg, "quoted_message_id", "") or "").strip() or None
         reply_to_task_id = (
-            self._task_id_for_message_reference(session_id, getattr(msg, "reply_to_message_id", ""))
-            or self._task_id_for_message_reference(session_id, getattr(msg, "quoted_message_id", ""))
+            self._task_id_for_message_reference(session_id, reply_to_ref)
+            or self._task_id_for_message_reference(session_id, quoted_message_ref)
         )
         if task_controller is not None and callable(getattr(task_controller, "decide_ingress", None)):
             ingress = task_controller.decide_ingress(
@@ -1315,6 +1319,8 @@ class FeishuAdapter:
                 raw_text=raw_text,
                 prompt=dispatch_text,
                 reply_to_task_id=reply_to_task_id,
+                reply_to_ref=reply_to_ref,
+                quoted_message_ref=quoted_message_ref,
             )
             if str(getattr(ingress, "resolution", "") or "") == "pending_disambiguation":
                 text = (
@@ -1328,6 +1334,8 @@ class FeishuAdapter:
             if ingress.mode == "append_note":
                 if ingress.task_id:
                     self._patch_task_topic(ingress.task_id)
+                if self._client is not None and msg.message_id:
+                    send_done(self._client, msg.message_id, self._settings)
                 return
 
         if not self._supports_async_ingress():
@@ -1345,6 +1353,8 @@ class FeishuAdapter:
                 raw_text=raw_text,
                 prompt=dispatch_text,
                 reply_to_task_id=reply_to_task_id,
+                reply_to_ref=reply_to_ref,
+                quoted_message_ref=quoted_message_ref,
             )
 
         if str(getattr(ingress, "intent", "") or "") == "chat_only":

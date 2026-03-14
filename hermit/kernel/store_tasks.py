@@ -4,7 +4,13 @@ import json
 import time
 from typing import Any
 
-from hermit.kernel.models import ConversationRecord, IngressRecord, StepAttemptRecord, StepRecord, TaskRecord
+from hermit.kernel.models import (
+    ConversationRecord,
+    IngressRecord,
+    StepAttemptRecord,
+    StepRecord,
+    TaskRecord,
+)
 from hermit.kernel.store_support import _UNSET, _json_loads
 
 

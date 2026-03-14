@@ -700,7 +700,6 @@ class AgentRuntime:
             tool_result_blocks: List[Dict[str, Any]] = []
             for block in tool_use_blocks:
                 tool_name = str(block_value(block, "name"))
-                tool_input = dict(block_value(block, "input", {}) or {})
                 try:
                     if self.tool_executor is None:
                         raise RuntimeError(

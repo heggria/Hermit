@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
+from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
 from hermit.core.runner import AgentRunner
 from hermit.core.session import Session, SessionManager
 from hermit.core.tools import ToolRegistry, ToolSpec
-from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
 from hermit.kernel.approval_copy import ApprovalCopyService
 from hermit.kernel.approvals import ApprovalService
 from hermit.kernel.artifacts import ArtifactStore
@@ -22,15 +22,14 @@ from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.controller import TaskController
 from hermit.kernel.dispatch import KernelDispatchService
 from hermit.kernel.executor import ToolExecutor
+from hermit.kernel.permits import CapabilityGrantError
 from hermit.kernel.policy import PolicyEngine
 from hermit.kernel.policy.models import ActionRequest
 from hermit.kernel.progress_summary import ProgressSummary
-from hermit.kernel.proofs import ProofService
 from hermit.kernel.projections import ProjectionService
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.rollbacks import RollbackService
 from hermit.kernel.store import KernelSchemaError, KernelStore
-from hermit.kernel.permits import CapabilityGrantError
 from hermit.kernel.topics import build_task_topic
 from hermit.plugin.base import PluginContext
 from hermit.plugin.hooks import HooksEngine
@@ -2338,7 +2337,7 @@ def test_runner_approve_resumes_attempt_and_finalizes_task(tmp_path: Path) -> No
 
 def test_runner_dispatches_natural_language_case_and_rollback_without_slash(tmp_path: Path) -> None:
     store, artifacts, controller, executor, ctx = _kernel_runtime(tmp_path)
-    result = executor.execute(ctx, "write_file", {"path": "runner-nl.txt", "content": "after\n"})
+    executor.execute(ctx, "write_file", {"path": "runner-nl.txt", "content": "after\n"})
     grant = store.create_path_grant(
         subject_kind="conversation",
         subject_ref="chat-kernel",

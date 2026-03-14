@@ -5,7 +5,6 @@ from typing import Any
 
 from hermit.kernel.topics import build_task_topic
 
-
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 _SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
 _FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)

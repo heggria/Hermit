@@ -8,7 +8,12 @@ import pytest
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.controller import TaskController
 from hermit.kernel.ingress_router import IngressRouter
-from hermit.kernel.outcomes import build_task_outcome, clean_runtime_text, outcome_source_artifact_refs, trim_text
+from hermit.kernel.outcomes import (
+    build_task_outcome,
+    clean_runtime_text,
+    outcome_source_artifact_refs,
+    trim_text,
+)
 from hermit.kernel.planning import PlanningService, PlanningState
 from hermit.kernel.provider_input import ProviderInputCompiler
 from hermit.kernel.store import KernelStore
@@ -234,6 +239,28 @@ def test_provider_input_compile_clears_input_dirty_and_emits_recompiled_event(tm
     assert attempt.context["last_compiled_ingress_id"] == "ingress_compile_1"
     events = store.list_events(task_id=ctx.task_id, limit=50)
     assert any(event["event_type"] == "step_attempt.recompiled" for event in events)
+
+
+def test_task_controller_decide_ingress_persists_raw_reply_and_quote_refs(tmp_path: Path) -> None:
+    store = KernelStore(tmp_path / "kernel.db")
+    controller = TaskController(store)
+    ctx = _start_task(controller, conversation_id="conv-reply-evidence", goal="整理文档")
+
+    decision = controller.decide_ingress(
+        conversation_id="conv-reply-evidence",
+        source_channel="feishu",
+        raw_text="继续这个",
+        prompt="继续这个",
+        reply_to_task_id=ctx.task_id,
+        reply_to_ref="om_root",
+        quoted_message_ref="om_quote",
+    )
+
+    ingress = store.get_ingress(decision.ingress_id or "")
+    assert ingress is not None
+    assert ingress.reply_to_ref == "om_root"
+    assert ingress.quoted_message_ref == "om_quote"
+    assert ingress.chosen_task_id == ctx.task_id
 
 
 def test_provider_input_normalize_without_artifact_store_keeps_inline_only(tmp_path: Path) -> None:

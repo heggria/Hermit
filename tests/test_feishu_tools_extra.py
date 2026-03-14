@@ -55,7 +55,6 @@ def test_feishu_err_and_check_resp_surface_permission_hints() -> None:
 
 
 def test_feishu_doc_tools_cover_success_and_validation(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
     client = _ns(
         docx=_ns(
             v1=_ns(

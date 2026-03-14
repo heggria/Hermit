@@ -1,9 +1,9 @@
 from __future__ import annotations
-import httpx
 
 import sys
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from hermit.core.tools import ToolSpec
