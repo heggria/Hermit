@@ -407,3 +407,13 @@ def test_runner_resume_attempt_handles_terminal_and_blocked_paths() -> None:
     blocked = runner.resume_attempt("attempt-1")
     assert blocked.blocked is True
     assert controller.blocked
+
+
+def test_runner_handle_respects_ingress_parent_override() -> None:
+    runner, _agent, _session_manager, _plugin_manager, controller = _make_runner()
+
+    controller.decide_ingress = lambda **_kwargs: SimpleNamespace(mode="start", intent="chat_only", parent_task_id=None)  # type: ignore[method-assign]
+
+    runner.handle("chat-1", "你好")
+
+    assert controller.started[-1]["kwargs"]["parent_task_id"] is None

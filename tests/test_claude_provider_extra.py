@@ -92,6 +92,35 @@ def test_claude_payload_builds_system_thinking_tools_and_clone() -> None:
     assert clone.system_prompt == "child-system"
 
 
+def test_claude_payload_moves_internal_tool_context_into_system_prompt() -> None:
+    provider = ClaudeProvider(client=object(), model="claude-3", system_prompt="fallback")
+    request = ProviderRequest(
+        model="claude-3",
+        max_tokens=256,
+        messages=[
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "call_skill", "name": "read_skill", "input": {"name": "grok-search"}}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_skill",
+                        "content": "<skill_content name=\"grok-search\">secret</skill_content>",
+                        "internal_context": True,
+                        "tool_name": "read_skill",
+                    }
+                ],
+            },
+        ],
+    )
+
+    payload = provider._payload(request)
+
+    assert "secret" in payload["system"][0]["text"]
+    assert "do not quote" in payload["system"][0]["text"]
+    assert payload["messages"][1]["content"][0]["content"] == "[internal context loaded]"
+
+
 def test_claude_generate_normalizes_usage_and_api_errors() -> None:
     dict_error_response = SimpleNamespace(
         content=[{"type": "text", "text": "hello"}],

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from hermit.i18n import resolve_locale, tr
+
 log = logging.getLogger(__name__)
 
 _CARD_MAX_BYTES = 28_000  # 30KB limit with safety margin
@@ -59,21 +61,68 @@ _SKIP_TOOLS: frozenset[str] = frozenset({
     "image_store_from_feishu", # image pre-processing — internal, not user-visible
 })
 
-# Plain-text labels for tool names shown in progress cards.  No emoji.
-_TOOL_DISPLAY: dict[str, str] = {
-    "web_search":           "搜索",
-    "web_fetch":            "读取网页",
-    "grok_search":          "深度搜索",
-    "read_file":            "读取文件",
-    "write_file":           "写入文件",
-    "read_hermit_file":  "读取文件",
-    "write_hermit_file": "写入文件",
-    "list_hermit_files": "列出文件",
-    "schedule_create":      "创建任务",
-    "schedule_list":        "查看任务",
-    "schedule_history":     "执行历史",
-    "codex_exec":           "运行 Codex",
+# Plain-text labels for tool names shown in progress cards. No emoji.
+_TOOL_DISPLAY_KEYS: dict[str, str] = {
+    "web_search": "feishu.reply.tool_display.web_search",
+    "web_fetch": "feishu.reply.tool_display.web_fetch",
+    "grok_search": "feishu.reply.tool_display.grok_search",
+    "read_file": "feishu.reply.tool_display.read_file",
+    "write_file": "feishu.reply.tool_display.write_file",
+    "read_hermit_file": "feishu.reply.tool_display.read_hermit_file",
+    "write_hermit_file": "feishu.reply.tool_display.write_hermit_file",
+    "list_hermit_files": "feishu.reply.tool_display.list_hermit_files",
+    "schedule_create": "feishu.reply.tool_display.schedule_create",
+    "schedule_list": "feishu.reply.tool_display.schedule_list",
+    "schedule_history": "feishu.reply.tool_display.schedule_history",
+    "codex_exec": "feishu.reply.tool_display.codex_exec",
 }
+
+_TASK_TOPIC_LABEL_KEYS: dict[str, str] = {
+    "task.started": "feishu.reply.task_topic.kind.task.started",
+    "tool.submitted": "feishu.reply.task_topic.kind.tool.submitted",
+    "tool.progressed": "feishu.reply.task_topic.kind.tool.progressed",
+    "tool.status.changed": "feishu.reply.task_topic.kind.tool.status.changed",
+    "task.progress.summarized": "feishu.reply.task_topic.kind.task.progress.summarized",
+    "user.note.appended": "feishu.reply.task_topic.kind.user.note.appended",
+    "approval.requested": "feishu.reply.task_topic.kind.approval.requested",
+    "approval.resolved": "feishu.reply.task_topic.kind.approval.resolved",
+    "task.completed": "feishu.reply.task_topic.kind.task.completed",
+    "task.failed": "feishu.reply.task_topic.kind.task.failed",
+    "task.cancelled": "feishu.reply.task_topic.kind.task.cancelled",
+    "started": "feishu.reply.task_topic.phase.started",
+    "starting": "feishu.reply.task_topic.phase.starting",
+    "submitted": "feishu.reply.task_topic.phase.submitted",
+    "running": "feishu.reply.task_topic.phase.running",
+    "ready": "feishu.reply.task_topic.phase.ready",
+    "awaiting_approval": "feishu.reply.task_topic.phase.awaiting_approval",
+    "approval_resolved": "feishu.reply.task_topic.phase.approval_resolved",
+    "completed": "feishu.reply.task_topic.phase.completed",
+    "failed": "feishu.reply.task_topic.phase.failed",
+    "cancelled": "feishu.reply.task_topic.phase.cancelled",
+}
+
+
+def _t(message_key: str, *, locale: str | None = None, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, locale=resolve_locale(locale), default=default, **kwargs)
+
+
+def _tool_display(name: str, *, locale: str | None = None) -> str:
+    key = _TOOL_DISPLAY_KEYS.get(name)
+    return _t(key, locale=locale, default=name) if key else name
+
+
+def _humanize_task_topic_label(value: str) -> str:
+    cleaned = value.replace(".", " ").replace("_", " ").strip()
+    if not cleaned:
+        return ""
+    return cleaned[0].upper() + cleaned[1:]
+
+
+def _task_topic_label(value: str, *, locale: str | None = None) -> str:
+    key = _TASK_TOPIC_LABEL_KEYS.get(value)
+    if key:
+        return _t(key, locale=locale, default=_humanize_task_topic_label(value))
+    return _humanize_task_topic_label(value)
 
 
 @dataclass
@@ -111,15 +160,15 @@ def _extract_key_input(name: str, tool_input: dict) -> str:
     return ""
 
 
-def _summarize_result(result: Any) -> str:
+def _summarize_result(result: Any, *, locale: str | None = None) -> str:
     """Produce a short one-line summary of a tool result for display."""
     if isinstance(result, list):
         if result and isinstance(result[0], dict) and result[0].get("type") == "image":
-            return "[image result]"
+            return _t("feishu.reply.summary.image_result", locale=locale)
         text = json.dumps(result, ensure_ascii=False)
     elif isinstance(result, dict):
         if result.get("type") == "image":
-            return "[image result]"
+            return _t("feishu.reply.summary.image_result", locale=locale)
         text = json.dumps(result, ensure_ascii=False)
     else:
         text = str(result)
@@ -130,14 +179,21 @@ def _summarize_result(result: Any) -> str:
     return text[:80] + "…" if len(text) > 80 else text
 
 
-def make_tool_step(name: str, tool_input: dict, result: Any, elapsed_ms: int) -> ToolStep:
+def make_tool_step(
+    name: str,
+    tool_input: dict,
+    result: Any,
+    elapsed_ms: int,
+    *,
+    locale: str | None = None,
+) -> ToolStep:
     """Build a ToolStep from a completed tool invocation."""
-    label = _TOOL_DISPLAY.get(name, name)
+    label = _tool_display(name, locale=locale)
     return ToolStep(
         name=name,
         display=label,
         key_input=_extract_key_input(name, tool_input),
-        summary=_summarize_result(result),
+        summary=_summarize_result(result, locale=locale),
         elapsed_ms=elapsed_ms,
     )
 
@@ -152,15 +208,15 @@ def format_tool_step_text(step: ToolStep) -> str:
     return "".join(parts)
 
 
-def format_tool_start_hint(name: str, tool_input: dict) -> str:
+def format_tool_start_hint(name: str, tool_input: dict, *, locale: str | None = None) -> str:
     """Build a short 'currently running' hint string for on_tool_start callbacks.
 
     Returns e.g. '正在深度搜索: "Iran situation today..."...'
     Adapter code can pass this directly as the current_hint of build_progress_card.
     """
-    label = _TOOL_DISPLAY.get(name, name)
+    label = _tool_display(name, locale=locale)
     key_input = _extract_key_input(name, tool_input)
-    hint = f"正在{label}"
+    hint = _t("feishu.reply.hint.running", locale=locale, label=label)
     if key_input:
         hint += f": {key_input}"
     hint += "..."
@@ -172,7 +228,7 @@ def _should_use_card(text: str) -> bool:
     return bool(_MARKDOWN_SIGNAL.search(text))
 
 
-def sanitize_for_feishu(text: str) -> str:
+def sanitize_for_feishu(text: str, *, locale: str | None = None) -> str:
     """Lightweight safety net for hard constraints the LLM cannot guarantee.
 
     The agent is already instructed to output Feishu-compatible Markdown via
@@ -185,12 +241,12 @@ def sanitize_for_feishu(text: str) -> str:
     if len(text.encode("utf-8")) > _CARD_MAX_BYTES:
         while len(text.encode("utf-8")) > _CARD_MAX_BYTES - 100:
             text = text[: len(text) - 200]
-        text = text.rsplit("\n", 1)[0] + "\n\n---\n*（内容过长，已截断）*"
+        text = text.rsplit("\n", 1)[0] + _t("feishu.reply.summary.truncated", locale=locale)
 
     return text
 
 
-def _strip_markdown_for_summary(text: str) -> str:
+def _strip_markdown_for_summary(text: str, *, locale: str | None = None) -> str:
     """Derive a readable card preview from markdown-heavy content."""
     summary = text.strip()
     summary = re.sub(r"^#+\s*", "", summary)
@@ -200,7 +256,7 @@ def _strip_markdown_for_summary(text: str) -> str:
     summary = re.sub(r"\s+", " ", summary).strip()
     if len(summary) > _SUMMARY_MAX_CHARS:
         summary = summary[: _SUMMARY_MAX_CHARS - 1].rstrip() + "…"
-    return summary or "Hermit 回复"
+    return summary or _t("feishu.reply.summary.fallback", locale=locale)
 
 
 def _shorten(text: str, limit: int) -> str:
@@ -432,7 +488,13 @@ def _header_template(text: str) -> str:
     return "blue"
 
 
-def _header_tags(text: str, section_count: int, image_count: int) -> list[dict[str, Any]]:
+def _header_tags(
+    text: str,
+    section_count: int,
+    image_count: int,
+    *,
+    locale: str | None = None,
+) -> list[dict[str, Any]]:
     tags: list[dict[str, Any]] = []
 
     # Count HR-separated non-empty blocks as sections too.
@@ -440,16 +502,16 @@ def _header_tags(text: str, section_count: int, image_count: int) -> list[dict[s
     hr_blocks = [p for p in re.split(r"(?m)^---\s*$", text) if p.strip()]
     total_sections = section_count + max(0, len(hr_blocks) - 1)
     if total_sections >= 2:
-        tags.append(_text_tag("结构化", "blue"))
+        tags.append(_text_tag(_t("feishu.reply.header_tag.structured", locale=locale), "blue"))
 
     if image_count > 0:
-        tags.append(_text_tag("图文", "violet"))
+        tags.append(_text_tag(_t("feishu.reply.header_tag.media", locale=locale), "violet"))
 
     # Numbered list (news, rankings, steps) vs bulleted list (feature points)
     if re.search(r"(?m)^\s*\d+\.\s", text):
-        tags.append(_text_tag("列表", "indigo"))
+        tags.append(_text_tag(_t("feishu.reply.header_tag.list", locale=locale), "indigo"))
     elif re.search(r"(?m)^\s*[-*+]\s", text):
-        tags.append(_text_tag("要点", "turquoise"))
+        tags.append(_text_tag(_t("feishu.reply.header_tag.points", locale=locale), "turquoise"))
 
     return tags[:3]
 
@@ -457,8 +519,9 @@ def _header_tags(text: str, section_count: int, image_count: int) -> list[dict[s
 class RichCardBuilder:
     """Build richer product-style Feishu cards for structured replies."""
 
-    def __init__(self, text: str) -> None:
-        self.adapted = sanitize_for_feishu(text)
+    def __init__(self, text: str, *, locale: str | None = None) -> None:
+        self.locale = resolve_locale(locale)
+        self.adapted = sanitize_for_feishu(text, locale=self.locale)
 
     def build(self) -> dict[str, Any]:
         title, body_text = self._extract_title(self.adapted)
@@ -471,7 +534,7 @@ class RichCardBuilder:
             "schema": "2.0",
             "config": {
                 "update_multi": True,
-                "summary": {"content": _strip_markdown_for_summary(summary_source)},
+                "summary": {"content": _strip_markdown_for_summary(summary_source, locale=self.locale)},
             },
             "body": {
                 "padding": "8px 12px 12px 12px",
@@ -494,13 +557,13 @@ class RichCardBuilder:
             # paragraph with "---" which would bleed into the subtitle text.
             intro_clean = re.sub(r"(\s*\n---\s*)+$", "", intro_clean).strip()
             if sections and intro_clean:
-                subtitle_source = _strip_markdown_for_summary(intro_clean)
+                subtitle_source = _strip_markdown_for_summary(intro_clean, locale=self.locale)
                 if subtitle_source and subtitle_source != title:
                     header["subtitle"] = {
                         "content": _shorten(subtitle_source, _SUBTITLE_MAX_CHARS),
                         "tag": "plain_text",
                     }
-            tags = _header_tags(body_text, len(sections), image_count)
+            tags = _header_tags(body_text, len(sections), image_count, locale=self.locale)
             if tags:
                 header["text_tag_list"] = tags
             card["header"] = header
@@ -687,7 +750,7 @@ def send_at_mention_reply(client: Any, message_id: str, sender_open_id: str) -> 
     return send_text_reply(client, message_id, at_text)
 
 
-def reply_with_card(client: Any, message_id: str, text: str) -> bool:
+def reply_with_card(client: Any, message_id: str, text: str, *, locale: str | None = None) -> bool:
     """Reply to a message with a card containing rendered Markdown.
 
     Falls back to plain text if card delivery fails.
@@ -697,7 +760,7 @@ def reply_with_card(client: Any, message_id: str, text: str) -> bool:
         ReplyMessageRequestBody,
     )
 
-    card = build_result_card(text)
+    card = build_result_card(text, locale=locale)
     request = (
         ReplyMessageRequest.builder()
         .message_id(message_id)
@@ -814,70 +877,232 @@ def upload_image_path(client: Any, path: Path, image_type: str = "message") -> s
     return str(response.data.image_key)
 
 
-def smart_reply(client: Any, message_id: str, text: str) -> bool:
+def smart_reply(client: Any, message_id: str, text: str, *, locale: str | None = None) -> bool:
     """Send as card when text has markdown signals, otherwise as plain text.
 
     Simple conversational replies (no formatting) get plain text for a lighter
     UX; structured responses with markdown or feishu extensions get a card.
     """
     if _should_use_card(text):
-        return reply_with_card(client, message_id, text)
+        return reply_with_card(client, message_id, text, locale=locale)
     return send_text_reply(client, message_id, text)
 
 
-def build_thinking_card(hint: str = "Thinking...") -> dict:
+def smart_send_message(client: Any, chat_id: str, text: str, *, locale: str | None = None) -> Optional[str]:
+    """Send a new message to a chat using the same card/text heuristic as smart_reply()."""
+    if _should_use_card(text):
+        card = build_result_card(text, locale=locale)
+        return send_card(client, chat_id, card)
+    return send_text_message(client, chat_id, text)
+
+
+def build_thinking_card(hint: str | None = None, *, locale: str | None = None) -> dict:
     """Build a minimal card that can be PATCH-updated later."""
+    content = hint or _t("feishu.reply.thinking.default", locale=locale)
     return {
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "summary": {"content": _strip_markdown_for_summary(hint)},
+            "summary": {"content": _strip_markdown_for_summary(content, locale=locale)},
         },
         "body": {
             "elements": [
-                {"tag": "markdown", "content": f"*{hint}*"},
+                {"tag": "markdown", "content": f"*{content}*"},
             ]
         },
     }
 
 
-def build_result_card(text: str) -> dict:
+def build_result_card(text: str, *, locale: str | None = None) -> dict:
     """Build a richer product-style card for structured replies."""
-    return RichCardBuilder(text).build()
+    return RichCardBuilder(text, locale=locale).build()
 
 
-def build_approval_card(text: str, approval_id: str, steps: list[ToolStep] | None = None) -> dict[str, Any]:
-    """Build a dedicated approval card with approve/deny buttons."""
-    body_elements: list[dict[str, Any]] = [
-        _markdown_element(sanitize_for_feishu(text), margin="0 0 8px 0"),
-        _markdown_element(f"*Approval ID: `{approval_id}`*", text_size="small", margin="0 0 10px 0"),
-        {
-            "tag": "action",
-            "layout": "bisected",
-            "actions": [
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "不通过"},
-                    "type": "default",
-                    "value": {
-                        "kind": "approval",
-                        "action": "deny",
-                        "approval_id": approval_id,
+def build_approval_card(
+    text: str,
+    approval_id: str,
+    steps: list[ToolStep] | None = None,
+    *,
+    title: str | None = None,
+    detail: str | None = None,
+    sections: list[dict[str, Any]] | tuple[Any, ...] | None = None,
+    command_preview: str | None = None,
+    target_path: str | None = None,
+    workspace_root: str | None = None,
+    grant_scope_dir: str | None = None,
+    locale: str | None = None,
+) -> dict[str, Any]:
+    """Build a dedicated approval card with deny/approve-once/approve-always buttons."""
+    button_row = {
+        "tag": "column_set",
+        "horizontal_spacing": "8px",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": _t("feishu.reply.approval.button.deny", locale=locale)},
+                        "type": "default",
+                        "width": "fill",
+                        "behaviors": [
+                            {
+                                "type": "callback",
+                                "value": {
+                                    "kind": "approval",
+                                    "action": "deny",
+                                    "approval_id": approval_id,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": _t("feishu.reply.approval.button.once", locale=locale)},
+                        "type": "primary_filled",
+                        "width": "fill",
+                        "behaviors": [
+                            {
+                                "type": "callback",
+                                "value": {
+                                    "kind": "approval",
+                                    "action": "approve_once",
+                                    "approval_id": approval_id,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": _t("feishu.reply.approval.button.always", locale=locale)},
+                        "type": "primary",
+                        "width": "fill",
+                        "behaviors": [
+                            {
+                                "type": "callback",
+                                "value": {
+                                    "kind": "approval",
+                                    "action": "approve_always_directory",
+                                    "approval_id": approval_id,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+    clean_text = sanitize_for_feishu(text, locale=locale)
+    clean_detail = sanitize_for_feishu(detail or "", locale=locale)
+    command = (command_preview or "").strip()
+    body_elements: list[dict[str, Any]] = [_markdown_element(clean_text, margin="0 0 8px 0")]
+    if clean_detail and clean_detail != clean_text:
+        detail_content = clean_detail
+        if not sections:
+            detail_content = f"**{_t('feishu.reply.approval.why_title', locale=locale)}**\n{clean_detail}"
+        body_elements.append(
+            _markdown_element(
+                detail_content,
+                text_size="small",
+                margin="0 0 8px 0",
+            )
+        )
+    for raw_section in sections or ():
+        section_title = ""
+        section_items: list[str] = []
+        if isinstance(raw_section, dict):
+            section_title = str(raw_section.get("title", "")).strip()
+            raw_items = raw_section.get("items")
+            if isinstance(raw_items, list):
+                section_items = [str(item).strip() for item in raw_items if str(item).strip()]
+        else:
+            section_title = str(getattr(raw_section, "title", "")).strip()
+            raw_items = getattr(raw_section, "items", ())
+            section_items = [str(item).strip() for item in raw_items if str(item).strip()]
+        if not section_title or not section_items:
+            continue
+        rendered_items = "\n".join(
+            f"- {sanitize_for_feishu(item, locale=locale)}"
+            for item in section_items
+        )
+        body_elements.append(
+            _markdown_element(
+                f"**{sanitize_for_feishu(section_title, locale=locale)}**\n{rendered_items}",
+                text_size="small",
+                margin="0 0 8px 0",
+            )
+        )
+    if target_path:
+        body_elements.append(_markdown_element(
+            _t("feishu.reply.approval.target_path", locale=locale, target_path=sanitize_for_feishu(target_path, locale=locale)),
+            text_size="small",
+            margin="0 0 6px 0",
+        ))
+    if workspace_root:
+        body_elements.append(_markdown_element(
+            _t("feishu.reply.approval.workspace_root", locale=locale, workspace_root=sanitize_for_feishu(workspace_root, locale=locale)),
+            text_size="small",
+            margin="0 0 6px 0",
+        ))
+    if grant_scope_dir:
+        body_elements.append(
+            _markdown_element(
+                _t(
+                    "feishu.reply.approval.grant_scope_dir",
+                    locale=locale,
+                    grant_scope_dir=sanitize_for_feishu(grant_scope_dir, locale=locale),
+                ),
+                text_size="small",
+                margin="0 0 8px 0",
+            )
+        )
+    if command:
+        body_elements.append(
+            {
+                "tag": "collapsible_panel",
+                "expanded": False,
+                "header": {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": _t("feishu.reply.approval.view_raw_command", locale=locale),
                     },
                 },
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": "通过"},
-                    "type": "primary",
-                    "value": {
-                        "kind": "approval",
-                        "action": "approve",
-                        "approval_id": approval_id,
-                    },
-                },
-            ],
-        },
-    ]
+                "elements": [
+                    _markdown_element(
+                        f"```bash\n{sanitize_for_feishu(command, locale=locale)}\n```",
+                        text_size="small",
+                        margin="4px 0",
+                    ),
+                ],
+                "margin": "0 0 8px 0",
+            }
+        )
+    body_elements.extend(
+        [
+            _markdown_element(
+                _t("feishu.reply.approval.approval_id", locale=locale, approval_id=approval_id),
+                text_size="small",
+                margin="0 0 10px 0",
+            ),
+            button_row,
+        ]
+    )
     if steps:
         lines: list[str] = []
         for step in steps:
@@ -896,7 +1121,7 @@ def build_approval_card(text: str, approval_id: str, steps: list[ToolStep] | Non
                     "header": {
                         "title": {
                             "tag": "plain_text",
-                            "content": f"已完成步骤 ({len(steps)})",
+                            "content": _t("feishu.reply.approval.completed_steps", locale=locale, count=len(steps)),
                         },
                     },
                     "elements": [
@@ -909,10 +1134,10 @@ def build_approval_card(text: str, approval_id: str, steps: list[ToolStep] | Non
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "summary": {"content": "任务等待审批"},
+            "summary": {"content": _t("feishu.reply.approval.waiting_summary", locale=locale)},
         },
         "header": {
-            "title": {"content": "等待审批", "tag": "plain_text"},
+            "title": {"content": title or _t("feishu.reply.approval.waiting_title", locale=locale), "tag": "plain_text"},
             "template": "orange",
         },
         "body": {
@@ -926,17 +1151,19 @@ def build_approval_resolution_card(
     action: str,
     approval_id: str,
     text: str,
+    *,
+    locale: str | None = None,
 ) -> dict[str, Any]:
     """Build a terminal approval-state card with buttons removed."""
     action_key = action.strip().lower()
     if action_key == "approve":
-        title = "已通过"
+        title = _t("feishu.reply.approval.resolution.approve", locale=locale)
         template = "green"
     elif action_key == "deny":
-        title = "未通过"
+        title = _t("feishu.reply.approval.resolution.deny", locale=locale)
         template = "red"
     else:
-        title = "已处理"
+        title = _t("feishu.reply.approval.resolution.processed", locale=locale)
         template = "grey"
     return {
         "schema": "2.0",
@@ -951,28 +1178,62 @@ def build_approval_resolution_card(
         "body": {
             "padding": "8px 12px 12px 12px",
             "elements": [
-                _markdown_element(sanitize_for_feishu(text), margin="0 0 8px 0"),
-                _markdown_element(f"*Approval ID: `{approval_id}`*", text_size="small", margin="0"),
+                _markdown_element(sanitize_for_feishu(text, locale=locale), margin="0 0 8px 0"),
+                _markdown_element(
+                    _t("feishu.reply.approval.approval_id", locale=locale, approval_id=approval_id),
+                    text_size="small",
+                    margin="0",
+                ),
             ],
         },
     }
 
 
-def build_error_card(hint: str = "处理出错，请稍后重试") -> dict:
-    """Build an error-state card for patching when the agent fails."""
+def build_completion_status_card(
+    text: str | None = None,
+    *,
+    locale: str | None = None,
+) -> dict[str, Any]:
+    title = _t("feishu.reply.completion.title", locale=locale)
+    body = sanitize_for_feishu(
+        text or _t("feishu.reply.completion.body", locale=locale),
+        locale=locale,
+    )
     return {
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "summary": {"content": "❌ 处理失败"},
+            "summary": {"content": _t("feishu.reply.completion.summary", locale=locale)},
         },
         "header": {
-            "title": {"content": "❌ 处理失败", "tag": "plain_text"},
+            "title": {"content": title, "tag": "plain_text"},
+            "template": "green",
+        },
+        "body": {
+            "padding": "8px 12px 12px 12px",
+            "elements": [
+                _markdown_element(body, margin="0"),
+            ],
+        },
+    }
+
+
+def build_error_card(hint: str | None = None, *, locale: str | None = None) -> dict:
+    """Build an error-state card for patching when the agent fails."""
+    content = hint or _t("feishu.reply.error.default", locale=locale)
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "summary": {"content": _t("feishu.reply.error.summary", locale=locale)},
+        },
+        "header": {
+            "title": {"content": _t("feishu.reply.error.title", locale=locale), "tag": "plain_text"},
             "template": "red",
         },
         "body": {
             "padding": "8px 12px 12px 12px",
-            "elements": [_markdown_element(hint)],
+            "elements": [_markdown_element(content)],
         },
     }
 
@@ -1009,7 +1270,12 @@ def reply_card_return_id(client: Any, message_id: str, card: dict) -> Optional[s
     return getattr(response.data, "message_id", None)
 
 
-def build_progress_card(steps: list[ToolStep], current_hint: str = "正在处理...") -> dict:
+def build_progress_card(
+    steps: list[ToolStep],
+    current_hint: str | None = None,
+    *,
+    locale: str | None = None,
+) -> dict:
     """Build a Manus-style progress card, PATCH-updated after each tool call.
 
     Each completed step gets its own markdown block:
@@ -1020,6 +1286,7 @@ def build_progress_card(steps: list[ToolStep], current_hint: str = "正在处理
 
     Followed by an italic current-state hint line.
     """
+    hint = current_hint or _t("feishu.reply.progress.default", locale=locale)
     elements: list[dict] = []
     for step in steps:
         elapsed_s = step.elapsed_ms / 1000
@@ -1028,15 +1295,15 @@ def build_progress_card(steps: list[ToolStep], current_hint: str = "正在处理
         if step.key_input:
             lines.append(step.key_input)
         elements.append(_markdown_element("\n".join(lines), margin="0 0 10px 0"))
-    elements.append(_markdown_element(f"*{current_hint}*", margin="4px 0 0 0"))
+    elements.append(_markdown_element(f"*{hint}*", margin="4px 0 0 0"))
     return {
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "summary": {"content": current_hint},
+            "summary": {"content": hint},
         },
         "header": {
-            "title": {"content": "正在处理", "tag": "plain_text"},
+            "title": {"content": _t("feishu.reply.progress.title", locale=locale), "tag": "plain_text"},
             "template": "blue",
         },
         "body": {
@@ -1046,14 +1313,93 @@ def build_progress_card(steps: list[ToolStep], current_hint: str = "正在处理
     }
 
 
-def build_result_card_with_process(text: str, steps: list[ToolStep]) -> dict:
+def build_task_topic_card(
+    topic: dict[str, Any],
+    *,
+    title: str | None = None,
+    locale: str | None = None,
+) -> dict:
+    items = list(topic.get("items", []) or [])
+    elements: list[dict[str, Any]] = []
+    current_hint = str(topic.get("current_hint", "") or _t("feishu.reply.progress.default", locale=locale))
+    current_phase = str(topic.get("current_phase", "") or "").strip()
+    status = str(topic.get("status", "running") or "running")
+    current_progress_percent = topic.get("current_progress_percent")
+    try:
+        current_percent = int(current_progress_percent) if current_progress_percent is not None else None
+    except (TypeError, ValueError):
+        current_percent = None
+
+    current_parts: list[str] = []
+    if current_phase:
+        current_parts.append(_task_topic_label(current_phase, locale=locale))
+    if current_percent is not None:
+        current_parts.append(f"{current_percent}%")
+    current_header = " · ".join(current_parts)
+    current_default = _t("feishu.reply.task_topic.current", locale=locale)
+    current_text = f"**{current_header}**\n{current_hint}" if current_header else f"**{current_default}**\n{current_hint}"
+    elements.append(_markdown_element(current_text, margin="0 0 12px 0"))
+
+    terminal_status = status in {"completed", "failed", "cancelled"}
+    for item in reversed(items[-8:]):
+        kind = str(item.get("kind", "")).strip()
+        phase = str(item.get("phase", "") or "").strip()
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+        percent = item.get("progress_percent")
+        try:
+            progress_percent = int(percent) if percent is not None else None
+        except (TypeError, ValueError):
+            progress_percent = None
+        if (
+            phase == current_phase
+            and progress_percent == current_percent
+            and text == current_hint
+        ):
+            continue
+        if terminal_status and kind == "task.started":
+            continue
+        header_parts: list[str] = []
+        if phase:
+            header_parts.append(_task_topic_label(phase, locale=locale))
+        elif kind:
+            header_parts.append(_task_topic_label(kind, locale=locale))
+        if progress_percent is not None:
+            header_parts.append(f"{progress_percent}%")
+        header = " · ".join(header_parts)
+        line = f"**{header}**\n{text}" if header else text
+        elements.append(_markdown_element(line, margin="0 0 10px 0"))
+    template = "blue"
+    if status == "completed":
+        template = "green"
+    elif status in {"failed", "cancelled"}:
+        template = "red"
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "summary": {"content": current_hint},
+        },
+        "header": {
+            "title": {"content": title or _t("feishu.reply.task_topic.default_title", locale=locale), "tag": "plain_text"},
+            "template": template,
+        },
+        "body": {
+            "padding": "8px 12px 12px 12px",
+            "elements": elements,
+        },
+    }
+
+
+def build_result_card_with_process(text: str, steps: list[ToolStep], *, locale: str | None = None) -> dict:
     """Build the final result card, appending a collapsible work-process panel.
 
     When *steps* is empty the function behaves identically to build_result_card().
     When *steps* is non-empty a collapsible_panel is appended after a divider so
     the user can expand it to review exactly what the agent did.
     """
-    card = build_result_card(text)
+    card = build_result_card(text, locale=locale)
     if not steps:
         return card
 
@@ -1072,7 +1418,7 @@ def build_result_card_with_process(text: str, steps: list[ToolStep]) -> dict:
         "header": {
             "title": {
                 "tag": "plain_text",
-                "content": f"工作过程 ({len(steps)} 步骤)",
+                "content": _t("feishu.reply.result.process", locale=locale, count=len(steps)),
             },
         },
         "elements": [

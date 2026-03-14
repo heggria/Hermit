@@ -145,6 +145,23 @@ class AgentRuntime:
             **kwargs,
         )
 
+    def _tool_result_block(self, *, tool_name: str, tool_use_id: str, content: Any, is_error: bool = False) -> Dict[str, Any]:
+        block: Dict[str, Any] = {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": content,
+        }
+        if is_error:
+            block["is_error"] = True
+        try:
+            tool = self.registry.get(tool_name)
+        except KeyError:
+            tool = None
+        if tool is not None and tool.result_is_internal_context:
+            block["internal_context"] = True
+            block["tool_name"] = tool_name
+        return block
+
     def _request(
         self,
         messages: List[Dict[str, Any]],
@@ -171,14 +188,18 @@ class AgentRuntime:
         self,
         prompt: str,
         message_history: Optional[List[Dict[str, Any]]] = None,
+        compiled_messages: Optional[List[Dict[str, Any]]] = None,
         on_tool_call: Optional[ToolCallback] = None,
         on_tool_start: Optional[ToolStartCallback] = None,
         disable_tools: bool = False,
         readonly_only: bool = False,
         task_context: TaskExecutionContext | None = None,
     ) -> AgentResult:
-        messages: List[Dict[str, Any]] = normalize_messages(message_history or [])
-        messages.append({"role": "user", "content": prompt})
+        if compiled_messages is not None:
+            messages = normalize_messages(compiled_messages)
+        else:
+            messages = normalize_messages(message_history or [])
+            messages.append({"role": "user", "content": prompt})
         return self._run_from_messages(
             messages,
             start_turn=1,
@@ -531,11 +552,11 @@ class AgentRuntime:
             if on_tool_call:
                 on_tool_call(tool_name, tool_input, serialized)
             tool_result_blocks.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": block_value(block, "id"),
-                    "content": serialized,
-                }
+                self._tool_result_block(
+                    tool_name=tool_name,
+                    tool_use_id=str(block_value(block, "id")),
+                    content=serialized,
+                )
             )
             tool_calls += 1
         return tool_result_blocks, tool_calls
@@ -595,12 +616,12 @@ class AgentRuntime:
                 content,
             )
         tool_result_blocks.append(
-            {
-                "type": "tool_result",
-                "tool_use_id": block_value(current, "id"),
-                "content": content,
-                "is_error": bool(observation.get("final_is_error", False)),
-            }
+            self._tool_result_block(
+                tool_name=str(block_value(current, "name")),
+                tool_use_id=str(block_value(current, "id")),
+                content=content,
+                is_error=bool(observation.get("final_is_error", False)),
+            )
         )
         return tool_result_blocks, 1
 
@@ -704,11 +725,11 @@ class AgentRuntime:
                         error=exc,
                     )
                 tool_result_blocks.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block_value(block, "id"),
-                        "content": serialized,
-                    }
+                    self._tool_result_block(
+                        tool_name=tool_name,
+                        tool_use_id=str(block_value(block, "id")),
+                        content=serialized,
+                    )
                 )
                 tool_calls += 1
             messages.append({"role": "user", "content": tool_result_blocks})

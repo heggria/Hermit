@@ -189,7 +189,9 @@ def test_runner_preserves_history_across_messages(tmp_path) -> None:
     assert len(client.messages.calls) == 2
     second_call_messages = client.messages.calls[1]["messages"]
     roles = [m["role"] for m in second_call_messages]
-    assert roles == ["user", "assistant", "user"]
+    assert roles == ["user"]
+    assert "<conversation_projection>" in second_call_messages[0]["content"]
+    assert "<context_pack>" in second_call_messages[0]["content"]
 
 
 def test_runner_isolates_sessions(tmp_path) -> None:
@@ -255,6 +257,33 @@ def test_build_task_topic_card_renders_current_phase_and_recent_milestones() -> 
     assert elements[0]["content"].startswith("**已就绪 · 100%**")
     assert "下一步会继续 smoke test" in elements[0]["content"]
     assert "服务已经可以访问" in elements[1]["content"]
+
+
+def test_build_task_topic_card_hides_duplicate_terminal_summary_and_start_item() -> None:
+    card = build_task_topic_card(
+        {
+            "status": "completed",
+            "current_hint": "你好！有什么可以帮你的吗？",
+            "current_phase": "completed",
+            "current_progress_percent": 100,
+            "items": [
+                {"kind": "task.started", "text": "你好"},
+                {
+                    "kind": "task.completed",
+                    "text": "你好！有什么可以帮你的吗？",
+                    "phase": "completed",
+                    "progress_percent": 100,
+                },
+            ],
+        },
+        title="Greeting",
+        locale="zh-CN",
+    )
+
+    elements = card["body"]["elements"]
+    assert len(elements) == 1
+    assert elements[0]["content"].startswith("**已完成 · 100%**")
+    assert "有什么可以帮你的吗" in elements[0]["content"]
 
 
 def test_feishu_adapter_accepts_legacy_env_names(monkeypatch) -> None:
@@ -411,14 +440,12 @@ def test_feishu_adapter_ingests_images_via_kernel_executor(tmp_path) -> None:
     assert receipt.result_code == "succeeded"
 
 
-def test_feishu_adapter_process_message_enqueues_topic_card_for_new_task(monkeypatch) -> None:
+def test_feishu_adapter_process_message_routes_short_start_phrase_through_sync_dispatch(monkeypatch) -> None:
     from hermit.builtin.feishu.adapter import FeishuAdapter
 
-    replied_topics: list[tuple[str, str]] = []
-    smart_calls: list[str] = []
-    done_calls: list[str] = []
+    dispatch_calls: list[dict[str, Any]] = []
     bind_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-    topic_patch_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    enqueue_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
     adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=False))
     adapter._client = object()
@@ -427,25 +454,16 @@ def test_feishu_adapter_process_message_enqueues_topic_card_for_new_task(monkeyp
             resolve_text_command=lambda *_a, **_kw: None,
             decide_ingress=lambda **_kw: SimpleNamespace(mode="start_task", task_id=None),
         ),
-        enqueue_ingress=lambda *_a, **_kw: SimpleNamespace(task_id="task_approval"),
+        enqueue_ingress=lambda *args, **kwargs: enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_approval"),
     )
 
     monkeypatch.setattr("hermit.builtin.feishu.adapter.send_ack", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         adapter,
-        "_reply_task_topic_card",
-        lambda reply_to_message_id, task_id: replied_topics.append((reply_to_message_id, task_id)) or "om_reply",
-    )
-    monkeypatch.setattr(
-        "hermit.builtin.feishu.adapter.smart_reply",
-        lambda *_a, **_kw: smart_calls.append("smart"),
-    )
-    monkeypatch.setattr(
-        "hermit.builtin.feishu.adapter.send_done",
-        lambda *_a, **_kw: done_calls.append("done"),
+        "_dispatch_message_sync_compat",
+        lambda **kwargs: dispatch_calls.append(kwargs),
     )
     monkeypatch.setattr(adapter, "_bind_task_topic", lambda *args, **kwargs: bind_calls.append((args, kwargs)))
-    monkeypatch.setattr(adapter, "_patch_task_topic", lambda *args, **kwargs: topic_patch_calls.append((args, kwargs)))
 
     msg = FeishuMessage(
         chat_id="oc_1",
@@ -458,18 +476,131 @@ def test_feishu_adapter_process_message_enqueues_topic_card_for_new_task(monkeyp
     )
     adapter._process_message(msg)
 
-    assert replied_topics == [("om_1", "task_approval")]
-    assert smart_calls == []
-    assert done_calls == ["done"]
-    assert bind_calls == [(
-        ("oc_1", "task_approval"),
-        {
-            "chat_id": "oc_1",
-            "root_message_id": "om_reply",
-            "card_mode": "topic",
-        },
-    )]
-    assert topic_patch_calls == []
+    assert len(dispatch_calls) == 1
+    assert dispatch_calls[0]["enable_progress_card"] is False
+    assert bind_calls == []
+    assert enqueue_calls == []
+
+
+def test_feishu_adapter_process_message_routes_chat_only_through_sync_dispatch(monkeypatch) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    dispatch_calls: list[dict[str, Any]] = []
+    enqueue_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=False))
+    adapter._client = object()
+    adapter._runner = SimpleNamespace(
+        task_controller=SimpleNamespace(
+            resolve_text_command=lambda *_a, **_kw: None,
+            decide_ingress=lambda **_kw: SimpleNamespace(mode="start", intent="chat_only", task_id=None),
+        ),
+        enqueue_ingress=lambda *args, **kwargs: enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_chat"),
+    )
+
+    monkeypatch.setattr("hermit.builtin.feishu.adapter.send_ack", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        adapter,
+        "_dispatch_message_sync_compat",
+        lambda **kwargs: dispatch_calls.append(kwargs),
+    )
+
+    adapter._process_message(
+        FeishuMessage(
+            chat_id="oc_1",
+            message_id="om_hello",
+            sender_id="user-1",
+            text="你好",
+            message_type="text",
+            chat_type="p2p",
+            image_keys=[],
+        )
+    )
+
+    assert len(dispatch_calls) == 1
+    assert dispatch_calls[0]["session_id"] == "oc_1"
+    assert dispatch_calls[0]["dispatch_text"]
+    assert enqueue_calls == []
+
+
+def test_feishu_adapter_process_message_routes_low_signal_punctuation_through_sync_dispatch(monkeypatch) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    dispatch_calls: list[dict[str, Any]] = []
+    enqueue_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=False))
+    adapter._client = object()
+    adapter._runner = SimpleNamespace(
+        task_controller=SimpleNamespace(
+            resolve_text_command=lambda *_a, **_kw: None,
+            decide_ingress=lambda **_kw: SimpleNamespace(mode="start_task", task_id=None),
+        ),
+        enqueue_ingress=lambda *args, **kwargs: enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_noise"),
+    )
+
+    monkeypatch.setattr("hermit.builtin.feishu.adapter.send_ack", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        adapter,
+        "_dispatch_message_sync_compat",
+        lambda **kwargs: dispatch_calls.append(kwargs),
+    )
+
+    adapter._process_message(
+        FeishuMessage(
+            chat_id="oc_1",
+            message_id="om_noise",
+            sender_id="user-1",
+            text="？",
+            message_type="text",
+            chat_type="p2p",
+            image_keys=[],
+        )
+    )
+
+    assert len(dispatch_calls) == 1
+    assert dispatch_calls[0]["enable_progress_card"] is False
+    assert enqueue_calls == []
+
+
+def test_feishu_adapter_process_message_routes_short_text_through_sync_dispatch_without_progress(monkeypatch) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    dispatch_calls: list[dict[str, Any]] = []
+    enqueue_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=True))
+    adapter._client = object()
+    adapter._runner = SimpleNamespace(
+        task_controller=SimpleNamespace(
+            resolve_text_command=lambda *_a, **_kw: None,
+            decide_ingress=lambda **_kw: SimpleNamespace(mode="start_task", intent="start_new_task", task_id=None),
+        ),
+        enqueue_ingress=lambda *args, **kwargs: enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_short"),
+    )
+
+    monkeypatch.setattr("hermit.builtin.feishu.adapter.send_ack", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        adapter,
+        "_dispatch_message_sync_compat",
+        lambda **kwargs: dispatch_calls.append(kwargs),
+    )
+
+    adapter._process_message(
+        FeishuMessage(
+            chat_id="oc_1",
+            message_id="om_short",
+            sender_id="user-1",
+            text="帮我看看",
+            message_type="text",
+            chat_type="p2p",
+            image_keys=[],
+        )
+    )
+
+    assert len(dispatch_calls) == 1
+    assert dispatch_calls[0]["enable_progress_card"] is False
+    assert enqueue_calls == []
 
 
 def test_build_approval_card_renders_structured_sections() -> None:
@@ -729,7 +860,7 @@ def test_feishu_adapter_on_message_sends_ack_before_background_dispatch(monkeypa
     assert submitted[0][1][0].message_id == "om_ack"
 
 
-def test_feishu_adapter_guided_task_completion_uses_compact_completion_card_and_sends_new_result(monkeypatch, tmp_path) -> None:
+def test_feishu_adapter_guided_task_completion_patches_existing_card_to_final_result(monkeypatch, tmp_path) -> None:
     from hermit.builtin.feishu.adapter import FeishuAdapter
     from hermit.core.runner import DispatchResult
 
@@ -755,17 +886,11 @@ def test_feishu_adapter_guided_task_completion_uses_compact_completion_card_and_
     )
 
     patched_cards: list[dict[str, Any]] = []
-    completion_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=True))
     adapter._client = object()
     adapter._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
 
     monkeypatch.setattr("hermit.builtin.feishu.adapter.patch_card", lambda _client, _message_id, card: patched_cards.append(card))
-    monkeypatch.setattr(
-        adapter,
-        "_maybe_send_completion_result_message",
-        lambda *args, **kwargs: completion_calls.append((args, kwargs)) or True,
-    )
 
     adapter._present_task_result(
         reply_to_message_id="om_1",
@@ -783,11 +908,11 @@ def test_feishu_adapter_guided_task_completion_uses_compact_completion_card_and_
         steps=[make_tool_step("web_search", {"query": "北京天气"}, {"forecast": "晴"}, 120, locale="zh-CN")],
     )
 
-    assert patched_cards[-1]["header"]["title"]["content"] == "任务已完成"
-    assert completion_calls == [((ctx.task_id,), {"task_text": "北京今天晴，最高 16°C，最低 8°C。", "chat_id": "oc_1"})]
+    assert "北京今天晴，最高 16°C，最低 8°C。" in json.dumps(patched_cards[-1], ensure_ascii=False)
+    assert patched_cards[-1]["body"]["elements"][-1]["tag"] == "collapsible_panel"
 
 
-def test_feishu_adapter_guided_completion_without_progress_replies_with_compact_card(monkeypatch, tmp_path) -> None:
+def test_feishu_adapter_guided_completion_without_progress_replies_with_final_text(monkeypatch, tmp_path) -> None:
     from hermit.builtin.feishu.adapter import FeishuAdapter
     from hermit.core.runner import DispatchResult
 
@@ -812,24 +937,13 @@ def test_feishu_adapter_guided_completion_without_progress_replies_with_compact_
         result_text="文件已写到桌面：`今日热门话题_20260313.md`",
     )
 
-    replied_cards: list[dict[str, Any]] = []
     smart_calls: list[str] = []
-    completion_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
     adapter = FeishuAdapter(settings=SimpleNamespace(feishu_thread_progress=False))
     adapter._client = object()
     adapter._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
 
-    monkeypatch.setattr(
-        "hermit.builtin.feishu.adapter.reply_card_return_id",
-        lambda _client, _message_id, card: replied_cards.append(card) or "om_completion",
-    )
     monkeypatch.setattr("hermit.builtin.feishu.adapter.smart_reply", lambda *_a, **_kw: smart_calls.append("smart"))
-    monkeypatch.setattr(
-        adapter,
-        "_maybe_send_completion_result_message",
-        lambda *args, **kwargs: completion_calls.append((args, kwargs)) or True,
-    )
 
     adapter._present_task_result(
         reply_to_message_id="om_1",
@@ -847,12 +961,10 @@ def test_feishu_adapter_guided_completion_without_progress_replies_with_compact_
         steps=[],
     )
 
-    assert smart_calls == []
-    assert replied_cards[-1]["header"]["title"]["content"] == "任务已完成"
-    assert completion_calls == [((ctx.task_id,), {"task_text": "文件已写到桌面：`今日热门话题_20260313.md`", "chat_id": "oc_1"})]
+    assert smart_calls == ["smart"]
 
 
-def test_feishu_refresh_sends_guided_completion_message_only_once(monkeypatch, tmp_path) -> None:
+def test_feishu_refresh_patches_guided_completion_result_only_once(monkeypatch, tmp_path) -> None:
     from hermit.builtin.feishu.adapter import FeishuAdapter
 
     store = KernelStore(tmp_path / "kernel" / "state.db")
@@ -888,30 +1000,27 @@ def test_feishu_refresh_sends_guided_completion_message_only_once(monkeypatch, t
         },
     )
 
-    sent_messages: list[tuple[str, str]] = []
     patched_topics: list[tuple[str, str]] = []
+    terminal_patches: list[tuple[str, str]] = []
 
     adapter = FeishuAdapter()
     adapter._client = object()
     adapter._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
     monkeypatch.setattr(adapter, "_schedule_topic_refresh", lambda: None)
     monkeypatch.setattr(adapter, "_patch_task_topic", lambda task_id, **kwargs: patched_topics.append((task_id, str(kwargs.get("message_id", "")))))
-    monkeypatch.setattr(
-        "hermit.builtin.feishu.adapter.smart_send_message",
-        lambda _client, chat_id, text, **kwargs: sent_messages.append((chat_id, text)) or "om_result",
-    )
+    monkeypatch.setattr(adapter, "_patch_terminal_result_card", lambda task_id, **kwargs: terminal_patches.append((task_id, str(kwargs.get("message_id", "")))) or True)
 
     adapter._refresh_task_topics()
     adapter._refresh_task_topics()
 
     assert patched_topics == [(ctx.task_id, "om_root")]
-    assert sent_messages == [("oc_chat", "整理完成，重点结论已经汇总好了。")]
+    assert terminal_patches == [(ctx.task_id, "om_root")]
     conversation = store.get_conversation("oc_chat:user_1")
     assert conversation is not None
     assert dict(conversation.metadata or {}).get("feishu_task_topics", {}) == {}
 
 
-def test_feishu_refresh_only_patches_topic_when_content_changes(monkeypatch, tmp_path) -> None:
+def test_feishu_refresh_only_patches_progress_when_content_changes(monkeypatch, tmp_path) -> None:
     from hermit.builtin.feishu.adapter import FeishuAdapter
 
     store = KernelStore(tmp_path / "kernel" / "state.db")
@@ -954,11 +1063,121 @@ def test_feishu_refresh_only_patches_topic_when_content_changes(monkeypatch, tmp
     )
     adapter._refresh_task_topics()
 
-    assert [message_id for message_id, _card in patched_cards] == ["om_root", "om_root"]
+    assert [message_id for message_id, _card in patched_cards] == ["om_root"]
     conversation = store.get_conversation("oc_chat:user_1")
     assert conversation is not None
     mapping = dict(conversation.metadata or {}).get("feishu_task_topics", {}).get(ctx.task_id, {})
     assert mapping.get("topic_signature")
+
+
+def test_feishu_refresh_waits_for_meaningful_progress_before_creating_card(monkeypatch, tmp_path) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    controller = TaskController(store)
+    ctx = controller.start_task(
+        conversation_id="oc_chat:user_1",
+        goal="长任务",
+        source_channel="feishu",
+        kind="respond",
+    )
+    store.update_conversation_metadata(
+        "oc_chat:user_1",
+        {
+            "feishu_task_topics": {
+                ctx.task_id: {
+                    "chat_id": "oc_chat",
+                    "reply_to_message_id": "om_reply",
+                    "card_mode": "topic",
+                }
+            }
+        },
+    )
+
+    sent_cards: list[tuple[str, dict[str, Any]]] = []
+    current_topic = {"current_hint": "Task is running.", "current_phase": "started", "items": []}
+
+    adapter = FeishuAdapter(settings=SimpleNamespace(locale="zh-CN"))
+    adapter._client = object()
+    adapter._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
+    adapter._task_history_steps = lambda task_id, live_steps=None: []  # type: ignore[method-assign]
+
+    monkeypatch.setattr(adapter, "_schedule_topic_refresh", lambda: None)
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.ProjectionService",
+        lambda _store: SimpleNamespace(ensure_task_projection=lambda _task_id: {"topic": current_topic}),
+    )
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.reply_card_return_id",
+        lambda _client, message_id, card: sent_cards.append((message_id, card)) or "om_root",
+    )
+
+    adapter._refresh_task_topics()
+    assert sent_cards == []
+
+    current_topic = {
+        "current_hint": "正在搜索最新资料",
+        "current_phase": "submitted",
+        "items": [{"kind": "tool.submitted", "text": "搜索资料"}],
+    }
+    adapter._refresh_task_topics()
+
+    assert [message_id for message_id, _card in sent_cards] == ["om_reply"]
+    conversation = store.get_conversation("oc_chat:user_1")
+    assert conversation is not None
+    mapping = dict(conversation.metadata or {}).get("feishu_task_topics", {}).get(ctx.task_id, {})
+    assert mapping.get("root_message_id") == "om_root"
+    assert mapping.get("topic_signature")
+
+
+def test_feishu_refresh_replies_with_terminal_result_when_no_card_was_shown(monkeypatch, tmp_path) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    controller = TaskController(store)
+    ctx = controller.start_task(
+        conversation_id="oc_chat:user_1",
+        goal="简单回复",
+        source_channel="feishu",
+        kind="respond",
+    )
+    controller.finalize_result(
+        ctx,
+        status="succeeded",
+        result_preview="你好！有什么我能帮你的？",
+        result_text="你好！有什么我能帮你的？",
+    )
+    store.update_conversation_metadata(
+        "oc_chat:user_1",
+        {
+            "feishu_task_topics": {
+                ctx.task_id: {
+                    "chat_id": "oc_chat",
+                    "reply_to_message_id": "om_hello",
+                    "card_mode": "topic",
+                    "completion_reply_sent": False,
+                }
+            }
+        },
+    )
+
+    replies: list[tuple[str, str]] = []
+
+    adapter = FeishuAdapter()
+    adapter._client = object()
+    adapter._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
+    monkeypatch.setattr(adapter, "_schedule_topic_refresh", lambda: None)
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.adapter.smart_reply",
+        lambda _client, message_id, text, **kwargs: replies.append((message_id, text)),
+    )
+
+    adapter._refresh_task_topics()
+
+    assert replies == [("om_hello", "你好！有什么我能帮你的？")]
+    conversation = store.get_conversation("oc_chat:user_1")
+    assert conversation is not None
+    assert dict(conversation.metadata or {}).get("feishu_task_topics", {}) == {}
 
 
 def test_feishu_refresh_prunes_stale_terminal_topic_mapping(monkeypatch, tmp_path) -> None:
@@ -991,16 +1210,19 @@ def test_feishu_refresh_prunes_stale_terminal_topic_mapping(monkeypatch, tmp_pat
     )
 
     patched_topics: list[tuple[str, str]] = []
+    terminal_patches: list[tuple[str, str]] = []
 
     adapter = FeishuAdapter()
     adapter._client = object()
     adapter._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
     monkeypatch.setattr(adapter, "_schedule_topic_refresh", lambda: None)
     monkeypatch.setattr(adapter, "_patch_task_topic", lambda task_id, **kwargs: patched_topics.append((task_id, str(kwargs.get("message_id", "")))))
+    monkeypatch.setattr(adapter, "_patch_terminal_result_card", lambda task_id, **kwargs: terminal_patches.append((task_id, str(kwargs.get("message_id", "")))) or True)
 
     adapter._refresh_task_topics()
 
     assert patched_topics == [(ctx.task_id, "om_root")]
+    assert terminal_patches == [(ctx.task_id, "om_root")]
     conversation = store.get_conversation("oc_chat:user_1")
     assert conversation is not None
     assert dict(conversation.metadata or {}).get("feishu_task_topics", {}) == {}

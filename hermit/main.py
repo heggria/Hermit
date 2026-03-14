@@ -62,6 +62,7 @@ from hermit.kernel import (
     SupervisionService,
     TaskController,
 )
+from hermit.kernel.knowledge import MemoryRecordService
 from hermit.kernel.memory_governance import MemoryGovernanceService
 from hermit.kernel.proofs import ProofService
 from hermit.logging import configure_logging
@@ -1619,6 +1620,33 @@ def _render_memory_payload(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _memory_list_payload(
+    records: list[Any],
+    *,
+    settings: Settings,
+) -> list[dict[str, Any]]:
+    governance = MemoryGovernanceService()
+    payload: list[dict[str, Any]] = []
+    for record in records:
+        payload.append(
+            {
+                "memory_id": record.memory_id,
+                "status": record.status,
+                "category": record.category,
+                "retention_class": record.retention_class,
+                "scope_kind": record.scope_kind,
+                "scope_ref": record.scope_ref,
+                "subject_key": governance.subject_key_for_memory(record),
+                "topic_key": governance.topic_key_for_memory(record),
+                "claim_text": record.claim_text,
+                "updated_at": record.updated_at,
+                "expires_at": record.expires_at,
+                "superseded_by_memory_id": record.superseded_by_memory_id,
+            }
+        )
+    return payload
+
+
 @task_app.command("list")
 def task_list(
     limit: int = typer.Option(
@@ -2088,6 +2116,138 @@ def memory_inspect(
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     typer.echo(_render_memory_payload(payload))
+
+
+@memory_app.command("list")
+def memory_list(
+    status: Optional[str] = typer.Option(
+        "active",
+        "--status",
+        help=_cli_t("cli.memory.list.status", "Optional status filter."),
+    ),
+    conversation_id: Optional[str] = typer.Option(
+        None,
+        "--conversation-id",
+        help=_cli_t("cli.memory.list.conversation_id", "Optional conversation filter."),
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        help=_cli_t("cli.memory.list.limit", "Maximum number of memory records to show."),
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help=_cli_t("cli.memory.list.json", "Emit JSON instead of human-readable text."),
+    ),
+) -> None:
+    """List recent memory records with governance-facing metadata."""
+    settings = get_settings()
+    _ensure_workspace(settings)
+    store = _get_kernel_store()
+    records = store.list_memory_records(status=status, conversation_id=conversation_id, limit=limit)
+    payload = _memory_list_payload(records, settings=settings)
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not payload:
+        typer.echo(_t("cli.memory.list.empty", "No memory records found."))
+        return
+    for item in payload:
+        typer.echo(
+            f"[{item['memory_id']}] {item['status']} {item['category']} "
+            f"{item['retention_class']} {item['subject_key'] or '-'} {item['claim_text']}"
+        )
+
+
+@memory_app.command("status")
+def memory_status(
+    limit: int = typer.Option(
+        1000,
+        "--limit",
+        help=_cli_t("cli.memory.status.limit", "Maximum number of memory records to scan."),
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help=_cli_t("cli.memory.status.json", "Emit JSON instead of human-readable text."),
+    ),
+) -> None:
+    """Show aggregate memory health and governance counts."""
+    settings = get_settings()
+    _ensure_workspace(settings)
+    governance = MemoryGovernanceService()
+    store = _get_kernel_store()
+    records = store.list_memory_records(limit=limit)
+    by_status: dict[str, int] = {}
+    by_retention: dict[str, int] = {}
+    by_category: dict[str, int] = {}
+    expired = 0
+    superseded_links = 0
+    for record in records:
+        by_status[record.status] = by_status.get(record.status, 0) + 1
+        by_retention[record.retention_class] = by_retention.get(record.retention_class, 0) + 1
+        by_category[record.category] = by_category.get(record.category, 0) + 1
+        if governance.is_expired(record):
+            expired += 1
+        if record.superseded_by_memory_id:
+            superseded_links += 1
+    payload = {
+        "total_records": len(records),
+        "active_records": sum(1 for record in records if record.status == "active" and not governance.is_expired(record)),
+        "expired_records": expired,
+        "superseded_links": superseded_links,
+        "by_status": by_status,
+        "by_retention_class": by_retention,
+        "by_category": by_category,
+        "memory_file": str(settings.memory_file),
+        "kernel_db_path": str(settings.kernel_db_path),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Total Records: {payload['total_records']}")
+    typer.echo(f"Active Records: {payload['active_records']}")
+    typer.echo(f"Expired Records: {payload['expired_records']}")
+    typer.echo(f"Superseded Links: {payload['superseded_links']}")
+    typer.echo("By Status:")
+    for key, value in sorted(by_status.items()):
+        typer.echo(f"  - {key}: {value}")
+    typer.echo("By Retention:")
+    for key, value in sorted(by_retention.items()):
+        typer.echo(f"  - {key}: {value}")
+
+
+@memory_app.command("rebuild")
+def memory_rebuild(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help=_cli_t("cli.memory.rebuild.json", "Emit JSON instead of human-readable text."),
+    ),
+) -> None:
+    """Reconcile active records and re-render the mirror file from kernel state."""
+    settings = get_settings()
+    _ensure_workspace(settings)
+    store = _get_kernel_store()
+    service = MemoryRecordService(store, mirror_path=settings.memory_file)
+    before_active = len(store.list_memory_records(status="active", limit=5000))
+    result = service.reconcile_active_records()
+    service.render_mirror(settings.memory_file)
+    after_active = len(store.list_memory_records(status="active", limit=5000))
+    payload = {
+        "before_active": before_active,
+        "after_active": after_active,
+        **result,
+        "mirror_path": str(settings.memory_file),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"Rebuilt memory mirror. active {before_active} -> {after_active}; "
+        f"superseded={result['superseded_count']} duplicate={result['duplicate_count']}"
+    )
 
 
 # --------------- Plugin sub-commands ---------------

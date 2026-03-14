@@ -3,39 +3,39 @@ name: image-memory-system
 description: "Use when users refer to previously shared images, screenshots, QR codes, or photos, or when you need to store/search/reuse images across sessions."
 ---
 
-你可以使用跨 session 图片记忆工具来管理和复用用户发过的图片。
+You can use the cross-session image memory tools to manage and reuse images the user has shared before.
 
-## 何时使用
+## When to use
 
-- 用户说“刚才那张图”“上次那个截图”“之前发过的二维码”
-- 需要把本地图片纳入系统记忆
-- 需要按摘要、标签、OCR 文本检索历史图片
-- 在飞书回复里需要重新附上一张已经存过的图片
+- the user says things like “that image from just now,” “the screenshot from last time,” or “the QR code I sent earlier”
+- you need to add a local image into long-term system memory
+- you need to search historical images by summary, tags, or OCR text
+- you need to attach a previously stored image again in a Feishu reply
 
-## 工具说明
+## Tool overview
 
 - `image_store_from_path`
-  - 把本地图片保存到图片记忆，并立即生成 `summary`、`tags`、`ocr_text`
+  - stores a local image in image memory and immediately generates `summary`, `tags`, and `ocr_text`
 - `image_search`
-  - 按关键词搜索历史图片；关键词可来自场景、对象、图片文字或用途
+  - searches historical images by keyword; the keyword can come from the scenario, object, image text, or intended use
 - `image_get`
-  - 获取某张图的完整元数据
+  - retrieves full metadata for a specific image
 - `image_attach_to_feishu`
-  - 返回一个可直接放进最终回复里的 `<feishu_image key='...'/>` 标签
+  - returns a `<feishu_image key='...'/>` tag that can be inserted directly into the final reply
 
-## 使用原则
+## Usage principles
 
-- 当用户提到历史图片时，不要凭印象猜，优先先搜再答
-- 先用 `image_search` 缩小范围，再用 `image_get` 看细节
-- 如果工具返回了 `image_id`，后续优先用 `image_id` 作为稳定引用
+- when the user refers to an old image, do not guess from memory; search first
+- use `image_search` to narrow the scope, then `image_get` to inspect details
+- if a tool returns `image_id`, prefer using `image_id` as the stable reference in later steps
 
-## 飞书回复
+## Feishu replies
 
-- `image_attach_to_feishu` 返回的标签必须原样保留
-- 最好把该标签单独放在一行，不要夹在句子中间
-- 标签前后可以有普通 Markdown 文本说明
+- keep the tag returned by `image_attach_to_feishu` exactly as-is
+- preferably place that tag on its own line instead of in the middle of a sentence
+- you can place normal Markdown text before or after the tag
 
-示例：
+Example:
 
 ```md
 这是你刚才提到的那张流程图：

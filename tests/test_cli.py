@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -479,6 +480,62 @@ def test_memory_inspect_command_reports_stored_and_preview_governance(tmp_path, 
     assert preview_payload["inspection"]["category"] == "用户偏好"
     assert preview_payload["inspection"]["retention_class"] == "user_preference"
     assert preview_payload["inspection"]["scope_kind"] == "global"
+
+
+def test_memory_list_status_and_rebuild_commands_cover_inspection_suite(tmp_path, monkeypatch) -> None:
+    from hermit.config import get_settings
+    from hermit.kernel.store import KernelStore
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    older = store.create_memory_record(
+        task_id="task-older",
+        conversation_id="chat-memory",
+        category="进行中的任务",
+        claim_text="已设定每日定时任务：每天早上 10 点自动搜索 AI 最新动态并推送日报到飞书群。",
+        confidence=0.8,
+        evidence_refs=[],
+    )
+    latest = store.create_memory_record(
+        task_id="task-latest",
+        conversation_id="chat-memory",
+        category="进行中的任务",
+        claim_text="当前无任何定时任务，刚刚已经全部清理完成。",
+        confidence=0.9,
+        evidence_refs=[],
+    )
+    store.create_memory_record(
+        task_id="task-pref",
+        conversation_id="chat-memory",
+        category="用户偏好",
+        claim_text="以后都用简体中文回复我。",
+        confidence=0.9,
+        evidence_refs=[],
+    )
+
+    runner = CliRunner()
+    list_result = runner.invoke(app, ["memory", "list"])
+    status_result = runner.invoke(app, ["memory", "status", "--json"])
+    rebuild_result = runner.invoke(app, ["memory", "rebuild", "--json"])
+
+    assert list_result.exit_code == 0
+    assert older.memory_id in list_result.output
+    assert latest.memory_id in list_result.output
+    assert "task_state" in list_result.output
+
+    assert status_result.exit_code == 0
+    status_payload = json.loads(status_result.output)
+    assert status_payload["total_records"] >= 3
+    assert status_payload["by_retention_class"]["task_state"] >= 2
+
+    assert rebuild_result.exit_code == 0
+    rebuild_payload = json.loads(rebuild_result.output)
+    assert rebuild_payload["before_active"] >= rebuild_payload["after_active"]
+    assert rebuild_payload["superseded_count"] >= 1
+    assert Path(rebuild_payload["mirror_path"]).exists()
 
 
 def test_task_explain_command_summarizes_authority_chain(tmp_path, monkeypatch) -> None:

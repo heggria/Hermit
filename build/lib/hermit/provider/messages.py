@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+import json
+from typing import Any, Dict, Iterable, List, Tuple
+
+from hermit.core.tools import serialize_tool_result
 
 _ALLOWED_BLOCK_KEYS = {
     "text": {"type", "text"},
     "tool_use": {"type", "id", "name", "input"},
-    "tool_result": {"type", "tool_use_id", "content", "is_error"},
+    "tool_result": {"type", "tool_use_id", "content", "is_error", "internal_context", "tool_name"},
     "thinking": {"type", "thinking", "signature"},
     "image": {"type", "source"},
 }
@@ -20,8 +23,17 @@ _FALLBACK_KEYS = {
     "tool_use_id",
     "content",
     "is_error",
+    "internal_context",
+    "tool_name",
     "source",
 }
+
+INTERNAL_TOOL_RESULT_PLACEHOLDER = "[internal context loaded]"
+_INTERNAL_TOOL_CONTEXT_PREAMBLE = (
+    "The following tool output is internal working context for this turn. "
+    "Use it to guide your tool choice and answer, but do not quote, summarize, "
+    "or mention it to the user unless they explicitly ask for the underlying instructions."
+)
 
 
 def block_value(block: Any, key: str, default: Any = None) -> Any:
@@ -90,3 +102,56 @@ def extract_thinking(blocks: list[Any]) -> str:
             if text:
                 parts.append(str(text))
     return "\n".join(parts).strip()
+
+
+def _stringify_internal_tool_content(content: Any) -> str:
+    serialized = serialize_tool_result(content)
+    if isinstance(serialized, str):
+        return serialized
+    return json.dumps(serialized, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def split_internal_tool_context(messages: list[Dict[str, Any]]) -> Tuple[list[Dict[str, Any]], list[str]]:
+    sanitized: list[Dict[str, Any]] = []
+    contexts: list[str] = []
+
+    for message in messages:
+        content = message.get("content", "")
+        if not isinstance(content, list):
+            sanitized.append(dict(message))
+            continue
+
+        blocks: list[Dict[str, Any]] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_result" and block.get("internal_context"):
+                tool_name = str(block.get("tool_name", "") or "tool")
+                contexts.append(
+                    f'<internal_tool_context tool="{tool_name}">\n'
+                    f"{_stringify_internal_tool_content(block.get('content'))}\n"
+                    "</internal_tool_context>"
+                )
+                sanitized_block = {
+                    k: v
+                    for k, v in block.items()
+                    if k not in {"internal_context", "tool_name"}
+                }
+                sanitized_block["content"] = INTERNAL_TOOL_RESULT_PLACEHOLDER
+                blocks.append(sanitized_block)
+                continue
+            blocks.append(dict(block))
+        sanitized.append({**message, "content": blocks})
+
+    return sanitized, contexts
+
+
+def append_internal_tool_context(system_prompt: str | None, contexts: list[str]) -> str | None:
+    if not contexts:
+        return system_prompt
+    internal_section = "\n\n".join(
+        ["<internal_tool_contexts>", _INTERNAL_TOOL_CONTEXT_PREAMBLE, "", *contexts, "</internal_tool_contexts>"]
+    )
+    if system_prompt:
+        return f"{system_prompt}\n\n{internal_section}"
+    return internal_section

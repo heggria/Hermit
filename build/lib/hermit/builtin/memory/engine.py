@@ -51,6 +51,9 @@ class MemoryEngine:
                         ),
                         confidence=float(meta.get("confidence", 0.5)),
                         supersedes=list(meta.get("supersedes", [])),
+                        scope_kind=str(meta.get("scope_kind", "")),
+                        scope_ref=str(meta.get("scope_ref", "")),
+                        retention_class=str(meta.get("retention_class", "")),
                     )
                 )
         return categories
@@ -144,6 +147,8 @@ class MemoryEngine:
 
     @staticmethod
     def summary_prompt(categories: Dict[str, List[MemoryEntry]], limit_per_category: int = 10) -> str:
+        if not any(entries for entries in categories.values()):
+            return ""
         lines = ["以下是跨会话记忆，请优先遵循其中的长期约定："]
         for category, entries in categories.items():
             if not entries:

@@ -92,6 +92,23 @@ class KernelProjectionStoreMixin:
             "updated_at": float(row["updated_at"]),
         }
 
+    def get_conversation_projection_cache(self, conversation_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._row(
+                "SELECT * FROM conversation_projection_cache WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+        if row is None:
+            return None
+        return {
+            "conversation_id": str(row["conversation_id"]),
+            "schema_version": str(row["schema_version"]),
+            "event_head_hash": row["event_head_hash"],
+            "payload": _json_loads(row["payload_json"]),
+            "built_at": float(row["built_at"]),
+            "updated_at": float(row["updated_at"]),
+        }
+
     def upsert_projection_cache(
         self,
         task_id: str,
@@ -115,7 +132,46 @@ class KernelProjectionStoreMixin:
                 (task_id, schema_version, event_head_hash, json.dumps(payload, ensure_ascii=False), now, now),
             )
 
+    def upsert_conversation_projection_cache(
+        self,
+        conversation_id: str,
+        *,
+        schema_version: str,
+        event_head_hash: str | None,
+        payload: dict[str, Any],
+    ) -> None:
+        now = time.time()
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO conversation_projection_cache (
+                    conversation_id, schema_version, event_head_hash, payload_json, built_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(conversation_id) DO UPDATE SET
+                    schema_version = excluded.schema_version,
+                    event_head_hash = excluded.event_head_hash,
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    conversation_id,
+                    schema_version,
+                    event_head_hash,
+                    json.dumps(payload, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+
     def list_projection_cache_tasks(self) -> list[str]:
         with self._lock:
             rows = self._rows("SELECT task_id FROM projection_cache ORDER BY updated_at DESC")
         return [str(row["task_id"]) for row in rows]
+
+    def list_conversation_projection_cache(self) -> list[str]:
+        with self._lock:
+            rows = self._rows(
+                "SELECT conversation_id FROM conversation_projection_cache ORDER BY updated_at DESC"
+            )
+        return [str(row["conversation_id"]) for row in rows]

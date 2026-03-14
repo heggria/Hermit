@@ -25,6 +25,9 @@ class MemoryEntry:
     updated_at: Optional[date] = None
     confidence: float = 0.5
     supersedes: list[str] = field(default_factory=list)
+    scope_kind: str = ""
+    scope_ref: str = ""
+    retention_class: str = ""
 
     def __post_init__(self) -> None:
         if self.updated_at is None:
@@ -48,4 +51,10 @@ class MemoryEntry:
             meta["confidence"] = round(self.confidence, 2)
         if self.supersedes:
             meta["supersedes"] = list(self.supersedes)
+        if self.scope_kind:
+            meta["scope_kind"] = self.scope_kind
+        if self.scope_ref:
+            meta["scope_ref"] = self.scope_ref
+        if self.retention_class:
+            meta["retention_class"] = self.retention_class
         return meta

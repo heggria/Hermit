@@ -9,6 +9,7 @@ from typing import Dict, Optional
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from hermit.core.budgets import ExecutionBudget
 from hermit.i18n import locale_from_env, normalize_locale
 from hermit.provider.profiles import config_path_for_base_dir, load_profile_catalog, resolve_profile
 
@@ -146,13 +147,18 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_catch_up: bool = True
     scheduler_feishu_chat_id: Optional[str] = None
+    kernel_dispatch_worker_count: int = 4
     webhook_enabled: bool = True
     webhook_host: Optional[str] = None
     webhook_port: Optional[int] = None
     webhook_control_secret: Optional[str] = None
-    approval_copy_formatter_enabled: bool = False
+    approval_copy_formatter_enabled: bool = True
     approval_copy_model: Optional[str] = None
     approval_copy_formatter_timeout_ms: int = 500
+    progress_summary_enabled: bool = True
+    progress_summary_model: Optional[str] = None
+    progress_summary_max_tokens: int = 160
+    progress_summary_keepalive_seconds: float = 15.0
 
     @model_validator(mode="before")
     @classmethod
@@ -198,6 +204,7 @@ class Settings(BaseSettings):
         _set_if_present(values, "scheduler_enabled", env_file_values.get("HERMIT_SCHEDULER_ENABLED"))
         _set_if_present(values, "scheduler_catch_up", env_file_values.get("HERMIT_SCHEDULER_CATCH_UP"))
         _set_if_present(values, "scheduler_feishu_chat_id", env_file_values.get("HERMIT_SCHEDULER_FEISHU_CHAT_ID"))
+        _set_if_present(values, "kernel_dispatch_worker_count", env_file_values.get("HERMIT_KERNEL_DISPATCH_WORKER_COUNT"))
         _set_if_present(values, "webhook_enabled", env_file_values.get("HERMIT_WEBHOOK_ENABLED"))
         _set_if_present(values, "webhook_host", env_file_values.get("HERMIT_WEBHOOK_HOST"))
         _set_if_present(values, "webhook_port", env_file_values.get("HERMIT_WEBHOOK_PORT"))
@@ -205,6 +212,10 @@ class Settings(BaseSettings):
         _set_if_present(values, "approval_copy_formatter_enabled", env_file_values.get("HERMIT_APPROVAL_COPY_FORMATTER_ENABLED"))
         _set_if_present(values, "approval_copy_model", env_file_values.get("HERMIT_APPROVAL_COPY_MODEL"))
         _set_if_present(values, "approval_copy_formatter_timeout_ms", env_file_values.get("HERMIT_APPROVAL_COPY_FORMATTER_TIMEOUT_MS"))
+        _set_if_present(values, "progress_summary_enabled", env_file_values.get("HERMIT_PROGRESS_SUMMARY_ENABLED"))
+        _set_if_present(values, "progress_summary_model", env_file_values.get("HERMIT_PROGRESS_SUMMARY_MODEL"))
+        _set_if_present(values, "progress_summary_max_tokens", env_file_values.get("HERMIT_PROGRESS_SUMMARY_MAX_TOKENS"))
+        _set_if_present(values, "progress_summary_keepalive_seconds", env_file_values.get("HERMIT_PROGRESS_SUMMARY_KEEPALIVE_SECONDS"))
         _override_if_present(values, "claude_api_key", os.environ.get("HERMIT_CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"))
         _override_if_present(values, "claude_auth_token", os.environ.get("HERMIT_CLAUDE_AUTH_TOKEN") or os.environ.get("HERMIT_AUTH_TOKEN"))
         _override_if_present(values, "claude_base_url", os.environ.get("HERMIT_CLAUDE_BASE_URL") or os.environ.get("HERMIT_BASE_URL"))
@@ -222,6 +233,7 @@ class Settings(BaseSettings):
         _override_if_present(values, "scheduler_enabled", os.environ.get("HERMIT_SCHEDULER_ENABLED"))
         _override_if_present(values, "scheduler_catch_up", os.environ.get("HERMIT_SCHEDULER_CATCH_UP"))
         _override_if_present(values, "scheduler_feishu_chat_id", os.environ.get("HERMIT_SCHEDULER_FEISHU_CHAT_ID"))
+        _override_if_present(values, "kernel_dispatch_worker_count", os.environ.get("HERMIT_KERNEL_DISPATCH_WORKER_COUNT"))
         _override_if_present(values, "webhook_enabled", os.environ.get("HERMIT_WEBHOOK_ENABLED"))
         _override_if_present(values, "webhook_host", os.environ.get("HERMIT_WEBHOOK_HOST"))
         _override_if_present(values, "webhook_port", os.environ.get("HERMIT_WEBHOOK_PORT"))
@@ -229,6 +241,10 @@ class Settings(BaseSettings):
         _override_if_present(values, "approval_copy_formatter_enabled", os.environ.get("HERMIT_APPROVAL_COPY_FORMATTER_ENABLED"))
         _override_if_present(values, "approval_copy_model", os.environ.get("HERMIT_APPROVAL_COPY_MODEL"))
         _override_if_present(values, "approval_copy_formatter_timeout_ms", os.environ.get("HERMIT_APPROVAL_COPY_FORMATTER_TIMEOUT_MS"))
+        _override_if_present(values, "progress_summary_enabled", os.environ.get("HERMIT_PROGRESS_SUMMARY_ENABLED"))
+        _override_if_present(values, "progress_summary_model", os.environ.get("HERMIT_PROGRESS_SUMMARY_MODEL"))
+        _override_if_present(values, "progress_summary_max_tokens", os.environ.get("HERMIT_PROGRESS_SUMMARY_MAX_TOKENS"))
+        _override_if_present(values, "progress_summary_keepalive_seconds", os.environ.get("HERMIT_PROGRESS_SUMMARY_KEEPALIVE_SECONDS"))
         return values
 
     @model_validator(mode="after")
@@ -244,6 +260,14 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     sandbox_mode: str = "l0"
     command_timeout_seconds: int = 30
+    ingress_ack_deadline_seconds: float = 0.0
+    provider_connect_timeout_seconds: float = 0.0
+    provider_read_timeout_seconds: float = 0.0
+    provider_stream_idle_timeout_seconds: float = 0.0
+    tool_soft_deadline_seconds: float = 0.0
+    tool_hard_deadline_seconds: float = 0.0
+    observation_window_seconds: float = 0.0
+    observation_poll_interval_seconds: float = 0.0
     session_idle_timeout_seconds: int = 1800
     base_dir: Path = Field(default_factory=lambda: Path.home() / ".hermit")
 
@@ -258,6 +282,21 @@ class Settings(BaseSettings):
     @property
     def config_profiles(self) -> dict[str, dict[str, object]]:
         return load_profile_catalog(self.base_dir).profiles
+
+    def execution_budget(self) -> ExecutionBudget:
+        legacy = max(float(self.command_timeout_seconds or 0), 1.0)
+        soft = float(self.tool_soft_deadline_seconds or 0) or legacy
+        hard = float(self.tool_hard_deadline_seconds or 0) or max(legacy, 600.0)
+        return ExecutionBudget(
+            ingress_ack_deadline=float(self.ingress_ack_deadline_seconds or 5.0),
+            provider_connect_timeout=float(self.provider_connect_timeout_seconds or legacy),
+            provider_read_timeout=float(self.provider_read_timeout_seconds or 600.0),
+            provider_stream_idle_timeout=float(self.provider_stream_idle_timeout_seconds or 600.0),
+            tool_soft_deadline=soft,
+            tool_hard_deadline=max(hard, soft),
+            observation_window=float(self.observation_window_seconds or 600.0),
+            observation_poll_interval=float(self.observation_poll_interval_seconds or 5.0),
+        )
 
     @property
     def default_profile(self) -> Optional[str]:

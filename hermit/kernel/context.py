@@ -74,6 +74,15 @@ class WorkingStateSnapshot:
         self.plan_status = self.plan_status[:64] or "none"
 
 
+@dataclass
+class CompiledProviderInput:
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    context_pack_ref: str | None = None
+    ingress_artifact_refs: list[str] = field(default_factory=list)
+    session_projection_ref: str | None = None
+    source_mode: str = "compiled"
+
+
 def capture_execution_environment(*, cwd: Path) -> dict[str, Any]:
     return {
         "cwd": str(cwd),

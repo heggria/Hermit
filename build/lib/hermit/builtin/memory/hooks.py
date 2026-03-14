@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
@@ -9,6 +10,11 @@ import structlog
 
 from hermit.builtin.memory.engine import MemoryEngine
 from hermit.builtin.memory.types import MemoryEntry
+from hermit.kernel.artifacts import ArtifactStore
+from hermit.kernel.context import TaskExecutionContext, WorkingStateSnapshot
+from hermit.kernel.context_compiler import ContextCompiler
+from hermit.kernel.planning import PlanningService
+from hermit.kernel.memory_governance import MemoryGovernanceService
 from hermit.plugin.base import HookEvent, PluginContext
 from hermit.provider.services import StructuredExtractionService, build_provider
 from hermit.storage import JsonStore
@@ -20,6 +26,7 @@ _MAX_MSG_CHARS = 800
 _CHECKPOINT_MIN_CHARS = 300
 _CHECKPOINT_MIN_MESSAGES = 6
 _CHECKPOINT_MIN_USER_MESSAGES = 2
+_GOVERNANCE = MemoryGovernanceService()
 
 _EXPLICIT_MEMORY_RE = re.compile(
     r"(记住|牢记|以后都|今后都|统一使用|统一回复|不要再|必须|务必|偏好|约定|规则|规范|"
@@ -76,11 +83,22 @@ def register(ctx: PluginContext) -> None:
         return
 
     engine = MemoryEngine(settings.memory_file)
-    ctx.add_hook(HookEvent.SYSTEM_PROMPT, lambda: _inject_memory(engine), priority=10)
+    ctx.add_hook(
+        HookEvent.SYSTEM_PROMPT,
+        lambda **_: _inject_memory(engine, settings),
+        priority=20,
+    )
     ctx.add_hook(
         HookEvent.PRE_RUN,
-        lambda prompt, **kwargs: _inject_relevant_memory(engine, prompt),
-        priority=15,
+        lambda prompt="", session_id="", runner=None, **kwargs: _inject_relevant_memory(
+            engine,
+            settings,
+            prompt=prompt,
+            session_id=session_id,
+            runner=runner,
+            **kwargs,
+        ),
+        priority=20,
     )
     ctx.add_hook(
         HookEvent.POST_RUN,
@@ -99,24 +117,157 @@ def register(ctx: PluginContext) -> None:
     )
 
 
-def _inject_memory(engine: MemoryEngine) -> str:
-    categories = engine.load()
-    prompt = engine.summary_prompt(categories, limit_per_category=3)
+def _inject_memory(engine: MemoryEngine, settings: Any | None = None) -> str:
+    compiler_result = _compile_context_pack(
+        engine,
+        settings,
+        query="",
+        conversation_id=None,
+        runner=None,
+    )
+    if compiler_result is None:
+        categories = _knowledge_categories(engine, settings)
+        static_categories = _GOVERNANCE.filter_static_categories(categories)
+        prompt = engine.summary_prompt(static_categories, limit_per_category=3)
+        entry_count = sum(min(3, len(entries)) for entries in static_categories.values() if entries)
+        category_count = sum(1 for entries in static_categories.values() if entries)
+    else:
+        prompt = compiler_result["static_prompt"]
+        entry_count = len(compiler_result["pack"].static_memory)
+        category_count = len({item["category"] for item in compiler_result["pack"].static_memory})
     if not prompt:
         log.info("memory_injected", categories=0, entries=0)
         return ""
-    entry_count = sum(min(3, len(entries)) for entries in categories.values() if entries)
-    category_count = sum(1 for entries in categories.values() if entries)
     log.info("memory_injected", categories=category_count, entries=entry_count)
     return f"<memory_context>\n{prompt}\n</memory_context>"
 
 
-def _inject_relevant_memory(engine: MemoryEngine, prompt: str) -> str:
-    relevant = engine.retrieval_prompt(prompt, limit=5, char_budget=900)
+def _inject_relevant_memory(
+    engine: MemoryEngine,
+    settings: Any | str | None,
+    prompt: str | None = None,
+    session_id: str | None = None,
+    runner: Any | None = None,
+    **_: Any,
+) -> str:
+    # Keep backward compatibility with older helper call sites/tests that pass
+    # only `(engine, prompt)`.
+    if prompt is None:
+        prompt = str(settings or "")
+        settings = None
+    compiler_result = _compile_context_pack(
+        engine,
+        settings,
+        query=prompt,
+        conversation_id=session_id,
+        runner=runner,
+    )
+    if compiler_result is None:
+        categories = _knowledge_categories(engine, settings)
+        relevant = engine.retrieval_prompt(prompt, categories=categories, limit=5, char_budget=900)
+    else:
+        relevant = compiler_result["retrieval_prompt"]
     if not relevant:
         return prompt
     return f"<relevant_memory>\n{relevant}\n</relevant_memory>\n\n{prompt}"
 
+
+def _knowledge_categories(engine: MemoryEngine, settings: Any | None) -> Dict[str, List[MemoryEntry]]:
+    if settings is None:
+        return engine.load()
+    kernel_db_path = getattr(settings, "kernel_db_path", None)
+    if not kernel_db_path:
+        return engine.load()
+    from hermit.kernel.knowledge import MemoryRecordService
+    from hermit.kernel.store import KernelStore
+
+    store = KernelStore(Path(kernel_db_path))
+    try:
+        service = MemoryRecordService(store, mirror_path=Path(settings.memory_file))
+        return service.active_categories()
+    finally:
+        store.close()
+
+
+def _compile_context_pack(
+    engine: MemoryEngine,
+    settings: Any | None,
+    *,
+    query: str,
+    conversation_id: str | None,
+    runner: Any | None,
+) -> dict[str, Any] | None:
+    if settings is None:
+        return None
+    kernel_db_path = getattr(settings, "kernel_db_path", None)
+    if not kernel_db_path:
+        return None
+    from hermit.kernel.store import KernelStore
+
+    artifact_store = None
+    kernel_artifacts_dir = getattr(settings, "kernel_artifacts_dir", None)
+    if kernel_artifacts_dir:
+        artifact_store = ArtifactStore(Path(kernel_artifacts_dir))
+    store = KernelStore(Path(kernel_db_path))
+    try:
+        task_id = ""
+        if runner is not None and conversation_id and getattr(runner, "task_controller", None) is not None:
+            active_task = runner.task_controller.active_task_for_conversation(conversation_id)
+            if active_task is not None:
+                task_id = active_task.task_id
+        workspace_root = str(Path(settings.memory_file).parent)
+        ctx = TaskExecutionContext(
+            conversation_id=conversation_id or "memory-system",
+            task_id=task_id,
+            step_id="context_pack",
+            step_attempt_id="context_pack",
+            source_channel="memory",
+            workspace_root=workspace_root,
+        )
+        compiler = ContextCompiler(_GOVERNANCE, artifact_store)
+        planning = PlanningService(store, artifact_store)
+        planning_state = planning.state_for_task(task_id) if task_id else None
+        pack = compiler.compile(
+            context=ctx,
+            working_state=WorkingStateSnapshot(
+                goal_summary=query[:400],
+                planning_mode=bool(planning_state.planning_mode) if planning_state else False,
+                candidate_plan_refs=list(planning_state.candidate_plan_refs) if planning_state else [],
+                selected_plan_ref=str(planning_state.selected_plan_ref or "") if planning_state else "",
+                plan_status=str(planning_state.plan_status or "none") if planning_state else "none",
+            ),
+            beliefs=store.list_beliefs(status="active", limit=200),
+            memories=store.list_memory_records(status="active", conversation_id=conversation_id, limit=500),
+            query=query,
+        )
+        if artifact_store is not None and pack.artifact_uri is not None:
+            artifact = store.create_artifact(
+                task_id=task_id or None,
+                step_id=None,
+                kind="context.pack/v1",
+                uri=pack.artifact_uri,
+                content_hash=str(pack.artifact_hash or pack.pack_hash),
+                producer="memory_hook",
+                retention_class="audit",
+                trust_tier="derived",
+                metadata={"pack_hash": pack.pack_hash, "conversation_id": conversation_id or ""},
+            )
+            if task_id:
+                store.append_event(
+                    event_type="context.pack.compiled",
+                    entity_type="task",
+                    entity_id=task_id,
+                    task_id=task_id,
+                    actor="kernel",
+                    payload={"artifact_ref": artifact.artifact_id, "pack_hash": pack.pack_hash},
+                )
+        return {
+            "pack": pack,
+            "static_prompt": compiler.render_static_prompt(pack),
+            "retrieval_prompt": compiler.render_retrieval_prompt(pack),
+        }
+    finally:
+        store.close()
 
 def _save_memories(
     engine: MemoryEngine,
@@ -131,7 +282,7 @@ def _save_memories(
         log.info("memory_save_skipped", session_id=session_id, reason="no_auth")
         return
     try:
-        _extract_and_save(engine, settings, messages)
+        _extract_and_save(engine, settings, messages, session_id=session_id)
     except Exception:
         log.exception("memory_save_failed", session_id=session_id)
     finally:
@@ -183,7 +334,17 @@ def _checkpoint_memories(
         )
         return
 
-    engine.append_entries(new_entries)
+    if not _promote_memories_via_kernel(
+        engine,
+        settings,
+        session_id=session_id,
+        messages=delta,
+        used_keywords=set(extraction["used_keywords"]),
+        new_entries=new_entries,
+        mode="checkpoint",
+    ):
+        log.info("memory_checkpoint_skipped", session_id=session_id, reason="kernel_promotion_unavailable")
+        return
     _mark_messages_processed(settings.session_state_file, session_id, len(messages))
     log.info(
         "memory_checkpoint_saved",
@@ -195,7 +356,13 @@ def _checkpoint_memories(
     )
 
 
-def _extract_and_save(engine: MemoryEngine, settings: Any, messages: List[Dict[str, Any]]) -> None:
+def _extract_and_save(
+    engine: MemoryEngine,
+    settings: Any,
+    messages: List[Dict[str, Any]],
+    *,
+    session_id: str = "",
+) -> None:
     log.info("memory_extraction_started", mode="session_end", message_count=len(messages))
     extraction = _extract_memory_payload(engine, settings, messages, max_tokens=2048)
     used_keywords = extraction["used_keywords"]
@@ -205,26 +372,371 @@ def _extract_and_save(engine: MemoryEngine, settings: Any, messages: List[Dict[s
         log.info("memory_nothing_to_save")
         return
 
-    session_idx = _bump_session_index(settings.session_state_file)
-    before = engine.load()
-    engine.record_session(
-        new_entries=new_entries,
+    if _promote_memories_via_kernel(
+        engine,
+        settings,
+        session_id=session_id,
+        messages=messages,
         used_keywords=used_keywords,
-        session_index=session_idx,
-        merge_fn=_consolidate_category_entries,
-        merge_threshold=6,
-    )
-    after = engine.load()
-    before_total = sum(len(entries) for entries in before.values())
-    after_total = sum(len(entries) for entries in after.values())
-    if after_total < before_total + len(new_entries):
-        log.info(
-            "memory_consolidated",
-            before=before_total,
-            after=after_total,
-            merged=max(0, before_total + len(new_entries) - after_total),
+        new_entries=new_entries,
+        mode="session_end",
+    ):
+        log.info("memory_promoted", mode="session_end", new=len(new_entries), keywords=len(used_keywords))
+        return
+    log.info("memory_save_skipped", session_id=session_id, reason="kernel_promotion_unavailable")
+
+
+def _promote_memories_via_kernel(
+    engine: MemoryEngine,
+    settings: Any,
+    *,
+    session_id: str,
+    messages: List[Dict[str, Any]],
+    used_keywords: Set[str],
+    new_entries: List[MemoryEntry],
+    mode: str,
+) -> bool:
+    kernel_db_path = getattr(settings, "kernel_db_path", None)
+    kernel_artifacts_dir = getattr(settings, "kernel_artifacts_dir", None)
+    if not kernel_db_path or not kernel_artifacts_dir or not new_entries:
+        return False
+
+    from hermit.kernel.artifacts import ArtifactStore
+    from hermit.kernel.context import capture_execution_environment
+    from hermit.kernel.controller import TaskController
+    from hermit.kernel.decisions import DecisionService
+    from hermit.kernel.knowledge import BeliefService, MemoryRecordService
+    from hermit.kernel.permits import CapabilityGrantError, ExecutionPermitService
+    from hermit.kernel.policy import ActionRequest, PolicyEngine
+    from hermit.kernel.receipts import ReceiptService
+    from hermit.kernel.store import KernelStore
+
+    store = KernelStore(Path(kernel_db_path))
+    try:
+        artifact_store = ArtifactStore(Path(kernel_artifacts_dir))
+        controller = TaskController(store)
+        ctx = controller.start_task(
+            conversation_id=session_id or f"memory-{mode}",
+            goal=f"Promote durable memory ({mode})",
+            source_channel=controller.source_from_session(session_id or "memory"),
+            kind="memory_promotion",
+            policy_profile="memory",
+            workspace_root=str(Path(settings.memory_file).parent),
         )
-    log.info("memories_saved", new=len(new_entries), keywords=len(used_keywords))
+        policy_engine = PolicyEngine()
+        decision_service = DecisionService(store)
+        belief_service = BeliefService(store)
+        memory_service = MemoryRecordService(store, mirror_path=Path(settings.memory_file))
+        permit_service = ExecutionPermitService(store)
+        receipt_service = ReceiptService(store, artifact_store)
+        request_id = f"memreq_{uuid.uuid4().hex[:12]}"
+
+        transcript = _format_transcript(messages)
+        transcript_ref = _store_memory_artifact(
+            store,
+            artifact_store,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            kind="memory_evidence.transcript",
+            payload={"mode": mode, "transcript": transcript},
+            metadata={"mode": mode},
+            event_type="memory.evidence.captured",
+            entity_id=ctx.step_attempt_id,
+            task_context=ctx,
+        )
+        extraction_ref = _store_memory_artifact(
+            store,
+            artifact_store,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            kind="memory_evidence.extraction",
+            payload={
+                "mode": mode,
+                "used_keywords": sorted(used_keywords),
+                "new_entries": [_memory_entry_payload(entry) for entry in new_entries],
+            },
+            metadata={"mode": mode, "entry_count": len(new_entries)},
+            event_type="memory.extraction.recorded",
+            entity_id=ctx.step_attempt_id,
+            task_context=ctx,
+        )
+        action_request = ActionRequest(
+            request_id=request_id,
+            idempotency_key=request_id,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            step_attempt_id=ctx.step_attempt_id,
+            conversation_id=ctx.conversation_id,
+            tool_name="memory_promotion",
+            tool_input={
+                "mode": mode,
+                "entry_count": len(new_entries),
+                "entries": [_memory_entry_payload(entry) for entry in new_entries],
+            },
+            action_class="memory_write",
+            resource_scopes=["memory_store"],
+            risk_hint="medium",
+            requires_receipt=True,
+            actor={"kind": "kernel", "agent_id": "memory"},
+            context={
+                "policy_profile": "memory",
+                "source_ingress": "memory_hook",
+                "workspace_root": str(Path(settings.memory_file).parent),
+                "evidence_refs": [transcript_ref, extraction_ref],
+                "mode": mode,
+            },
+            derived={"categories": sorted({entry.category for entry in new_entries})},
+        )
+        action_ref = _store_memory_artifact(
+            store,
+            artifact_store,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            kind="action_request",
+            payload=action_request.to_dict(),
+            metadata={"mode": mode, "tool_name": action_request.tool_name},
+            event_type="action.requested",
+            entity_id=ctx.step_attempt_id,
+            task_context=ctx,
+        )
+        policy = policy_engine.evaluate(action_request)
+        policy_ref = _store_memory_artifact(
+            store,
+            artifact_store,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            kind="policy_evaluation",
+            payload={
+                "tool_name": action_request.tool_name,
+                "action_class": action_request.action_class,
+                "risk_band": policy.risk_level,
+                "verdict": policy.verdict,
+                "reason": policy.reason,
+                "reasons": [reason.to_dict() for reason in policy.reasons],
+                "obligations": policy.obligations.to_dict(),
+                "policy_profile": "memory",
+            },
+            metadata={"mode": mode, "tool_name": action_request.tool_name},
+            event_type="policy.evaluated",
+            entity_id=ctx.step_attempt_id,
+            task_context=ctx,
+        )
+        if policy.verdict == "deny" or policy.obligations.require_approval:
+            controller.finalize_result(ctx, status="failed")
+            return False
+
+        decision_id = decision_service.record(
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            step_attempt_id=ctx.step_attempt_id,
+            decision_type="memory_promotion",
+            verdict=policy.verdict,
+            reason=policy.reason or "Evidence-bound durable memory promotion allowed.",
+            evidence_refs=[transcript_ref, extraction_ref, action_ref, policy_ref],
+            policy_ref=policy_ref,
+            action_type="memory_write",
+            decided_by="memory_hook",
+        )
+        permit_id = permit_service.issue(
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            step_attempt_id=ctx.step_attempt_id,
+            decision_ref=decision_id,
+            approval_ref=None,
+            policy_ref=policy_ref,
+            action_class="memory_write",
+            resource_scope=["memory_store"],
+            idempotency_key=request_id,
+            constraints={
+                "mode": mode,
+                "entry_count": len(new_entries),
+                "categories": sorted({entry.category for entry in new_entries}),
+            },
+        )
+        store.update_step_attempt(
+            ctx.step_attempt_id,
+            status="dispatching",
+            decision_id=decision_id,
+            permit_id=permit_id,
+        )
+        store.update_step(ctx.step_id, status="dispatching")
+        try:
+            permit_service.enforce(
+                permit_id,
+                action_class="memory_write",
+                resource_scope=["memory_store"],
+                constraints={
+                    "mode": mode,
+                    "entry_count": len(new_entries),
+                    "categories": sorted({entry.category for entry in new_entries}),
+                },
+            )
+        except CapabilityGrantError as exc:
+            store.append_event(
+                event_type="dispatch.denied",
+                entity_type="execution_permit",
+                entity_id=permit_id,
+                task_id=ctx.task_id,
+                step_id=ctx.step_id,
+                actor="kernel",
+                payload={
+                    "permit_ref": permit_id,
+                    "decision_ref": decision_id,
+                    "error_code": exc.code,
+                    "error": str(exc),
+                    "tool_name": action_request.tool_name,
+                },
+            )
+            store.update_step_attempt(
+                ctx.step_attempt_id,
+                status="failed",
+                waiting_reason=str(exc),
+                decision_id=decision_id,
+                permit_id=permit_id,
+            )
+            store.update_step(ctx.step_id, status="failed")
+            controller.finalize_result(ctx, status="failed")
+            return False
+
+        promoted_beliefs = []
+        promoted_memories = []
+        for entry in new_entries:
+            belief = belief_service.record(
+                task_id=ctx.task_id,
+                conversation_id=ctx.conversation_id,
+                scope_kind="conversation",
+                scope_ref=ctx.conversation_id,
+                category=entry.category,
+                content=entry.content,
+                confidence=entry.confidence,
+                evidence_refs=[transcript_ref, extraction_ref, action_ref],
+                supersedes=list(entry.supersedes),
+            )
+            memory = memory_service.promote_from_belief(
+                belief=belief,
+                conversation_id=ctx.conversation_id,
+                workspace_root=str(Path(settings.memory_file).parent),
+            )
+            promoted_beliefs.append(belief.belief_id)
+            promoted_memories.append(memory.memory_id)
+        memory_service.render_mirror(Path(settings.memory_file))
+
+        rollback_ref = _store_memory_artifact(
+            store,
+            artifact_store,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            kind="rollback.memory_targets",
+            payload={"belief_ids": promoted_beliefs, "memory_ids": promoted_memories},
+            metadata={"mode": mode, "entry_count": len(promoted_memories)},
+            event_type="memory.rollback_captured",
+            entity_id=ctx.step_attempt_id,
+            task_context=ctx,
+        )
+
+        output_ref = _store_memory_artifact(
+            store,
+            artifact_store,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            kind="memory_promotion_result",
+            payload={
+                "mode": mode,
+                "used_keywords": sorted(used_keywords),
+                "new_entries": [_memory_entry_payload(entry) for entry in new_entries],
+            },
+            metadata={"mode": mode, "entry_count": len(new_entries)},
+            event_type="memory.promoted",
+            entity_id=ctx.step_attempt_id,
+            task_context=ctx,
+        )
+        env_ref = _store_memory_artifact(
+            store,
+            artifact_store,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            kind="environment",
+            payload=capture_execution_environment(cwd=Path(settings.memory_file).parent),
+            metadata={"mode": mode},
+            entity_type="step_attempt",
+            event_type=None,
+            entity_id=ctx.step_attempt_id,
+            task_context=ctx,
+        )
+        receipt_service.issue(
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            step_attempt_id=ctx.step_attempt_id,
+            action_type="memory_write",
+            input_refs=[transcript_ref, extraction_ref],
+            environment_ref=env_ref,
+            policy_result=policy.to_dict(),
+            approval_ref=None,
+            output_refs=[output_ref],
+            result_summary=f"Promoted {len(new_entries)} durable memory entries via {mode}.",
+            result_code="succeeded",
+            decision_ref=decision_id,
+            permit_ref=permit_id,
+            policy_ref=policy_ref,
+            idempotency_key=request_id,
+            rollback_supported=True,
+            rollback_strategy="supersede_or_invalidate",
+            rollback_artifact_refs=[rollback_ref],
+        )
+        permit_service.consume(permit_id)
+        controller.finalize_result(ctx, status="succeeded")
+        return True
+    finally:
+        store.close()
+
+
+def _store_memory_artifact(
+    store: Any,
+    artifact_store: Any,
+    *,
+    task_id: str,
+    step_id: str,
+    kind: str,
+    payload: Any,
+    metadata: Dict[str, Any],
+    task_context: Any,
+    event_type: str | None,
+    entity_id: str,
+    entity_type: str = "step_attempt",
+) -> str:
+    uri, content_hash = artifact_store.store_json(payload)
+    artifact = store.create_artifact(
+        task_id=task_id,
+        step_id=step_id,
+        kind=kind,
+        uri=uri,
+        content_hash=content_hash,
+        producer="memory_hook",
+        retention_class="audit",
+        trust_tier="observed",
+        metadata=metadata,
+    )
+    if event_type:
+        store.append_event(
+            event_type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            task_id=task_context.task_id,
+            step_id=task_context.step_id,
+            actor="kernel",
+            payload={"artifact_ref": artifact.artifact_id, **metadata},
+        )
+    return artifact.artifact_id
+
+
+def _memory_entry_payload(entry: MemoryEntry) -> Dict[str, Any]:
+    return {
+        "category": entry.category,
+        "content": entry.content,
+        "score": entry.score,
+        "locked": entry.locked,
+        "confidence": entry.confidence,
+    }
 
 
 def _extract_memory_payload(
@@ -239,7 +751,7 @@ def _extract_memory_payload(
         log.info("memory_extraction_empty", reason="short_transcript", transcript_chars=len(transcript))
         return {"used_keywords": set(), "new_entries": []}
 
-    existing = engine.load()
+    existing = _knowledge_categories(engine, settings)
     existing_text = engine.summary_prompt(existing)
     user_content = (
         f"<existing_memories>\n{existing_text}\n</existing_memories>\n\n"

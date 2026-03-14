@@ -83,11 +83,22 @@ def register(ctx: PluginContext) -> None:
         return
 
     engine = MemoryEngine(settings.memory_file)
-    ctx.add_hook(HookEvent.SYSTEM_PROMPT, lambda: _inject_memory(engine, settings), priority=10)
+    ctx.add_hook(
+        HookEvent.SYSTEM_PROMPT,
+        lambda **_: _inject_memory(engine, settings),
+        priority=20,
+    )
     ctx.add_hook(
         HookEvent.PRE_RUN,
-        lambda prompt, **kwargs: _inject_relevant_memory(engine, settings, prompt, **kwargs),
-        priority=15,
+        lambda prompt="", session_id="", runner=None, **kwargs: _inject_relevant_memory(
+            engine,
+            settings,
+            prompt=prompt,
+            session_id=session_id,
+            runner=runner,
+            **kwargs,
+        ),
+        priority=20,
     )
     ctx.add_hook(
         HookEvent.POST_RUN,

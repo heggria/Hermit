@@ -128,6 +128,7 @@ class PluginManager:
                 idempotent=True,
                 risk_hint="low",
                 requires_receipt=False,
+                result_is_internal_context=True,
             ), locale=locale))
 
         self.hooks.fire(HookEvent.REGISTER_TOOLS, registry=registry)

@@ -8,6 +8,9 @@ import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 
+from hermit.core.budgets import get_runtime_budget
+from hermit.i18n import resolve_locale, tr
+
 # DDG date-filter codes
 _TIME_FILTER_MAP = {
     "day": "d",
@@ -17,10 +20,14 @@ _TIME_FILTER_MAP = {
 }
 
 
+def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
+
+
 def handle_search(payload: dict[str, Any]) -> str:
     query = str(payload.get("query", "")).strip()
     if not query:
-        return "Error: empty query"
+        return _t("tools.web.search.error.empty_query")
 
     max_results = min(int(payload.get("max_results", 8)), 20)
     region = str(payload.get("region", "wt-wt"))
@@ -46,10 +53,10 @@ def handle_search(payload: dict[str, Any]) -> str:
         if results:
             parts.append(results)
     except Exception as exc:
-        parts.append(f"Search error: {exc}")
+        parts.append(_t("tools.web.search.error.search", error=exc))
 
     if not parts:
-        return f"No results found for: {query}"
+        return _t("tools.web.search.no_results", query=query)
 
     return "\n\n".join(parts)
 
@@ -75,7 +82,7 @@ def _ddg_lite_search(
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     })
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
         html = resp.read().decode("utf-8")
 
     parser = _DDGLiteParser()
@@ -85,7 +92,7 @@ def _ddg_lite_search(
     if not results:
         return ""
 
-    lines = ["## Search Results"]
+    lines = [_t("tools.web.search.results.title")]
     for i, r in enumerate(results, 1):
         title = r.get("title", "(no title)")
         snippet = r.get("snippet", "")
@@ -150,7 +157,7 @@ def _ddg_instant_answer(query: str) -> str:
         })
         url = f"https://api.duckduckgo.com/?{params}"
         req = urllib.request.Request(url, headers={"User-Agent": "Hermit/0.1"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return ""
@@ -160,15 +167,15 @@ def _ddg_instant_answer(query: str) -> str:
     if data.get("AbstractText"):
         source = data.get("AbstractSource", "")
         source_url = data.get("AbstractURL", "")
-        parts.append(f"## Summary ({source})")
+        parts.append(_t("tools.web.search.instant.summary", source=source))
         parts.append(data["AbstractText"])
         if source_url:
-            parts.append(f"Source: {source_url}")
+            parts.append(_t("tools.web.search.instant.source", url=source_url))
 
     if data.get("Answer"):
-        parts.append(f"## Answer\n{data['Answer']}")
+        parts.append(_t("tools.web.search.instant.answer", answer=data["Answer"]))
 
     if data.get("Definition"):
-        parts.append(f"## Definition\n{data['Definition']}")
+        parts.append(_t("tools.web.search.instant.definition", definition=data["Definition"]))
 
     return "\n\n".join(parts) if parts else ""

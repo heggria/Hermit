@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from hermit.core.tools import ToolRegistry, serialize_tool_result
+from hermit.i18n import resolve_locale, tr
 from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.executor import ToolExecutionResult, ToolExecutor
 from hermit.provider.contracts import Provider, ProviderRequest, UsageMetrics
@@ -60,7 +61,6 @@ def format_tool_result_content(value: Any, limit: int) -> Any:
         return _tool_result_json_text(serialized, limit)
     return serialized
 
-
 @dataclass
 class AgentResult:
     text: str
@@ -69,7 +69,10 @@ class AgentResult:
     thinking: str = ""
     messages: List[Dict[str, Any]] = None  # type: ignore[assignment]
     blocked: bool = False
+    suspended: bool = False
+    waiting_kind: str | None = None
     approval_id: str | None = None
+    observation: dict[str, Any] | None = None
     step_attempt_id: str | None = None
     task_id: str | None = None
     step_id: str | None = None
@@ -77,6 +80,8 @@ class AgentResult:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    execution_status: str = "succeeded"
+    status_managed_by_kernel: bool = False
 
 
 class AgentRuntime:
@@ -91,6 +96,7 @@ class AgentRuntime:
         thinking_budget: int = 0,
         system_prompt: Optional[str] = None,
         tool_executor: ToolExecutor | None = None,
+        locale: str | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -101,6 +107,7 @@ class AgentRuntime:
         self.thinking_budget = thinking_budget
         self.system_prompt = system_prompt
         self.tool_executor = tool_executor
+        self.locale = resolve_locale(locale)
 
     def clone(
         self,
@@ -123,7 +130,11 @@ class AgentRuntime:
             thinking_budget=self.thinking_budget,
             system_prompt=self.system_prompt if system_prompt is None else system_prompt,
             tool_executor=self.tool_executor,
+            locale=self.locale,
         )
+
+    def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+        return tr(message_key, locale=self.locale, default=default, **kwargs)
 
     def _usage_to_result(self, usage: UsageMetrics, **kwargs: Any) -> AgentResult:
         return AgentResult(
@@ -133,6 +144,23 @@ class AgentRuntime:
             cache_creation_tokens=usage.cache_creation_tokens,
             **kwargs,
         )
+
+    def _tool_result_block(self, *, tool_name: str, tool_use_id: str, content: Any, is_error: bool = False) -> Dict[str, Any]:
+        block: Dict[str, Any] = {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": content,
+        }
+        if is_error:
+            block["is_error"] = True
+        try:
+            tool = self.registry.get(tool_name)
+        except KeyError:
+            tool = None
+        if tool is not None and tool.result_is_internal_context:
+            block["internal_context"] = True
+            block["tool_name"] = tool_name
+        return block
 
     def _request(
         self,
@@ -160,14 +188,18 @@ class AgentRuntime:
         self,
         prompt: str,
         message_history: Optional[List[Dict[str, Any]]] = None,
+        compiled_messages: Optional[List[Dict[str, Any]]] = None,
         on_tool_call: Optional[ToolCallback] = None,
         on_tool_start: Optional[ToolStartCallback] = None,
         disable_tools: bool = False,
         readonly_only: bool = False,
         task_context: TaskExecutionContext | None = None,
     ) -> AgentResult:
-        messages: List[Dict[str, Any]] = normalize_messages(message_history or [])
-        messages.append({"role": "user", "content": prompt})
+        if compiled_messages is not None:
+            messages = normalize_messages(compiled_messages)
+        else:
+            messages = normalize_messages(message_history or [])
+            messages.append({"role": "user", "content": prompt})
         return self._run_from_messages(
             messages,
             start_turn=1,
@@ -187,35 +219,70 @@ class AgentRuntime:
         on_tool_start: Optional[ToolStartCallback] = None,
     ) -> AgentResult:
         if self.tool_executor is None:
-            raise RuntimeError("Task resume requires a configured ToolExecutor")
-        snapshot = self.tool_executor.load_blocked_state(step_attempt_id)
+            raise RuntimeError(
+                self._t(
+                    "kernel.runtime.error.resume_requires_tool_executor",
+                    default="Task resume requires a configured ToolExecutor",
+                )
+            )
+        loader = getattr(self.tool_executor, "load_suspended_state", None) or getattr(self.tool_executor, "load_blocked_state")
+        snapshot = loader(step_attempt_id)
         messages = normalize_messages(list(snapshot.get("messages", [])))
         pending_tool_blocks = list(snapshot.get("pending_tool_blocks", []))
         tool_result_blocks = list(snapshot.get("tool_result_blocks", []))
         next_turn = int(snapshot.get("next_turn", 1))
         disable_tools = bool(snapshot.get("disable_tools", False))
         readonly_only = bool(snapshot.get("readonly_only", False))
+        suspend_kind = str(snapshot.get("suspend_kind", "awaiting_approval") or "awaiting_approval")
+        observation = dict(snapshot.get("observation", {}) or {})
         tool_calls = 0
         usage = UsageMetrics()
 
-        executed = self._execute_tool_turn(
-            messages=messages,
-            tool_use_blocks=pending_tool_blocks,
-            tool_result_blocks=tool_result_blocks,
-            turn=next_turn - 1,
-            on_tool_call=on_tool_call,
-            on_tool_start=on_tool_start,
-            disable_tools=disable_tools,
-            readonly_only=readonly_only,
-            task_context=task_context,
-            usage=usage,
-            tool_calls=tool_calls,
-        )
-        if isinstance(executed, AgentResult):
-            return executed
-        tool_result_blocks, tool_calls = executed
+        if suspend_kind == "observing" and observation.get("terminal_status"):
+            tool_result_blocks, tool_calls = self._resume_observation_turn(
+                pending_tool_blocks=pending_tool_blocks,
+                tool_result_blocks=tool_result_blocks,
+                observation=observation,
+                on_tool_call=on_tool_call,
+            )
+            remaining_tool_blocks = pending_tool_blocks[1:]
+            if remaining_tool_blocks:
+                executed = self._execute_tool_turn(
+                    messages=messages,
+                    tool_use_blocks=remaining_tool_blocks,
+                    tool_result_blocks=tool_result_blocks,
+                    turn=next_turn - 1,
+                    on_tool_call=on_tool_call,
+                    on_tool_start=on_tool_start,
+                    disable_tools=disable_tools,
+                    readonly_only=readonly_only,
+                    task_context=task_context,
+                    usage=usage,
+                    tool_calls=tool_calls,
+                )
+                if isinstance(executed, AgentResult):
+                    return executed
+                tool_result_blocks, tool_calls = executed
+        else:
+            executed = self._execute_tool_turn(
+                messages=messages,
+                tool_use_blocks=pending_tool_blocks,
+                tool_result_blocks=tool_result_blocks,
+                turn=next_turn - 1,
+                on_tool_call=on_tool_call,
+                on_tool_start=on_tool_start,
+                disable_tools=disable_tools,
+                readonly_only=readonly_only,
+                task_context=task_context,
+                usage=usage,
+                tool_calls=tool_calls,
+            )
+            if isinstance(executed, AgentResult):
+                return executed
+            tool_result_blocks, tool_calls = executed
         messages.append({"role": "user", "content": tool_result_blocks})
-        self.tool_executor.clear_blocked_state(step_attempt_id)
+        clearer = getattr(self.tool_executor, "clear_suspended_state", None) or getattr(self.tool_executor, "clear_blocked_state")
+        clearer(step_attempt_id)
         return self._run_from_messages(
             messages,
             start_turn=next_turn,
@@ -244,6 +311,7 @@ class AgentRuntime:
         usage = usage or UsageMetrics()
 
         for turn in range(start_turn, self.max_turns + 1):
+            messages = self._apply_appended_notes(messages, task_context)
             try:
                 response = self.provider.generate(
                     self._request(
@@ -264,6 +332,7 @@ class AgentRuntime:
                     task_id=task_context.task_id if task_context else None,
                     step_id=task_context.step_id if task_context else None,
                     step_attempt_id=task_context.step_attempt_id if task_context else None,
+                    execution_status="failed",
                 )
 
             usage.input_tokens += response.usage.input_tokens
@@ -281,6 +350,7 @@ class AgentRuntime:
                     task_id=task_context.task_id if task_context else None,
                     step_id=task_context.step_id if task_context else None,
                     step_attempt_id=task_context.step_attempt_id if task_context else None,
+                    execution_status="failed",
                 )
 
             response_blocks = [normalize_block(block) for block in response.content]
@@ -297,11 +367,17 @@ class AgentRuntime:
                     task_id=task_context.task_id if task_context else None,
                     step_id=task_context.step_id if task_context else None,
                     step_attempt_id=task_context.step_attempt_id if task_context else None,
+                    execution_status="succeeded",
                 )
 
             tool_use_blocks = [block for block in response_blocks if block_value(block, "type") == "tool_use"]
             if not tool_use_blocks:
-                raise RuntimeError("Provider requested tool_use without tool blocks.")
+                raise RuntimeError(
+                    self._t(
+                        "kernel.runtime.error.tool_use_without_blocks",
+                        default="Provider requested tool_use without tool blocks.",
+                    )
+                )
 
             executed = self._execute_tool_turn(
                 messages=messages,
@@ -355,6 +431,7 @@ class AgentRuntime:
                 task_id=task_context.task_id if task_context else None,
                 step_id=task_context.step_id if task_context else None,
                 step_attempt_id=task_context.step_attempt_id if task_context else None,
+                execution_status="succeeded",
             )
         except Exception as exc:
             log.error("final_summary_failed", error=str(exc))
@@ -367,6 +444,7 @@ class AgentRuntime:
                 task_id=task_context.task_id if task_context else None,
                 step_id=task_context.step_id if task_context else None,
                 step_attempt_id=task_context.step_attempt_id if task_context else None,
+                execution_status="failed",
             )
 
     def _execute_tool_turn(
@@ -403,8 +481,15 @@ class AgentRuntime:
                 serialized = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
                 exec_result = ToolExecutionResult(model_content=serialized, raw_result=serialized)
 
-            if exec_result.blocked and self.tool_executor is not None and task_context is not None:
-                self.tool_executor.persist_blocked_state(
+            if (exec_result.suspended or exec_result.blocked) and self.tool_executor is not None and task_context is not None:
+                note_cursor = (
+                    self.tool_executor.current_note_cursor(task_context.step_attempt_id)
+                    if hasattr(self.tool_executor, "current_note_cursor")
+                    else 0
+                )
+                supports_suspend_persist = hasattr(self.tool_executor, "persist_suspended_state")
+                persister = getattr(self.tool_executor, "persist_suspended_state", None) or getattr(self.tool_executor, "persist_blocked_state")
+                persister(
                     task_context,
                     pending_tool_blocks=tool_use_blocks[index:],
                     tool_result_blocks=tool_result_blocks,
@@ -412,6 +497,15 @@ class AgentRuntime:
                     next_turn=turn + 1,
                     disable_tools=disable_tools,
                     readonly_only=readonly_only,
+                    **(
+                        {
+                            "suspend_kind": exec_result.waiting_kind or "awaiting_approval",
+                            "note_cursor_event_seq": note_cursor,
+                            "observation": exec_result.observation,
+                        }
+                        if supports_suspend_persist
+                        else {}
+                    ),
                 )
                 blocked_message = exec_result.approval_message or str(exec_result.model_content)
                 blocked_messages = list(messages)
@@ -425,10 +519,15 @@ class AgentRuntime:
                     tool_calls=tool_calls,
                     messages=blocked_messages,
                     blocked=True,
+                    suspended=True,
+                    waiting_kind=exec_result.waiting_kind,
                     approval_id=exec_result.approval_id,
+                    observation=exec_result.observation.to_dict() if exec_result.observation is not None else None,
                     task_id=task_context.task_id,
                     step_id=task_context.step_id,
                     step_attempt_id=task_context.step_attempt_id,
+                    execution_status=exec_result.execution_status,
+                    status_managed_by_kernel=exec_result.state_applied,
                 )
 
             if exec_result.denied and task_context is not None:
@@ -446,16 +545,18 @@ class AgentRuntime:
                     task_id=task_context.task_id,
                     step_id=task_context.step_id,
                     step_attempt_id=task_context.step_attempt_id,
+                    execution_status=exec_result.execution_status,
+                    status_managed_by_kernel=exec_result.state_applied,
                 )
 
             if on_tool_call:
                 on_tool_call(tool_name, tool_input, serialized)
             tool_result_blocks.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": block_value(block, "id"),
-                    "content": serialized,
-                }
+                self._tool_result_block(
+                    tool_name=tool_name,
+                    tool_use_id=str(block_value(block, "id")),
+                    content=serialized,
+                )
             )
             tool_calls += 1
         return tool_result_blocks, tool_calls
@@ -467,13 +568,62 @@ class AgentRuntime:
         tool_name: str,
         tool_input: dict[str, Any],
     ) -> ToolExecutionResult:
-        if self.tool_executor is None or task_context is None:
-            raw_result = self.registry.call(tool_name, tool_input)
-            return ToolExecutionResult(
-                model_content=format_tool_result_content(raw_result, self.tool_output_limit),
-                raw_result=raw_result,
+        if self.tool_executor is None:
+            raise RuntimeError(
+                self._t(
+                    "kernel.runtime.error.tool_execution_requires_executor",
+                    default="Task-scoped kernel executor is required for tool execution.",
+                )
+            )
+        if task_context is None:
+            raise RuntimeError(
+                self._t(
+                    "kernel.runtime.error.tool_execution_missing_context",
+                    default="Tool '{tool_name}' requires task-scoped governed execution; task context is missing.",
+                    tool_name=tool_name,
+                )
             )
         return self.tool_executor.execute(task_context, tool_name, tool_input)
+
+    def _apply_appended_notes(
+        self,
+        messages: List[Dict[str, Any]],
+        task_context: TaskExecutionContext | None,
+    ) -> List[Dict[str, Any]]:
+        if self.tool_executor is None or task_context is None or not hasattr(self.tool_executor, "consume_appended_notes"):
+            return messages
+        appended, _cursor = self.tool_executor.consume_appended_notes(task_context)
+        if not appended:
+            return messages
+        return normalize_messages(list(messages) + appended)
+
+    def _resume_observation_turn(
+        self,
+        *,
+        pending_tool_blocks: List[Dict[str, Any]],
+        tool_result_blocks: List[Dict[str, Any]],
+        observation: dict[str, Any],
+        on_tool_call: Optional[ToolCallback],
+    ) -> tuple[List[Dict[str, Any]], int]:
+        if not pending_tool_blocks:
+            return tool_result_blocks, 0
+        current = pending_tool_blocks[0]
+        content = observation.get("final_model_content")
+        if on_tool_call:
+            on_tool_call(
+                str(block_value(current, "name")),
+                dict(block_value(current, "input", {}) or {}),
+                content,
+            )
+        tool_result_blocks.append(
+            self._tool_result_block(
+                tool_name=str(block_value(current, "name")),
+                tool_use_id=str(block_value(current, "id")),
+                content=content,
+                is_error=bool(observation.get("final_is_error", False)),
+            )
+        )
+        return tool_result_blocks, 1
 
     def run_stream(
         self,
@@ -523,6 +673,7 @@ class AgentRuntime:
                     turns=turn,
                     tool_calls=tool_calls,
                     messages=messages,
+                    execution_status="failed",
                 )
 
             messages.append({"role": "assistant", "content": response_blocks})
@@ -534,29 +685,51 @@ class AgentRuntime:
                     tool_calls=tool_calls,
                     thinking=extract_thinking(response_blocks),
                     messages=messages,
+                    execution_status="succeeded",
                 )
 
             tool_use_blocks = [block for block in response_blocks if block_value(block, "type") == "tool_use"]
             if not tool_use_blocks:
-                raise RuntimeError("Provider requested tool_use without tool blocks.")
+                raise RuntimeError(
+                    self._t(
+                        "kernel.runtime.error.tool_use_without_blocks",
+                        default="Provider requested tool_use without tool blocks.",
+                    )
+                )
 
             tool_result_blocks: List[Dict[str, Any]] = []
             for block in tool_use_blocks:
                 tool_name = str(block_value(block, "name"))
                 tool_input = dict(block_value(block, "input", {}) or {})
                 try:
-                    raw_result = self.registry.call(tool_name, tool_input)
-                    serialized = format_tool_result_content(raw_result, self.tool_output_limit)
-                except KeyError:
-                    serialized = f"Error: Unknown tool '{tool_name}'. Available: {list(self.registry._tools.keys())}"
+                    if self.tool_executor is None:
+                        raise RuntimeError(
+                            self._t(
+                                "kernel.runtime.error.streaming_tool_execution_requires_executor",
+                                default="Task-scoped kernel executor is required for streaming tool execution.",
+                            )
+                        )
+                    raise RuntimeError(
+                        self._t(
+                            "kernel.runtime.error.tool_execution_missing_context",
+                            default="Tool '{tool_name}' requires task-scoped governed execution; task context is missing.",
+                            tool_name=tool_name,
+                        )
+                    )
                 except Exception as exc:
-                    serialized = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
+                    serialized = self._t(
+                        "kernel.runtime.error.serialized_tool_execution",
+                        default="Error executing {tool_name}: {error_type}: {error}",
+                        tool_name=tool_name,
+                        error_type=type(exc).__name__,
+                        error=exc,
+                    )
                 tool_result_blocks.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block_value(block, "id"),
-                        "content": serialized,
-                    }
+                    self._tool_result_block(
+                        tool_name=tool_name,
+                        tool_use_id=str(block_value(block, "id")),
+                        content=serialized,
+                    )
                 )
                 tool_calls += 1
             messages.append({"role": "user", "content": tool_result_blocks})
@@ -590,6 +763,7 @@ class AgentRuntime:
                 turns=self.max_turns + 1,
                 tool_calls=tool_calls,
                 messages=messages,
+                execution_status="succeeded",
             )
         except Exception as exc:
             log.error("final_summary_failed_stream", error=str(exc))
@@ -599,4 +773,5 @@ class AgentRuntime:
                 turns=self.max_turns + 1,
                 tool_calls=tool_calls,
                 messages=messages,
+                execution_status="failed",
             )

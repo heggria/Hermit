@@ -104,6 +104,7 @@ def test_task_controller_ingress_decision_and_missing_errors(tmp_path) -> None:
         prompt="请开始",
     )
     assert start.mode == "start"
+    assert start.intent == "start_new_task"
 
     ctx = controller.start_task(
         conversation_id="oc_2",
@@ -119,6 +120,7 @@ def test_task_controller_ingress_decision_and_missing_errors(tmp_path) -> None:
         requested_by="user-2",
     )
     assert decision.mode == "append_note"
+    assert decision.intent == "continue_task"
     assert decision.task_id == ctx.task_id
     assert decision.note_event_seq is not None and decision.note_event_seq > 0
 
@@ -135,6 +137,64 @@ def test_task_controller_ingress_decision_and_missing_errors(tmp_path) -> None:
         controller.cancel_task("task-missing")
     with pytest.raises(KeyError):
         controller.reprioritize_task("task-missing", priority="low")
+
+
+def test_task_controller_ingress_routes_chat_only_new_topic_and_followup(tmp_path) -> None:
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    controller = TaskController(store)
+
+    active = controller.start_task(
+        conversation_id="oc_9",
+        goal="制作 GPT-5.4 / Grok 3 对比文档",
+        source_channel="feishu",
+        kind="respond",
+    )
+    controller.append_note(
+        task_id=active.task_id,
+        source_channel="feishu",
+        raw_text="加上和 Claude 4.6 的对比",
+        prompt="加上和 Claude 4.6 的对比",
+    )
+
+    chat_only = controller.decide_ingress(
+        conversation_id="oc_9",
+        source_channel="feishu",
+        raw_text="你好",
+        prompt="你好",
+    )
+    assert chat_only.mode == "start"
+    assert chat_only.intent == "chat_only"
+    assert chat_only.parent_task_id is None
+
+    new_topic = controller.decide_ingress(
+        conversation_id="oc_9",
+        source_channel="feishu",
+        raw_text="你是什么模型",
+        prompt="你是什么模型",
+    )
+    assert new_topic.mode == "start"
+    assert new_topic.intent == "start_new_task"
+    assert new_topic.parent_task_id is None
+
+    explicit_new = controller.decide_ingress(
+        conversation_id="oc_9",
+        source_channel="feishu",
+        raw_text="新任务：整理桌面文件",
+        prompt="新任务：整理桌面文件",
+    )
+    assert explicit_new.mode == "start"
+    assert explicit_new.intent == "start_new_task"
+    assert explicit_new.reason == "explicit_new_task_marker"
+
+    followup = controller.decide_ingress(
+        conversation_id="oc_9",
+        source_channel="feishu",
+        raw_text="加上和 Grok 的对比",
+        prompt="加上和 Grok 的对比",
+    )
+    assert followup.mode == "append_note"
+    assert followup.intent == "continue_task"
+    assert followup.task_id == active.task_id
 
 
 def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypatch) -> None:

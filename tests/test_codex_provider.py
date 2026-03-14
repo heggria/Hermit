@@ -60,6 +60,40 @@ def test_responses_input_maps_tool_history_and_images() -> None:
     }
 
 
+def test_codex_payload_moves_internal_tool_context_into_instructions(tmp_path: Path) -> None:
+    provider = CodexProvider(api_key="test-key", model="gpt-5.4", cwd=tmp_path, system_prompt="base system")
+
+    payload = provider._payload(
+        ProviderRequest(
+            model="gpt-5.4",
+            max_tokens=256,
+            messages=[
+                {"role": "assistant", "content": [{"type": "tool_use", "id": "call_skill", "name": "read_skill", "input": {"name": "grok-search"}}]},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_skill",
+                            "content": "<skill_content name=\"grok-search\">secret</skill_content>",
+                            "internal_context": True,
+                            "tool_name": "read_skill",
+                        }
+                    ],
+                },
+            ],
+        )
+    )
+
+    assert "secret" in payload["instructions"]
+    assert "do not quote" in payload["instructions"]
+    assert payload["input"][1] == {
+        "type": "function_call_output",
+        "call_id": "call_skill",
+        "output": "[internal context loaded]",
+    }
+
+
 def test_responses_input_hoists_tool_result_images_for_codex_oauth() -> None:
     items = _responses_input(
         [

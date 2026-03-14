@@ -1,21 +1,36 @@
 ---
 name: computer-use
-description: 使用 macOS Computer Use 工具前先截图观察，再执行鼠标、键盘或应用控制操作。
+description: Observe the current screen with a screenshot before using macOS Computer Use tools to click, type, press keys, or control apps.
 ---
 
-## 何时使用
+## When to use
 
-当任务需要直接查看当前屏幕、操作桌面应用、自动化点击输入、或根据屏幕内容继续推理时，使用这组工具。
+Use this toolset only when a task truly requires directly inspecting the current screen, operating desktop apps, automating clicks and typing, or continuing the reasoning process based on visible screen content.
 
-## 基本流程
+Prefer native tools first. If the target system already has a dedicated tool or API, use that instead of Computer Use.
 
-1. 先调用 `computer_screenshot` 查看当前状态。
-2. 根据截图判断目标应用、控件位置和下一步动作。
-3. 再调用点击、移动、输入、快捷键、滚动或打开应用等工具。
-4. 每做完一组关键操作后，优先再次截图确认结果。
+Examples:
+- use Feishu messaging or document tools instead of clicking around the Feishu desktop app
+- use filesystem, shell, web, or MCP tools instead of copying text through the UI
+- use provider-native integrations instead of driving a browser or chat window manually
 
-## 典型场景
+Only fall back to Computer Use when the job is genuinely UI-only, or when the user explicitly asked you to operate the desktop UI.
 
-- 自动化操作本地 macOS 应用
-- 查看屏幕内容并继续分析
-- 控制应用打开、切换、输入、点击和滚动
+## Basic workflow
+
+1. Call `computer_screenshot` first to inspect the current state.
+2. Use the screenshot to identify the target app, control positions, and the next action.
+3. Then call tools for clicking, moving, typing, shortcuts, scrolling, or opening apps.
+4. After each important group of actions, prefer taking another screenshot to confirm the result.
+
+## Do not use for
+
+- routine messaging in apps that already have native message tools
+- tasks where the required target id, URL, file path, or API exists and can be used directly
+- "reply in the current Feishu thread" or "send a message to a known Feishu chat_id" scenarios
+
+## Typical scenarios
+
+- automating local macOS applications
+- inspecting screen content and continuing analysis
+- controlling app launch, switching, typing, clicking, and scrolling

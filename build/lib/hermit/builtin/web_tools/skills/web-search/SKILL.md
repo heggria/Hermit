@@ -3,63 +3,63 @@ name: web-search
 description: How to use web_search effectively — recency-first strategy, parameter selection, and fallback escalation. Read when performing any web search, especially for current events or news.
 ---
 
-## 优先考虑 grok_search
+## Prefer `grok_search` first
 
-如果 `grok_search` 工具可用（XAI_API_KEY 已配置），对于新闻、时事、股价等时效性查询**优先使用 grok_search**，它具备实时网页读取能力，结果比 DuckDuckGo 更新更准。
+If the `grok_search` tool is available (`XAI_API_KEY` is configured), prefer it for news, current events, stock prices, and other time-sensitive queries. It can read live web content directly and is usually more current than DuckDuckGo-based results.
 
-`web_search` 作为备用：当 grok_search 不可用、查询为技术文档/百科知识、或只需快速链接时使用。
-
----
-
-## 搜索策略：优先最新，按需扩大
-
-**核心原则**：凡涉及新闻、时事、动态、价格、发布、事件等有时效性的查询，**先搜最近**，搜不到再扩大范围。不要一开始就用无限制的全局搜索。
+Use `web_search` as the fallback when `grok_search` is unavailable, when the query is about technical docs or encyclopedic knowledge, or when you only need a few quick links.
 
 ---
 
-## 参数速查
+## Search strategy: start recent, then widen only if needed
 
-| 参数 | 取值 | 说明 |
+**Core rule**: for anything time-sensitive, such as news, current events, prices, releases, or ongoing incidents, start with recent results first. Only expand the time window if the first pass does not find useful results. Do not begin with an unrestricted global search.
+
+---
+
+## Parameter quick reference
+
+| Parameter | Values | Description |
 |------|------|------|
-| `search_type` | `"news"` / `"web"` | 新闻/时事用 `news`；文档、代码、百科用 `web` |
-| `time_filter` | `"day"` / `"week"` / `"month"` / `"year"` | 结果时间范围；不填则不限制 |
-| `region` | `"cn-zh"` / `"us-en"` / `"wt-wt"` | 中文内容用 `cn-zh`；默认全球 |
+| `search_type` | `"news"` / `"web"` | use `news` for current events; use `web` for docs, code, and reference content |
+| `time_filter` | `"day"` / `"week"` / `"month"` / `"year"` | result time window; leave empty for no limit |
+| `region` | `"cn-zh"` / `"us-en"` / `"wt-wt"` | use `cn-zh` for Chinese content; default is global |
 
 ---
 
-## 搜索升级策略（Escalation）
+## Escalation strategy
 
-对于**有时效性**的问题，按以下顺序逐步放宽，找到有效结果即停：
+For **time-sensitive** questions, widen the search in this order and stop as soon as you get useful results:
 
 ```
-第 1 次：search_type="news", time_filter="day"     ← 今日新闻
-第 2 次：search_type="news", time_filter="week"    ← 近一周
-第 3 次：search_type="news", time_filter="month"   ← 近一个月
-第 4 次：search_type="web"（不限时间）              ← 兜底全局
+Pass 1: search_type="news", time_filter="day"     ← today
+Pass 2: search_type="news", time_filter="week"    ← last week
+Pass 3: search_type="news", time_filter="month"   ← last month
+Pass 4: search_type="web"（不限时间）              ← global fallback
 ```
 
-**何时判断"无有效结果"**：返回结果少于 2 条，或所有结果标题/摘要与问题无关，则升级到下一档。
+When to decide there are “no useful results”: fewer than 2 results, or all titles/snippets are irrelevant to the question. In that case, move to the next level.
 
 ---
 
-## 判断是否有时效性
+## How to judge whether a query is time-sensitive
 
-**有时效性**（走升级策略）：
-- 新闻事件：战争、灾难、政策、外交、市场行情
-- 产品/版本：最新发布、更新日志、价格变动
-- 人物动态：声明、任命、逮捕、去世
-- 体育/娱乐：比赛结果、上映信息
+**Time-sensitive** (use the escalation strategy):
+- news events: war, disasters, policy, diplomacy, markets
+- product / version questions: latest release, changelog, price changes
+- people or company updates: statements, appointments, arrests, deaths
+- sports / entertainment: results, release schedules
 
-**无时效性**（直接 `search_type="web"`，不加 `time_filter`）：
-- 技术文档、API 参考、库的使用方法
-- 历史事件、地理、科学知识
-- 编程问题、语法、概念解释
+**Not time-sensitive** (go straight to `search_type="web"` with no `time_filter`):
+- technical docs, API references, how to use a library
+- historical events, geography, science facts
+- programming questions, syntax, concept explanations
 
 ---
 
-## 示例
+## Examples
 
-### 查最新新闻（升级策略）
+### Latest news (with escalation)
 
 ```json
 // 第 1 次
@@ -69,13 +69,13 @@ description: How to use web_search effectively — recency-first strategy, param
 {"query": "伊朗油库 以色列袭击", "search_type": "news", "time_filter": "week"}
 ```
 
-### 查技术文档（直接全局）
+### Technical documentation (go straight to web)
 
 ```json
 {"query": "Python asyncio event loop tutorial", "search_type": "web"}
 ```
 
-### 中文新闻（指定区域）
+### Chinese news (set the region)
 
 ```json
 {"query": "A股 今日涨跌", "search_type": "news", "time_filter": "day", "region": "cn-zh"}

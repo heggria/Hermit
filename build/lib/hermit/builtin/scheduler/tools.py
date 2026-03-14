@@ -8,6 +8,7 @@ from typing import Any
 from hermit.builtin.scheduler.engine import SchedulerEngine
 from hermit.builtin.scheduler.models import ScheduledJob
 from hermit.core.tools import ToolSpec
+from hermit.i18n import resolve_locale, tr
 from hermit.plugin.base import PluginContext
 
 _engine: SchedulerEngine | None = None
@@ -20,16 +21,22 @@ def set_engine(engine: SchedulerEngine) -> None:
 
 def _require_engine() -> SchedulerEngine:
     if _engine is None:
-        raise RuntimeError(
-            "Scheduler engine not running. "
-            "Scheduled tasks require `hermit serve` to be active."
-        )
+        raise RuntimeError(_t("tools.scheduler.common.engine_not_running"))
     return _engine
+
+
+def _locale() -> str:
+    settings = getattr(_engine, "_settings", None)
+    return resolve_locale(getattr(settings, "locale", None))
+
+
+def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, locale=_locale(), default=default, **kwargs)
 
 
 def _format_time(ts: float | None) -> str:
     if ts is None:
-        return "N/A"
+        return _t("tools.scheduler.common.not_available", default="N/A")
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -40,10 +47,10 @@ def _handle_create(payload: dict[str, Any]) -> str:
     schedule_type = str(payload.get("schedule_type", "")).strip()
 
     if not name or not prompt or not schedule_type:
-        return "Error: name, prompt, and schedule_type are required."
+        return _t("tools.scheduler.create.error.required")
 
     if schedule_type not in ("cron", "once", "interval"):
-        return "Error: schedule_type must be 'cron', 'once', or 'interval'."
+        return _t("tools.scheduler.create.error.schedule_type")
 
     cron_expr = payload.get("cron_expr")
     once_at_str = payload.get("once_at")
@@ -52,27 +59,27 @@ def _handle_create(payload: dict[str, Any]) -> str:
     once_at: float | None = None
     if schedule_type == "cron":
         if not cron_expr:
-            return "Error: cron_expr is required for schedule_type 'cron'."
+            return _t("tools.scheduler.create.error.cron_required")
         try:
             from croniter import croniter
             croniter(cron_expr)
         except (ValueError, KeyError) as exc:
-            return f"Error: invalid cron expression '{cron_expr}': {exc}"
+            return _t("tools.scheduler.create.error.invalid_cron", cron_expr=cron_expr, error=exc)
 
     elif schedule_type == "once":
         if not once_at_str:
-            return "Error: once_at is required for schedule_type 'once'."
+            return _t("tools.scheduler.create.error.once_required")
         try:
             dt = datetime.datetime.fromisoformat(str(once_at_str))
             once_at = dt.timestamp()
         except ValueError:
-            return f"Error: invalid datetime format '{once_at_str}'. Use ISO format like '2026-03-15T14:00:00'."
+            return _t("tools.scheduler.create.error.invalid_datetime", once_at=once_at_str)
         if once_at <= time.time():
-            return "Error: once_at must be in the future."
+            return _t("tools.scheduler.create.error.once_past")
 
     elif schedule_type == "interval":
         if not interval_seconds or int(interval_seconds) < 60:
-            return "Error: interval_seconds is required and must be >= 60."
+            return _t("tools.scheduler.create.error.interval_required")
         interval_seconds = int(interval_seconds)
 
     feishu_chat_id = str(payload.get("feishu_chat_id", "") or "").strip() or None
@@ -89,12 +96,12 @@ def _handle_create(payload: dict[str, Any]) -> str:
     )
     engine.add_job(job)
 
-    return (
-        f"Scheduled task created:\n"
-        f"  ID: {job.id}\n"
-        f"  Name: {job.name}\n"
-        f"  Type: {job.schedule_type}\n"
-        f"  Next run: {_format_time(job.next_run_at)}"
+    return _t(
+        "tools.scheduler.create.success",
+        job_id=job.id,
+        name=job.name,
+        schedule_type=job.schedule_type,
+        next_run=_format_time(job.next_run_at),
     )
 
 
@@ -102,21 +109,21 @@ def _handle_list(payload: dict[str, Any]) -> str:
     engine = _require_engine()
     jobs = engine.list_jobs()
     if not jobs:
-        return "No scheduled tasks."
+        return _t("tools.scheduler.list.empty")
 
-    lines = [f"Scheduled tasks ({len(jobs)}):"]
+    lines = [_t("tools.scheduler.list.title", count=len(jobs))]
     for j in jobs:
-        status = "enabled" if j.enabled else "disabled"
+        status = _t("tools.scheduler.list.status.enabled") if j.enabled else _t("tools.scheduler.list.status.disabled")
         schedule_info = j.cron_expr or (
-            f"once at {_format_time(j.once_at)}" if j.once_at
-            else f"every {j.interval_seconds}s" if j.interval_seconds
-            else "unknown"
+            _t("tools.scheduler.list.once_at", time=_format_time(j.once_at)) if j.once_at
+            else _t("tools.scheduler.list.every_seconds", seconds=j.interval_seconds) if j.interval_seconds
+            else _t("tools.scheduler.list.unknown")
         )
         lines.append(
             f"  [{j.id}] {j.name} ({status})\n"
-            f"    Schedule: {schedule_info}\n"
-            f"    Next run: {_format_time(j.next_run_at)}\n"
-            f"    Last run: {_format_time(j.last_run_at)}"
+            f"    {_t('tools.scheduler.list.schedule_label')}: {schedule_info}\n"
+            f"    {_t('tools.scheduler.list.next_run_label')}: {_format_time(j.next_run_at)}\n"
+            f"    {_t('tools.scheduler.list.last_run_label')}: {_format_time(j.last_run_at)}"
         )
     return "\n".join(lines)
 
@@ -125,10 +132,10 @@ def _handle_delete(payload: dict[str, Any]) -> str:
     engine = _require_engine()
     job_id = str(payload.get("job_id", "")).strip()
     if not job_id:
-        return "Error: job_id is required."
+        return _t("tools.scheduler.delete.error.required")
     if engine.remove_job(job_id):
-        return f"Deleted scheduled task '{job_id}'."
-    return f"Error: no task with id '{job_id}' found."
+        return _t("tools.scheduler.delete.success", job_id=job_id)
+    return _t("tools.scheduler.common.not_found", job_id=job_id)
 
 
 def _handle_history(payload: dict[str, Any]) -> str:
@@ -138,9 +145,9 @@ def _handle_history(payload: dict[str, Any]) -> str:
     records = engine.get_history(job_id=job_id, limit=limit)
 
     if not records:
-        return "No execution history found."
+        return _t("tools.scheduler.history.empty")
 
-    lines = [f"Execution history ({len(records)} records):"]
+    lines = [_t("tools.scheduler.history.title", count=len(records))]
     for r in records:
         status = "✓" if r.success else "✗"
         started = datetime.datetime.fromtimestamp(r.started_at).strftime("%Y-%m-%d %H:%M:%S")
@@ -150,7 +157,7 @@ def _handle_history(payload: dict[str, Any]) -> str:
             preview = r.result_text[:200].replace("\n", " ")
             lines.append(f"      {preview}")
         if r.error:
-            lines.append(f"      Error: {r.error}")
+            lines.append(f"      {_t('tools.scheduler.history.error_label')}: {r.error}")
     return "\n".join(lines)
 
 
@@ -158,7 +165,7 @@ def _handle_update(payload: dict[str, Any]) -> str:
     engine = _require_engine()
     job_id = str(payload.get("job_id", "")).strip()
     if not job_id:
-        return "Error: job_id is required."
+        return _t("tools.scheduler.update.error.required")
 
     updates: dict[str, Any] = {}
     if "name" in payload:
@@ -173,20 +180,22 @@ def _handle_update(payload: dict[str, Any]) -> str:
             from croniter import croniter
             croniter(cron_expr)
         except (ValueError, KeyError) as exc:
-            return f"Error: invalid cron expression '{cron_expr}': {exc}"
+            return _t("tools.scheduler.create.error.invalid_cron", cron_expr=cron_expr, error=exc)
         updates["cron_expr"] = cron_expr
     if "feishu_chat_id" in payload:
         updates["feishu_chat_id"] = str(payload["feishu_chat_id"]).strip() or None
 
     if not updates:
-        return "Error: no fields to update. Provide name, prompt, enabled, cron_expr, or feishu_chat_id."
+        return _t("tools.scheduler.update.error.no_fields")
 
     job = engine.update_job(job_id, **updates)
     if job is None:
-        return f"Error: no task with id '{job_id}' found."
-    return (
-        f"Updated task '{job.name}' ({job.id}).\n"
-        f"  Next run: {_format_time(job.next_run_at)}"
+        return _t("tools.scheduler.common.not_found", job_id=job_id)
+    return _t(
+        "tools.scheduler.update.success",
+        name=job.name,
+        job_id=job.id,
+        next_run=_format_time(job.next_run_at),
     )
 
 
@@ -200,58 +209,56 @@ def register(ctx: PluginContext) -> None:
             "IMPORTANT: When called from a Feishu chat, always pass the feishu_chat_id "
             "from <feishu_chat_id>...</feishu_chat_id> in the context so results are pushed back to this chat."
         ),
+        description_key="tools.scheduler.create.description",
         input_schema={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Human-readable name for the task (e.g. '每日站报').",
+                    "description_key": "tools.scheduler.create.name",
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "The prompt to send to the agent when the task fires.",
+                    "description_key": "tools.scheduler.create.prompt",
                 },
                 "schedule_type": {
                     "type": "string",
                     "enum": ["cron", "once", "interval"],
-                    "description": "Type of schedule: 'cron' for cron expressions, 'once' for one-time, 'interval' for fixed intervals.",
+                    "description_key": "tools.scheduler.create.schedule_type",
                 },
                 "cron_expr": {
                     "type": "string",
-                    "description": "Cron expression (required for type 'cron'). E.g. '0 9 * * *' = daily 9am, '0 9 * * 1-5' = weekdays 9am.",
+                    "description_key": "tools.scheduler.create.cron_expr",
                 },
                 "once_at": {
                     "type": "string",
-                    "description": "ISO datetime for one-time execution (required for type 'once'). E.g. '2026-03-15T14:00:00'.",
+                    "description_key": "tools.scheduler.create.once_at",
                 },
                 "interval_seconds": {
                     "type": "integer",
-                    "description": "Interval in seconds (required for type 'interval', minimum 60).",
+                    "description_key": "tools.scheduler.create.interval_seconds",
                 },
                 "max_retries": {
                     "type": "integer",
-                    "description": "Number of retry attempts on failure (default 1).",
+                    "description_key": "tools.scheduler.create.max_retries",
                 },
                 "feishu_chat_id": {
                     "type": "string",
-                    "description": (
-                        "Feishu chat_id to push results to when the task fires. "
-                        "Read from <feishu_chat_id>...</feishu_chat_id> in the current message context. "
-                        "Required for Feishu push notifications."
-                    ),
+                    "description_key": "tools.scheduler.create.feishu_chat_id",
                 },
             },
             "required": ["name", "prompt", "schedule_type"],
         },
         handler=_handle_create,
-        action_class="write_local",
-        risk_hint="high",
+        action_class="scheduler_mutation",
+        risk_hint="medium",
         requires_receipt=True,
     ))
 
     ctx.add_tool(ToolSpec(
         name="schedule_list",
         description="List all scheduled tasks with their status, schedule, and next/last run times.",
+        description_key="tools.scheduler.list.description",
         input_schema={
             "type": "object",
             "properties": {},
@@ -267,43 +274,45 @@ def register(ctx: PluginContext) -> None:
     ctx.add_tool(ToolSpec(
         name="schedule_delete",
         description="Delete a scheduled task by its ID.",
+        description_key="tools.scheduler.delete.description",
         input_schema={
             "type": "object",
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "The ID of the scheduled task to delete.",
+                    "description_key": "tools.scheduler.delete.job_id",
                 },
             },
             "required": ["job_id"],
         },
         handler=_handle_delete,
-        action_class="write_local",
-        risk_hint="high",
+        action_class="scheduler_mutation",
+        risk_hint="medium",
         requires_receipt=True,
     ))
 
     ctx.add_tool(ToolSpec(
         name="schedule_update",
         description="Update an existing scheduled task's name, prompt, enabled status, or cron expression.",
+        description_key="tools.scheduler.update.description",
         input_schema={
             "type": "object",
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "The ID of the scheduled task to update.",
+                    "description_key": "tools.scheduler.update.job_id",
                 },
-                "name": {"type": "string", "description": "New name."},
-                "prompt": {"type": "string", "description": "New prompt."},
-                "enabled": {"type": "boolean", "description": "Enable or disable the task."},
-                "cron_expr": {"type": "string", "description": "New cron expression."},
-                "feishu_chat_id": {"type": "string", "description": "Feishu chat_id for push notifications."},
+                "name": {"type": "string", "description_key": "tools.scheduler.update.name"},
+                "prompt": {"type": "string", "description_key": "tools.scheduler.update.prompt"},
+                "enabled": {"type": "boolean", "description_key": "tools.scheduler.update.enabled"},
+                "cron_expr": {"type": "string", "description_key": "tools.scheduler.update.cron_expr"},
+                "feishu_chat_id": {"type": "string", "description_key": "tools.scheduler.update.feishu_chat_id"},
             },
             "required": ["job_id"],
         },
         handler=_handle_update,
-        action_class="write_local",
-        risk_hint="high",
+        action_class="scheduler_mutation",
+        risk_hint="medium",
         requires_receipt=True,
     ))
 
@@ -315,16 +324,17 @@ def register(ctx: PluginContext) -> None:
             "'did it succeed', 'when was the last execution', or 'show me the results'. "
             "Returns recent execution records with timestamps, duration, and result previews."
         ),
+        description_key="tools.scheduler.history.description",
         input_schema={
             "type": "object",
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "Filter history by task ID. Omit to show all tasks.",
+                    "description_key": "tools.scheduler.history.job_id",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of records to return (default 20).",
+                    "description_key": "tools.scheduler.history.limit",
                 },
             },
         },

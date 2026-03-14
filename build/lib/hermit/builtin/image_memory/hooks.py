@@ -195,7 +195,7 @@ def _build_image_store_from_feishu_tool(engine: ImageMemoryEngine, settings: Any
             "required": ["session_id", "message_id", "image_key"],
         },
         handler=handler,
-        action_class="credentialed_api_call",
+        action_class="attachment_ingest",
         risk_hint="high",
         requires_receipt=True,
     )

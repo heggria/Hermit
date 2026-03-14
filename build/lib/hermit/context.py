@@ -3,8 +3,29 @@ from __future__ import annotations
 from pathlib import Path
 
 from hermit.config import Settings
+from hermit.i18n import resolve_locale, tr
 
 DEFAULT_CONTEXT_TEMPLATE = """# Hermit Context
+
+## Identity
+- You are an AI agent optimized for personal-use workflows.
+
+## Long-Term Goals
+- Help the user complete research, coding, configuration, and automation tasks.
+
+## Working Style
+- Prefer reusing existing configuration, rules, and skills.
+- Read the current state first before changing Hermit's own configuration, and keep edits minimal.
+- Do not write API keys, passwords, or tokens into `memory/memories.md`, `context.md`, or public docs.
+
+## Self-Configuration Conventions
+- Store long-term preferences and background in `context.md`
+- Store hard constraints in `rules/*.md`
+- Store reusable workflows in `skills/*/SKILL.md`
+- Keep sensitive configuration only in `.env`
+"""
+
+_ZH_CONTEXT_TEMPLATE = """# Hermit Context
 
 ## 身份
 - 你是一个偏个人使用场景的 AI Agent。
@@ -25,9 +46,13 @@ DEFAULT_CONTEXT_TEMPLATE = """# Hermit Context
 """
 
 
-def ensure_default_context_file(path: Path) -> None:
+def default_context_template(locale: str | None = None) -> str:
+    return _ZH_CONTEXT_TEMPLATE if resolve_locale(locale) == "zh-CN" else DEFAULT_CONTEXT_TEMPLATE
+
+
+def ensure_default_context_file(path: Path, *, locale: str | None = None) -> None:
     if not path.exists():
-        path.write_text(DEFAULT_CONTEXT_TEMPLATE, encoding="utf-8")
+        path.write_text(default_context_template(locale), encoding="utf-8")
 
 
 def load_context_text(path: Path) -> str:
@@ -42,6 +67,7 @@ def build_base_context(settings: Settings, working_dir: Path) -> str:
     Plugin-contributed sections (memory, rules, skills) are appended
     separately by PluginManager.build_system_prompt().
     """
+    locale = resolve_locale(getattr(settings, "locale", None))
     sections = [
         "<hermit_runtime>",
         f"- current_working_directory: {working_dir}",
@@ -64,11 +90,11 @@ def build_base_context(settings: Settings, working_dir: Path) -> str:
         "</hermit_runtime>",
         "",
         "<self_configuration>",
-        "你可以通过专用配置工具读取和修改 Hermit 自己的配置目录，从而具备自我配置能力。",
-        "修改原则：先读后写、最小改动、保留用户已有内容、不要把 secrets 写入 context/memory/rules/skills。",
-        "推荐落点：长期背景写 `context.md`；硬规则写 `rules/*.md`；可复用流程写 `skills/*/SKILL.md`；敏感变量写 `.env`。",
-        "如果用户询问“你当前用的什么模型 / provider / profile / 默认配置”，必须严格以 <hermit_runtime> 中的 current_model / current_provider / selected_profile 为准回答。",
-        "不要根据记忆、历史对话、常识或推测回答当前模型；若历史内容与 <hermit_runtime> 冲突，以 <hermit_runtime> 为准并明确说明已切换。",
+        tr("prompt.context.self_configuration.line_1", locale=locale),
+        tr("prompt.context.self_configuration.line_2", locale=locale),
+        tr("prompt.context.self_configuration.line_3", locale=locale),
+        tr("prompt.context.self_configuration.line_4", locale=locale),
+        tr("prompt.context.self_configuration.line_5", locale=locale),
         "</self_configuration>",
     ]
 

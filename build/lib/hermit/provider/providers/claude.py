@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
+from hermit.core.budgets import ExecutionBudget, get_runtime_budget
 from hermit.core.tools import ToolSpec
 from hermit.provider.contracts import (
     Provider,
@@ -12,7 +13,7 @@ from hermit.provider.contracts import (
     UsageMetrics,
 )
 from hermit.provider.images import prepare_messages_for_provider
-from hermit.provider.messages import normalize_block
+from hermit.provider.messages import append_internal_tool_context, normalize_block, split_internal_tool_context
 
 _CACHE_CONTROL_EPHEMERAL: Dict[str, str] = {"type": "ephemeral"}
 
@@ -140,7 +141,9 @@ class ClaudeProvider(Provider):
 
     def _payload(self, request: ProviderRequest, *, stream: bool = False) -> Dict[str, Any]:
         prepared_messages = prepare_messages_for_provider(request.messages)
+        prepared_messages, internal_contexts = split_internal_tool_context(prepared_messages)
         system_prompt = request.system_prompt if request.system_prompt is not None else self.system_prompt
+        system_prompt = append_internal_tool_context(system_prompt, internal_contexts)
         system_payload, cached_messages = _inject_cache_control(
             list(prepared_messages[:-1]),
             system_prompt,
@@ -262,7 +265,29 @@ def build_claude_provider(
         kwargs["base_url"] = settings.claude_base_url
     if settings.parsed_claude_headers:
         kwargs["default_headers"] = settings.parsed_claude_headers
-    if getattr(settings, "command_timeout_seconds", 0):
-        kwargs["timeout"] = settings.command_timeout_seconds
+    if hasattr(settings, "execution_budget"):
+        budget = settings.execution_budget()
+    elif hasattr(settings, "command_timeout_seconds"):
+        legacy = max(float(getattr(settings, "command_timeout_seconds", 30) or 30), 1.0)
+        budget = ExecutionBudget(
+            ingress_ack_deadline=5.0,
+            provider_connect_timeout=legacy,
+            provider_read_timeout=600.0,
+            provider_stream_idle_timeout=600.0,
+            tool_soft_deadline=legacy,
+            tool_hard_deadline=max(legacy, 600.0),
+            observation_window=600.0,
+            observation_poll_interval=5.0,
+        )
+    else:
+        budget = get_runtime_budget()
+    import httpx
+    kwargs["timeout"] = httpx.Timeout(
+        budget.provider_read_timeout,
+        connect=budget.provider_connect_timeout,
+        read=budget.provider_stream_idle_timeout,
+        write=budget.provider_read_timeout,
+        pool=budget.provider_read_timeout,
+    )
     client = Anthropic(**kwargs)
     return ClaudeProvider(client, model=model, system_prompt=system_prompt)

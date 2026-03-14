@@ -10,9 +10,11 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional
 
 from hermit.core.session import SessionManager, sanitize_session_messages
 from hermit.i18n import resolve_locale, tr
+from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.planning import PlanningService
 from hermit.kernel.controller import TaskController
 from hermit.kernel.observation import ObservationService
+from hermit.kernel.provider_input import ProviderInputCompiler
 from hermit.provider.runtime import AgentResult, AgentRuntime, ToolCallback, ToolStartCallback
 from hermit.storage import atomic_write
 
@@ -20,6 +22,7 @@ if TYPE_CHECKING:
     from hermit.plugin.manager import PluginManager
 
 CommandHandler = Callable[["AgentRunner", str, str], "DispatchResult"]
+_AUTO_PARENT = object()
 
 _SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
 _FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
@@ -182,8 +185,11 @@ class AgentRunner:
             f"message_sent_at={now.strftime('%Y-%m-%d %H:%M:%S')}"
             f"</session_time>\n\n"
         )
-        planning = PlanningService(self.task_controller.store, getattr(self.agent, "artifact_store", None))
-        planning_mode = planning.pending_for_conversation(session_id) or PlanningService.planning_requested(text)
+        store = getattr(self.task_controller, "store", None)
+        planning_mode = PlanningService.planning_requested(text)
+        if store is not None and hasattr(store, "ensure_conversation"):
+            planning = PlanningService(store, getattr(self.agent, "artifact_store", None))
+            planning_mode = planning.pending_for_conversation(session_id) or planning_mode
         if planning_mode:
             run_opts = dict(run_opts)
             run_opts["readonly_only"] = True
@@ -192,6 +198,39 @@ class AgentRunner:
         full_prompt = time_ctx + prompt
         task_goal = _strip_internal_markup(text) or _strip_internal_markup(full_prompt) or text.strip() or full_prompt.strip()
         return session, full_prompt, run_opts, task_goal
+
+    def _provider_input_compiler(self) -> ProviderInputCompiler:
+        store = getattr(self.task_controller, "store", None)
+        if store is None or getattr(store, "db_path", None) is None:
+            raise RuntimeError("compiled_context_unavailable")
+        return ProviderInputCompiler(store, getattr(self.agent, "artifact_store", None))
+
+    def _compile_provider_input(
+        self,
+        *,
+        task_ctx: TaskExecutionContext,
+        prompt: str,
+        raw_text: str,
+    ):
+        try:
+            compiler = self._provider_input_compiler()
+        except RuntimeError:
+            return None
+        return compiler.compile(task_context=task_ctx, final_prompt=prompt, raw_text=raw_text)
+
+    def _append_note_context(self, session_id: str, task_id: str, source_channel: str) -> TaskExecutionContext:
+        attempt = next(iter(self.task_controller.store.list_step_attempts(task_id=task_id, limit=1)), None)
+        task = self.task_controller.store.get_task(task_id)
+        return TaskExecutionContext(
+            conversation_id=session_id,
+            task_id=task_id,
+            step_id=attempt.step_id if attempt is not None else "",
+            step_attempt_id=attempt.step_attempt_id if attempt is not None else "",
+            source_channel=source_channel,
+            policy_profile=getattr(task, "policy_profile", "default"),
+            workspace_root=str((attempt.context if attempt is not None else {}).get("workspace_root", "") or ""),
+            ingress_metadata=dict((attempt.context if attempt is not None else {}).get("ingress_metadata", {}) or {}),
+        )
 
     def _maybe_capture_planning_result(
         self,
@@ -202,10 +241,13 @@ class AgentRunner:
     ) -> bool:
         if not readonly_only:
             return False
-        step = self.task_controller.store.get_step(task_ctx.step_id)
+        store = getattr(self.task_controller, "store", None)
+        if store is None or not hasattr(store, "get_step"):
+            return False
+        step = store.get_step(task_ctx.step_id)
         if step is None or step.kind != "plan":
             return False
-        planning = PlanningService(self.task_controller.store, getattr(self.agent, "artifact_store", None))
+        planning = PlanningService(store, getattr(self.agent, "artifact_store", None))
         plan_ref = planning.capture_plan_result(task_ctx, plan_text=result.text or "")
         self.task_controller.mark_planning_ready(
             task_ctx,
@@ -222,15 +264,22 @@ class AgentRunner:
         task_ctx: TaskExecutionContext,
         prompt: str,
         *,
+        raw_text: str | None = None,
         readonly_only: bool = False,
         disable_tools: bool = False,
         on_tool_call: Optional[ToolCallback] = None,
         on_tool_start: Optional[ToolStartCallback] = None,
     ) -> AgentResult:
         session = self.session_manager.get_or_create(task_ctx.conversation_id)
+        compiled_input = self._compile_provider_input(
+            task_ctx=task_ctx,
+            prompt=prompt,
+            raw_text=raw_text or prompt,
+        )
         result = self.agent.run(
             prompt,
-            message_history=list(session.messages),
+            compiled_messages=compiled_input.messages if compiled_input is not None else None,
+            message_history=None if compiled_input is not None else list(session.messages),
             on_tool_call=on_tool_call,
             on_tool_start=on_tool_start,
             disable_tools=disable_tools,
@@ -271,6 +320,7 @@ class AgentRunner:
         source_ref: str = "",
         ingress_metadata: dict[str, object] | None = None,
         requested_by: str | None = "user",
+        parent_task_id: str | None | object = _AUTO_PARENT,
     ):
         source = source_channel or self.task_controller.source_from_session(session_id)
         _session, full_prompt, run_opts, task_goal = self._prepare_prompt_context(
@@ -283,6 +333,7 @@ class AgentRunner:
         metadata.update({
             "dispatch_mode": "async",
             "entry_prompt": full_prompt,
+            "raw_text": text,
             "notify": dict(notify or {}),
             "source_ref": source_ref,
             "disable_tools": bool(run_opts.get("disable_tools", False)),
@@ -295,6 +346,7 @@ class AgentRunner:
             kind=task_kind,
             policy_profile="readonly" if run_opts.get("readonly_only", False) else "default",
             workspace_root=str(getattr(self.agent, "workspace_root", "") or ""),
+            parent_task_id=parent_task_id,
             requested_by=requested_by,
             ingress_metadata=metadata,
             source_ref=source_ref or None,
@@ -385,9 +437,15 @@ class AgentRunner:
                     on_tool_start=on_tool_start,
                 )
             else:
+                compiled_input = self._compile_provider_input(
+                    task_ctx=task_ctx,
+                    prompt=str(metadata.get("entry_prompt", "") or ""),
+                    raw_text=str(metadata.get("raw_text", "") or str(metadata.get("entry_prompt", "") or "")),
+                )
                 result = self.agent.run(
                     str(metadata.get("entry_prompt", "") or ""),
-                    message_history=list(session.messages),
+                    compiled_messages=compiled_input.messages if compiled_input is not None else None,
+                    message_history=None if compiled_input is not None else list(session.messages),
                     on_tool_call=on_tool_call,
                     on_tool_start=on_tool_start,
                     disable_tools=bool(metadata.get("disable_tools", False)),
@@ -579,6 +637,7 @@ class AgentRunner:
             source_channel=source_channel,
         )
 
+        ingress = None
         if self.task_controller is not None and hasattr(self.task_controller, "decide_ingress"):
             ingress = self.task_controller.decide_ingress(
                 conversation_id=session_id,
@@ -587,6 +646,23 @@ class AgentRunner:
                 prompt=prompt,
             )
             if ingress.mode == "append_note":
+                normalized = None
+                try:
+                    append_ctx = self._append_note_context(session_id, ingress.task_id or "", source_channel)
+                    normalized = self._provider_input_compiler().normalize_ingress(
+                        task_context=append_ctx,
+                        raw_text=text,
+                        final_prompt=prompt,
+                    )
+                except RuntimeError:
+                    normalized = None
+                self.task_controller.append_note(
+                    task_id=ingress.task_id or "",
+                    source_channel=source_channel,
+                    raw_text=text,
+                    prompt=prompt,
+                    normalized_payload=normalized,
+                )
                 return AgentResult(
                     text=_t(
                         "kernel.runner.note_appended",
@@ -600,6 +676,7 @@ class AgentRunner:
                     execution_status="note_appended",
                     status_managed_by_kernel=True,
                 )
+        parent_task_id = getattr(ingress, "parent_task_id", _AUTO_PARENT) if ingress is not None else _AUTO_PARENT
 
         task_ctx = None
         if self.task_controller is not None:
@@ -611,15 +688,22 @@ class AgentRunner:
                 kind=task_kind,
                 policy_profile="readonly" if run_opts.get("readonly_only", False) else "default",
                 workspace_root=str(getattr(self.agent, "workspace_root", "") or ""),
+                parent_task_id=parent_task_id,
             )
             if run_opts.get("planning_mode", False):
                 planning = PlanningService(self.task_controller.store, getattr(self.agent, "artifact_store", None))
                 planning.set_pending_for_conversation(session_id, enabled=False)
                 planning.enter_planning(task_ctx.task_id)
 
+        compiled_input = self._compile_provider_input(
+            task_ctx=task_ctx,
+            prompt=prompt,
+            raw_text=text,
+        ) if task_ctx is not None else None
         result = self.agent.run(
             prompt,
-            message_history=list(session.messages),
+            compiled_messages=compiled_input.messages if compiled_input is not None else None,
+            message_history=None if compiled_input is not None else list(session.messages),
             on_tool_call=on_tool_call,
             on_tool_start=on_tool_start,
             disable_tools=run_opts.get("disable_tools", False),
@@ -780,6 +864,82 @@ class AgentRunner:
             return DispatchResult(
                 text=_t("kernel.runner.task_kernel_unavailable", runner=self),
                 is_command=True,
+            )
+        planning = PlanningService(store, getattr(self.agent, "artifact_store", None)) if hasattr(store, "ensure_conversation") else None
+        get_latest_task = getattr(store, "get_last_task_for_conversation", None)
+        latest_task = get_latest_task(session_id) if callable(get_latest_task) else None
+        resolved_target = target_id or (latest_task.task_id if latest_task is not None else "")
+
+        if action == "plan_enter":
+            if planning is None:
+                return DispatchResult(text=_t("kernel.runner.task_kernel_unavailable", runner=self), is_command=True)
+            if resolved_target:
+                planning.enter_planning(resolved_target)
+            else:
+                planning.set_pending_for_conversation(session_id, enabled=True)
+            plans_dir = getattr(getattr(self.agent, "artifact_store", None), "root_dir", "kernel artifact store")
+            return DispatchResult(
+                _t("kernel.planner.entered", runner=self, plans_hint=plans_dir),
+                is_command=True,
+            )
+        if action == "plan_exit":
+            if planning is None:
+                return DispatchResult(text=_t("kernel.runner.task_kernel_unavailable", runner=self), is_command=True)
+            planning.set_pending_for_conversation(session_id, enabled=False)
+            if resolved_target:
+                planning.exit_planning(resolved_target)
+            return DispatchResult(_t("kernel.planner.closed", runner=self), is_command=True)
+        if action == "plan_confirm":
+            if planning is None:
+                return DispatchResult(text=_t("kernel.runner.task_kernel_unavailable", runner=self), is_command=True)
+            if not resolved_target:
+                return DispatchResult(
+                    _t("kernel.planner.confirm_missing_plan", runner=self),
+                    is_command=True,
+                )
+            plan_text = planning.load_selected_plan_text(resolved_target)
+            plan_ctx = planning.latest_planning_attempt(resolved_target)
+            if not plan_text or plan_ctx is None:
+                return DispatchResult(
+                    _t("kernel.planner.confirm_missing_plan", runner=self),
+                    is_command=True,
+                )
+            planning.confirm_selected_plan(plan_ctx, actor="user")
+            latest_attempt = self.task_controller.store.get_step_attempt(plan_ctx.step_attempt_id)
+            if latest_attempt is not None and str(latest_attempt.status or "") == "awaiting_plan_confirmation":
+                self.task_controller.store.update_step(plan_ctx.step_id, status="succeeded")
+                self.task_controller.store.update_step_attempt(
+                    plan_ctx.step_attempt_id,
+                    status="succeeded",
+                    waiting_reason=None,
+                )
+            execution_ctx = self.task_controller.start_followup_step(
+                task_id=resolved_target,
+                kind="respond",
+                status="running",
+                workspace_root=plan_ctx.workspace_root,
+                ingress_metadata={
+                    "selected_plan_ref": planning.state_for_task(resolved_target).selected_plan_ref or "",
+                    "plan_status": "executing",
+                    "planning_required": True,
+                },
+            )
+            execution_prompt = _t(
+                "kernel.planner.execution_prompt",
+                runner=self,
+                plan_content=plan_text,
+            )
+            result = self._run_existing_task(
+                execution_ctx,
+                execution_prompt,
+                raw_text=execution_prompt,
+                on_tool_call=on_tool_call,
+                on_tool_start=on_tool_start,
+            )
+            return DispatchResult(
+                text=result.text or "",
+                is_command=False,
+                agent_result=result,
             )
 
         if action == "task_list":

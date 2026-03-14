@@ -18,6 +18,7 @@ from hermit.kernel.store_tasks import KernelTaskStoreMixin
 _SCHEMA_VERSION = "4"
 _KNOWN_KERNEL_TABLES = {
     "conversations",
+    "conversation_projection_cache",
     "tasks",
     "steps",
     "step_attempts",
@@ -117,6 +118,14 @@ class KernelStore(
                     total_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                     total_cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS conversation_projection_cache (
+                    conversation_id TEXT PRIMARY KEY,
+                    schema_version TEXT NOT NULL,
+                    event_head_hash TEXT,
+                    payload_json TEXT NOT NULL,
+                    built_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS tasks (

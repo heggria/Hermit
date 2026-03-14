@@ -20,6 +20,7 @@ from hermit.provider.contracts import (
     UsageMetrics,
 )
 from hermit.provider.images import prepare_messages_for_provider
+from hermit.provider.messages import append_internal_tool_context, split_internal_tool_context
 
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _CODEX_OAUTH_BASE_URL = "https://chatgpt.com/backend-api/codex/responses"
@@ -364,13 +365,15 @@ class CodexProvider(Provider):
 
     def _payload(self, request: ProviderRequest) -> dict[str, Any]:
         prepared_messages = prepare_messages_for_provider(request.messages)
+        sanitized_messages, internal_contexts = split_internal_tool_context(prepared_messages)
+        instructions = request.system_prompt if request.system_prompt is not None else self.system_prompt
+        instructions = append_internal_tool_context(instructions, internal_contexts)
         payload: dict[str, Any] = {
             "model": request.model or self.model,
-            "input": _responses_input(prepared_messages),
+            "input": _responses_input(sanitized_messages),
             "max_output_tokens": request.max_tokens,
             "store": False,
         }
-        instructions = request.system_prompt if request.system_prompt is not None else self.system_prompt
         if instructions:
             payload["instructions"] = instructions
         if request.tools:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -10,6 +11,35 @@ from hermit.kernel.context import TaskExecutionContext, WorkingStateSnapshot
 from hermit.kernel.memory_governance import MemoryGovernanceService
 from hermit.kernel.models import BeliefRecord, MemoryRecord
 from hermit.kernel.store_support import _canonical_json, _sha256_hex
+
+_GREETING_QUERIES = {
+    "hi",
+    "hello",
+    "你好",
+    "您好",
+    "嗨",
+    "在吗",
+    "早上好",
+    "上午好",
+    "中午好",
+    "下午好",
+    "晚上好",
+}
+_FOLLOWUP_MARKERS = (
+    "继续",
+    "接着",
+    "然后",
+    "刚才",
+    "上面",
+    "上一条",
+    "那个",
+    "这些",
+    "确认",
+    "批准",
+    "同意",
+    "开始执行",
+    "执行吧",
+)
 
 
 @dataclass
@@ -22,16 +52,33 @@ class ContextPack:
     excluded_memory_ids: list[str]
     excluded_reasons: dict[str, str]
     pack_hash: str
+    kind: str = "context.pack/v1"
+    task_summary: dict[str, Any] = field(default_factory=dict)
+    step_summary: dict[str, Any] = field(default_factory=dict)
+    policy_summary: dict[str, Any] = field(default_factory=dict)
+    planning_state: dict[str, Any] = field(default_factory=dict)
+    recent_notes: list[dict[str, Any]] = field(default_factory=list)
+    relevant_artifact_refs: list[str] = field(default_factory=list)
+    ingress_artifact_refs: list[str] = field(default_factory=list)
+    session_projection_ref: str | None = None
     artifact_uri: str | None = None
     artifact_hash: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            "kind": "context.pack/v1",
+            "kind": self.kind,
             "static_memory": self.static_memory,
             "retrieval_memory": self.retrieval_memory,
             "selected_beliefs": self.selected_beliefs,
             "working_state": self.working_state,
+            "task_summary": self.task_summary,
+            "step_summary": self.step_summary,
+            "policy_summary": self.policy_summary,
+            "planning_state": self.planning_state,
+            "recent_notes": self.recent_notes,
+            "relevant_artifact_refs": self.relevant_artifact_refs,
+            "ingress_artifact_refs": self.ingress_artifact_refs,
+            "session_projection_ref": self.session_projection_ref,
             "selection_reasons": self.selection_reasons,
             "excluded_memory_ids": self.excluded_memory_ids,
             "excluded_reasons": self.excluded_reasons,
@@ -58,11 +105,21 @@ class ContextCompiler:
         beliefs: list[BeliefRecord],
         memories: list[MemoryRecord],
         query: str,
+        task_summary: dict[str, Any] | None = None,
+        step_summary: dict[str, Any] | None = None,
+        policy_summary: dict[str, Any] | None = None,
+        planning_state: dict[str, Any] | None = None,
+        recent_notes: list[dict[str, Any]] | None = None,
+        relevant_artifact_refs: list[str] | None = None,
+        ingress_artifact_refs: list[str] | None = None,
+        session_projection_ref: str | None = None,
     ) -> ContextPack:
         selection_reasons: dict[str, str] = {}
         excluded_reasons: dict[str, str] = {}
         static_memory: list[dict[str, Any]] = []
         retrieval_candidates: list[tuple[MemoryRecord, float]] = []
+        query_text = self._normalize_query(query)
+        suppress_contextual_retrieval = self._is_smalltalk_query(query_text)
 
         for memory in memories:
             if memory.status != "active":
@@ -79,7 +136,13 @@ class ContextCompiler:
             if retrieval_reason is None:
                 excluded_reasons[memory.memory_id] = "out_of_scope"
                 continue
-            retrieval_candidates.append((memory, self._retrieval_score(memory, context=context, query=query)))
+            if suppress_contextual_retrieval:
+                excluded_reasons[memory.memory_id] = "smalltalk_query"
+                continue
+            if not self._memory_relevant_to_query(memory, query=query_text):
+                excluded_reasons[memory.memory_id] = "query_irrelevant"
+                continue
+            retrieval_candidates.append((memory, self._retrieval_score(memory, context=context, query=query_text)))
 
         retrieval_candidates.sort(
             key=lambda item: (
@@ -114,10 +177,19 @@ class ContextCompiler:
             )
 
         payload = {
+            "kind": "context.pack/v1",
             "static_memory": static_memory,
             "retrieval_memory": retrieval_memory,
             "selected_beliefs": selected_beliefs,
             "working_state": asdict(working_state),
+            "task_summary": dict(task_summary or {}),
+            "step_summary": dict(step_summary or {}),
+            "policy_summary": dict(policy_summary or {}),
+            "planning_state": dict(planning_state or {}),
+            "recent_notes": list(recent_notes or []),
+            "relevant_artifact_refs": list(relevant_artifact_refs or []),
+            "ingress_artifact_refs": list(ingress_artifact_refs or []),
+            "session_projection_ref": session_projection_ref,
             "selection_reasons": selection_reasons,
             "excluded_memory_ids": sorted(excluded_reasons),
             "excluded_reasons": excluded_reasons,
@@ -126,14 +198,21 @@ class ContextCompiler:
         artifact_uri = None
         artifact_hash = None
         if self.artifact_store is not None:
-            artifact_uri, artifact_hash = self.artifact_store.store_json(
-                {"kind": "context.pack/v1", **payload, "pack_hash": pack_hash}
-            )
+            artifact_uri, artifact_hash = self.artifact_store.store_json({**payload, "pack_hash": pack_hash})
         return ContextPack(
+            kind="context.pack/v1",
             static_memory=static_memory,
             retrieval_memory=retrieval_memory,
             selected_beliefs=selected_beliefs,
             working_state=asdict(working_state),
+            task_summary=dict(task_summary or {}),
+            step_summary=dict(step_summary or {}),
+            policy_summary=dict(policy_summary or {}),
+            planning_state=dict(planning_state or {}),
+            recent_notes=list(recent_notes or []),
+            relevant_artifact_refs=list(relevant_artifact_refs or []),
+            ingress_artifact_refs=list(ingress_artifact_refs or []),
+            session_projection_ref=session_projection_ref,
             selection_reasons=selection_reasons,
             excluded_memory_ids=sorted(excluded_reasons),
             excluded_reasons=excluded_reasons,
@@ -207,6 +286,40 @@ class ContextCompiler:
         score += 5.0 if memory.trust_tier == "durable" else 0.0
         score += float(memory.updated_at or 0.0) / 1_000_000_000_000.0
         return score
+
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        return " ".join(str(query or "").split()).strip()
+
+    @classmethod
+    def _is_smalltalk_query(cls, query: str) -> bool:
+        cleaned = re.sub(r"\s+", "", str(query or "")).lower()
+        return cleaned in _GREETING_QUERIES
+
+    @staticmethod
+    def _is_followup_query(query: str) -> bool:
+        cleaned = re.sub(r"\s+", "", str(query or ""))
+        return any(marker in cleaned for marker in _FOLLOWUP_MARKERS)
+
+    @classmethod
+    def _memory_relevant_to_query(cls, memory: MemoryRecord, *, query: str) -> bool:
+        if not query:
+            return False
+        if memory.scope_kind != "conversation":
+            return True
+        if memory.retention_class not in {"task_state", "volatile_fact"}:
+            return True
+        if cls._is_followup_query(query):
+            return True
+        query_tokens = {token for token in MemoryEngine._topic_tokens(query) if len(token) >= 2}
+        memory_tokens = {token for token in MemoryEngine._topic_tokens(memory.claim_text) if len(token) >= 2}
+        if query_tokens & memory_tokens:
+            return True
+        if any(token in memory.claim_text for token in query_tokens):
+            return True
+        if any(token in query for token in memory_tokens):
+            return True
+        return MemoryEngine._shares_topic(memory.claim_text, query)
 
 
 __all__ = ["ContextCompiler", "ContextPack"]

@@ -52,6 +52,17 @@ _MODIFIER_FLAGS = {
     "shift": "shift down",
 }
 
+_ACCESSIBILITY_ERROR_MARKERS = (
+    "1002",
+    "assistive access",
+    "not allowed assistive access",
+    "not permitted to send keystrokes",
+    "not allowed to send keystrokes",
+    "not allowed to control",
+    "不允许发送按键",
+    "不允许控制",
+)
+
 
 def _run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(args, capture_output=True, text=True)
@@ -95,6 +106,44 @@ def _ok(info: str | None = None) -> dict[str, Any]:
     return result
 
 
+def _is_accessibility_error(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _ACCESSIBILITY_ERROR_MARKERS)
+
+
+def _desktop_automation_error(
+    action: str,
+    detail: str,
+    *,
+    used_osascript: bool = False,
+    suggest_cliclick: bool = False,
+) -> RuntimeError:
+    if _is_accessibility_error(detail):
+        message = (
+            f"macOS blocked desktop automation while trying to {action}. "
+            "Grant Accessibility access to the app running Hermit "
+            "(for example Codex, Terminal, iTerm, or Python) in "
+            "System Settings > Privacy & Security > Accessibility."
+        )
+        if suggest_cliclick:
+            message += (
+                " Hermit is currently using osascript/System Events for this action. "
+                "Installing cliclick makes clicks, typing, moving, and scrolling more reliable, "
+                "but Accessibility permission is still required."
+            )
+        return RuntimeError(f"{message} Original error: {detail}")
+
+    if used_osascript and suggest_cliclick:
+        return RuntimeError(
+            f"Desktop automation failed while trying to {action}. "
+            "Hermit fell back to osascript/System Events because cliclick is not installed. "
+            "Install cliclick for more reliable clicks, typing, moving, and scrolling. "
+            f"Original error: {detail}"
+        )
+
+    return RuntimeError(detail)
+
+
 def screenshot(_: dict[str, Any]) -> dict[str, Any]:
     path = Path("/tmp") / f"{_TMP_PREFIX}{time.time_ns()}.png"
     if not _tool_exists("screencapture"):
@@ -122,20 +171,31 @@ def click(payload: dict[str, Any]) -> dict[str, Any]:
     y = _require_int(payload, "y")
     button = str(payload.get("button", "left")).strip().lower()
     double = bool(payload.get("double", False))
+    verb = "double click" if double else "right click" if button == "right" else "click"
 
     if _tool_exists(_CLICLICK):
         action = "dc" if double else {"left": "c", "right": "rc", "middle": "mc"}.get(button)
         if action is None:
             raise RuntimeError(f"unsupported button: {button}")
-        _run_command([_CLICLICK, f"{action}:{x},{y}"])
+        try:
+            _run_command([_CLICLICK, f"{action}:{x},{y}"])
+        except RuntimeError as exc:
+            raise _desktop_automation_error(f"{verb} at {x},{y}", str(exc)) from exc
         return _ok(f"clicked at {x},{y}")
 
     if button not in {"left", "right"}:
         raise RuntimeError("middle click requires cliclick")
 
-    verb = "double click" if double else "right click" if button == "right" else "click"
     script = f'tell application "System Events" to {verb} at {{{x}, {y}}}'
-    _run_osascript(script)
+    try:
+        _run_osascript(script)
+    except RuntimeError as exc:
+        raise _desktop_automation_error(
+            f"{verb} at {x},{y}",
+            str(exc),
+            used_osascript=True,
+            suggest_cliclick=True,
+        ) from exc
     return _ok(f"{verb} at {x},{y}")
 
 
@@ -145,7 +205,10 @@ def type_text(payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("text is required")
 
     if _tool_exists(_CLICLICK):
-        _run_command([_CLICLICK, f"t:{text}"])
+        try:
+            _run_command([_CLICLICK, f"t:{text}"])
+        except RuntimeError as exc:
+            raise _desktop_automation_error("type text", str(exc)) from exc
         return _ok("text typed")
 
     script = (
@@ -153,7 +216,15 @@ def type_text(payload: dict[str, Any]) -> dict[str, Any]:
         'tell application "System Events" to keystroke item 1 of argv\n'
         "end run"
     )
-    _run_osascript(script, [text])
+    try:
+        _run_osascript(script, [text])
+    except RuntimeError as exc:
+        raise _desktop_automation_error(
+            "type text",
+            str(exc),
+            used_osascript=True,
+            suggest_cliclick=True,
+        ) from exc
     return _ok("text typed")
 
 
@@ -177,7 +248,10 @@ def press_key(payload: dict[str, Any]) -> dict[str, Any]:
 
     if key_code is not None:
         script = f'tell application "System Events" to key code {key_code}{using_clause}'
-        _run_osascript(script)
+        try:
+            _run_osascript(script)
+        except RuntimeError as exc:
+            raise _desktop_automation_error("press a key", str(exc), used_osascript=True) from exc
         return _ok(f"pressed {raw_key}")
 
     if len(key) == 1:
@@ -187,7 +261,10 @@ def press_key(payload: dict[str, Any]) -> dict[str, Any]:
             if not modifiers
             else f'tell application "System Events" to keystroke {quoted}{using_clause}'
         )
-        _run_osascript(script)
+        try:
+            _run_osascript(script)
+        except RuntimeError as exc:
+            raise _desktop_automation_error("press a key", str(exc), used_osascript=True) from exc
         return _ok(f"pressed {raw_key}")
 
     raise RuntimeError(f"unsupported key: {raw_key}")
@@ -198,11 +275,22 @@ def move(payload: dict[str, Any]) -> dict[str, Any]:
     y = _require_int(payload, "y")
 
     if _tool_exists(_CLICLICK):
-        _run_command([_CLICLICK, f"m:{x},{y}"])
+        try:
+            _run_command([_CLICLICK, f"m:{x},{y}"])
+        except RuntimeError as exc:
+            raise _desktop_automation_error(f"move the mouse to {x},{y}", str(exc)) from exc
         return _ok(f"moved to {x},{y}")
 
     script = f'tell application "System Events" to move mouse to {{{x}, {y}}}'
-    _run_osascript(script)
+    try:
+        _run_osascript(script)
+    except RuntimeError as exc:
+        raise _desktop_automation_error(
+            f"move the mouse to {x},{y}",
+            str(exc),
+            used_osascript=True,
+            suggest_cliclick=True,
+        ) from exc
     return _ok(f"moved to {x},{y}")
 
 
@@ -218,7 +306,10 @@ def scroll(payload: dict[str, Any]) -> dict[str, Any]:
         action = {"up": "wu", "down": "wd", "left": "wl", "right": "wr"}.get(direction)
         if action is None:
             raise RuntimeError(f"unsupported direction: {direction}")
-        _run_command([_CLICLICK, f"m:{x},{y}", f"{action}:{amount}"])
+        try:
+            _run_command([_CLICLICK, f"m:{x},{y}", f"{action}:{amount}"])
+        except RuntimeError as exc:
+            raise _desktop_automation_error(f"scroll {direction}", str(exc)) from exc
         return _ok(f"scrolled {direction} at {x},{y}")
 
     verb = {
@@ -235,7 +326,15 @@ def scroll(payload: dict[str, Any]) -> dict[str, Any]:
         f'{verb} by {amount}\n'
         f'end tell'
     )
-    _run_osascript(script)
+    try:
+        _run_osascript(script)
+    except RuntimeError as exc:
+        raise _desktop_automation_error(
+            f"scroll {direction}",
+            str(exc),
+            used_osascript=True,
+            suggest_cliclick=True,
+        ) from exc
     return _ok(f"scrolled {direction} at {x},{y}")
 
 

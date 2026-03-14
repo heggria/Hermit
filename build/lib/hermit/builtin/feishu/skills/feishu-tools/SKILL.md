@@ -4,6 +4,14 @@ Use this skill when the user asks to interact with Feishu (飞书) resources bey
 such as creating documents, reading spreadsheets, adding wiki pages, querying Bitable records,
 or creating calendar events.
 
+When a task targets Feishu resources, prefer these native Feishu tools over `computer_use`.
+Use `computer_use` only when the user explicitly asks to drive the Feishu desktop UI, or when the action is genuinely unavailable through the exposed Feishu APIs.
+
+Messaging guidance:
+- replying in the current Feishu thread is usually handled by the adapter's normal reply flow
+- proactively sending a message to a known chat or user should use `feishu_send_message`
+- if the task is "join a group from an invite/UI flow", there may be no native tool for that step, so UI automation can be a last resort
+
 ## Activation Triggers
 
 - "帮我创建一个飞书文档" / "写一个飞书文档"
@@ -84,6 +92,7 @@ feishu_send_message(
 ```
 - For formatted/rich content, prefer the reply mechanism (auto-handled by the bot).
 - Use this for proactive notifications to teams or individuals.
+- Prefer this over `computer_use` whenever you already know the target `chat_id`, `open_id`, `user_id`, `union_id`, or email.
 
 ---
 

@@ -123,3 +123,79 @@ def test_context_compiler_selects_static_and_retrieval_memory(tmp_path: Path) ->
     assert pack.excluded_reasons["mem-sensitive"] == "out_of_scope"
     assert "统一使用简体中文回复用户" in compiler.render_static_prompt(pack)
     assert "当前无任何定时任务" in compiler.render_retrieval_prompt(pack)
+
+
+def test_context_compiler_skips_conversation_retrieval_for_smalltalk(tmp_path: Path) -> None:
+    workspace_root = str((tmp_path / "repo").resolve())
+    compiler = ContextCompiler(artifact_store=ArtifactStore(tmp_path / "artifacts"))
+    context = TaskExecutionContext(
+        conversation_id="chat-1",
+        task_id="task-1",
+        step_id="step-1",
+        step_attempt_id="attempt-1",
+        source_channel="chat",
+        workspace_root=workspace_root,
+    )
+    memories = [
+        _memory(
+            memory_id="mem-task",
+            category="进行中的任务",
+            claim_text="用户要求制作 GPT-5.4 vs Grok 3 对比文档，任务尚未完成。",
+            retention_class="task_state",
+            scope_kind="conversation",
+            scope_ref="chat-1",
+        ),
+        _memory(
+            memory_id="mem-pref",
+            category="用户偏好",
+            claim_text="统一使用简体中文回复用户",
+            retention_class="user_preference",
+            scope_kind="global",
+            scope_ref="global",
+        ),
+    ]
+
+    pack = compiler.compile(
+        context=context,
+        working_state=WorkingStateSnapshot(goal_summary="你好"),
+        beliefs=[],
+        memories=memories,
+        query="你好",
+    )
+
+    assert [item["memory_id"] for item in pack.static_memory] == ["mem-pref"]
+    assert pack.retrieval_memory == []
+    assert pack.excluded_reasons["mem-task"] == "smalltalk_query"
+
+
+def test_context_compiler_keeps_followup_task_state_for_short_followup(tmp_path: Path) -> None:
+    workspace_root = str((tmp_path / "repo").resolve())
+    compiler = ContextCompiler(artifact_store=ArtifactStore(tmp_path / "artifacts"))
+    context = TaskExecutionContext(
+        conversation_id="chat-1",
+        task_id="task-1",
+        step_id="step-1",
+        step_attempt_id="attempt-1",
+        source_channel="chat",
+        workspace_root=workspace_root,
+    )
+    memories = [
+        _memory(
+            memory_id="mem-task",
+            category="进行中的任务",
+            claim_text="用户要求制作 GPT-5.4 vs Grok 3 对比文档，任务尚未完成。",
+            retention_class="task_state",
+            scope_kind="conversation",
+            scope_ref="chat-1",
+        )
+    ]
+
+    pack = compiler.compile(
+        context=context,
+        working_state=WorkingStateSnapshot(goal_summary="继续"),
+        beliefs=[],
+        memories=memories,
+        query="继续",
+    )
+
+    assert [item["memory_id"] for item in pack.retrieval_memory] == ["mem-task"]

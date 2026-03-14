@@ -75,7 +75,7 @@ class ProjectionService:
         ]
         latest_context_pack_ref = None
         for artifact in reversed(self.store.list_artifacts(task_id=task_id, limit=200)):
-            if artifact.kind == "context.pack/v1":
+            if artifact.kind.startswith("context.pack/"):
                 latest_context_pack_ref = artifact.artifact_id
                 break
         latest_planning_decision_id = None

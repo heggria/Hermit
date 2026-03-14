@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
+from hermit.i18n import resolve_locale, tr
 from hermit.kernel.store import KernelStore
 from hermit.plugin.base import HookEvent
 from hermit.storage import atomic_write
@@ -27,7 +28,7 @@ _HISTORY_MAX_RECORDS = 200
 _POLL_INTERVAL = 60
 
 
-def _build_execution_prompt(task_prompt: str) -> str:
+def _build_execution_prompt(task_prompt: str, *, locale: str | None = None) -> str:
     """Wrap a scheduled task prompt so the agent returns only the final deliverable.
 
     Scheduled jobs are already fully configured before they fire. When executed,
@@ -36,17 +37,10 @@ def _build_execution_prompt(task_prompt: str) -> str:
     user conversation). The scheduler itself handles delivery to Feishu.
     """
     clean_prompt = task_prompt.strip()
-    return (
-        "你正在执行一个已经创建好的定时任务。\n"
-        "当前目标是直接产出这次任务的最终结果，用于随后发送给用户。\n"
-        "不要把当前触发当成新的需求受理流程。\n"
-        "不要询问澄清问题，不要索要 chat_id、open_id、群聊 ID、消息目标或权限信息。\n"
-        "不要调用任何创建、修改、删除定时任务的工具，也不要建议用户重新设置提醒。\n"
-        "如果原任务是提醒类，直接写出要发送给用户的提醒内容。\n"
-        "如果原任务是报告、总结、搜索或整理类，直接给出完成后的内容。\n"
-        "输出中不要包含过程说明，除非原任务明确要求。\n\n"
-        "任务内容如下：\n"
-        f"{clean_prompt}"
+    return tr(
+        "prompt.scheduler.execution",
+        locale=resolve_locale(locale),
+        task_prompt=clean_prompt,
     )
 
 
@@ -64,7 +58,9 @@ class SchedulerEngine:
         self._runner: Any = None
         self._schedules_dir = settings.base_dir / "schedules"
         self._schedules_dir.mkdir(parents=True, exist_ok=True)
-        kernel_db_path = getattr(settings, "kernel_db_path", settings.base_dir / "kernel" / "state.db")
+        kernel_db_path = getattr(settings, "kernel_db_path", None)
+        if not isinstance(kernel_db_path, (str, Path)):
+            kernel_db_path = settings.base_dir / "kernel" / "state.db"
         self._store = KernelStore(Path(kernel_db_path))
         self._history_path = self._schedules_dir / "history.json"
         self._logs_dir = self._schedules_dir / "logs"
@@ -193,6 +189,39 @@ class SchedulerEngine:
 
     def _execute(self, job: ScheduledJob) -> None:
         log.info("scheduler_executing", job_id=job.id, job_name=job.name)
+        from hermit.core.runner import AgentRunner
+
+        if isinstance(self._runner, AgentRunner):
+            notify: dict[str, str] = {}
+            chat_id = getattr(job, "feishu_chat_id", None) or getattr(
+                self._settings, "scheduler_feishu_chat_id", ""
+            )
+            if chat_id:
+                notify["feishu_chat_id"] = chat_id
+            session_id = f"schedule-{job.id}-{uuid.uuid4().hex[:8]}"
+            self._runner.enqueue_ingress(
+                session_id,
+                job.prompt,
+                source_channel="scheduler",
+                notify=notify,
+                source_ref="scheduler",
+                ingress_metadata={
+                    "title": job.name,
+                    "schedule_job_id": job.id,
+                    "schedule_job_name": job.name,
+                },
+                requested_by="scheduler",
+            )
+            with self._lock:
+                job.last_run_at = time.time()
+                if job.schedule_type == "once":
+                    job.enabled = False
+                    job.next_run_at = None
+                else:
+                    job.next_run_at = self._compute_next_run(job)
+            self._persist_jobs()
+            return
+
         started_at = time.time()
         result_text = ""
         success = False
@@ -210,7 +239,7 @@ class SchedulerEngine:
 
         finished_at = time.time()
 
-        notify: dict[str, str] = {}
+        notify = {}
         chat_id = getattr(job, "feishu_chat_id", None) or getattr(
             self._settings, "scheduler_feishu_chat_id", ""
         )
@@ -250,7 +279,10 @@ class SchedulerEngine:
         self._persist_jobs()
 
     def _run_agent(self, prompt: str) -> Any:
-        execution_prompt = _build_execution_prompt(prompt)
+        execution_prompt = _build_execution_prompt(
+            prompt,
+            locale=getattr(self._settings, "locale", None),
+        )
         if self._runner is not None:
             return self._run_agent_via_runner(execution_prompt)
         return self._run_agent_standalone(execution_prompt)
@@ -263,13 +295,25 @@ class SchedulerEngine:
         return result.agent_result
 
     def _run_agent_standalone(self, prompt: str) -> Any:
-        """Fallback: build a fresh agent when running outside serve context (e.g. CLI)."""
+        """Fallback: build a task-aware runner when running outside serve context."""
         from hermit.config import get_settings
+        from hermit.core.runner import AgentRunner
+        from hermit.core.session import SessionManager
         from hermit.provider.services import build_background_runtime
 
         settings = get_settings()
         agent, pm = build_background_runtime(settings, cwd=Path.home())
-        return agent.run(prompt)
+        runner = AgentRunner(
+            agent,
+            SessionManager(settings.sessions_dir),
+            pm,
+            task_controller=getattr(agent, "task_controller", None),
+        )
+        session_id = f"schedule-{uuid.uuid4().hex[:8]}"
+        result = runner.dispatch(session_id, prompt)
+        if result.agent_result is None:
+            raise RuntimeError(result.text)
+        return result.agent_result
 
     # ------------------------------------------------------------------
     # Catch-up: execute missed jobs on startup

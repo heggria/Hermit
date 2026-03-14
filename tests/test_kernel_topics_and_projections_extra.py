@@ -236,6 +236,33 @@ def test_projection_service_context_pack_and_rollbacks_are_included(tmp_path: Pa
     assert payload["rollbacks"][0]["receipt_ref"] == receipt.receipt_id
 
 
+def test_conversation_projection_strips_internal_tags_from_recent_notes(tmp_path: Path) -> None:
+    from hermit.kernel.conversation_projection import ConversationProjectionService
+
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    controller = TaskController(store)
+    ctx = controller.start_task(conversation_id="oc_1", goal="你好", source_channel="feishu", kind="respond")
+    store.append_event(
+        event_type="task.note.appended",
+        entity_type="task",
+        entity_id=ctx.task_id,
+        task_id=ctx.task_id,
+        actor="user",
+        payload={
+            "raw_text": (
+                "<feishu_msg_id>om_1</feishu_msg_id>\n"
+                "<feishu_chat_id>oc_1</feishu_chat_id>\n"
+                "加上和 grok 的对比"
+            )
+        },
+    )
+
+    payload = ConversationProjectionService(store).rebuild("oc_1")
+
+    assert payload["recent_notes"] == ["加上和 grok 的对比"]
+    assert "<feishu_msg_id>" not in payload["summary"]
+
+
 def test_projection_service_key_input_prefers_first_value() -> None:
     assert ProjectionService._key_input({}) == ""
     assert ProjectionService._key_input({"query": "北京天气", "limit": 3}) == "北京天气"

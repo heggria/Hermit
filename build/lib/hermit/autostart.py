@@ -20,9 +20,15 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Optional
 
+from hermit.i18n import tr
+
 _LABEL_PREFIX = "com.hermit.serve"
 _LEGACY_LABEL_PREFIXES = ("com.moltforge.serve",)
 _LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
+
+
+def _t(message_key: str, default: str | None = None, **kwargs: object) -> str:
+    return tr(message_key, default=default, **kwargs)
 
 
 def _label(adapter: str) -> str:
@@ -194,13 +200,19 @@ def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
     Returns a human-readable status message.
     """
     if sys.platform != "darwin":
-        return "Auto-start via launchd is only supported on macOS."
+        return _t(
+            "autostart.common.mac_only",
+            "Auto-start via launchd is only supported on macOS.",
+        )
 
     exe = _find_executable()
     if exe is None:
-        return (
-            "Cannot find the hermit executable. "
-            "Make sure it is installed and available in PATH."
+        return _t(
+            "autostart.enable.missing_executable",
+            (
+                "Cannot find the hermit executable. "
+                "Make sure it is installed and available in PATH."
+            ),
         )
 
     if log_dir is None:
@@ -219,18 +231,33 @@ def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
 
     result = _launchctl("load", str(plist))
     if result.returncode != 0:
-        return f"launchctl load failed:\n{result.stderr.strip()}"
+        return _t(
+            "autostart.enable.load_failed",
+            "launchctl load failed:\n{stderr}",
+            stderr=result.stderr.strip(),
+        )
 
-    message = (
-        f"Auto-start enabled for adapter '{adapter}'.\n"
-        f"  Label : {_label(adapter)}\n"
-        f"  Plist : {plist}\n"
-        f"  Logs  : {log_dir}/{adapter}-{{stdout,stderr}}.log\n"
-        f"Hermit will start automatically at next login."
+    message = _t(
+        "autostart.enable.done",
+        (
+            "Auto-start enabled for adapter '{adapter}'.\n"
+            "  Label : {label}\n"
+            "  Plist : {plist}\n"
+            "  Logs  : {logs}/{adapter}-{{stdout,stderr}}.log\n"
+            "Hermit will start automatically at next login."
+        ),
+        adapter=adapter,
+        label=_label(adapter),
+        plist=plist,
+        logs=log_dir,
     )
     if removed_legacy:
         removed_text = ", ".join(str(path) for path in removed_legacy)
-        message += f"\nRemoved legacy LaunchAgents: {removed_text}"
+        message += _t(
+            "autostart.enable.removed_legacy",
+            "\nRemoved legacy LaunchAgents: {paths}",
+            paths=removed_text,
+        )
     return message
 
 
@@ -240,19 +267,35 @@ def disable(adapter: str = "feishu") -> str:
     Returns a human-readable status message.
     """
     if sys.platform != "darwin":
-        return "Auto-start via launchd is only supported on macOS."
+        return _t(
+            "autostart.common.mac_only",
+            "Auto-start via launchd is only supported on macOS.",
+        )
 
     plist = _plist_path(adapter)
     if not plist.exists():
-        return f"Auto-start for '{adapter}' is not configured (plist not found)."
+        return _t(
+            "autostart.disable.not_configured",
+            "Auto-start for '{adapter}' is not configured (plist not found).",
+            adapter=adapter,
+        )
 
     if _is_loaded(adapter):
         result = _launchctl("unload", str(plist))
         if result.returncode != 0:
-            return f"launchctl unload failed:\n{result.stderr.strip()}"
+            return _t(
+                "autostart.disable.unload_failed",
+                "launchctl unload failed:\n{stderr}",
+                stderr=result.stderr.strip(),
+            )
 
     plist.unlink()
-    return f"Auto-start disabled for '{adapter}'.  Plist removed: {plist}"
+    return _t(
+        "autostart.disable.done",
+        "Auto-start disabled for '{adapter}'.  Plist removed: {plist}",
+        adapter=adapter,
+        plist=plist,
+    )
 
 
 def status(adapter: Optional[str] = None) -> str:
@@ -262,13 +305,20 @@ def status(adapter: Optional[str] = None) -> str:
     Otherwise show all managed LaunchAgents.
     """
     if sys.platform != "darwin":
-        return "Auto-start via launchd is only supported on macOS."
+        return _t(
+            "autostart.common.mac_only",
+            "Auto-start via launchd is only supported on macOS.",
+        )
 
     plists = [_plist_path(adapter)] if adapter else _list_managed_plists()
 
     if not plists or not any(p.exists() for p in plists):
         scope = f"'{adapter}'" if adapter else "any adapter"
-        return f"Auto-start: no agents configured for {scope}."
+        return _t(
+            "autostart.status.empty",
+            "Auto-start: no agents configured for {scope}.",
+            scope=scope,
+        )
 
     lines: list[str] = []
     for plist in plists:
@@ -279,9 +329,13 @@ def status(adapter: Optional[str] = None) -> str:
         if not adp:
             continue
         loaded = _is_loaded(adp)
-        state = "running" if loaded else "NOT loaded"
+        state = (
+            _t("autostart.status.state.running", "running")
+            if loaded
+            else _t("autostart.status.state.not_loaded", "NOT loaded")
+        )
         label = plist.stem
         lines.append(f"  [{state:^10}]  {label}")
         lines.append(f"               {plist}")
 
-    return "Auto-start agents:\n" + "\n".join(lines)
+    return _t("autostart.status.header", "Auto-start agents:\n") + "\n".join(lines)

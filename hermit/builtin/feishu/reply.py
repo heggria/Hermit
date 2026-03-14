@@ -1323,6 +1323,7 @@ def build_task_topic_card(
     elements: list[dict[str, Any]] = []
     current_hint = str(topic.get("current_hint", "") or _t("feishu.reply.progress.default", locale=locale))
     current_phase = str(topic.get("current_phase", "") or "").strip()
+    status = str(topic.get("status", "running") or "running")
     current_progress_percent = topic.get("current_progress_percent")
     try:
         current_percent = int(current_progress_percent) if current_progress_percent is not None else None
@@ -1339,6 +1340,7 @@ def build_task_topic_card(
     current_text = f"**{current_header}**\n{current_hint}" if current_header else f"**{current_default}**\n{current_hint}"
     elements.append(_markdown_element(current_text, margin="0 0 12px 0"))
 
+    terminal_status = status in {"completed", "failed", "cancelled"}
     for item in reversed(items[-8:]):
         kind = str(item.get("kind", "")).strip()
         phase = str(item.get("phase", "") or "").strip()
@@ -1350,6 +1352,14 @@ def build_task_topic_card(
             progress_percent = int(percent) if percent is not None else None
         except (TypeError, ValueError):
             progress_percent = None
+        if (
+            phase == current_phase
+            and progress_percent == current_percent
+            and text == current_hint
+        ):
+            continue
+        if terminal_status and kind == "task.started":
+            continue
         header_parts: list[str] = []
         if phase:
             header_parts.append(_task_topic_label(phase, locale=locale))
@@ -1360,7 +1370,6 @@ def build_task_topic_card(
         header = " · ".join(header_parts)
         line = f"**{header}**\n{text}" if header else text
         elements.append(_markdown_element(line, margin="0 0 10px 0"))
-    status = str(topic.get("status", "running") or "running")
     template = "blue"
     if status == "completed":
         template = "green"

@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from hermit.i18n import resolve_locale, tr
 from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.decisions import DecisionService
 from hermit.kernel.store import KernelStore
@@ -14,10 +13,6 @@ _EXPLICIT_PLAN_RE = re.compile(
     r"(先规划一下|先计划一下|先给个计划|先别执行|不要执行先规划|进入规划模式|先做规划|先出计划|plan\s+first)",
     re.IGNORECASE,
 )
-
-
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
 
 
 @dataclass

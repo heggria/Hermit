@@ -14,6 +14,10 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 
 from hermit.builtin.webhook.models import WebhookConfig, WebhookRoute
+from hermit.kernel.proofs import ProofService
+from hermit.kernel.projections import ProjectionService
+from hermit.kernel.rollbacks import RollbackService
+from hermit.kernel.supervision import SupervisionService
 from hermit.plugin.base import HookEvent
 
 if TYPE_CHECKING:
@@ -80,6 +84,11 @@ class WebhookServer:
         self._app.add_api_route("/tasks", self._list_tasks, methods=["GET"])
         self._app.add_api_route("/tasks/{task_id}", self._show_task, methods=["GET"])
         self._app.add_api_route("/tasks/{task_id}/events", self._task_events, methods=["GET"])
+        self._app.add_api_route("/tasks/{task_id}/case", self._task_case, methods=["GET"])
+        self._app.add_api_route("/tasks/{task_id}/proof", self._task_proof, methods=["GET"])
+        self._app.add_api_route("/tasks/{task_id}/proof/export", self._task_proof_export, methods=["POST"])
+        self._app.add_api_route("/receipts/{receipt_id}/rollback", self._receipt_rollback, methods=["POST"])
+        self._app.add_api_route("/projections/rebuild", self._rebuild_projections, methods=["POST"])
         self._app.add_api_route("/approvals/pending", self._list_pending_approvals, methods=["GET"])
         self._app.add_api_route("/approvals/{approval_id}/approve", self._approve, methods=["POST"])
         self._app.add_api_route("/approvals/{approval_id}/deny", self._deny, methods=["POST"])
@@ -155,37 +164,55 @@ class WebhookServer:
             return
 
         prompt = FlattenDict(payload).render(route.prompt_template)
-
         session_id = f"webhook-{route.name}-{uuid4().hex[:8]}"
         _log.info("webhook_dispatch", route=route.name, session_id=session_id)  # type: ignore[call-arg]
 
-        result_text = ""
-        success = True
-        error: str | None = None
+        from hermit.core.runner import AgentRunner
+
+        if not isinstance(self._runner, AgentRunner):
+            result_text = ""
+            success = True
+            error: str | None = None
+            try:
+                result = self._runner.dispatch(session_id, prompt)
+                result_text = result.text or ""
+            except Exception as exc:
+                success = False
+                error = str(exc)
+                _log.exception("webhook_dispatch_error", route=route.name, error=error)  # type: ignore[call-arg]
+            finally:
+                try:
+                    self._runner.close_session(session_id)
+                except Exception:
+                    _log.exception("webhook_close_session_error", route=route.name, session_id=session_id)  # type: ignore[call-arg]
+
+            self._hooks.fire(
+                HookEvent.DISPATCH_RESULT,
+                source=f"webhook/{route.name}",
+                title=f"Webhook: {route.name}",
+                result_text=result_text,
+                success=success,
+                error=error,
+                notify=route.notify,
+                metadata={"payload_keys": list(payload.keys())},
+            )
+            return
 
         try:
-            result = self._runner.dispatch(session_id, prompt)
-            result_text = result.text or ""
+            self._runner.enqueue_ingress(
+                session_id,
+                prompt,
+                source_channel="webhook",
+                notify=route.notify,
+                source_ref=f"webhook/{route.name}",
+                ingress_metadata={
+                    "title": f"Webhook: {route.name}",
+                    "webhook_route": route.name,
+                    "payload_keys": list(payload.keys()),
+                },
+            )
         except Exception as exc:
-            success = False
-            error = str(exc)
-            _log.exception("webhook_dispatch_error", route=route.name, error=error)  # type: ignore[call-arg]
-        finally:
-            try:
-                self._runner.close_session(session_id)
-            except Exception:
-                _log.exception("webhook_close_session_error", route=route.name, session_id=session_id)  # type: ignore[call-arg]
-
-        self._hooks.fire(
-            HookEvent.DISPATCH_RESULT,
-            source=f"webhook/{route.name}",
-            title=f"Webhook: {route.name}",
-            result_text=result_text,
-            success=success,
-            error=error,
-            notify=route.notify,
-            metadata={"payload_keys": list(payload.keys())},
-        )
+            _log.exception("webhook_dispatch_error", route=route.name, error=str(exc))  # type: ignore[call-arg]
 
     def _kernel_store(self) -> Any:
         if self._runner is None:
@@ -231,6 +258,39 @@ class WebhookServer:
         await self._verify_control_request(request)
         store = self._kernel_store()
         return {"events": store.list_events(task_id=task_id, limit=limit)}
+
+    async def _task_case(self, task_id: str, request: Request) -> dict[str, Any]:
+        await self._verify_control_request(request)
+        store = self._kernel_store()
+        return SupervisionService(store).build_task_case(task_id)
+
+    async def _task_proof(self, task_id: str, request: Request) -> dict[str, Any]:
+        await self._verify_control_request(request)
+        store = self._kernel_store()
+        return ProofService(store).build_proof_summary(task_id)
+
+    async def _task_proof_export(self, task_id: str, request: Request) -> dict[str, Any]:
+        await self._verify_control_request(request)
+        store = self._kernel_store()
+        return ProofService(store).export_task_proof(task_id)
+
+    async def _receipt_rollback(self, receipt_id: str, request: Request) -> dict[str, Any]:
+        await self._verify_control_request(request)
+        store = self._kernel_store()
+        return RollbackService(store).execute(receipt_id)
+
+    async def _rebuild_projections(self, request: Request) -> dict[str, Any]:
+        body = await self._verify_control_request(request)
+        task_id = ""
+        if body:
+            try:
+                import json
+                task_id = str(json.loads(body).get("task_id", "") or "").strip()
+            except Exception:
+                task_id = ""
+        store = self._kernel_store()
+        service = ProjectionService(store)
+        return service.rebuild_task(task_id) if task_id else service.rebuild_all()
 
     async def _list_pending_approvals(
         self,

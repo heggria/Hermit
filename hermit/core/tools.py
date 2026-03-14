@@ -26,6 +26,7 @@ class ToolSpec:
     risk_hint: str | None = None
     requires_receipt: bool | None = None
     supports_preview: bool = False
+    result_is_internal_context: bool = False
 
 class ToolRegistry:
     def __init__(self) -> None:

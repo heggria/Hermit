@@ -553,7 +553,9 @@ def _build_send_message_tool() -> ToolSpec:
             "Send a text message to a Feishu chat or user. "
             "Use receive_id_type='chat_id' for group chats, 'open_id' for individual users. "
             "For Markdown formatting, use the existing reply mechanism instead. "
-            "Useful for proactively notifying teams about results or summaries."
+            "Prefer this over desktop automation for routine Feishu messaging whenever "
+            "you know the target receive_id. Useful for proactively notifying teams "
+            "about results or summaries."
         ),
         input_schema={
             "type": "object",
@@ -605,7 +607,7 @@ def _build_bitable_query_tool() -> ToolSpec:
             )
 
             client = build_lark_client()
-            body_builder = SearchAppTableRecordRequestBody.builder().page_size(page_size)
+            body_builder = SearchAppTableRecordRequestBody.builder()
 
             if filter_field and filter_value is not None:
                 condition = (
@@ -627,6 +629,7 @@ def _build_bitable_query_tool() -> ToolSpec:
                 SearchAppTableRecordRequest.builder()
                 .app_token(app_token)
                 .table_id(table_id)
+                .page_size(page_size)
                 .request_body(body_builder.build())
                 .build()
             )

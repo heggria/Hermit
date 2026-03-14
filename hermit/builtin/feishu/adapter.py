@@ -24,7 +24,6 @@ from hermit.builtin.feishu.reply import (
     build_error_card,
     build_progress_card,
     build_result_card_with_process,
-    build_task_topic_card,
     build_thinking_card,
     format_tool_start_hint,
     make_tool_step,
@@ -62,6 +61,14 @@ _RAW_CONTROL_PREFIXES = (
     "approve_always_directory ",
     "deny ",
 )
+_DISPLAYABLE_TOPIC_KINDS = {
+    "tool.submitted",
+    "tool.progressed",
+    "tool.status.changed",
+    "task.progress.summarized",
+    "approval.requested",
+    "approval.resolved",
+}
 
 
 
@@ -329,10 +336,6 @@ class FeishuAdapter:
                             mappings_changed = True
                         continue
                     message_id = str(mapping.get("root_message_id", "") or "")
-                    if not message_id:
-                        mappings.pop(task_id, None)
-                        mappings_changed = True
-                        continue
                     pending = None
                     if task.status == "blocked" and hasattr(store, "list_approvals"):
                         pending_approvals = store.list_approvals(task_id=task_id, status="pending", limit=1)
@@ -343,26 +346,63 @@ class FeishuAdapter:
                             fallback_text=self._task_terminal_result_text(task_id) or self._t("feishu.adapter.progress.thinking"),
                             approval=pending,
                         )
-                        if patch_card(self._client, message_id, approval_card):
+                        if message_id:
+                            changed = patch_card(self._client, message_id, approval_card)
+                        else:
+                            message_id = self._send_task_card(
+                                task.conversation_id,
+                                task_id,
+                                mapping=mapping,
+                                card=approval_card,
+                                card_mode="approval",
+                                approval_id=pending.approval_id,
+                            )
+                            changed = bool(message_id)
+                        if changed:
                             updated = dict(mapping)
                             updated["card_mode"] = "approval"
                             updated["approval_id"] = pending.approval_id
+                            if message_id:
+                                updated["root_message_id"] = message_id
+                            mappings[task_id] = updated
+                            mappings_changed = True
+                        continue
+                    if not message_id:
+                        if task.status in {"completed", "failed", "cancelled"}:
+                            self._deliver_terminal_result_without_card(task_id, mapping=mapping)
+                            mappings.pop(task_id, None)
+                            mappings_changed = True
+                            continue
+                        projection = ProjectionService(store).ensure_task_projection(task_id)
+                        topic = dict(projection.get("topic", {}) or {})
+                        if not self._topic_has_displayable_progress(topic):
+                            continue
+                        card = build_progress_card(
+                            self._task_history_steps(task_id),
+                            current_hint=self._progress_hint_from_topic(topic),
+                            locale=self._locale(),
+                        )
+                        signature = self._card_signature(card)
+                        message_id = self._send_task_card(
+                            task.conversation_id,
+                            task_id,
+                            mapping=mapping,
+                            card=card,
+                            card_mode="topic",
+                            topic_signature=signature,
+                        )
+                        if message_id:
+                            updated = dict(mapping)
+                            updated["root_message_id"] = message_id
+                            updated["topic_signature"] = signature
                             mappings[task_id] = updated
                             mappings_changed = True
                         continue
                     self._patch_task_topic(task_id, message_id=message_id)
                     if task.status in {"completed", "failed", "cancelled"}:
-                        completion_sent = self._maybe_send_completion_result_message(
-                            task_id,
-                            chat_id=str(mapping.get("chat_id", "") or "") or None,
-                        )
-                        if (
-                            not self._task_has_appended_notes(task_id)
-                            or bool(mapping.get("completion_reply_sent", False))
-                            or completion_sent
-                        ):
-                            mappings.pop(task_id, None)
-                            mappings_changed = True
+                        self._patch_terminal_result_card(task_id, message_id=message_id)
+                        mappings.pop(task_id, None)
+                        mappings_changed = True
                 if mappings_changed:
                     metadata["feishu_task_topics"] = mappings
                     store.update_conversation_metadata(conversation_id, metadata)
@@ -375,7 +415,8 @@ class FeishuAdapter:
         task_id: str,
         *,
         chat_id: str,
-        root_message_id: str,
+        root_message_id: str | None = None,
+        reply_to_message_id: str | None = None,
         card_mode: str = "topic",
         approval_id: str | None = None,
     ) -> None:
@@ -388,15 +429,21 @@ class FeishuAdapter:
         metadata = dict(conversation.metadata if conversation is not None else {})
         mappings = dict(metadata.get("feishu_task_topics", {}) or {})
         existing = dict(mappings.get(task_id, {}) or {})
-        mappings[task_id] = {
+        updated = {
             "chat_id": chat_id,
-            "root_message_id": root_message_id,
             "completion_reply_sent": bool(existing.get("completion_reply_sent", False)),
             "card_mode": card_mode or "topic",
             "topic_signature": str(existing.get("topic_signature", "") or ""),
         }
+        normalized_root = str(root_message_id or "").strip()
+        if normalized_root:
+            updated["root_message_id"] = normalized_root
+        normalized_reply_to = str(reply_to_message_id or "").strip()
+        if normalized_reply_to:
+            updated["reply_to_message_id"] = normalized_reply_to
         if approval_id:
-            mappings[task_id]["approval_id"] = approval_id
+            updated["approval_id"] = approval_id
+        mappings[task_id] = updated
         metadata["feishu_task_topics"] = mappings
         store.update_conversation_metadata(conversation_id, metadata)
 
@@ -513,13 +560,115 @@ class FeishuAdapter:
         return merged
 
     @staticmethod
-    def _topic_signature(topic: dict[str, Any], title: str) -> str:
-        payload = {
-            "title": title,
-            "topic": topic,
-        }
+    def _card_signature(payload: dict[str, Any]) -> str:
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
+
+    def _topic_has_displayable_progress(self, topic: dict[str, Any]) -> bool:
+        items = list(topic.get("items", []) or [])
+        return any(str(item.get("kind", "")).strip() in _DISPLAYABLE_TOPIC_KINDS for item in items)
+
+    def _progress_hint_from_topic(self, topic: dict[str, Any]) -> str:
+        current_hint = str(topic.get("current_hint", "") or "").strip()
+        current_phase = str(topic.get("current_phase", "") or "").strip()
+        items = list(topic.get("items", []) or [])
+        meaningful_kinds = _DISPLAYABLE_TOPIC_KINDS | {"task.completed", "task.failed", "task.cancelled"}
+        has_meaningful_progress = any(str(item.get("kind", "")).strip() in meaningful_kinds for item in items)
+        if current_phase in {"", "started", "submitted"} and not has_meaningful_progress:
+            return self._t("feishu.adapter.progress.thinking")
+        return current_hint or self._t("feishu.adapter.progress.thinking")
+
+    def _send_task_card(
+        self,
+        conversation_id: str,
+        task_id: str,
+        *,
+        mapping: dict[str, Any],
+        card: dict[str, Any],
+        card_mode: str,
+        approval_id: str | None = None,
+        topic_signature: str | None = None,
+    ) -> str | None:
+        if self._client is None:
+            return None
+        reply_to_message_id = str(mapping.get("reply_to_message_id", "") or "").strip()
+        chat_id = str(mapping.get("chat_id", "") or "").strip() or self._chat_id_from_conversation_id(conversation_id)
+        if reply_to_message_id:
+            message_id = reply_card_return_id(self._client, reply_to_message_id, card)
+        elif chat_id:
+            message_id = send_card(self._client, chat_id, card)
+        else:
+            return None
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_message_id:
+            return None
+        updates: dict[str, Any] = {
+            "root_message_id": normalized_message_id,
+            "card_mode": card_mode,
+        }
+        if approval_id:
+            updates["approval_id"] = approval_id
+        if topic_signature is not None:
+            updates["topic_signature"] = topic_signature
+        self._update_task_topic_mapping(conversation_id, task_id, **updates)
+        return normalized_message_id
+
+    def _deliver_terminal_result_without_card(self, task_id: str, *, mapping: dict[str, Any]) -> bool:
+        if self._runner is None or self._client is None:
+            return False
+        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
+        if store is None:
+            return False
+        task = store.get_task(task_id)
+        if task is None or task.status not in {"completed", "failed", "cancelled"}:
+            return False
+        if bool(mapping.get("completion_reply_sent", False)):
+            return False
+        text = self._task_terminal_result_text(task_id)
+        if not text:
+            return False
+        reply_to_message_id = str(mapping.get("reply_to_message_id", "") or "").strip()
+        chat_id = str(mapping.get("chat_id", "") or "").strip() or self._chat_id_from_conversation_id(task.conversation_id)
+        if reply_to_message_id:
+            smart_reply(self._client, reply_to_message_id, text, locale=self._locale())
+        elif chat_id:
+            message_id = smart_send_message(self._client, chat_id, text, locale=self._locale())
+            if not message_id:
+                return False
+        else:
+            return False
+        self._update_task_topic_mapping(task.conversation_id, task_id, completion_reply_sent=True)
+        return True
+
+    def _patch_terminal_result_card(self, task_id: str, *, message_id: str | None = None) -> bool:
+        if self._runner is None or self._client is None:
+            return False
+        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
+        if store is None:
+            return False
+        task = store.get_task(task_id)
+        if task is None:
+            return False
+        mapping = self._task_topic_mapping(task.conversation_id, task_id)
+        root_message_id = message_id or str(mapping.get("root_message_id", "") or "")
+        if not root_message_id:
+            return False
+        result_text = self._task_terminal_result_text(task_id)
+        if result_text:
+            card = build_result_card_with_process(
+                result_text,
+                self._task_history_steps(task_id),
+                locale=self._locale(),
+            )
+        else:
+            card = build_completion_status_card(locale=self._locale())
+        signature = self._card_signature(card)
+        if str(mapping.get("topic_signature", "") or "") == signature:
+            return False
+        patched = patch_card(self._client, root_message_id, card)
+        if patched:
+            self._update_task_topic_mapping(task.conversation_id, task_id, topic_signature=signature)
+        return patched
 
     def _maybe_send_completion_result_message(
         self,
@@ -568,16 +717,15 @@ class FeishuAdapter:
             return False
         projection = ProjectionService(store).ensure_task_projection(task_id)
         topic = dict(projection.get("topic", {}) or {})
-        default_title = self._t("feishu.adapter.topic.default_title")
-        title = str(projection.get("task", {}).get("title", "") or default_title)[:40] or default_title
-        signature = self._topic_signature(topic, title)
+        card = build_progress_card(
+            self._task_history_steps(task_id),
+            current_hint=self._progress_hint_from_topic(topic),
+            locale=self._locale(),
+        )
+        signature = self._card_signature(card)
         if str(mapping.get("topic_signature", "") or "") == signature:
             return False
-        patched = patch_card(
-            self._client,
-            root_message_id,
-            build_task_topic_card(topic, title=title, locale=self._locale()),
-        )
+        patched = patch_card(self._client, root_message_id, card)
         if patched:
             self._update_task_topic_mapping(task.conversation_id, task_id, topic_signature=signature)
         return patched
@@ -830,7 +978,6 @@ class FeishuAdapter:
         blocked = bool(agent_result and (agent_result.blocked or agent_result.suspended))
         task_id = str(getattr(agent_result, "task_id", "") or "")
         approval_id = str(getattr(agent_result, "approval_id", "") or "")
-        has_appended_notes = bool(task_id) and self._task_has_appended_notes(task_id)
         card_message_id = str(existing_card_message_id or "").strip() or None
         result_text = str(getattr(result, "text", "") or "")
 
@@ -853,39 +1000,14 @@ class FeishuAdapter:
             return card_message_id, blocked, task_id
 
         if card_message_id:
-            if has_appended_notes and task_id:
-                patch_card(
-                    self._client,
-                    card_message_id,
-                    build_completion_status_card(locale=self._locale()),
-                )
-                self._maybe_send_completion_result_message(
-                    task_id,
-                    task_text=result_text,
-                    chat_id=chat_id,
-                )
-            else:
-                patch_card(
-                    self._client,
-                    card_message_id,
-                    build_result_card_with_process(
-                        result_text,
-                        self._task_history_steps(task_id, live_steps=steps),
-                        locale=self._locale(),
-                    ),
-                )
-            return card_message_id, blocked, task_id
-
-        if has_appended_notes and task_id and reply_to_message_id:
-            card_message_id = reply_card_return_id(
+            patch_card(
                 self._client,
-                reply_to_message_id,
-                build_completion_status_card(locale=self._locale()),
-            )
-            self._maybe_send_completion_result_message(
-                task_id,
-                task_text=result_text,
-                chat_id=chat_id,
+                card_message_id,
+                build_result_card_with_process(
+                    result_text,
+                    self._task_history_steps(task_id, live_steps=steps),
+                    locale=self._locale(),
+                ),
             )
             return card_message_id, blocked, task_id
 
@@ -895,20 +1017,13 @@ class FeishuAdapter:
             smart_send_message(self._client, chat_id, result_text, locale=self._locale())
         return card_message_id, blocked, task_id
 
-    def _reply_task_topic_card(self, reply_to_message_id: str, task_id: str) -> str | None:
-        if self._runner is None or self._client is None:
+    def _reply_task_topic_card(self, reply_to_message_id: str, _task_id: str) -> str | None:
+        if self._client is None:
             return None
-        store = getattr(getattr(self._runner, "task_controller", None), "store", None)
-        if store is None:
-            return None
-        projection = ProjectionService(store).ensure_task_projection(task_id)
-        topic = dict(projection.get("topic", {}) or {})
-        default_title = self._t("feishu.adapter.topic.default_title")
-        title = str(projection.get("task", {}).get("title", "") or default_title)[:40] or default_title
         return reply_card_return_id(
             self._client,
             reply_to_message_id,
-            build_task_topic_card(topic, title=title, locale=self._locale()),
+            build_thinking_card(self._t("feishu.adapter.progress.thinking"), locale=self._locale()),
         )
 
     def _reissue_pending_approval_cards(self) -> None:
@@ -974,6 +1089,15 @@ class FeishuAdapter:
             and callable(getattr(task_controller, "decide_ingress", None))
         )
 
+    @staticmethod
+    def _is_short_text_message(raw_text: str) -> bool:
+        cleaned = " ".join(str(raw_text or "").split()).strip()
+        if not cleaned:
+            return True
+        if "\n" in str(raw_text or ""):
+            return False
+        return len(cleaned) <= 12
+
     def _resolve_approval_from_feishu(
         self,
         session_id: str,
@@ -1012,6 +1136,7 @@ class FeishuAdapter:
         session_id: str,
         msg: FeishuMessage,
         dispatch_text: str,
+        enable_progress_card: bool = True,
     ) -> None:
         if self._runner is None:
             return
@@ -1037,7 +1162,12 @@ class FeishuAdapter:
 
         on_tool_start = None
         on_tool_call = None
-        if bool(getattr(self._settings, "feishu_thread_progress", False)) and self._client is not None and msg.message_id:
+        if (
+            enable_progress_card
+            and bool(getattr(self._settings, "feishu_thread_progress", False))
+            and self._client is not None
+            and msg.message_id
+        ):
             card_message_id = reply_card_return_id(
                 self._client,
                 msg.message_id,
@@ -1186,17 +1316,42 @@ class FeishuAdapter:
                 prompt=dispatch_text,
             )
 
+        if str(getattr(ingress, "intent", "") or "") == "chat_only":
+            self._dispatch_message_sync_compat(
+                session_id=session_id,
+                msg=msg,
+                dispatch_text=dispatch_text,
+                enable_progress_card=False,
+            )
+            return
+
+        if self._is_short_text_message(raw_text):
+            self._dispatch_message_sync_compat(
+                session_id=session_id,
+                msg=msg,
+                dispatch_text=dispatch_text,
+                enable_progress_card=False,
+            )
+            return
+
+        enqueue_kwargs = {
+            "source_channel": "feishu",
+            "source_ref": f"feishu:{msg.chat_id}:{msg.message_id}",
+            "ingress_metadata": {
+                "feishu_chat_id": msg.chat_id,
+                "feishu_message_id": msg.message_id,
+                "title": raw_text[:80] or self._t("feishu.adapter.topic.default_title"),
+                "ingress_intent": str(getattr(ingress, "intent", "") or ""),
+                "ingress_reason": str(getattr(ingress, "reason", "") or ""),
+            },
+        }
+        if hasattr(ingress, "parent_task_id"):
+            enqueue_kwargs["parent_task_id"] = getattr(ingress, "parent_task_id")
         try:
             ctx = self._runner.enqueue_ingress(
                 session_id,
                 dispatch_text,
-                source_channel="feishu",
-                source_ref=f"feishu:{msg.chat_id}:{msg.message_id}",
-                ingress_metadata={
-                    "feishu_chat_id": msg.chat_id,
-                    "feishu_message_id": msg.message_id,
-                    "title": raw_text[:80] or self._t("feishu.adapter.topic.default_title"),
-                },
+                **enqueue_kwargs,
             )
         except Exception:
             log.exception("Failed to enqueue Feishu ingress chat_id=%s", msg.chat_id)
@@ -1209,15 +1364,13 @@ class FeishuAdapter:
             return
 
         if self._client and msg.message_id:
-            root_message_id = self._reply_task_topic_card(msg.message_id, ctx.task_id)
-            if root_message_id:
-                self._bind_task_topic(
-                    session_id,
-                    ctx.task_id,
-                    chat_id=msg.chat_id,
-                    root_message_id=root_message_id,
-                    card_mode="topic",
-                )
+            self._bind_task_topic(
+                session_id,
+                ctx.task_id,
+                chat_id=msg.chat_id,
+                reply_to_message_id=msg.message_id,
+                card_mode="topic",
+            )
             send_done(self._client, msg.message_id, self._settings)
 
     def _card_action_response(self, content: str, *, level: str = "info", card: dict[str, Any] | None = None) -> Any:

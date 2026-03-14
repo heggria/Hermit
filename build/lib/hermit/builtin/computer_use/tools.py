@@ -15,8 +15,8 @@ def _all_tools() -> list[ToolSpec]:
         ToolSpec(
             name="computer_screenshot",
             description=(
-                "Capture the current macOS screen and return a PNG screenshot as "
-                "Anthropic vision-compatible base64 image content."
+                "Inspect the current macOS screen when visible UI state matters and "
+                "no native tool or API can provide the needed context."
             ),
             input_schema={
                 "type": "object",
@@ -32,7 +32,8 @@ def _all_tools() -> list[ToolSpec]:
         ToolSpec(
             name="computer_click",
             description=(
-                "Click at screen coordinates. Supports left/right/middle click and double click."
+                "Last-resort desktop automation: click at screen coordinates. "
+                "Prefer native app/API tools when available."
             ),
             input_schema={
                 "type": "object",
@@ -59,7 +60,10 @@ def _all_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="computer_type",
-            description="Type text into the focused macOS application.",
+            description=(
+                "Last-resort desktop automation: type text into the focused macOS "
+                "application. Prefer native app/API tools when available."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -76,8 +80,9 @@ def _all_tools() -> list[ToolSpec]:
         ToolSpec(
             name="computer_key",
             description=(
-                "Press a keyboard shortcut or special key, for example 'cmd+c', "
-                "'return', 'escape', or 'cmd+space'."
+                "Last-resort desktop automation: press a keyboard shortcut or special "
+                "key, for example 'cmd+c', 'return', 'escape', or 'cmd+space'. "
+                "Prefer native app/API tools when available."
             ),
             input_schema={
                 "type": "object",
@@ -94,7 +99,10 @@ def _all_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="computer_move",
-            description="Move the mouse cursor to screen coordinates.",
+            description=(
+                "Last-resort desktop automation: move the mouse cursor to screen "
+                "coordinates. Prefer native app/API tools when available."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -111,7 +119,10 @@ def _all_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="computer_scroll",
-            description="Scroll at screen coordinates in a given direction.",
+            description=(
+                "Last-resort desktop automation: scroll at screen coordinates in a "
+                "given direction. Prefer native app/API tools when available."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -151,7 +162,10 @@ def _all_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="computer_open_app",
-            description="Open a macOS application by name using `open -a`.",
+            description=(
+                "Last-resort desktop automation: open a macOS application by name "
+                "using `open -a`. Prefer native app/API tools when available."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {

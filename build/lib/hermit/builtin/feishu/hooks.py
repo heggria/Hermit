@@ -113,7 +113,9 @@ def _build_react_tool(settings: Any = None) -> ToolSpec:
             "required": ["message_id", "emoji"],
         },
         handler=handler,
-        action_class="credentialed_api_call",
-        risk_hint="high",
-        requires_receipt=True,
+        # Internal UX affordance: this is an ephemeral reaction, not a durable
+        # external mutation that should block the main reply behind approval.
+        action_class="ephemeral_ui_mutation",
+        risk_hint="low",
+        requires_receipt=False,
     )

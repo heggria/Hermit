@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
 
+from hermit.builtin.memory.engine import MemoryEngine
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.control_intents import parse_control_intent
@@ -11,13 +13,77 @@ from hermit.kernel.planning import PlanningService
 from hermit.kernel.store import KernelStore
 
 _AUTO_PARENT = object()
+_LOW_SIGNAL_RE = re.compile(r"^[\s\?\uff1f!！,，。\.~～…]+$")
+_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
+_FEISHU_TAG_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
+_GREETING_TEXTS = {
+    "hi",
+    "hello",
+    "你好",
+    "您好",
+    "嗨",
+    "哈喽",
+    "在吗",
+    "有人吗",
+    "早上好",
+    "上午好",
+    "中午好",
+    "下午好",
+    "晚上好",
+}
+_EXPLICIT_NEW_TASK_MARKERS = (
+    "新任务",
+    "新开一个",
+    "新开个",
+    "另一个",
+    "重新开始",
+    "从头开始",
+    "换个话题",
+    "顺便问下",
+    "顺便再问",
+)
+_CONTINUE_MARKERS = (
+    "继续",
+    "接着",
+    "然后",
+    "补充",
+    "补充一点",
+    "补充说明",
+    "说明",
+    "加上",
+    "再加",
+    "改成",
+    "改为",
+    "extra note",
+    "follow up",
+    "放到",
+    "发到",
+    "写到",
+    "去掉",
+    "删掉",
+    "保留",
+    "就按",
+    "按照",
+)
+_AMBIGUOUS_FOLLOWUP_MARKERS = (
+    "这个",
+    "那个",
+    "这份",
+    "这条",
+    "上面",
+    "上一条",
+    "刚才",
+)
 
 
 @dataclass(frozen=True)
 class IngressDecision:
     mode: str
+    intent: str = ""
+    reason: str = ""
     task_id: str | None = None
     note_event_seq: int | None = None
+    parent_task_id: str | None | object = _AUTO_PARENT
 
 
 class TaskController:
@@ -288,23 +354,42 @@ class TaskController:
         prompt: str,
         requested_by: str | None = "user",
     ) -> IngressDecision:
+        normalized = self._normalize_ingress_text(raw_text)
         planning = PlanningService(self.store)
         latest = self.store.get_last_task_for_conversation(conversation_id)
         if latest is not None and planning.state_for_task(latest.task_id).planning_mode:
             attempt = next(iter(self.store.list_step_attempts(task_id=latest.task_id, limit=1)), None)
             if attempt is not None and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation":
-                return IngressDecision(mode="start")
+                return IngressDecision(mode="start", intent="start_new_task", reason="planning_confirmation_gate")
         active = self.active_task_for_conversation(conversation_id)
         if active is None:
-            return IngressDecision(mode="start")
-        note_seq = self.append_note(
-            task_id=active.task_id,
-            source_channel=source_channel,
-            raw_text=raw_text,
-            prompt=prompt,
-            requested_by=requested_by,
+            intent = "chat_only" if self._is_chat_only_message(normalized) else "start_new_task"
+            return IngressDecision(mode="start", intent=intent, reason="no_active_task", parent_task_id=None)
+        if self._is_chat_only_message(normalized):
+            return IngressDecision(mode="start", intent="chat_only", reason="chat_only_message", parent_task_id=None)
+        if self._is_explicit_new_task_message(normalized):
+            return IngressDecision(mode="start", intent="start_new_task", reason="explicit_new_task_marker", parent_task_id=None)
+        if self._looks_like_task_followup(normalized, task_id=active.task_id):
+            note_event_seq = self.append_note(
+                task_id=active.task_id,
+                source_channel=source_channel,
+                raw_text=raw_text,
+                prompt=prompt,
+                requested_by=requested_by,
+            )
+            return IngressDecision(
+                mode="append_note",
+                intent="continue_task",
+                reason="matched_active_task",
+                task_id=active.task_id,
+                note_event_seq=note_event_seq,
+            )
+        return IngressDecision(
+            mode="start",
+            intent="start_new_task",
+            reason="conservative_new_task_fallback",
+            parent_task_id=None,
         )
-        return IngressDecision(mode="append_note", task_id=active.task_id, note_event_seq=note_seq)
 
     def append_note(
         self,
@@ -313,6 +398,7 @@ class TaskController:
         source_channel: str,
         raw_text: str,
         prompt: str,
+        normalized_payload: dict[str, Any] | None = None,
         requested_by: str | None = "user",
     ) -> int:
         task = self.store.get_task(task_id)
@@ -335,6 +421,7 @@ class TaskController:
                 "source_channel": source_channel,
                 "raw_text": raw_text,
                 "prompt": prompt,
+                **dict(normalized_payload or {}),
                 "requested_by": requested_by,
                 "appended_at": time.time(),
             },
@@ -481,3 +568,76 @@ class TaskController:
         if intent is None:
             return None
         return (intent.action, intent.target_id, intent.reason)
+
+    @staticmethod
+    def _normalize_ingress_text(text: str) -> str:
+        return " ".join(str(text or "").split()).strip()
+
+    @classmethod
+    def _is_chat_only_message(cls, text: str) -> bool:
+        cleaned = cls._normalize_ingress_text(text)
+        lowered = cleaned.lower()
+        if not cleaned:
+            return True
+        if lowered in _GREETING_TEXTS or cleaned in _GREETING_TEXTS:
+            return True
+        return bool(_LOW_SIGNAL_RE.match(cleaned))
+
+    @classmethod
+    def _is_explicit_new_task_message(cls, text: str) -> bool:
+        cleaned = cls._normalize_ingress_text(text)
+        return any(marker in cleaned for marker in _EXPLICIT_NEW_TASK_MARKERS)
+
+    @classmethod
+    def _has_continue_marker(cls, text: str) -> bool:
+        cleaned = cls._normalize_ingress_text(text)
+        return any(marker in cleaned for marker in _CONTINUE_MARKERS)
+
+    def _looks_like_task_followup(self, text: str, *, task_id: str) -> bool:
+        cleaned = self._normalize_ingress_text(text)
+        if not cleaned:
+            return False
+        if self._has_continue_marker(cleaned):
+            return True
+        if any(marker in cleaned for marker in _AMBIGUOUS_FOLLOWUP_MARKERS):
+            return True
+        context_texts = self._task_context_texts(task_id)
+        query_tokens = {token for token in MemoryEngine._topic_tokens(cleaned) if len(token) >= 2}
+        for context_text in context_texts:
+            if not context_text:
+                continue
+            if MemoryEngine._shares_topic(context_text, cleaned):
+                return True
+            context_tokens = {token for token in MemoryEngine._topic_tokens(context_text) if len(token) >= 2}
+            if query_tokens & context_tokens:
+                return True
+            if any(token in context_text for token in query_tokens):
+                return True
+            if any(token in cleaned for token in context_tokens if len(token) >= 4):
+                return True
+        return False
+
+    def _task_context_texts(self, task_id: str) -> list[str]:
+        task = self.store.get_task(task_id)
+        texts: list[str] = []
+        if task is not None:
+            texts.extend([str(task.title or ""), str(task.goal or "")])
+        for event in reversed(self.store.list_events(task_id=task_id, limit=50)):
+            if event["event_type"] != "task.note.appended":
+                continue
+            payload = dict(event["payload"] or {})
+            note_text = self._sanitize_context_text(
+                str(payload.get("raw_text") or payload.get("inline_excerpt") or "")
+            )
+            if note_text:
+                texts.append(note_text)
+            if len(texts) >= 6:
+                break
+        return texts
+
+    @staticmethod
+    def _sanitize_context_text(text: str) -> str:
+        cleaned = _SESSION_TIME_RE.sub("", str(text or ""))
+        cleaned = _FEISHU_TAG_RE.sub("", cleaned)
+        cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
+        return cleaned.strip()

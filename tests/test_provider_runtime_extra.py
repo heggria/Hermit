@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermit.core.tools import ToolRegistry
+from hermit.core.tools import ToolRegistry, ToolSpec
 from hermit.kernel.executor import ToolExecutionResult
 from hermit.provider.contracts import (
     ProviderEvent,
@@ -173,6 +173,50 @@ def test_runtime_resume_executes_pending_tool_results_before_appended_notes() ->
     assert request_messages[1]["content"][0]["tool_use_id"] == "call_1"
     assert request_messages[2]["role"] == "user"
     assert request_messages[2]["content"] == "[Task Note Appended]\n确认删除"
+
+
+def test_runtime_marks_internal_context_tool_results() -> None:
+    provider = FakeProvider(
+        responses=[
+            ProviderResponse(
+                content=[{"type": "tool_use", "id": "call_1", "name": "read_skill", "input": {"name": "grok-search"}}],
+                stop_reason="tool_use",
+            ),
+            ProviderResponse(content=[{"type": "text", "text": "done"}], stop_reason="end_turn"),
+        ]
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="read_skill",
+            description="Read a skill",
+            input_schema={"type": "object"},
+            handler=lambda payload: payload,
+            result_is_internal_context=True,
+        )
+    )
+    runtime = AgentRuntime(
+        provider=provider,
+        registry=registry,
+        model="fake",
+        max_turns=2,
+        tool_executor=SimpleNamespace(
+            execute=lambda *_args, **_kwargs: ToolExecutionResult(
+                model_content="<skill_content name=\"grok-search\">secret</skill_content>",
+                raw_result="secret",
+            )
+        ),
+    )
+
+    result = runtime.run(
+        "hello",
+        task_context=SimpleNamespace(task_id="task", step_id="step", step_attempt_id="attempt"),
+    )
+
+    tool_result_block = provider.requests[1].messages[2]["content"][0]
+    assert result.text == "done"
+    assert tool_result_block["internal_context"] is True
+    assert tool_result_block["tool_name"] == "read_skill"
 
 
 def test_runtime_run_raises_when_tool_use_has_no_blocks() -> None:
