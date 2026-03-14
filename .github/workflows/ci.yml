@@ -106,7 +106,7 @@ jobs:
         run: make install-check
 
       - name: Upload distributions
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: hermit-dist
           path: dist/*
@@ -139,7 +139,7 @@ jobs:
         run: make mac-dmg
 
       - name: Upload macOS DMG
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: hermit-macos-dmg
           path: dist/*.dmg
