@@ -8,6 +8,7 @@ from typing import Any
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.context import CompiledProviderInput, TaskExecutionContext, WorkingStateSnapshot
 from hermit.kernel.context_compiler import ContextCompiler
+from hermit.kernel.continuation import build_continuation_guidance
 from hermit.kernel.conversation_projection import ConversationProjectionService
 from hermit.kernel.planning import PlanningService
 from hermit.kernel.projections import ProjectionService
@@ -85,9 +86,8 @@ class ProviderInputCompiler:
             if artifact_ref is not None:
                 artifact_refs.append(artifact_ref)
                 detected_payload_kinds.append("code_block")
-                replacement = (
-                    f"[artifact:{artifact_ref}] fenced code block"
-                    + (f" ({language})" if language else "")
+                replacement = f"[artifact:{artifact_ref}] fenced code block" + (
+                    f" ({language})" if language else ""
                 )
                 normalized_prompt = normalized_prompt.replace(match.group(0), replacement, 1)
 
@@ -143,20 +143,33 @@ class ProviderInputCompiler:
         step = self.store.get_step(task_context.step_id)
         notes = self._recent_notes(task_context.task_id)
         carry_forward = self._carry_forward(task_context, task_projection)
-        recent_result_summary = _trim(str(task_projection.get("topic", {}).get("summary", "") or ""), 200)
+        continuation_guidance_obj = build_continuation_guidance(
+            current_request=normalized["inline_excerpt"],
+            anchor=carry_forward,
+        )
+        continuation_guidance = (
+            continuation_guidance_obj.to_payload() if continuation_guidance_obj.has_anchor else None
+        )
+        recent_result_summary = _trim(
+            str(task_projection.get("topic", {}).get("summary", "") or ""), 200
+        )
 
         pack = self.context_compiler.compile(
             context=task_context,
             working_state=WorkingStateSnapshot(
                 goal_summary=_trim(raw_text or final_prompt, 400),
-                open_loops=[_trim(item, 200) for item in projection_payload.get("open_loops", [])[:8]],
+                open_loops=[
+                    _trim(item, 200) for item in projection_payload.get("open_loops", [])[:8]
+                ],
                 recent_results=[recent_result_summary] if recent_result_summary else [],
                 planning_mode=bool(planning_state.planning_mode),
                 candidate_plan_refs=list(planning_state.candidate_plan_refs),
                 selected_plan_ref=str(planning_state.selected_plan_ref or ""),
                 plan_status=str(planning_state.plan_status or "none"),
             ),
-            beliefs=self.store.list_beliefs(task_id=task_context.task_id, status="active", limit=200),
+            beliefs=self.store.list_beliefs(
+                task_id=task_context.task_id, status="active", limit=200
+            ),
             memories=self.store.list_memory_records(
                 status="active",
                 conversation_id=task_context.conversation_id,
@@ -177,8 +190,11 @@ class ProviderInputCompiler:
             policy_summary={"policy_profile": task_context.policy_profile},
             planning_state=asdict(planning_state),
             carry_forward=carry_forward,
+            continuation_guidance=continuation_guidance,
             recent_notes=notes,
-            relevant_artifact_refs=self._relevant_artifact_refs(task_context, normalized["ingress_artifact_refs"]),
+            relevant_artifact_refs=self._relevant_artifact_refs(
+                task_context, normalized["ingress_artifact_refs"]
+            ),
             ingress_artifact_refs=list(normalized["ingress_artifact_refs"]),
             focus_summary=self._focus_summary(task_context, projection_payload),
             bound_ingress_deltas=self._bound_ingress_deltas(task_context),
@@ -219,7 +235,9 @@ class ProviderInputCompiler:
                 break
         return items
 
-    def _focus_summary(self, task_context: TaskExecutionContext, projection_payload: dict[str, Any]) -> dict[str, Any] | None:
+    def _focus_summary(
+        self, task_context: TaskExecutionContext, projection_payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
         focus_task_id = str(projection_payload.get("focus_task_id", "") or "").strip()
         if not focus_task_id:
             return None
@@ -286,16 +304,21 @@ class ProviderInputCompiler:
         return deltas
 
     @staticmethod
-    def _carry_forward(task_context: TaskExecutionContext, task_projection: dict[str, Any]) -> dict[str, Any] | None:
+    def _carry_forward(
+        task_context: TaskExecutionContext, task_projection: dict[str, Any]
+    ) -> dict[str, Any] | None:
         ingress_anchor = dict(task_context.ingress_metadata.get("continuation_anchor", {}) or {})
         if ingress_anchor:
             return ingress_anchor
         projection_anchor = dict(
-            task_projection.get("projection", {}).get("task", {}).get("continuation_anchor", {}) or {}
+            task_projection.get("projection", {}).get("task", {}).get("continuation_anchor", {})
+            or {}
         )
         return projection_anchor or None
 
-    def _relevant_artifact_refs(self, task_context: TaskExecutionContext, ingress_artifact_refs: list[str]) -> list[str]:
+    def _relevant_artifact_refs(
+        self, task_context: TaskExecutionContext, ingress_artifact_refs: list[str]
+    ) -> list[str]:
         refs: list[str] = []
         for artifact_ref in ingress_artifact_refs:
             if artifact_ref not in refs:
@@ -356,11 +379,17 @@ class ProviderInputCompiler:
             task_id=task_context.task_id,
             step_id=task_context.step_id,
             actor="kernel",
-            payload={"artifact_ref": artifact.artifact_id, "pack_hash": pack.pack_hash, "kind": "context.pack/v3"},
+            payload={
+                "artifact_ref": artifact.artifact_id,
+                "pack_hash": pack.pack_hash,
+                "kind": "context.pack/v3",
+            },
         )
         return artifact.artifact_id
 
-    def _update_attempt_ingress_metadata(self, step_attempt_id: str, normalized: dict[str, Any]) -> None:
+    def _update_attempt_ingress_metadata(
+        self, step_attempt_id: str, normalized: dict[str, Any]
+    ) -> None:
         attempt = self.store.get_step_attempt(step_attempt_id)
         if attempt is None:
             return
@@ -380,7 +409,9 @@ class ProviderInputCompiler:
         if was_dirty:
             context["input_dirty"] = False
             context["last_recompiled_at"] = time.time()
-            context["last_compiled_ingress_id"] = str(context.get("latest_bound_ingress_id", "") or "")
+            context["last_compiled_ingress_id"] = str(
+                context.get("latest_bound_ingress_id", "") or ""
+            )
         self.store.update_step_attempt(step_attempt_id, context=context)
         if was_dirty:
             self.store.append_event(
@@ -417,6 +448,7 @@ class ProviderInputCompiler:
             f"policy={context_pack.get('policy_summary', {})}",
             f"working_state={context_pack.get('working_state', {})}",
             f"carry_forward={context_pack.get('carry_forward')}",
+            f"continuation_guidance={context_pack.get('continuation_guidance')}",
             f"selected_beliefs={context_pack.get('selected_beliefs', [])}",
             f"retrieval_memory={context_pack.get('retrieval_memory', [])}",
             f"relevant_artifact_refs={context_pack.get('relevant_artifact_refs', [])}",
@@ -425,11 +457,14 @@ class ProviderInputCompiler:
             f"bound_ingress_deltas={context_pack.get('bound_ingress_deltas', [])}",
             f"session_projection_ref={context_pack.get('session_projection_ref')}",
             "</context_pack>",
-            "",
-            "<current_request>",
-            current_request,
-            "</current_request>",
         ]
+        continuation_guidance = context_pack.get("continuation_guidance") or {}
+        rendered_guidance = self._render_continuation_guidance(continuation_guidance)
+        if rendered_guidance:
+            lines.extend(
+                ["", "<continuation_guidance>", rendered_guidance, "</continuation_guidance>"]
+            )
+        lines.extend(["", "<current_request>", current_request, "</current_request>"])
         if ingress_artifact_refs:
             lines.extend(
                 [
@@ -441,8 +476,51 @@ class ProviderInputCompiler:
                 ]
             )
         if normalized_prompt and normalized_prompt != current_request:
-            lines.extend(["", "<normalized_prompt>", _trim(normalized_prompt, 1600), "</normalized_prompt>"])
+            lines.extend(
+                ["", "<normalized_prompt>", _trim(normalized_prompt, 1600), "</normalized_prompt>"]
+            )
         return "\n".join(str(line) for line in lines if line is not None)
+
+    def _render_continuation_guidance(self, guidance: dict[str, Any]) -> str:
+        if not guidance or not guidance.get("has_anchor"):
+            return ""
+        mode = str(guidance.get("mode", "") or "plain_new_task")
+        anchor_task_id = str(guidance.get("anchor_task_id", "") or "")
+        anchor_user_request = _trim(str(guidance.get("anchor_user_request", "") or ""), 240)
+        anchor_goal = _trim(str(guidance.get("anchor_goal", "") or ""), 240)
+        outcome_summary = _trim(str(guidance.get("outcome_summary", "") or ""), 320)
+
+        lines = [
+            f"anchor_task_id={anchor_task_id}",
+            "This is a new task with carry-forward context from a completed anchor task.",
+        ]
+        if anchor_user_request:
+            lines.append(f"Anchor original user request: {anchor_user_request}")
+        if anchor_goal:
+            lines.append(f"Anchor goal: {anchor_goal}")
+        if outcome_summary:
+            lines.append(f"Anchor outcome summary: {outcome_summary}")
+
+        if mode == "explicit_topic_shift":
+            lines.append(
+                "The current request explicitly starts a new topic. Ignore the anchor when deciding intent and answer it as a new request."
+            )
+        elif mode == "strong_topic_shift":
+            lines.append(
+                "The current request carries strong new semantics and does not match the anchor topic. Treat it as a new topic unless the user clearly refers back to the anchor."
+            )
+        elif mode == "anchor_correction":
+            lines.append(
+                "The current request is short and ambiguous or corrective. Prefer interpreting it as a clarification or correction of the anchor task, and do not drift into unrelated semantics."
+            )
+        else:
+            lines.append(
+                "Use the anchor as background context, but treat the current request as a normal new task unless the user is clearly clarifying the anchor."
+            )
+        lines.append(
+            "Interpretation priority: explicit topic shift > strong new-topic semantics > anchor clarification/correction > ordinary new task."
+        )
+        return "\n".join(lines)
 
 
 __all__ = ["ProviderInputCompiler"]

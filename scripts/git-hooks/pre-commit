@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+staged_files=()
+while IFS= read -r file; do
+  staged_files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+if [[ ${#staged_files[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+partially_staged_files=()
+while IFS= read -r file; do
+  partially_staged_files+=("$file")
+done < <(git diff --name-only -- "${staged_files[@]}")
+
+if [[ ${#partially_staged_files[@]} -gt 0 ]]; then
+  echo "pre-commit: refusing to auto-fix partially staged files:" >&2
+  printf '  %s\n' "${partially_staged_files[@]}" >&2
+  echo "Please fully stage or stash those changes, then commit again." >&2
+  exit 1
+fi
+
+staged_python_files=()
+while IFS= read -r file; do
+  staged_python_files+=("$file")
+done < <(printf '%s\n' "${staged_files[@]}" | awk '/\.py$/')
+
+if [[ ${#staged_python_files[@]} -gt 0 ]]; then
+  echo "pre-commit: auto-fixing staged Python files with ruff"
+  uv run ruff check --fix --force-exclude "${staged_python_files[@]}"
+  uv run ruff format --force-exclude "${staged_python_files[@]}"
+  git add -- "${staged_python_files[@]}"
+fi
+
+first_run_failed=0
+if ! uv run pre-commit run --hook-stage pre-commit; then
+  first_run_failed=1
+fi
+
+git add -- "${staged_files[@]}"
+
+if [[ $first_run_failed -ne 0 ]]; then
+  echo "pre-commit: re-running checks after auto-fix and restage"
+fi
+
+uv run pre-commit run --hook-stage pre-commit

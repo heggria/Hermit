@@ -125,7 +125,8 @@ def test_task_controller_ingress_decision_and_missing_errors(tmp_path) -> None:
     assert decision.note_event_seq is not None and decision.note_event_seq > 0
 
     note_event = next(
-        event for event in reversed(store.list_events(task_id=ctx.task_id, limit=50))
+        event
+        for event in reversed(store.list_events(task_id=ctx.task_id, limit=50))
         if event["event_type"] == "task.note.appended"
     )
     assert note_event["payload"]["raw_text"] == "补充一点说明"
@@ -232,6 +233,8 @@ def test_task_controller_routes_terminal_followup_to_continuation_anchor(tmp_pat
     assert decision.anchor_reason == "terminal_followup_marker_topic_overlap"
     assert decision.continuation_anchor is not None
     assert decision.continuation_anchor["anchor_task_id"] == weather.task_id
+    assert decision.continuation_anchor["anchor_goal"] == "查询北京天气"
+    assert decision.continuation_anchor["anchor_user_request"] == "查询北京天气"
     assert decision.continuation_anchor["outcome_status"] == "completed"
     assert "北京今天天气不错" in decision.continuation_anchor["outcome_summary"]
 
@@ -387,7 +390,8 @@ def test_task_controller_focus_task_resolves_pending_disambiguation(tmp_path) ->
     assert updated.chosen_task_id == primary.task_id
 
     note_event = next(
-        event for event in reversed(store.list_events(task_id=primary.task_id, limit=50))
+        event
+        for event in reversed(store.list_events(task_id=primary.task_id, limit=50))
         if event["event_type"] == "task.note.appended"
     )
     assert note_event["payload"]["raw_text"] == "这个改一下"
@@ -474,9 +478,13 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
 
     store = SimpleNamespace(
         list_step_attempts=lambda status, limit: [async_attempt, sync_attempt],
-        update_step_attempt=lambda step_attempt_id, **kwargs: failed_attempt_updates.append((step_attempt_id, kwargs)),
+        update_step_attempt=lambda step_attempt_id, **kwargs: failed_attempt_updates.append(
+            (step_attempt_id, kwargs)
+        ),
         update_step=lambda step_id, **kwargs: failed_step_updates.append((step_id, kwargs)),
-        update_task_status=lambda task_id, status, payload=None: task_status_updates.append((task_id, status, payload or {})),
+        update_task_status=lambda task_id, status, payload=None: task_status_updates.append(
+            (task_id, status, payload or {})
+        ),
         claim_next_ready_step_attempt=lambda: claims.pop(0),
     )
     runner = SimpleNamespace(
@@ -488,7 +496,9 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
         submit=lambda fn, attempt_id: processed_attempts.append(attempt_id) or future,
         shutdown=lambda **kwargs: None,
     )
-    service._wake = SimpleNamespace(wait=lambda _timeout: None, clear=lambda: None, set=lambda: None)
+    service._wake = SimpleNamespace(
+        wait=lambda _timeout: None, clear=lambda: None, set=lambda: None
+    )
 
     original_claim = store.claim_next_ready_step_attempt
 
@@ -505,7 +515,12 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
 
     assert failed_attempt_updates[0][0] == "attempt-running"
     assert failed_attempt_updates[0][1]["status"] == "failed"
-    assert failed_step_updates == [("step-running", {"status": "failed", "finished_at": failed_step_updates[0][1]["finished_at"]})]
+    assert failed_step_updates == [
+        (
+            "step-running",
+            {"status": "failed", "finished_at": failed_step_updates[0][1]["finished_at"]},
+        )
+    ]
     assert task_status_updates == [
         (
             "task-running",
@@ -536,7 +551,10 @@ def test_kernel_dispatch_service_reaps_failed_futures_and_wakes(monkeypatch) -> 
 
     wake_calls: list[str] = []
     service._wake = SimpleNamespace(set=lambda: wake_calls.append("wake"))
-    monkeypatch.setattr("hermit.kernel.dispatch.log.exception", lambda event, **kwargs: logged.append(f"{event}:{kwargs['step_attempt_id']}"))
+    monkeypatch.setattr(
+        "hermit.kernel.dispatch.log.exception",
+        lambda event, **kwargs: logged.append(f"{event}:{kwargs['step_attempt_id']}"),
+    )
 
     assert service._capacity_available() is True
     service.wake()
@@ -576,9 +594,13 @@ def test_kernel_dispatch_service_start_and_stop_cover_thread_lifecycle(monkeypat
         def join(self, timeout=None):
             joins.append(timeout)
 
-    monkeypatch.setattr(service, "_recover_interrupted_attempts", lambda: recover_calls.append("recover"))
+    monkeypatch.setattr(
+        service, "_recover_interrupted_attempts", lambda: recover_calls.append("recover")
+    )
     monkeypatch.setattr("hermit.kernel.dispatch.threading.Thread", FakeThread)
-    service._executor = SimpleNamespace(shutdown=lambda wait=False, cancel_futures=True: shutdowns.append((wait, cancel_futures)))
+    service._executor = SimpleNamespace(
+        shutdown=lambda wait=False, cancel_futures=True: shutdowns.append((wait, cancel_futures))
+    )
     service._wake = SimpleNamespace(set=lambda: wake_sets.append("wake"))
 
     service.start()

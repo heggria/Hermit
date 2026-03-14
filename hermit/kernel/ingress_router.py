@@ -6,47 +6,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 from hermit.builtin.memory.engine import MemoryEngine
+from hermit.kernel.continuation import (
+    has_ambiguous_followup_marker,
+    has_branch_marker,
+    has_continue_marker,
+)
 from hermit.kernel.models import ConversationRecord, TaskRecord
 
-_BRANCH_MARKERS = (
-    "顺便",
-    "另外",
-    "再查一下",
-    "再问一下",
-    "顺手",
-)
-_CONTINUE_MARKERS = (
-    "继续",
-    "接着",
-    "然后",
-    "补充",
-    "补充一点",
-    "补充说明",
-    "说明",
-    "加上",
-    "再加",
-    "改成",
-    "改为",
-    "放到",
-    "发到",
-    "写到",
-    "去掉",
-    "删掉",
-    "保留",
-    "就按",
-    "按照",
-    "extra note",
-    "follow up",
-)
-_AMBIGUOUS_MARKERS = (
-    "这个",
-    "那个",
-    "这份",
-    "这条",
-    "上面",
-    "上一条",
-    "刚才",
-)
 _ARTIFACT_REF_RE = re.compile(r"\bartifact_[a-z0-9]{6,}\b", re.IGNORECASE)
 _RECEIPT_REF_RE = re.compile(r"\breceipt_[a-z0-9]{6,}\b", re.IGNORECASE)
 _ABSOLUTE_PATH_RE = re.compile(r"(?:~|/)[\w./-]+")
@@ -126,7 +92,11 @@ class IngressRouter:
                 confidence=0.2,
                 reason_codes=["no_open_tasks"],
             )
-        if conversation is not None and conversation.focus_task_id and self._looks_like_focus_followup(cleaned):
+        if (
+            conversation is not None
+            and conversation.focus_task_id
+            and self._looks_like_focus_followup(cleaned)
+        ):
             return BindingDecision(
                 resolution="append_note",
                 chosen_task_id=conversation.focus_task_id,
@@ -150,7 +120,9 @@ class IngressRouter:
                 resolution="fork_child",
                 parent_task_id=parent,
                 confidence=0.72 if scored else 0.6,
-                margin=(scored[0].score - scored[1].score) if len(scored) > 1 else (scored[0].score if scored else 0.0),
+                margin=(scored[0].score - scored[1].score)
+                if len(scored) > 1
+                else (scored[0].score if scored else 0.0),
                 candidates=scored[:5],
                 reason_codes=["branch_marker"],
             )
@@ -206,19 +178,21 @@ class IngressRouter:
 
     @staticmethod
     def _looks_like_approval_followup(text: str) -> bool:
-        return any(marker in text for marker in ("执行", "批准", "approve", "草稿", "不要发", "改成"))
-
-    @staticmethod
-    def _looks_like_focus_followup(text: str) -> bool:
-        return any(marker in text for marker in _CONTINUE_MARKERS) or any(
-            marker in text for marker in _AMBIGUOUS_MARKERS
+        return any(
+            marker in text for marker in ("执行", "批准", "approve", "草稿", "不要发", "改成")
         )
 
     @staticmethod
-    def _has_branch_marker(text: str) -> bool:
-        return any(marker in text for marker in _BRANCH_MARKERS)
+    def _looks_like_focus_followup(text: str) -> bool:
+        return has_continue_marker(text) or has_ambiguous_followup_marker(text)
 
-    def _resolve_structural_binding(self, *, open_tasks: list[TaskRecord], text: str) -> BindingDecision | None:
+    @staticmethod
+    def _has_branch_marker(text: str) -> bool:
+        return has_branch_marker(text)
+
+    def _resolve_structural_binding(
+        self, *, open_tasks: list[TaskRecord], text: str
+    ) -> BindingDecision | None:
         task_ids = {task.task_id for task in open_tasks}
         artifact_targets = {
             artifact.task_id
@@ -253,7 +227,9 @@ class IngressRouter:
                 confidence=0.99,
                 margin=0.0,
                 candidates=[
-                    CandidateScore(task_id=task_id, score=1.0, reason_codes=["conflicting_reference_target"])
+                    CandidateScore(
+                        task_id=task_id, score=1.0, reason_codes=["conflicting_reference_target"]
+                    )
                     for task_id in sorted(direct_targets)
                 ],
                 reason_codes=["conflicting_reference_targets"],
@@ -283,7 +259,9 @@ class IngressRouter:
                 )
         return None
 
-    def _score_task(self, task: TaskRecord, text: str, *, focus_task_id: str | None) -> tuple[float, list[str]]:
+    def _score_task(
+        self, task: TaskRecord, text: str, *, focus_task_id: str | None
+    ) -> tuple[float, list[str]]:
         reasons: list[str] = []
         score = 0.0
         if focus_task_id and task.task_id == focus_task_id:
@@ -309,12 +287,12 @@ class IngressRouter:
             if len(context_texts) >= 6:
                 break
         query_tokens = {token for token in MemoryEngine._topic_tokens(text) if len(token) >= 2}
-        has_continue_marker = any(marker in text for marker in _CONTINUE_MARKERS)
-        has_ambiguous_marker = any(marker in text for marker in _AMBIGUOUS_MARKERS)
-        if has_continue_marker:
+        continue_marker_present = has_continue_marker(text)
+        ambiguous_marker_present = has_ambiguous_followup_marker(text)
+        if continue_marker_present:
             score += 0.2
             reasons.append("continue_marker")
-        if has_ambiguous_marker:
+        if ambiguous_marker_present:
             score += 0.15
             reasons.append("ambiguous_marker")
         for candidate_text in context_texts:
@@ -324,7 +302,9 @@ class IngressRouter:
                 score += 0.35
                 reasons.append("topic_overlap")
                 break
-            candidate_tokens = {token for token in MemoryEngine._topic_tokens(candidate_text) if len(token) >= 2}
+            candidate_tokens = {
+                token for token in MemoryEngine._topic_tokens(candidate_text) if len(token) >= 2
+            }
             if query_tokens & candidate_tokens:
                 score += 0.3
                 reasons.append("token_overlap")
@@ -352,7 +332,9 @@ class IngressRouter:
                 refs.append(candidate)
         return list(dict.fromkeys(refs))
 
-    def _workspace_targets(self, *, open_tasks: list[TaskRecord], text: str) -> list[tuple[str, float]]:
+    def _workspace_targets(
+        self, *, open_tasks: list[TaskRecord], text: str
+    ) -> list[tuple[str, float]]:
         paths = self._path_refs(text)
         if not paths:
             return []

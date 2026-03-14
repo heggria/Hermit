@@ -115,11 +115,11 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
     command = (
         f"{sys.executable} -u -c "
-        "\"import sys,time; "
+        '"import sys,time; '
         "print('Booting server'); sys.stdout.flush(); "
         "time.sleep(0.25); "
         "print('READY http://127.0.0.1:3000'); sys.stdout.flush(); "
-        "time.sleep(0.4)\""
+        'time.sleep(0.4)"'
     )
 
     result = sandbox.run(
@@ -172,9 +172,11 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     assert ready["result"]["ready"] is True
 
 
-def test_command_sandbox_observation_uses_coarse_running_progress_without_metadata(tmp_path) -> None:
+def test_command_sandbox_observation_uses_coarse_running_progress_without_metadata(
+    tmp_path,
+) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f"{sys.executable} -u -c \"import time; time.sleep(0.2)\""
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.2)"'
 
     result = sandbox.run({"command": command, "display_name": "Background Task"})
 
@@ -185,8 +187,9 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
         sandbox,
         ticket["job_id"],
         timeout=0.25,
-        predicate=lambda poll: poll.get("status") == "observing"
-        and poll.get("progress", {}).get("phase") == "running",
+        predicate=lambda poll: (
+            poll.get("status") == "observing" and poll.get("progress", {}).get("phase") == "running"
+        ),
     )
     assert observing is not None
     assert observing["progress"]["summary"] == "Background Task is still running."
@@ -198,4 +201,29 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
         predicate=lambda poll: poll.get("status") == "completed",
     )
     assert completed is not None
+    assert completed["result"]["returncode"] == 0
+
+
+def test_command_sandbox_coarse_observation_only_extends_completion_once(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("hermit.core.sandbox._COARSE_OBSERVATION_GRACE_SECONDS", 1.0)
+    sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.11)"'
+
+    result = sandbox.run({"command": command, "display_name": "Short Task"})
+
+    assert "_hermit_observation" in result
+    ticket = result["_hermit_observation"]
+
+    time.sleep(0.12)
+
+    observing = sandbox.poll(ticket["job_id"])
+    assert observing["status"] == "observing"
+    assert observing["progress"]["phase"] == "running"
+    assert observing["progress"]["summary"] == "Short Task is still running."
+
+    completed = sandbox.poll(ticket["job_id"])
+    assert completed["status"] == "completed"
     assert completed["result"]["returncode"] == 0

@@ -58,6 +58,7 @@ class ContextPack:
     policy_summary: dict[str, Any] = field(default_factory=dict)
     planning_state: dict[str, Any] = field(default_factory=dict)
     carry_forward: dict[str, Any] | None = None
+    continuation_guidance: dict[str, Any] | None = None
     recent_notes: list[dict[str, Any]] = field(default_factory=list)
     relevant_artifact_refs: list[str] = field(default_factory=list)
     ingress_artifact_refs: list[str] = field(default_factory=list)
@@ -79,6 +80,7 @@ class ContextPack:
             "policy_summary": self.policy_summary,
             "planning_state": self.planning_state,
             "carry_forward": self.carry_forward,
+            "continuation_guidance": self.continuation_guidance,
             "recent_notes": self.recent_notes,
             "relevant_artifact_refs": self.relevant_artifact_refs,
             "ingress_artifact_refs": self.ingress_artifact_refs,
@@ -116,6 +118,7 @@ class ContextCompiler:
         policy_summary: dict[str, Any] | None = None,
         planning_state: dict[str, Any] | None = None,
         carry_forward: dict[str, Any] | None = None,
+        continuation_guidance: dict[str, Any] | None = None,
         recent_notes: list[dict[str, Any]] | None = None,
         relevant_artifact_refs: list[str] | None = None,
         ingress_artifact_refs: list[str] | None = None,
@@ -151,7 +154,9 @@ class ContextCompiler:
             if not self._memory_relevant_to_query(memory, query=query_text):
                 excluded_reasons[memory.memory_id] = "query_irrelevant"
                 continue
-            retrieval_candidates.append((memory, self._retrieval_score(memory, context=context, query=query_text)))
+            retrieval_candidates.append(
+                (memory, self._retrieval_score(memory, context=context, query=query_text))
+            )
 
         retrieval_candidates.sort(
             key=lambda item: (
@@ -196,6 +201,7 @@ class ContextCompiler:
             "policy_summary": dict(policy_summary or {}),
             "planning_state": dict(planning_state or {}),
             "carry_forward": dict(carry_forward or {}) or None,
+            "continuation_guidance": dict(continuation_guidance or {}) or None,
             "recent_notes": list(recent_notes or []),
             "relevant_artifact_refs": list(relevant_artifact_refs or []),
             "ingress_artifact_refs": list(ingress_artifact_refs or []),
@@ -210,7 +216,9 @@ class ContextCompiler:
         artifact_uri = None
         artifact_hash = None
         if self.artifact_store is not None:
-            artifact_uri, artifact_hash = self.artifact_store.store_json({**payload, "pack_hash": pack_hash})
+            artifact_uri, artifact_hash = self.artifact_store.store_json(
+                {**payload, "pack_hash": pack_hash}
+            )
         return ContextPack(
             kind="context.pack/v3",
             static_memory=static_memory,
@@ -222,6 +230,7 @@ class ContextCompiler:
             policy_summary=dict(policy_summary or {}),
             planning_state=dict(planning_state or {}),
             carry_forward=dict(carry_forward or {}) or None,
+            continuation_guidance=dict(continuation_guidance or {}) or None,
             recent_notes=list(recent_notes or []),
             relevant_artifact_refs=list(relevant_artifact_refs or []),
             ingress_artifact_refs=list(ingress_artifact_refs or []),
@@ -256,8 +265,10 @@ class ContextCompiler:
             "scope_kind": memory.scope_kind,
             "scope_ref": memory.scope_ref,
             "retention_class": memory.retention_class,
-            "subject_key": assertion.get("subject_key", "") or self.governance.subject_key_for_memory(memory),
-            "topic_key": assertion.get("topic_key", "") or self.governance.topic_key_for_memory(memory),
+            "subject_key": assertion.get("subject_key", "")
+            or self.governance.subject_key_for_memory(memory),
+            "topic_key": assertion.get("topic_key", "")
+            or self.governance.topic_key_for_memory(memory),
             "governance_explanation": list(assertion.get("explanation", []))
             or self.governance.inspect_claim(
                 category=memory.category,
@@ -290,7 +301,9 @@ class ContextCompiler:
             )
         return categories
 
-    def _retrieval_score(self, memory: MemoryRecord, *, context: TaskExecutionContext, query: str) -> float:
+    def _retrieval_score(
+        self, memory: MemoryRecord, *, context: TaskExecutionContext, query: str
+    ) -> float:
         score = 0.0
         if self.governance.scope_matches(memory.scope_kind, memory.scope_ref, context=context):
             score += 100.0
@@ -327,7 +340,9 @@ class ContextCompiler:
         if cls._is_followup_query(query):
             return True
         query_tokens = {token for token in MemoryEngine._topic_tokens(query) if len(token) >= 2}
-        memory_tokens = {token for token in MemoryEngine._topic_tokens(memory.claim_text) if len(token) >= 2}
+        memory_tokens = {
+            token for token in MemoryEngine._topic_tokens(memory.claim_text) if len(token) >= 2
+        }
         if query_tokens & memory_tokens:
             return True
         if any(token in memory.claim_text for token in query_tokens):

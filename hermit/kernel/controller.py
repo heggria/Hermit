@@ -5,9 +5,15 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from hermit.builtin.memory.engine import MemoryEngine
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.context import TaskExecutionContext
+from hermit.kernel.continuation import (
+    has_ambiguous_followup_marker,
+    has_continue_marker,
+    has_explicit_new_task_marker,
+    normalize_text,
+    texts_overlap,
+)
 from hermit.kernel.control_intents import parse_control_intent
 from hermit.kernel.ingress_router import BindingDecision, IngressRouter
 from hermit.kernel.outcomes import TERMINAL_TASK_STATUSES, build_task_outcome, clean_runtime_text
@@ -34,49 +40,6 @@ _GREETING_TEXTS = {
     "下午好",
     "晚上好",
 }
-_EXPLICIT_NEW_TASK_MARKERS = (
-    "新任务",
-    "新开一个",
-    "新开个",
-    "另一个",
-    "重新开始",
-    "从头开始",
-    "换个话题",
-    "顺便问下",
-    "顺便再问",
-)
-_CONTINUE_MARKERS = (
-    "继续",
-    "接着",
-    "然后",
-    "补充",
-    "补充一点",
-    "补充说明",
-    "说明",
-    "加上",
-    "再加",
-    "改成",
-    "改为",
-    "extra note",
-    "follow up",
-    "放到",
-    "发到",
-    "写到",
-    "去掉",
-    "删掉",
-    "保留",
-    "就按",
-    "按照",
-)
-_AMBIGUOUS_FOLLOWUP_MARKERS = (
-    "这个",
-    "那个",
-    "这份",
-    "这条",
-    "上面",
-    "上一条",
-    "刚才",
-)
 
 
 @dataclass(frozen=True)
@@ -118,7 +81,9 @@ class TaskController:
             return "feishu"
         return "chat"
 
-    def ensure_conversation(self, conversation_id: str, *, source_channel: str | None = None) -> None:
+    def ensure_conversation(
+        self, conversation_id: str, *, source_channel: str | None = None
+    ) -> None:
         self.store.ensure_conversation(
             conversation_id,
             source_channel=source_channel or self.source_from_session(conversation_id),
@@ -136,7 +101,10 @@ class TaskController:
             return None
         if task.status == "blocked":
             attempt = next(iter(self.store.list_step_attempts(task_id=task.task_id, limit=1)), None)
-            if attempt is not None and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation":
+            if (
+                attempt is not None
+                and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation"
+            ):
                 return None
         if task.status in {"queued", "running", "blocked"}:
             return task
@@ -164,7 +132,10 @@ class TaskController:
         metadata = dict(ingress_metadata or {})
         task = self.store.create_task(
             conversation_id=conversation_id,
-            title=(goal.strip() or self._t("kernel.controller.task.default_title", default="Hermit task"))[:120],
+            title=(
+                goal.strip()
+                or self._t("kernel.controller.task.default_title", default="Hermit task")
+            )[:120],
             goal=goal,
             source_channel=source_channel,
             parent_task_id=resolved_parent,
@@ -187,7 +158,9 @@ class TaskController:
             step_id=step.step_id,
             status="running",
             context=attempt_context,
-            queue_priority=self._ingress_queue_priority(source_channel=source_channel, requested_by=requested_by, metadata=metadata),
+            queue_priority=self._ingress_queue_priority(
+                source_channel=source_channel, requested_by=requested_by, metadata=metadata
+            ),
         )
         self._bind_ingress_on_task_creation(
             conversation_id=conversation_id,
@@ -195,7 +168,9 @@ class TaskController:
             parent_task_id=resolved_parent,
             ingress_metadata=metadata,
         )
-        self._set_focus(conversation_id=conversation_id, task_id=task.task_id, reason="task_started")
+        self._set_focus(
+            conversation_id=conversation_id, task_id=task.task_id, reason="task_started"
+        )
         return TaskExecutionContext(
             conversation_id=conversation_id,
             task_id=task.task_id,
@@ -234,7 +209,10 @@ class TaskController:
         metadata = dict(ingress_metadata or {})
         task = self.store.create_task(
             conversation_id=conversation_id,
-            title=(goal.strip() or self._t("kernel.controller.task.default_title", default="Hermit task"))[:120],
+            title=(
+                goal.strip()
+                or self._t("kernel.controller.task.default_title", default="Hermit task")
+            )[:120],
             goal=goal,
             source_channel=source_channel,
             status="queued",
@@ -258,7 +236,9 @@ class TaskController:
             step_id=step.step_id,
             status="ready",
             context=attempt_context,
-            queue_priority=self._ingress_queue_priority(source_channel=source_channel, requested_by=requested_by, metadata=metadata),
+            queue_priority=self._ingress_queue_priority(
+                source_channel=source_channel, requested_by=requested_by, metadata=metadata
+            ),
         )
         self._bind_ingress_on_task_creation(
             conversation_id=conversation_id,
@@ -266,7 +246,9 @@ class TaskController:
             parent_task_id=resolved_parent,
             ingress_metadata=metadata,
         )
-        self._set_focus(conversation_id=conversation_id, task_id=task.task_id, reason="task_enqueued")
+        self._set_focus(
+            conversation_id=conversation_id, task_id=task.task_id, reason="task_enqueued"
+        )
         return TaskExecutionContext(
             conversation_id=conversation_id,
             task_id=task.task_id,
@@ -492,14 +474,18 @@ class TaskController:
         planning = PlanningService(self.store)
         latest = self.store.get_last_task_for_conversation(conversation_id)
         conversation = self.store.get_conversation(conversation_id)
-        open_tasks = self.store.list_open_tasks_for_conversation(conversation_id=conversation_id, limit=10)
+        open_tasks = self.store.list_open_tasks_for_conversation(
+            conversation_id=conversation_id, limit=10
+        )
         pending_approval = self.store.get_latest_pending_approval(conversation_id)
         shadow_binding = self._legacy_shadow_binding(
             normalized_text=normalized,
             open_tasks=open_tasks,
             explicit_task_ref=explicit_task_ref,
             reply_to_task_id=reply_to_task_id,
-            pending_approval_task_id=pending_approval.task_id if pending_approval is not None else None,
+            pending_approval_task_id=pending_approval.task_id
+            if pending_approval is not None
+            else None,
         )
         if self._is_chat_only_message(normalized):
             self.store.update_ingress(
@@ -557,7 +543,9 @@ class TaskController:
             normalized_text=normalized,
             explicit_task_ref=explicit_task_ref,
             reply_to_task_id=reply_to_task_id,
-            pending_approval_task_id=pending_approval.task_id if pending_approval is not None else None,
+            pending_approval_task_id=pending_approval.task_id
+            if pending_approval is not None
+            else None,
         )
 
         if binding.resolution == "append_note" and binding.chosen_task_id:
@@ -591,7 +579,11 @@ class TaskController:
                 requested_by=requested_by,
                 ingress_id=ingress.ingress_id,
             )
-            self._set_focus(conversation_id=conversation_id, task_id=binding.chosen_task_id, reason="ingress_bound")
+            self._set_focus(
+                conversation_id=conversation_id,
+                task_id=binding.chosen_task_id,
+                reason="ingress_bound",
+            )
             return self._binding_to_ingress_decision(
                 ingress_id=ingress.ingress_id,
                 binding=binding,
@@ -662,7 +654,9 @@ class TaskController:
                 reason="fork_child",
             )
 
-        anchor = self.resolve_continuation_target(conversation_id=conversation_id, raw_text=normalized)
+        anchor = self.resolve_continuation_target(
+            conversation_id=conversation_id, raw_text=normalized
+        )
         if anchor is not None:
             self.store.update_ingress(
                 ingress.ingress_id,
@@ -700,8 +694,13 @@ class TaskController:
                 parent_task_id=None,
             )
         if latest is not None and planning.state_for_task(latest.task_id).planning_mode:
-            attempt = next(iter(self.store.list_step_attempts(task_id=latest.task_id, limit=1)), None)
-            if attempt is not None and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation":
+            attempt = next(
+                iter(self.store.list_step_attempts(task_id=latest.task_id, limit=1)), None
+            )
+            if (
+                attempt is not None
+                and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation"
+            ):
                 self.store.update_ingress(
                     ingress.ingress_id,
                     status="bound",
@@ -768,14 +767,13 @@ class TaskController:
         if not cleaned:
             return None
         has_explicit_marker = self._has_continue_marker(cleaned)
-        has_ambiguous_marker = any(marker in cleaned for marker in _AMBIGUOUS_FOLLOWUP_MARKERS)
-        query_tokens = {token for token in MemoryEngine._topic_tokens(cleaned) if len(token) >= 2}
+        has_ambiguous_marker = has_ambiguous_followup_marker(cleaned)
 
         for task in self._terminal_continuation_tasks(conversation_id):
             candidate_texts = self._continuation_candidate_texts(task.task_id)
             if not candidate_texts:
                 continue
-            overlap = any(self._texts_overlap(cleaned, text, query_tokens=query_tokens) for text in candidate_texts)
+            overlap = any(texts_overlap(cleaned, text) for text in candidate_texts)
             if not overlap:
                 continue
             selection_reason = (
@@ -806,7 +804,9 @@ class TaskController:
                     task_id=task_id,
                 )
             )
-        self._mark_attempt_input_dirty(task_id=task_id, ingress_id=ingress_id, note_event_seq=None, emit_event=True)
+        self._mark_attempt_input_dirty(
+            task_id=task_id, ingress_id=ingress_id, note_event_seq=None, emit_event=True
+        )
         event_id = self.store.append_event(
             event_type="task.note.appended",
             entity_type="task",
@@ -831,7 +831,9 @@ class TaskController:
                 note_event_seq=int(events[-1]["event_seq"]),
                 emit_event=False,
             )
-            self._set_focus(conversation_id=task.conversation_id, task_id=task_id, reason="note_appended")
+            self._set_focus(
+                conversation_id=task.conversation_id, task_id=task_id, reason="note_appended"
+            )
             return int(events[-1]["event_seq"])
         recent = self.store.list_events(task_id=task_id, limit=200)
         for event in reversed(recent):
@@ -842,9 +844,13 @@ class TaskController:
                     note_event_seq=int(event["event_seq"]),
                     emit_event=False,
                 )
-                self._set_focus(conversation_id=task.conversation_id, task_id=task_id, reason="note_appended")
+                self._set_focus(
+                    conversation_id=task.conversation_id, task_id=task_id, reason="note_appended"
+                )
                 return int(event["event_seq"])
-        self._set_focus(conversation_id=task.conversation_id, task_id=task_id, reason="note_appended")
+        self._set_focus(
+            conversation_id=task.conversation_id, task_id=task_id, reason="note_appended"
+        )
         return 0
 
     def finalize_result(
@@ -904,7 +910,9 @@ class TaskController:
         if result_text:
             payload["result_text"] = result_text
         self.store.update_task_status(ctx.task_id, "blocked", payload=payload)
-        self._set_focus(conversation_id=ctx.conversation_id, task_id=ctx.task_id, reason="planning_ready")
+        self._set_focus(
+            conversation_id=ctx.conversation_id, task_id=ctx.task_id, reason="planning_ready"
+        )
 
     def mark_blocked(self, ctx: TaskExecutionContext) -> None:
         self.mark_suspended(ctx, waiting_kind="awaiting_approval")
@@ -914,7 +922,9 @@ class TaskController:
         self.store.update_step_attempt(ctx.step_attempt_id, status=waiting_kind)
         self.store.update_task_status(ctx.task_id, "blocked")
         self.update_attempt_phase(ctx.step_attempt_id, phase=waiting_kind)
-        self._set_focus(conversation_id=ctx.conversation_id, task_id=ctx.task_id, reason=waiting_kind)
+        self._set_focus(
+            conversation_id=ctx.conversation_id, task_id=ctx.task_id, reason=waiting_kind
+        )
 
     def pause_task(self, task_id: str) -> None:
         task = self.store.get_task(task_id)
@@ -960,7 +970,9 @@ class TaskController:
                     task_id=task_id,
                 )
             )
-        self._set_focus(conversation_id=conversation_id, task_id=task_id, reason="explicit_task_switch")
+        self._set_focus(
+            conversation_id=conversation_id, task_id=task_id, reason="explicit_task_switch"
+        )
         return self._resolve_pending_disambiguation(
             conversation_id=conversation_id,
             task_id=task_id,
@@ -1021,7 +1033,11 @@ class TaskController:
         requested_by: str | None,
     ) -> IngressDecision | None:
         pending = next(
-            iter(self.store.list_ingresses(conversation_id=conversation_id, status="pending_disambiguation", limit=1)),
+            iter(
+                self.store.list_ingresses(
+                    conversation_id=conversation_id, status="pending_disambiguation", limit=1
+                )
+            ),
             None,
         )
         if pending is None:
@@ -1062,7 +1078,9 @@ class TaskController:
             requested_by=requested_by or pending.actor or "user",
             ingress_id=pending.ingress_id,
         )
-        self._set_focus(conversation_id=conversation_id, task_id=task_id, reason="pending_ingress_resolved")
+        self._set_focus(
+            conversation_id=conversation_id, task_id=task_id, reason="pending_ingress_resolved"
+        )
         return self._binding_to_ingress_decision(
             ingress_id=pending.ingress_id,
             binding=binding,
@@ -1267,7 +1285,9 @@ class TaskController:
                 "created_task_id": task_id,
             },
         )
-        self._set_focus(conversation_id=conversation_id, task_id=task_id, reason="ingress_created_task")
+        self._set_focus(
+            conversation_id=conversation_id, task_id=task_id, reason="ingress_created_task"
+        )
 
     def _set_focus(self, *, conversation_id: str, task_id: str | None, reason: str) -> None:
         previous = self.store.get_conversation(conversation_id)
@@ -1290,7 +1310,11 @@ class TaskController:
                 entity_id=conversation_id,
                 task_id=None,
                 actor="kernel",
-                payload={"focus_task_id": task_id, "reason": reason, "previous_focus_task_id": previous_task_id},
+                payload={
+                    "focus_task_id": task_id,
+                    "reason": reason,
+                    "previous_focus_task_id": previous_task_id,
+                },
             )
         else:
             self.store.append_event(
@@ -1309,7 +1333,9 @@ class TaskController:
         next_focus = self.store.ensure_valid_focus(conversation_id)
         if next_focus == task_id:
             return
-        self._set_focus(conversation_id=conversation_id, task_id=next_focus, reason="focus_task_terminal")
+        self._set_focus(
+            conversation_id=conversation_id, task_id=next_focus, reason="focus_task_terminal"
+        )
 
     def _mark_attempt_input_dirty(
         self,
@@ -1323,7 +1349,8 @@ class TaskController:
             (
                 item
                 for item in self.store.list_step_attempts(task_id=task_id, limit=20)
-                if item.status in {"ready", "running", "awaiting_approval", "observing", "policy_pending"}
+                if item.status
+                in {"ready", "running", "awaiting_approval", "observing", "policy_pending"}
             ),
             None,
         )
@@ -1332,7 +1359,9 @@ class TaskController:
         context = dict(attempt.context or {})
         was_dirty = bool(context.get("input_dirty"))
         context["input_dirty"] = True
-        context["latest_bound_ingress_id"] = ingress_id or str(context.get("latest_bound_ingress_id", "") or "")
+        context["latest_bound_ingress_id"] = ingress_id or str(
+            context.get("latest_bound_ingress_id", "") or ""
+        )
         if note_event_seq is not None:
             context["latest_note_event_seq"] = int(note_event_seq)
         context["input_dirty_at"] = time.time()
@@ -1394,7 +1423,7 @@ class TaskController:
 
     @staticmethod
     def _normalize_ingress_text(text: str) -> str:
-        return " ".join(str(text or "").split()).strip()
+        return normalize_text(text)
 
     @staticmethod
     def _extract_artifact_refs(*values: str | None) -> list[str]:
@@ -1419,12 +1448,12 @@ class TaskController:
     @classmethod
     def _is_explicit_new_task_message(cls, text: str) -> bool:
         cleaned = cls._normalize_ingress_text(text)
-        return any(marker in cleaned for marker in _EXPLICIT_NEW_TASK_MARKERS)
+        return has_explicit_new_task_marker(cleaned)
 
     @classmethod
     def _has_continue_marker(cls, text: str) -> bool:
         cleaned = cls._normalize_ingress_text(text)
-        return any(marker in cleaned for marker in _CONTINUE_MARKERS)
+        return has_continue_marker(cleaned)
 
     def _looks_like_task_followup(self, text: str, *, task_id: str) -> bool:
         cleaned = self._normalize_ingress_text(text)
@@ -1432,21 +1461,11 @@ class TaskController:
             return False
         if self._has_continue_marker(cleaned):
             return True
-        if any(marker in cleaned for marker in _AMBIGUOUS_FOLLOWUP_MARKERS):
+        if has_ambiguous_followup_marker(cleaned):
             return True
         context_texts = self._task_context_texts(task_id)
-        query_tokens = {token for token in MemoryEngine._topic_tokens(cleaned) if len(token) >= 2}
         for context_text in context_texts:
-            if not context_text:
-                continue
-            if MemoryEngine._shares_topic(context_text, cleaned):
-                return True
-            context_tokens = {token for token in MemoryEngine._topic_tokens(context_text) if len(token) >= 2}
-            if query_tokens & context_tokens:
-                return True
-            if any(token in context_text for token in query_tokens):
-                return True
-            if any(token in cleaned for token in context_tokens if len(token) >= 4):
+            if texts_overlap(cleaned, context_text):
                 return True
         return False
 
@@ -1475,7 +1494,9 @@ class TaskController:
             if task.status not in TERMINAL_TASK_STATUSES:
                 continue
             projection = self.store.build_task_projection(task.task_id)
-            step_kinds = {str(step.get("kind") or "") for step in projection.get("steps", {}).values()}
+            step_kinds = {
+                str(step.get("kind") or "") for step in projection.get("steps", {}).values()
+            }
             if step_kinds and not (step_kinds & {"respond", "plan"}):
                 continue
             candidates.append(task)
@@ -1492,7 +1513,9 @@ class TaskController:
             if event["event_type"] != "task.note.appended":
                 continue
             payload = dict(event["payload"] or {})
-            note_text = clean_runtime_text(payload.get("raw_text") or payload.get("inline_excerpt") or "")
+            note_text = clean_runtime_text(
+                payload.get("raw_text") or payload.get("inline_excerpt") or ""
+            )
             if note_text:
                 texts.append(note_text)
             if len(texts) >= 6:
@@ -1508,34 +1531,32 @@ class TaskController:
         if task is None:
             return {}
         events = self.store.list_events(task_id=task_id, limit=500)
-        outcome = build_task_outcome(
-            store=self.store,
-            task_id=task_id,
-            status=str(task.status or ""),
-            events=events,
-        ) or {}
+        outcome = (
+            build_task_outcome(
+                store=self.store,
+                task_id=task_id,
+                status=str(task.status or ""),
+                events=events,
+            )
+            or {}
+        )
         return {
             "anchor_task_id": task_id,
             "anchor_kind": "completed_outcome",
             "selection_reason": selection_reason,
             "anchor_title": str(task.title or ""),
+            "anchor_goal": str(task.goal or ""),
+            "anchor_user_request": str(task.title or task.goal or ""),
             "outcome_status": str(outcome.get("status", task.status) or task.status),
             "outcome_summary": str(outcome.get("outcome_summary", "") or ""),
             "source_artifact_refs": list(outcome.get("source_artifact_refs", []) or []),
         }
 
     @staticmethod
-    def _texts_overlap(text: str, candidate_text: str, *, query_tokens: set[str]) -> bool:
-        if not candidate_text:
-            return False
-        if MemoryEngine._shares_topic(candidate_text, text):
-            return True
-        candidate_tokens = {token for token in MemoryEngine._topic_tokens(candidate_text) if len(token) >= 2}
-        if query_tokens & candidate_tokens:
-            return True
-        if any(token in candidate_text for token in query_tokens):
-            return True
-        return any(token in text for token in candidate_tokens if len(token) >= 4)
+    def _texts_overlap(
+        text: str, candidate_text: str, *, query_tokens: set[str] | None = None
+    ) -> bool:
+        return texts_overlap(text, candidate_text)
 
     @staticmethod
     def _sanitize_context_text(text: str) -> str:

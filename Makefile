@@ -108,4 +108,6 @@ verify:
 	@$(MAKE) install-check
 
 precommit-install:
-	@uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+	@chmod +x scripts/git-hooks/pre-commit scripts/git-hooks/pre-push
+	@git config --local core.hooksPath scripts/git-hooks
+	@printf 'Installed git hooks from %s/scripts/git-hooks\n' "$$(git rev-parse --show-toplevel)"

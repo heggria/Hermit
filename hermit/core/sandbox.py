@@ -39,6 +39,7 @@ class _ObservedProcess:
     failure_patterns: list[dict[str, Any]] = field(default_factory=list)
     progress_patterns: list[dict[str, Any]] = field(default_factory=list)
     ready_return: bool = False
+    coarse_observation_emitted: bool = False
     cancelled: bool = False
     completed: bool = False
     returncode: int | None = None
@@ -46,7 +47,9 @@ class _ObservedProcess:
     stdout_chunks: list[str] = field(default_factory=list)
     stderr_chunks: list[str] = field(default_factory=list)
     pending_events: list[tuple[str, str]] = field(default_factory=list)
-    recent_events: deque[tuple[str, str]] = field(default_factory=lambda: deque(maxlen=_RECENT_LINE_BUFFER))
+    recent_events: deque[tuple[str, str]] = field(
+        default_factory=lambda: deque(maxlen=_RECENT_LINE_BUFFER)
+    )
     reader_threads: list[threading.Thread] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -101,7 +104,9 @@ class CommandSandbox:
             proc=proc,
             deadline=deadline,
             created_at=time.time(),
-            display_name=str(payload.get("display_name", "") or self._default_display_name(command_text)),
+            display_name=str(
+                payload.get("display_name", "") or self._default_display_name(command_text)
+            ),
             ready_patterns=self._normalize_pattern_rules(payload.get("ready_patterns")),
             failure_patterns=self._normalize_pattern_rules(payload.get("failure_patterns")),
             progress_patterns=self._normalize_progress_rules(payload.get("progress_patterns")),
@@ -255,7 +260,10 @@ class CommandSandbox:
                     },
                     "is_error": True,
                 }
-            progress = matched_progress or self._coarse_running_progress(job)
+            progress = matched_progress
+            if progress is None:
+                progress = self._coarse_running_progress(job)
+                job.coarse_observation_emitted = True
             return self._observing_payload(
                 job,
                 progress=progress,
@@ -273,6 +281,7 @@ class CommandSandbox:
             ready_progress=ready_progress,
             failure_progress=failure_progress,
         ):
+            job.coarse_observation_emitted = True
             return self._observing_payload(
                 job,
                 progress=self._coarse_running_progress(job),
@@ -421,7 +430,9 @@ class CommandSandbox:
             return line
         fields = {"line": line, "stream": stream_name, "display_name": display_name}
         if match is not None:
-            fields.update({key: value for key, value in match.groupdict().items() if value is not None})
+            fields.update(
+                {key: value for key, value in match.groupdict().items() if value is not None}
+            )
         try:
             return text.format(**fields)
         except Exception:
@@ -566,7 +577,9 @@ class CommandSandbox:
 
     def _has_observation_output(self, job: _ObservedProcess) -> bool:
         with job.lock:
-            return bool(job.pending_events or job.recent_events or job.stdout_chunks or job.stderr_chunks)
+            return bool(
+                job.pending_events or job.recent_events or job.stdout_chunks or job.stderr_chunks
+            )
 
     def _should_extend_coarse_observation(
         self,
@@ -577,9 +590,15 @@ class CommandSandbox:
         ready_progress: dict[str, Any] | None,
         failure_progress: dict[str, Any] | None,
     ) -> bool:
-        if matched_progress is not None or ready_progress is not None or failure_progress is not None:
+        if (
+            matched_progress is not None
+            or ready_progress is not None
+            or failure_progress is not None
+        ):
             return False
         if self._has_observation_output(job):
+            return False
+        if job.coarse_observation_emitted:
             return False
         completed_at = job.completed_at or now
         return (
