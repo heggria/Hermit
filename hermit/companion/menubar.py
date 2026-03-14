@@ -110,10 +110,6 @@ if rumps is not None:  # pragma: no branch - class only exists when dependency i
             self.thread_progress_item = rumps.MenuItem(
                 _t("plugin.feishu.variable.thread_progress"), callback=self._toggle_thread_progress
             )
-            self.reaction_enabled_item = rumps.MenuItem(
-                _t("plugin.feishu.variable.reaction_enabled"),
-                callback=self._toggle_reaction_enabled,
-            )
             self.scheduler_enabled_item = rumps.MenuItem(
                 _t("plugin.scheduler.variable.enabled"), callback=self._toggle_scheduler_enabled
             )
@@ -165,7 +161,6 @@ if rumps is not None:  # pragma: no branch - class only exists when dependency i
                 rumps.MenuItem(_t("menubar.action.quit"), callback=self._quit_app),
             ]
             self.feature_toggles_item.add(self.thread_progress_item)
-            self.feature_toggles_item.add(self.reaction_enabled_item)
             self.feature_toggles_item.add(self.scheduler_enabled_item)
             self.feature_toggles_item.add(self.webhook_enabled_item)
             self.refresh_status(None)
@@ -250,9 +245,6 @@ if rumps is not None:  # pragma: no branch - class only exists when dependency i
                 self.autostart_item.state = 1 if state.autostart_loaded else 0
                 self.menu_login_item.state = 1 if login_item_enabled() else 0
                 self.thread_progress_item.state = 1 if bool(settings.feishu_thread_progress) else 0
-                self.reaction_enabled_item.state = (
-                    1 if bool(settings.feishu_reaction_enabled) else 0
-                )
                 self.scheduler_enabled_item.state = 1 if bool(settings.scheduler_enabled) else 0
                 self.webhook_enabled_item.state = 1 if bool(settings.webhook_enabled) else 0
                 if state.autostart_loaded:
@@ -406,12 +398,6 @@ if rumps is not None:  # pragma: no branch - class only exists when dependency i
             self._toggle_profile_bool(
                 "feishu_thread_progress",
                 bool(load_runtime_settings(self.base_dir).feishu_thread_progress),
-            )
-
-        def _toggle_reaction_enabled(self, _sender) -> None:
-            self._toggle_profile_bool(
-                "feishu_reaction_enabled",
-                bool(load_runtime_settings(self.base_dir).feishu_reaction_enabled),
             )
 
         def _toggle_scheduler_enabled(self, _sender) -> None:

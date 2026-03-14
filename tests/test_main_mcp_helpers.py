@@ -92,7 +92,6 @@ def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
         log_level="INFO",
         feishu_app_id="app",
         feishu_thread_progress=True,
-        feishu_reaction_enabled=False,
         scheduler_enabled=True,
         scheduler_catch_up=False,
         scheduler_feishu_chat_id="chat-id",
@@ -118,6 +117,7 @@ def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
     snapshot = main_mod._resolved_config_snapshot(settings)
     assert snapshot["auth"]["provider"] == "codex-oauth"
     assert snapshot["webhook"]["port"] == 8080
+    assert "reaction_enabled" not in snapshot["feishu"]
 
     created: list[Path] = []
     monkeypatch.setattr(main_mod, "ensure_default_context_file", lambda path: created.append(path))

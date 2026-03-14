@@ -262,7 +262,6 @@ def _resolved_config_snapshot(settings: Settings) -> dict[str, object]:
         "feishu": {
             "app_id_configured": bool(settings.feishu_app_id),
             "thread_progress": settings.feishu_thread_progress,
-            "reaction_enabled": settings.feishu_reaction_enabled,
         },
         "scheduler": {
             "enabled": settings.scheduler_enabled,

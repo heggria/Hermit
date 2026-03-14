@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Optional
 
 from hermit.builtin.feishu.normalize import FeishuMessage, normalize_event
-from hermit.builtin.feishu.reaction import send_ack, send_done
+from hermit.builtin.feishu.reaction import add_reaction
 from hermit.builtin.feishu.reply import (
     _SKIP_TOOLS,
     _tool_display,
@@ -61,6 +61,7 @@ _RAW_CONTROL_PREFIXES = (
     "approve_always_directory ",
     "deny ",
 )
+_SCHEDULE_REACTION_TOOLS = frozenset({"schedule_list", "schedule_create", "schedule_update", "schedule_delete"})
 _DISPLAYABLE_TOPIC_KINDS = {
     "tool.submitted",
     "tool.progressed",
@@ -69,9 +70,6 @@ _DISPLAYABLE_TOPIC_KINDS = {
     "approval.requested",
     "approval.resolved",
 }
-
-
-
 class FeishuAdapter:
     """Connects to Feishu via lark-oapi WebSocket long connection."""
 
@@ -96,7 +94,6 @@ class FeishuAdapter:
         self._runner: AgentRunner | None = None
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="feishu")
         self._seen_msgs: OrderedDict[str, bool] = OrderedDict()
-        self._acked_msgs: OrderedDict[str, bool] = OrderedDict()
         self._seen_lock = threading.Lock()
         self._stopped = False
         self._sweep_timer: threading.Timer | None = None
@@ -112,20 +109,6 @@ class FeishuAdapter:
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=self._locale(), default=default, **kwargs)
-
-    def _ack_message_once(self, message_id: str) -> bool:
-        normalized = str(message_id or "").strip()
-        if not normalized or self._client is None:
-            return False
-        with self._seen_lock:
-            if normalized in self._acked_msgs:
-                self._acked_msgs.move_to_end(normalized)
-                return False
-            self._acked_msgs[normalized] = True
-            while len(self._acked_msgs) > self._DEDUP_MAX:
-                self._acked_msgs.popitem(last=False)
-        send_ack(self._client, normalized, self._settings)
-        return True
 
     async def start(self, runner: AgentRunner) -> None:
         if not self._app_id or not self._app_secret:
@@ -791,7 +774,6 @@ class FeishuAdapter:
         log.info("Received msg_id=%s chat=%s chat_type=%s message_type=%s sender=%s text=%s images=%s",
                  msg.message_id, msg.chat_id, msg.chat_type,
                  msg.message_type, msg.sender_id, msg.text[:80], len(msg.image_keys))
-        self._ack_message_once(msg.message_id)
         try:
             self._executor.submit(self._process_message, msg)
         except RuntimeError:
@@ -1145,6 +1127,13 @@ class FeishuAdapter:
         card_message_id: str | None = None
         current_hint = self._t("feishu.adapter.progress.thinking")
         last_patch_at = 0.0
+        schedule_reacted = False
+        progress_enabled = (
+            enable_progress_card
+            and bool(getattr(self._settings, "feishu_thread_progress", False))
+            and self._client is not None
+            and bool(msg.message_id)
+        )
 
         def maybe_patch_progress(force: bool = False) -> None:
             nonlocal last_patch_at
@@ -1162,30 +1151,37 @@ class FeishuAdapter:
 
         on_tool_start = None
         on_tool_call = None
-        if (
-            enable_progress_card
-            and bool(getattr(self._settings, "feishu_thread_progress", False))
-            and self._client is not None
-            and msg.message_id
-        ):
-            card_message_id = reply_card_return_id(
-                self._client,
-                msg.message_id,
-                build_progress_card([], current_hint=current_hint, locale=self._locale()),
-            )
+        if self._client is not None and msg.message_id:
+            if progress_enabled:
+                card_message_id = reply_card_return_id(
+                    self._client,
+                    msg.message_id,
+                    build_progress_card([], current_hint=current_hint, locale=self._locale()),
+                )
 
             def _on_tool_start(name: str, tool_input: dict[str, Any]) -> None:
-                nonlocal current_hint
+                nonlocal current_hint, schedule_reacted
+                if not schedule_reacted:
+                    if (
+                        name in _SCHEDULE_REACTION_TOOLS
+                        or (name == "read_skill" and str(tool_input.get("name", "")).strip().lower() == "scheduler")
+                    ):
+                        schedule_reacted = True
+                        add_reaction(self._client, msg.message_id, "Get")
+                if not progress_enabled:
+                    return
                 current_hint = format_tool_start_hint(name, tool_input, locale=self._locale())
                 maybe_patch_progress()
 
+            on_tool_start = _on_tool_start
+
+        if progress_enabled:
             def _on_tool_call(name: str, tool_input: dict[str, Any], result: Any) -> None:
                 nonlocal current_hint
                 steps.append(make_tool_step(name, tool_input, result, 0, locale=self._locale()))
                 current_hint = self._t("feishu.adapter.progress.thinking")
                 maybe_patch_progress(force=True)
 
-            on_tool_start = _on_tool_start
             on_tool_call = _on_tool_call
 
         try:
@@ -1212,8 +1208,6 @@ class FeishuAdapter:
 
         if execution_status == "note_appended" and task_id:
             self._patch_task_topic(task_id)
-            if self._client and msg.message_id:
-                send_done(self._client, msg.message_id, self._settings)
             return
 
         card_message_id, blocked, task_id = self._present_task_result(
@@ -1237,16 +1231,10 @@ class FeishuAdapter:
         elif task_id and self._task_has_appended_notes(task_id):
             self._unbind_task_topic(session_id, task_id)
 
-        if self._client and msg.message_id:
-            send_done(self._client, msg.message_id, self._settings)
-
     def _process_message(self, msg: FeishuMessage) -> None:
         """Queue normal Feishu ingress onto the kernel worker pool."""
         if self._runner is None:
             return
-
-        if self._client and msg.message_id:
-            self._ack_message_once(msg.message_id)
 
         session_id = self._build_session_id(msg)
 
@@ -1281,7 +1269,6 @@ class FeishuAdapter:
                     return
             if self._client and msg.message_id and result.text:
                 smart_reply(self._client, msg.message_id, result.text, locale=self._locale())
-                send_done(self._client, msg.message_id, self._settings)
             return
 
         task_controller = getattr(self._runner, "task_controller", None)
@@ -1296,8 +1283,6 @@ class FeishuAdapter:
             if ingress.mode == "append_note":
                 if ingress.task_id:
                     self._patch_task_topic(ingress.task_id)
-                if self._client and msg.message_id:
-                    send_done(self._client, msg.message_id, self._settings)
                 return
 
         if not self._supports_async_ingress():
@@ -1334,20 +1319,25 @@ class FeishuAdapter:
             )
             return
 
-        enqueue_kwargs = {
-            "source_channel": "feishu",
-            "source_ref": f"feishu:{msg.chat_id}:{msg.message_id}",
-            "ingress_metadata": {
-                "feishu_chat_id": msg.chat_id,
-                "feishu_message_id": msg.message_id,
-                "title": raw_text[:80] or self._t("feishu.adapter.topic.default_title"),
-                "ingress_intent": str(getattr(ingress, "intent", "") or ""),
-                "ingress_reason": str(getattr(ingress, "reason", "") or ""),
-            },
-        }
-        if hasattr(ingress, "parent_task_id"):
-            enqueue_kwargs["parent_task_id"] = getattr(ingress, "parent_task_id")
+        if self._client is not None and msg.message_id:
+            lowered = raw_text.lower()
+            if any(token in lowered for token in ("schedule", "提醒", "定时")):
+                add_reaction(self._client, msg.message_id, "Get")
+
         try:
+            enqueue_kwargs = {
+                "source_channel": "feishu",
+                "source_ref": f"feishu:{msg.chat_id}:{msg.message_id}",
+                "ingress_metadata": {
+                    "feishu_chat_id": msg.chat_id,
+                    "feishu_message_id": msg.message_id,
+                    "title": raw_text[:80] or self._t("feishu.adapter.topic.default_title"),
+                    "ingress_intent": str(getattr(ingress, "intent", "") or ""),
+                    "ingress_reason": str(getattr(ingress, "reason", "") or ""),
+                },
+            }
+            if hasattr(ingress, "parent_task_id"):
+                enqueue_kwargs["parent_task_id"] = getattr(ingress, "parent_task_id")
             ctx = self._runner.enqueue_ingress(
                 session_id,
                 dispatch_text,
@@ -1371,7 +1361,6 @@ class FeishuAdapter:
                 reply_to_message_id=msg.message_id,
                 card_mode="topic",
             )
-            send_done(self._client, msg.message_id, self._settings)
 
     def _card_action_response(self, content: str, *, level: str = "info", card: dict[str, Any] | None = None) -> Any:
         from lark_oapi.event.callback.model.p2_card_action_trigger import (
