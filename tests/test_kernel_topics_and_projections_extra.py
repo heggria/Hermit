@@ -355,7 +355,7 @@ def test_conversation_projection_exposes_focus_open_tasks_and_pending_ingresses(
     payload = ConversationProjectionService(store).rebuild("oc_focus_projection")
 
     assert payload["focus_task_id"] == first.task_id
-    assert payload["focus_reason"] == "manual_test_focus"
+    assert payload["focus_reason"] == "ingress_bound"
     assert payload["pending_ingress_count"] == 1
     assert len(payload["open_tasks"]) == 2
     assert payload["open_tasks"][0]["task_id"] == second.task_id
@@ -365,6 +365,41 @@ def test_conversation_projection_exposes_focus_open_tasks_and_pending_ingresses(
     assert payload["ingress_metrics"]["shadow_disagreement_count"] >= 1
     assert payload["recent_ingresses"][0]["ingress_id"] == decision.ingress_id
     assert payload["recent_ingresses"][0]["shadow_match_actual"] is False
+
+
+def test_conversation_projection_cache_refreshes_on_focus_and_ingress_updates(tmp_path: Path) -> None:
+    from hermit.kernel.conversation_projection import ConversationProjectionService
+
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    controller = TaskController(store)
+    first = controller.start_task(conversation_id="chat-cache", goal="Inspect first", source_channel="chat", kind="respond")
+    second = controller.start_task(conversation_id="chat-cache", goal="Inspect second", source_channel="chat", kind="respond")
+    service = ConversationProjectionService(store, ArtifactStore(tmp_path / "artifacts"))
+
+    initial = service.ensure("chat-cache")
+    assert initial["focus_task_id"] == second.task_id
+
+    store.set_conversation_focus("chat-cache", task_id=first.task_id, reason="explicit_task_switch")
+    ingress = store.create_ingress(
+        conversation_id="chat-cache",
+        source_channel="chat",
+        actor="user",
+        raw_text="这个到底指哪一个",
+        normalized_text="这个到底指哪一个",
+    )
+    store.update_ingress(
+        ingress.ingress_id,
+        status="pending_disambiguation",
+        resolution="pending_disambiguation",
+        rationale={"reason_codes": ["ambiguous_close_tie"]},
+    )
+
+    refreshed = service.ensure("chat-cache")
+
+    assert refreshed["focus_task_id"] == first.task_id
+    assert refreshed["focus_reason"] == "explicit_task_switch"
+    assert refreshed["pending_ingress_count"] == 1
+    assert refreshed["ingress_metrics"]["resolution_counts"]["pending_disambiguation"] >= 1
 
 
 def test_projection_service_key_input_prefers_first_value() -> None:

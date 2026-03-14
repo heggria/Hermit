@@ -193,6 +193,17 @@ class ConversationProjectionService:
     def _event_head_hash(self, conversation_id: str) -> str:
         tasks = self.store.list_tasks(conversation_id=conversation_id, limit=500)
         heads: list[dict[str, Any]] = []
+        conversation = self.store.get_conversation(conversation_id)
+        if conversation is not None:
+            heads.append(
+                {
+                    "conversation_id": conversation.conversation_id,
+                    "focus_task_id": conversation.focus_task_id or "",
+                    "focus_reason": conversation.focus_reason or "",
+                    "focus_updated_at": float(conversation.focus_updated_at or 0),
+                    "updated_at": float(conversation.updated_at or 0),
+                }
+            )
         for task in tasks:
             events = self.store.list_events(task_id=task.task_id, limit=1)
             if not events:
@@ -203,6 +214,17 @@ class ConversationProjectionService:
                     "task_id": task.task_id,
                     "event_seq": int(event["event_seq"]),
                     "event_hash": event["event_hash"] or "",
+                }
+            )
+        for ingress in self.store.list_ingresses(conversation_id=conversation_id, limit=500):
+            heads.append(
+                {
+                    "ingress_id": ingress.ingress_id,
+                    "status": ingress.status,
+                    "resolution": ingress.resolution,
+                    "chosen_task_id": ingress.chosen_task_id or "",
+                    "parent_task_id": ingress.parent_task_id or "",
+                    "updated_at": float(ingress.updated_at or 0),
                 }
             )
         return _sha256_hex(_canonical_json(heads))

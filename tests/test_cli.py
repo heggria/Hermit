@@ -742,13 +742,69 @@ def test_task_case_and_projection_rebuild_commands(tmp_path, monkeypatch) -> Non
         permit_ref=permit.permit_id,
         policy_ref="policy_case",
     )
+    background = store.create_task(
+        conversation_id="cli-case",
+        title="Background task",
+        goal="Keep another task open",
+        source_channel="chat",
+    )
+    store.set_conversation_focus("cli-case", task_id=task.task_id, reason="explicit_task_switch")
+    bound_ingress = store.create_ingress(
+        conversation_id="cli-case",
+        source_channel="chat",
+        actor="user",
+        raw_text="这个改成 Markdown，并保留 artifact_123",
+        normalized_text="这个改成 markdown，并保留 artifact_123",
+        reply_to_ref="msg_reply_1",
+        quoted_message_ref="msg_quote_1",
+        referenced_artifact_refs=["artifact_123"],
+    )
+    store.update_ingress(
+        bound_ingress.ingress_id,
+        status="bound",
+        resolution="append_note",
+        chosen_task_id=task.task_id,
+        confidence=0.91,
+        margin=0.48,
+        rationale={
+            "reason_codes": ["focus_task", "artifact_ref"],
+            "shadow_binding": {
+                "resolution": "append_note",
+                "chosen_task_id": background.task_id,
+                "match_actual": False,
+            },
+        },
+    )
+    pending_ingress = store.create_ingress(
+        conversation_id="cli-case",
+        source_channel="chat",
+        actor="user",
+        raw_text="这个也改一下",
+        normalized_text="这个也改一下",
+    )
+    store.update_ingress(
+        pending_ingress.ingress_id,
+        status="pending_disambiguation",
+        resolution="pending_disambiguation",
+        rationale={"reason_codes": ["ambiguous_close_tie"]},
+    )
 
     runner = CliRunner()
     case_result = runner.invoke(app, ["task", "case", task.task_id])
     rebuild_result = runner.invoke(app, ["task", "projections-rebuild", task.task_id])
 
     assert case_result.exit_code == 0
-    assert json.loads(case_result.output)["operator_answers"]["why_execute"] == "Policy allowed this write."
+    case_payload = json.loads(case_result.output)
+    assert case_payload["operator_answers"]["why_execute"] == "Policy allowed this write."
+    assert case_payload["ingress_observability"]["conversation"]["focus"]["task_id"] == task.task_id
+    assert case_payload["ingress_observability"]["conversation"]["metrics"]["resolution_counts"]["append_note"] >= 1
+    assert case_payload["ingress_observability"]["conversation"]["pending_ingress_count"] >= 1
+    assert any(
+        item["reply_to_ref"] == "msg_reply_1"
+        for item in case_payload["ingress_observability"]["conversation"]["recent_ingresses"]
+    )
+    assert case_payload["ingress_observability"]["task"]["recent_related_ingresses"][0]["relation"] == "chosen_task"
+    assert case_payload["ingress_observability"]["task"]["pending_disambiguations"][0]["status"] == "pending_disambiguation"
     assert rebuild_result.exit_code == 0
     assert json.loads(rebuild_result.output)["task"]["task_id"] == task.task_id
 
