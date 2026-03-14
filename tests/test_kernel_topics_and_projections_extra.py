@@ -355,7 +355,7 @@ def test_conversation_projection_exposes_focus_open_tasks_and_pending_ingresses(
     payload = ConversationProjectionService(store).rebuild("oc_focus_projection")
 
     assert payload["focus_task_id"] == first.task_id
-    assert payload["focus_reason"] == "ingress_bound"
+    assert payload["focus_reason"] == "manual_test_focus"
     assert payload["pending_ingress_count"] == 1
     assert len(payload["open_tasks"]) == 2
     assert payload["open_tasks"][0]["task_id"] == second.task_id

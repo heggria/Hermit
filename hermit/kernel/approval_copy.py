@@ -102,7 +102,7 @@ class ApprovalCopyService:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
             future = executor.submit(self._formatter, facts)
-            payload = future.result(timeout=max(0.05, self._formatter_timeout_ms / 1000))
+            payload = future.result(timeout=max(0.001, self._formatter_timeout_ms / 1000))
         except Exception:
             executor.shutdown(wait=False, cancel_futures=True)
             return None

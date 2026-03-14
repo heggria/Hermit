@@ -1272,6 +1272,14 @@ class TaskController:
     def _set_focus(self, *, conversation_id: str, task_id: str | None, reason: str) -> None:
         previous = self.store.get_conversation(conversation_id)
         previous_task_id = previous.focus_task_id if previous is not None else None
+        previous_reason = str(previous.focus_reason or "") if previous is not None else ""
+        if (
+            task_id
+            and previous_task_id == task_id
+            and reason in {"ingress_bound", "note_appended"}
+            and previous_reason
+        ):
+            return
         self.store.set_conversation_focus(conversation_id, task_id=task_id, reason=reason)
         if previous_task_id == task_id:
             return
