@@ -655,6 +655,11 @@ def task_claim_status(
     store: KernelStore, task_id: str, *, proof_summary: dict[str, Any]
 ) -> dict[str, Any]:
     repo = read_repository_claim_status_cache(store=store)
+    cache = dict(repo.get("cache") or {})
+    if str(cache.get("status", "")) == "missing":
+        payload = repository_claim_status(include_expensive_probes=True)
+        repo = dict(payload)
+        _write_repository_claim_status_cache(repo, store=store)
     coverage = dict(proof_summary.get("proof_coverage", {}) or {})
     chain = dict(proof_summary.get("chain_verification", {}) or {})
     receipt_bundle = dict(coverage.get("receipt_bundle_coverage", {}) or {})

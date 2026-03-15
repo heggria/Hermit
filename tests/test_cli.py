@@ -909,6 +909,42 @@ def test_task_claim_status_reads_cached_repository_status_without_live_probes(
     assert payload["repository"]["profiles"]["core"]["claimable"] is True
 
 
+def test_task_claim_status_refreshes_repository_status_when_cache_is_missing(
+    tmp_path, monkeypatch
+) -> None:
+    import hermit.kernel.claims as claims_mod
+    from hermit.kernel.claims import repository_claim_status, task_claim_status
+    from hermit.kernel.store import KernelStore
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-claims-miss", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-claims-miss",
+        title="CLI Missing Claim Cache Task",
+        goal="Refresh claim gate on cache miss",
+        source_channel="chat",
+    )
+    proof = ProofService(store).build_proof_summary(task.task_id)
+
+    calls = {"count": 0}
+    original = repository_claim_status
+
+    def _wrapped(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(claims_mod, "repository_claim_status", _wrapped)
+
+    payload = task_claim_status(store, task.task_id, proof_summary=proof)
+
+    assert calls["count"] >= 1
+    assert payload["repository"]["cache"]["status"] == "fresh"
+    assert payload["repository"]["profiles"]["core"]["claimable"] is True
+
+
 def test_task_case_and_projection_rebuild_commands(tmp_path, monkeypatch) -> None:
     from hermit.config import get_settings
     from hermit.kernel.store import KernelStore
