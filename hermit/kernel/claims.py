@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -8,6 +11,10 @@ from typing import Any, Callable
 from hermit.kernel.claim_manifest import CLAIM_ROWS, PROFILE_LABELS
 from hermit.kernel.proofs import ProofService, proof_capabilities
 from hermit.kernel.store import KernelStore
+from hermit.storage.atomic import atomic_write
+
+_CLAIM_CACHE_SCHEMA_VERSION = "repository-claims-v1"
+_CLAIM_CACHE_FILENAME = "repository-claim-status.json"
 
 
 def _probe_write_registry(
@@ -493,7 +500,7 @@ def _semantic_probe(row_id: str, probe: Callable[[], None]) -> dict[str, Any]:
     return {"status": "implemented", "evaluation": "semantic_probe"}
 
 
-def _semantic_probe_results() -> dict[str, dict[str, Any]]:
+def _semantic_probe_results(*, include_expensive_probes: bool = True) -> dict[str, dict[str, Any]]:
     probes: dict[str, Callable[[], None]] = {
         "ingress_task_first": _probe_ingress_task_first,
         "event_backed_truth": _probe_event_backed_truth,
@@ -502,10 +509,11 @@ def _semantic_probe_results() -> dict[str, dict[str, Any]]:
         "receipts": _probe_receipts,
         "uncertain_outcome": _probe_uncertain_outcome,
         "durable_reentry": _probe_durable_reentry,
-        "artifact_context": _probe_artifact_context,
         "memory_evidence": _probe_memory_evidence,
         "proof_export": _probe_proof_export,
     }
+    if include_expensive_probes:
+        probes["artifact_context"] = _probe_artifact_context
     return {row_id: _semantic_probe(row_id, probe) for row_id, probe in probes.items()}
 
 
@@ -522,20 +530,33 @@ def _conditional_row_status(row_id: str, caps: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def repository_claim_status() -> dict[str, Any]:
+def _claim_cache_path(*, store: KernelStore | None = None, base_dir: Path | None = None) -> Path:
+    if store is not None:
+        return store.db_path.parent / _CLAIM_CACHE_FILENAME
+    if base_dir is None:
+        base_dir_raw = os.environ.get("HERMIT_BASE_DIR", "")
+        base_dir = Path(base_dir_raw).expanduser() if base_dir_raw else Path.home() / ".hermit"
+    return base_dir / "kernel" / _CLAIM_CACHE_FILENAME
+
+
+def _repository_claim_status_payload(
+    *,
+    semantic: dict[str, dict[str, Any]],
+    generated_at: float,
+    include_expensive_probes: bool,
+    cache_status: str,
+) -> dict[str, Any]:
     proof_caps = proof_capabilities()
-    semantic = _semantic_probe_results()
     rows: list[dict[str, Any]] = []
     blockers_by_profile: dict[str, list[str]] = {profile: [] for profile in PROFILE_LABELS}
     for row in CLAIM_ROWS:
+        row_id = str(row["id"])
         computed = dict(row)
-        computed.update(
-            semantic.get(str(row["id"])) or _conditional_row_status(str(row["id"]), proof_caps)
-        )
+        computed.update(semantic.get(row_id) or _conditional_row_status(row_id, proof_caps))
         rows.append(computed)
         for profile in row.get("profiles", []):
             if computed["status"] != "implemented":
-                blockers_by_profile[str(profile)].append(str(row["id"]))
+                blockers_by_profile[str(profile)].append(row_id)
 
     profiles = {
         profile: {
@@ -558,13 +579,82 @@ def repository_claim_status() -> dict[str, Any]:
             "strong_signed_proofs_available": proof_caps["strong_signed_proofs_available"],
             "baseline_verifiable_available": proof_caps["baseline_verifiable_available"],
         },
+        "cache": {
+            "schema_version": _CLAIM_CACHE_SCHEMA_VERSION,
+            "generated_at": generated_at,
+            "include_expensive_probes": include_expensive_probes,
+            "status": cache_status,
+        },
     }
+
+
+def _repository_claim_status_cache_miss(
+    *, include_expensive_probes: bool = False
+) -> dict[str, Any]:
+    semantic: dict[str, dict[str, Any]] = {}
+    for row in CLAIM_ROWS:
+        row_id = str(row["id"])
+        if row_id == "signed_proofs":
+            continue
+        semantic[row_id] = {
+            "status": "unknown",
+            "evaluation": "cache_miss",
+            "probe_error": "Repository claim cache is not available yet.",
+        }
+    return _repository_claim_status_payload(
+        semantic=semantic,
+        generated_at=0.0,
+        include_expensive_probes=include_expensive_probes,
+        cache_status="missing",
+    )
+
+
+def _write_repository_claim_status_cache(
+    payload: dict[str, Any], *, store: KernelStore | None = None, base_dir: Path | None = None
+) -> Path:
+    path = _claim_cache_path(store=store, base_dir=base_dir)
+    atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return path
+
+
+def read_repository_claim_status_cache(
+    *, store: KernelStore | None = None, base_dir: Path | None = None
+) -> dict[str, Any]:
+    path = _claim_cache_path(store=store, base_dir=base_dir)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return _repository_claim_status_cache_miss()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return _repository_claim_status_cache_miss()
+    if not isinstance(payload, dict):
+        return _repository_claim_status_cache_miss()
+    if not isinstance(payload.get("rows"), list) or not isinstance(payload.get("profiles"), dict):
+        return _repository_claim_status_cache_miss()
+    cache = dict(payload.get("cache") or {})
+    if str(cache.get("schema_version", "")) != _CLAIM_CACHE_SCHEMA_VERSION:
+        return _repository_claim_status_cache_miss()
+    return payload
+
+
+def repository_claim_status(*, include_expensive_probes: bool = True) -> dict[str, Any]:
+    semantic = _semantic_probe_results(include_expensive_probes=include_expensive_probes)
+    payload = _repository_claim_status_payload(
+        semantic=semantic,
+        generated_at=time.time(),
+        include_expensive_probes=include_expensive_probes,
+        cache_status="fresh",
+    )
+    _write_repository_claim_status_cache(payload)
+    return payload
 
 
 def task_claim_status(
     store: KernelStore, task_id: str, *, proof_summary: dict[str, Any]
 ) -> dict[str, Any]:
-    repo = repository_claim_status()
+    repo = read_repository_claim_status_cache(store=store)
     coverage = dict(proof_summary.get("proof_coverage", {}) or {})
     chain = dict(proof_summary.get("chain_verification", {}) or {})
     receipt_bundle = dict(coverage.get("receipt_bundle_coverage", {}) or {})
@@ -600,4 +690,8 @@ def task_claim_status(
     }
 
 
-__all__ = ["repository_claim_status", "task_claim_status"]
+__all__ = [
+    "read_repository_claim_status_cache",
+    "repository_claim_status",
+    "task_claim_status",
+]

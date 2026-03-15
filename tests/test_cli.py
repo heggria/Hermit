@@ -816,20 +816,24 @@ def test_task_claim_status_reports_conditional_strong_proofs_without_signing(
     assert task_payload["task_gate"]["strong_verifiable_ready"] is False
 
 
-def test_repository_claim_status_rows_are_backed_by_semantic_probes() -> None:
+def test_repository_claim_status_rows_are_backed_by_semantic_probes(tmp_path, monkeypatch) -> None:
     from hermit.kernel.claims import repository_claim_status
+
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
 
     payload = repository_claim_status()
 
     event_row = next(row for row in payload["rows"] if row["id"] == "event_backed_truth")
     assert event_row["status"] == "implemented"
     assert event_row["evaluation"] == "semantic_probe"
+    assert payload["cache"]["status"] == "fresh"
 
 
-def test_repository_claim_status_probe_failures_block_profiles(monkeypatch) -> None:
+def test_repository_claim_status_probe_failures_block_profiles(tmp_path, monkeypatch) -> None:
     import hermit.kernel.claims as claims_mod
     from hermit.kernel.claim_manifest import CLAIM_ROWS
 
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
     fake_rows = {
         str(row["id"]): {"status": "implemented", "evaluation": "semantic_probe"}
         for row in CLAIM_ROWS
@@ -840,7 +844,11 @@ def test_repository_claim_status_probe_failures_block_profiles(monkeypatch) -> N
         "evaluation": "semantic_probe",
         "probe_error": "RuntimeError: probe failed",
     }
-    monkeypatch.setattr(claims_mod, "_semantic_probe_results", lambda: fake_rows)
+    monkeypatch.setattr(
+        claims_mod,
+        "_semantic_probe_results",
+        lambda **_: fake_rows,
+    )
 
     payload = claims_mod.repository_claim_status()
 
@@ -850,6 +858,55 @@ def test_repository_claim_status_probe_failures_block_profiles(monkeypatch) -> N
     assert ingress_row["probe_error"] == "RuntimeError: probe failed"
     assert payload["profiles"]["core"]["claimable"] is False
     assert "ingress_task_first" in payload["profiles"]["core"]["blockers"]
+
+
+def test_task_claim_status_reads_cached_repository_status_without_live_probes(
+    tmp_path, monkeypatch
+) -> None:
+    import hermit.kernel.claims as claims_mod
+    from hermit.kernel.claims import repository_claim_status, task_claim_status
+    from hermit.kernel.store import KernelStore
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-claims-cache", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-claims-cache",
+        title="CLI Cached Claim Task",
+        goal="Inspect cached claim gate",
+        source_channel="chat",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    store.create_receipt(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        action_type="write_local",
+        input_refs=[],
+        environment_ref=None,
+        policy_result={"decision": "allow"},
+        approval_ref=None,
+        output_refs=[],
+        result_summary="claim receipt",
+        result_code="succeeded",
+    )
+    proof = ProofService(store).build_proof_summary(task.task_id)
+    repository_claim_status()
+
+    monkeypatch.setattr(
+        claims_mod,
+        "repository_claim_status",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("live refresh should not run")
+        ),
+    )
+
+    payload = task_claim_status(store, task.task_id, proof_summary=proof)
+    assert payload["repository"]["cache"]["status"] == "fresh"
+    assert payload["repository"]["profiles"]["core"]["claimable"] is True
 
 
 def test_task_case_and_projection_rebuild_commands(tmp_path, monkeypatch) -> None:
