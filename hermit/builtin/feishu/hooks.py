@@ -16,6 +16,15 @@ from hermit.plugin.base import HookEvent, PluginContext
 _log = structlog.get_logger(__name__)
 
 
+def _log_exception_with_compat(event: str, **kwargs: Any) -> None:
+    """Log with structured kwargs, but tolerate simplified test doubles."""
+    try:
+        _log.exception(event, **kwargs)
+    except TypeError:
+        chat_id = str(kwargs.get("chat_id", "") or "")
+        _log.exception(event, chat_id)
+
+
 def _on_dispatch_result(
     *,
     source: str = "",
@@ -99,7 +108,7 @@ def _on_dispatch_result(
             "error": None,
         }
     except Exception:
-        _log.exception(
+        _log_exception_with_compat(
             "feishu_proactive_delivery_exception",
             channel="feishu",
             mode=mode,

@@ -1,4 +1,5 @@
 """Data models for the scheduler plugin."""
+
 from __future__ import annotations
 
 import time
@@ -71,7 +72,7 @@ class ScheduledJob:
         max_retries: int = 1,
         feishu_chat_id: str | None = None,
     ) -> ScheduledJob:
-        return cls(
+        job = cls(
             id=uuid.uuid4().hex[:12],
             name=name,
             prompt=prompt,
@@ -82,6 +83,32 @@ class ScheduledJob:
             max_retries=max_retries,
             feishu_chat_id=feishu_chat_id,
         )
+        job.next_run_at = compute_job_next_run(job)
+        return job
+
+
+def compute_job_next_run(job: ScheduledJob, *, now: float | None = None) -> float | None:
+    if not job.enabled:
+        return None
+    current_time = time.time() if now is None else now
+
+    if job.schedule_type == "cron" and job.cron_expr:
+        from croniter import croniter
+
+        cron = croniter(job.cron_expr, current_time)
+        return cron.get_next(float)
+
+    if job.schedule_type == "once" and job.once_at is not None:
+        return job.once_at if job.once_at > current_time else None
+
+    if job.schedule_type == "interval" and job.interval_seconds:
+        base = job.last_run_at or job.created_at
+        nxt = base + job.interval_seconds
+        while nxt <= current_time:
+            nxt += job.interval_seconds
+        return nxt
+
+    return None
 
 
 @dataclass
@@ -93,6 +120,12 @@ class JobExecutionRecord:
     success: bool
     result_text: str
     error: str | None = None
+    delivery_status: str | None = None
+    delivery_channel: str | None = None
+    delivery_mode: str | None = None
+    delivery_target: str | None = None
+    delivery_message_id: str | None = None
+    delivery_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -103,6 +136,12 @@ class JobExecutionRecord:
             "success": self.success,
             "result_text": self.result_text,
             "error": self.error,
+            "delivery_status": self.delivery_status,
+            "delivery_channel": self.delivery_channel,
+            "delivery_mode": self.delivery_mode,
+            "delivery_target": self.delivery_target,
+            "delivery_message_id": self.delivery_message_id,
+            "delivery_error": self.delivery_error,
         }
 
     @classmethod
@@ -115,4 +154,10 @@ class JobExecutionRecord:
             success=bool(data["success"]),
             result_text=str(data.get("result_text", "")),
             error=data.get("error"),
+            delivery_status=data.get("delivery_status"),
+            delivery_channel=data.get("delivery_channel"),
+            delivery_mode=data.get("delivery_mode"),
+            delivery_target=data.get("delivery_target"),
+            delivery_message_id=data.get("delivery_message_id"),
+            delivery_error=data.get("delivery_error"),
         )

@@ -1,4 +1,5 @@
 """Core scheduler engine — daemon thread with precise cron/interval/once timing."""
+
 from __future__ import annotations
 
 import datetime
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
+from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob, compute_job_next_run
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.store import KernelStore
 from hermit.plugin.base import HookEvent
@@ -82,11 +83,13 @@ class SchedulerEngine:
 
     def start(self, *, catch_up: bool = True) -> None:
         self._load_jobs()
-        self._recalculate_all_next_run()
         if catch_up:
             self._catchup_missed_jobs()
+        self._recalculate_all_next_run()
         self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="scheduler",
+            target=self._loop,
+            daemon=True,
+            name="scheduler",
         )
         self._thread.start()
         log.info("scheduler_started", job_count=len(self._jobs))
@@ -159,7 +162,9 @@ class SchedulerEngine:
             self._wake_event.clear()
             job, wait = self._next_due_job()
             if job is None:
-                self._stop_event.wait(_POLL_INTERVAL)
+                # Wait on the wake event so newly created jobs can interrupt the
+                # idle sleep immediately instead of missing short once jobs.
+                self._wake_event.wait(_POLL_INTERVAL)
                 continue
             if wait > 0:
                 self._wake_event.wait(wait)
@@ -172,10 +177,7 @@ class SchedulerEngine:
     def _next_due_job(self) -> tuple[ScheduledJob | None, float]:
         now = time.time()
         with self._lock:
-            candidates = [
-                j for j in self._jobs
-                if j.enabled and j.next_run_at is not None
-            ]
+            candidates = [j for j in self._jobs if j.enabled and j.next_run_at is not None]
         if not candidates:
             return None, 0
         candidates.sort(key=lambda j: j.next_run_at or float("inf"))
@@ -198,6 +200,7 @@ class SchedulerEngine:
             )
             if chat_id:
                 notify["feishu_chat_id"] = chat_id
+                notify["delivery_mode"] = "new_message"
             session_id = f"schedule-{job.id}-{uuid.uuid4().hex[:8]}"
             self._runner.enqueue_ingress(
                 session_id,
@@ -323,7 +326,8 @@ class SchedulerEngine:
         now = time.time()
         with self._lock:
             missed = [
-                j for j in self._jobs
+                j
+                for j in self._jobs
                 if j.enabled and j.next_run_at is not None and j.next_run_at < now
             ]
         if not missed:
@@ -337,26 +341,7 @@ class SchedulerEngine:
     # ------------------------------------------------------------------
 
     def _compute_next_run(self, job: ScheduledJob) -> float | None:
-        if not job.enabled:
-            return None
-        now = time.time()
-
-        if job.schedule_type == "cron" and job.cron_expr:
-            from croniter import croniter
-            cron = croniter(job.cron_expr, now)
-            return cron.get_next(float)
-
-        if job.schedule_type == "once" and job.once_at is not None:
-            return job.once_at if job.once_at > now else None
-
-        if job.schedule_type == "interval" and job.interval_seconds:
-            base = job.last_run_at or job.created_at
-            nxt = base + job.interval_seconds
-            while nxt <= now:
-                nxt += job.interval_seconds
-            return nxt
-
-        return None
+        return compute_job_next_run(job)
 
     def _recalculate_all_next_run(self) -> None:
         with self._lock:

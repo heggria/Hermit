@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional
 from hermit.core.session import SessionManager, sanitize_session_messages
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.context import TaskExecutionContext
-from hermit.kernel.controller import TaskController
+from hermit.kernel.controller import _AUTO_PARENT, TaskController
 from hermit.kernel.observation import ObservationService
 from hermit.kernel.planning import PlanningService
 from hermit.kernel.provider_input import ProviderInputCompiler
+from hermit.plugin.base import HookEvent
 from hermit.provider.runtime import AgentResult, AgentRuntime, ToolCallback, ToolStartCallback
 from hermit.storage import atomic_write
 
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
     from hermit.plugin.manager import PluginManager
 
 CommandHandler = Callable[["AgentRunner", str, str], "DispatchResult"]
-_AUTO_PARENT = object()
 
 _SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
 _FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
@@ -536,8 +536,10 @@ class AgentRunner:
                 result_text=result.text or "",
             )
         self.pm.on_post_run(result, session_id=session_id, session=session, runner=self)
-        self._emit_async_dispatch_result(task_ctx, result, started_at=started_at)
-        self._record_scheduler_execution(task_ctx, result, started_at=started_at)
+        delivery_results = self._emit_async_dispatch_result(task_ctx, result, started_at=started_at)
+        self._record_scheduler_execution(
+            task_ctx, result, started_at=started_at, delivery_results=delivery_results
+        )
         return result
 
     def _emit_async_dispatch_result(
@@ -546,13 +548,13 @@ class AgentRunner:
         result: AgentResult,
         *,
         started_at: float,
-    ) -> None:
+    ) -> list[object]:
         notify = dict(task_ctx.ingress_metadata.get("notify", {}) or {})
         if not notify:
-            return
+            return []
         success = self._result_status(result) == "succeeded"
-        self.pm.hooks.fire(
-            "dispatch_result",
+        return self.pm.hooks.fire(
+            HookEvent.DISPATCH_RESULT,
             source=str(task_ctx.ingress_metadata.get("source_ref", "") or task_ctx.source_channel),
             title=str(
                 task_ctx.ingress_metadata.get("title", "")
@@ -566,6 +568,8 @@ class AgentRunner:
             metadata={
                 "task_id": task_ctx.task_id,
                 "step_attempt_id": task_ctx.step_attempt_id,
+                "job_id": str(task_ctx.ingress_metadata.get("schedule_job_id", "") or ""),
+                "job_name": str(task_ctx.ingress_metadata.get("schedule_job_name", "") or ""),
                 "started_at": started_at,
                 "source_channel": task_ctx.source_channel,
             },
@@ -578,6 +582,7 @@ class AgentRunner:
         result: AgentResult,
         *,
         started_at: float,
+        delivery_results: list[object] | None = None,
     ) -> None:
         job_id = str(task_ctx.ingress_metadata.get("schedule_job_id", "") or "")
         if not job_id:
@@ -587,6 +592,7 @@ class AgentRunner:
         settings = getattr(self.pm, "settings", None)
         if settings is None:
             return
+        notify = dict(task_ctx.ingress_metadata.get("notify", {}) or {})
         job_name = str(task_ctx.ingress_metadata.get("schedule_job_name", "") or "") or job_id
         finished_at = time.time()
         record = JobExecutionRecord(
@@ -598,6 +604,27 @@ class AgentRunner:
             result_text=result.text or "",
             error=None if self._result_status(result) == "succeeded" else (result.text or ""),
         )
+        delivery = next(
+            (
+                item
+                for item in (delivery_results or [])
+                if isinstance(item, dict) and item.get("channel") == "feishu"
+            ),
+            None,
+        )
+        if delivery is not None:
+            record.delivery_status = str(delivery.get("status", "") or "") or None
+            record.delivery_channel = str(delivery.get("channel", "") or "") or None
+            record.delivery_mode = str(delivery.get("mode", "") or "") or None
+            record.delivery_target = str(delivery.get("target", "") or "") or None
+            record.delivery_message_id = str(delivery.get("message_id", "") or "") or None
+            record.delivery_error = str(delivery.get("error", "") or "") or None
+        elif notify.get("feishu_chat_id"):
+            record.delivery_status = "failure"
+            record.delivery_channel = "feishu"
+            record.delivery_mode = str(notify.get("delivery_mode", "") or "") or None
+            record.delivery_target = str(notify.get("feishu_chat_id", "") or "") or None
+            record.delivery_error = "dispatch_result hook returned no feishu delivery result"
         self.task_controller.store.append_schedule_history(record)
         history = self.task_controller.store.list_schedule_history(limit=200)
         history_path = Path(settings.base_dir) / "schedules" / "history.json"

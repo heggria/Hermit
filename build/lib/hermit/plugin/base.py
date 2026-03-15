@@ -20,6 +20,9 @@ class HookEvent(str, Enum):
     SERVE_STOP = "serve_stop"
     DISPATCH_RESULT = "dispatch_result"
 
+    def __str__(self) -> str:
+        return self.value
+
 
 @dataclass
 class SubagentSpec:

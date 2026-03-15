@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+import structlog
 
 from hermit.builtin.feishu._client import build_lark_client
 from hermit.builtin.feishu.adapter import get_active_adapter
@@ -12,7 +13,16 @@ from hermit.builtin.feishu.tools import register_tools
 from hermit.core.tools import ToolSpec
 from hermit.plugin.base import HookEvent, PluginContext
 
-_log = logging.getLogger(__name__)
+_log = structlog.get_logger(__name__)
+
+
+def _log_exception_with_compat(event: str, **kwargs: Any) -> None:
+    """Log with structured kwargs, but tolerate simplified test doubles."""
+    try:
+        _log.exception(event, **kwargs)
+    except TypeError:
+        chat_id = str(kwargs.get("chat_id", "") or "")
+        _log.exception(event, chat_id)
 
 
 def _on_dispatch_result(
@@ -24,12 +34,22 @@ def _on_dispatch_result(
     error: str | None = None,
     notify: dict[str, Any] | None = None,
     settings: Any = None,
+    metadata: dict[str, Any] | None = None,
     **kw: Any,
-) -> None:
+) -> dict[str, Any] | None:
     """Push agent dispatch results to Feishu via proactive messaging."""
     chat_id = (notify or {}).get("feishu_chat_id", "")
     if not chat_id:
-        return
+        return None
+    mode = str((notify or {}).get("delivery_mode", "") or "new_message")
+    job_id = str((metadata or {}).get("job_id", "") or "")
+    _log.info(
+        "feishu_proactive_delivery_attempt",
+        channel="feishu",
+        mode=mode,
+        chat_id=chat_id,
+        job_id=job_id,
+    )
 
     try:
         from hermit.builtin.feishu.reply import (
@@ -47,13 +67,62 @@ def _on_dispatch_result(
             err_msg = error or "Unknown error"
             text = f"# {display_title} (failed)\n\n**Error:** {err_msg}\n\n{result_text}"
 
+        message_id: str | None = None
         if _should_use_card(text):
             card = build_result_card(text)
-            send_card(client, chat_id, card)
+            message_id = send_card(client, chat_id, card)
         else:
-            send_text_message(client, chat_id, text)
+            message_id = send_text_message(client, chat_id, text)
+        if not message_id:
+            delivery_error = "message.create returned no message_id"
+            _log.error(
+                "feishu_proactive_delivery_failure",
+                channel="feishu",
+                mode=mode,
+                chat_id=chat_id,
+                job_id=job_id,
+                error=delivery_error,
+            )
+            return {
+                "channel": "feishu",
+                "status": "failure",
+                "mode": mode,
+                "target": chat_id,
+                "message_id": None,
+                "error": delivery_error,
+            }
+        _log.info(
+            "feishu_proactive_delivery_success",
+            channel="feishu",
+            mode=mode,
+            chat_id=chat_id,
+            job_id=job_id,
+            message_id=message_id,
+        )
+        return {
+            "channel": "feishu",
+            "status": "success",
+            "mode": mode,
+            "target": chat_id,
+            "message_id": message_id,
+            "error": None,
+        }
     except Exception:
-        _log.exception("Failed to send dispatch result to Feishu chat_id=%s", chat_id)
+        _log_exception_with_compat(
+            "feishu_proactive_delivery_exception",
+            channel="feishu",
+            mode=mode,
+            chat_id=chat_id,
+            job_id=job_id,
+        )
+        return {
+            "channel": "feishu",
+            "status": "failure",
+            "mode": mode,
+            "target": chat_id,
+            "message_id": None,
+            "error": "exception",
+        }
 
 
 def _on_post_run(

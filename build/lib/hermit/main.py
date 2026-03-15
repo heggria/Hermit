@@ -2640,6 +2640,14 @@ def schedule_add(
                 )
             )
             raise typer.Exit(1)
+        if once_at <= time.time():
+            typer.echo(
+                _t(
+                    "cli.schedule.add.error.once_past",
+                    "Error: one-time schedule must be in the future.",
+                )
+            )
+            raise typer.Exit(1)
     elif interval is not None and interval < 60:
         typer.echo(
             _t(
