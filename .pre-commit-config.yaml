@@ -29,9 +29,9 @@ repos:
         types_or: [python, pyi]
         stages: [pre-commit]
 
-      - id: pytest
-        name: pytest
-        entry: make verify
+      - id: lint
+        name: lint
+        entry: make lint
         language: system
         pass_filenames: false
         stages: [pre-push]

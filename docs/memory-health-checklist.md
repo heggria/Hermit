@@ -276,4 +276,3 @@
 3. provider 鉴权异常时，memory 退化状态能被明确观测
 4. checkpoint / session_end / retrieval 三段行为都能从日志里解释清楚
 5. 新规则主要落在独立治理层，而不是继续扩张 hook 分支复杂度
-

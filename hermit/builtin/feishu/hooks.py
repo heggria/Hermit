@@ -1,11 +1,12 @@
 """Feishu plugin hooks — registers feishu_react, all Feishu API tools, and DISPATCH_RESULT handler."""
+
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from hermit.builtin.feishu.adapter import get_active_adapter
 from hermit.builtin.feishu._client import build_lark_client
+from hermit.builtin.feishu.adapter import get_active_adapter
 from hermit.builtin.feishu.reaction import add_reaction, resolve_emoji_type
 from hermit.builtin.feishu.tools import register_tools
 from hermit.core.tools import ToolSpec
