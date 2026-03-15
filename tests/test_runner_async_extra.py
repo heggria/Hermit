@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from hermit.core import runner as runner_module
 from hermit.core.runner import AgentRunner, DispatchResult, _result_preview, _strip_internal_markup
+from hermit.kernel import controller as controller_module
 from hermit.provider.runtime import AgentResult
 
 
@@ -206,6 +208,10 @@ def _make_runner(base_dir: Path | None = None):
     pm = _PluginManager(base_dir)
     runner = AgentRunner(agent, session_manager, pm, task_controller=controller)
     return runner, agent, session_manager, pm, controller, store
+
+
+def test_runner_uses_controller_auto_parent_sentinel() -> None:
+    assert runner_module._AUTO_PARENT is controller_module._AUTO_PARENT
 
 
 def test_runner_start_stop_background_services_and_wake(monkeypatch) -> None:
@@ -660,6 +666,71 @@ def test_runner_async_helpers_return_early_without_notify_or_schedule(tmp_path: 
     runner._record_scheduler_execution(task_ctx, result, started_at=1.0)
 
     assert pm.hooks.calls == []
+
+
+def test_runner_records_scheduler_delivery_metadata(tmp_path: Path) -> None:
+    runner, _agent, _session_manager, pm, _controller, store = _make_runner(tmp_path)
+    task_ctx = SimpleNamespace(
+        task_id="task-1",
+        step_attempt_id="attempt-1",
+        source_channel="scheduler",
+        ingress_metadata={"schedule_job_id": "job-1", "schedule_job_name": "Nightly summary"},
+    )
+    result = AgentResult(text="done", turns=1, tool_calls=0, messages=[])
+
+    runner._record_scheduler_execution(
+        task_ctx,
+        result,
+        started_at=1.0,
+        delivery_results=[
+            {
+                "channel": "feishu",
+                "status": "success",
+                "mode": "new_message",
+                "target": "oc_123",
+                "message_id": "om_456",
+                "error": None,
+            }
+        ],
+    )
+
+    record = store.appended_history[0]
+    assert record.delivery_status == "success"
+    assert record.delivery_channel == "feishu"
+    assert record.delivery_mode == "new_message"
+    assert record.delivery_target == "oc_123"
+    assert record.delivery_message_id == "om_456"
+    assert record.delivery_error is None
+
+
+def test_runner_marks_missing_feishu_delivery_result_as_failure(tmp_path: Path) -> None:
+    runner, _agent, _session_manager, pm, _controller, store = _make_runner(tmp_path)
+    task_ctx = SimpleNamespace(
+        task_id="task-1",
+        step_attempt_id="attempt-1",
+        source_channel="scheduler",
+        ingress_metadata={
+            "schedule_job_id": "job-1",
+            "schedule_job_name": "Nightly summary",
+            "notify": {"feishu_chat_id": "oc_123", "delivery_mode": "new_message"},
+        },
+    )
+    result = AgentResult(text="done", turns=1, tool_calls=0, messages=[])
+
+    runner._record_scheduler_execution(
+        task_ctx,
+        result,
+        started_at=1.0,
+        delivery_results=[],
+    )
+
+    record = store.appended_history[0]
+    assert record.delivery_status == "failure"
+    assert record.delivery_channel == "feishu"
+    assert record.delivery_mode == "new_message"
+    assert record.delivery_target == "oc_123"
+    assert record.delivery_message_id is None
+    assert record.delivery_error == "dispatch_result hook returned no feishu delivery result"
 
 
 def test_runner_helper_functions_and_constructor_guard() -> None:

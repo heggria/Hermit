@@ -61,8 +61,12 @@ class KernelSchedulerStoreMixin:
         with self._lock, self._conn:
             self._conn.execute(
                 """
-                INSERT INTO schedule_history (job_id, job_name, started_at, finished_at, success, result_text, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO schedule_history (
+                    job_id, job_name, started_at, finished_at, success, result_text, error,
+                    delivery_status, delivery_channel, delivery_mode, delivery_target,
+                    delivery_message_id, delivery_error
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.job_id,
@@ -72,19 +76,31 @@ class KernelSchedulerStoreMixin:
                     1 if record.success else 0,
                     record.result_text,
                     record.error,
+                    record.delivery_status,
+                    record.delivery_channel,
+                    record.delivery_mode,
+                    record.delivery_target,
+                    record.delivery_message_id,
+                    record.delivery_error,
                 ),
             )
 
-    def list_schedule_history(self, *, job_id: str | None = None, limit: int = 20) -> list[JobExecutionRecord]:
+    def list_schedule_history(
+        self, *, job_id: str | None = None, limit: int = 20
+    ) -> list[JobExecutionRecord]:
         if job_id:
             query = """
-                SELECT job_id, job_name, started_at, finished_at, success, result_text, error
+                SELECT job_id, job_name, started_at, finished_at, success, result_text, error,
+                       delivery_status, delivery_channel, delivery_mode, delivery_target,
+                       delivery_message_id, delivery_error
                 FROM schedule_history WHERE job_id = ? ORDER BY started_at DESC LIMIT ?
             """
             params: tuple[Any, ...] = (job_id, limit)
         else:
             query = """
-                SELECT job_id, job_name, started_at, finished_at, success, result_text, error
+                SELECT job_id, job_name, started_at, finished_at, success, result_text, error,
+                       delivery_status, delivery_channel, delivery_mode, delivery_target,
+                       delivery_message_id, delivery_error
                 FROM schedule_history ORDER BY started_at DESC LIMIT ?
             """
             params = (limit,)
@@ -99,6 +115,12 @@ class KernelSchedulerStoreMixin:
                 success=bool(row["success"]),
                 result_text=str(row["result_text"]),
                 error=row["error"],
+                delivery_status=row["delivery_status"],
+                delivery_channel=row["delivery_channel"],
+                delivery_mode=row["delivery_mode"],
+                delivery_target=row["delivery_target"],
+                delivery_message_id=row["delivery_message_id"],
+                delivery_error=row["delivery_error"],
             )
             for row in rows
         ]

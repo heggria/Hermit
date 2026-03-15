@@ -1,4 +1,5 @@
 """Tests for scheduler DISPATCH_RESULT migration — only fires DISPATCH_RESULT."""
+
 from __future__ import annotations
 
 import time
@@ -48,12 +49,12 @@ def _make_real_runner() -> AgentRunner:
 
 
 class TestSchedulerFiresDispatchResult:
-    def test_execute_wraps_prompt_before_running_agent(
-        self, engine: SchedulerEngine
-    ) -> None:
+    def test_execute_wraps_prompt_before_running_agent(self, engine: SchedulerEngine) -> None:
         job = ScheduledJob.create(
-            name="drink-water", prompt="提醒我喝水",
-            schedule_type="once", once_at=time.time() - 1,
+            name="drink-water",
+            prompt="提醒我喝水",
+            schedule_type="once",
+            once_at=time.time() - 1,
         )
 
         captured_prompt: dict[str, str] = {}
@@ -79,8 +80,10 @@ class TestSchedulerFiresDispatchResult:
         hooks.register(str(HookEvent.DISPATCH_RESULT), lambda **kw: dispatch_events.append(kw))
 
         job = ScheduledJob.create(
-            name="weekly-report", prompt="summarize the week",
-            schedule_type="once", once_at=time.time() - 1,
+            name="weekly-report",
+            prompt="summarize the week",
+            schedule_type="once",
+            once_at=time.time() - 1,
         )
         with engine._lock:
             engine._jobs.append(job)
@@ -99,6 +102,7 @@ class TestSchedulerFiresDispatchResult:
         assert ev["success"] is True
         assert ev["error"] is None
         assert "job_id" in ev["metadata"]
+        assert ev["metadata"]["job_id"] == job.id
 
     def test_notify_includes_feishu_chat_id_from_settings(
         self, engine: SchedulerEngine, hooks: HooksEngine
@@ -108,8 +112,10 @@ class TestSchedulerFiresDispatchResult:
         hooks.register(str(HookEvent.DISPATCH_RESULT), lambda **kw: dispatch_events.append(kw))
 
         job = ScheduledJob.create(
-            name="env-test", prompt="go",
-            schedule_type="once", once_at=time.time() - 1,
+            name="env-test",
+            prompt="go",
+            schedule_type="once",
+            once_at=time.time() - 1,
         )
         with engine._lock:
             engine._jobs.append(job)
@@ -129,8 +135,10 @@ class TestSchedulerFiresDispatchResult:
         hooks.register(str(HookEvent.DISPATCH_RESULT), lambda **kw: dispatch_events.append(kw))
 
         job = ScheduledJob.create(
-            name="job-chat-test", prompt="go",
-            schedule_type="once", once_at=time.time() - 1,
+            name="job-chat-test",
+            prompt="go",
+            schedule_type="once",
+            once_at=time.time() - 1,
         )
         job.feishu_chat_id = "oc_job_chat"  # type: ignore[attr-defined]
         with engine._lock:
@@ -151,8 +159,11 @@ class TestSchedulerFiresDispatchResult:
         hooks.register(str(HookEvent.DISPATCH_RESULT), lambda **kw: dispatch_events.append(kw))
 
         job = ScheduledJob.create(
-            name="fail-test", prompt="go", max_retries=1,
-            schedule_type="once", once_at=time.time() - 1,
+            name="fail-test",
+            prompt="go",
+            max_retries=1,
+            schedule_type="once",
+            once_at=time.time() - 1,
         )
         with engine._lock:
             engine._jobs.append(job)
@@ -170,8 +181,10 @@ class TestSchedulerFiresDispatchResult:
         hooks.register("schedule_result", lambda **kw: schedule_events.append(kw))
 
         job = ScheduledJob.create(
-            name="no-old-event", prompt="go",
-            schedule_type="once", once_at=time.time() - 1,
+            name="no-old-event",
+            prompt="go",
+            schedule_type="once",
+            once_at=time.time() - 1,
         )
         with engine._lock:
             engine._jobs.append(job)
@@ -191,12 +204,16 @@ class TestSchedulerFiresDispatchResult:
         hooks.register(str(HookEvent.DISPATCH_RESULT), lambda **kw: dispatch_events.append(kw))
         runner = _make_real_runner()
         enqueue_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-        runner.enqueue_ingress = lambda *args, **kwargs: enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_1")  # type: ignore[method-assign]
+        runner.enqueue_ingress = lambda *args, **kwargs: (
+            enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_1")
+        )  # type: ignore[method-assign]
         engine._runner = runner
 
         job = ScheduledJob.create(
-            name="async-job", prompt="run async",
-            schedule_type="once", once_at=time.time() - 1,
+            name="async-job",
+            prompt="run async",
+            schedule_type="once",
+            once_at=time.time() - 1,
         )
         job.feishu_chat_id = "oc_async"  # type: ignore[attr-defined]
 
@@ -206,7 +223,7 @@ class TestSchedulerFiresDispatchResult:
         args, kwargs = enqueue_calls[0]
         assert args[1] == "run async"
         assert kwargs["source_channel"] == "scheduler"
-        assert kwargs["notify"] == {"feishu_chat_id": "oc_async"}
+        assert kwargs["notify"] == {"feishu_chat_id": "oc_async", "delivery_mode": "new_message"}
         assert kwargs["source_ref"] == "scheduler"
         assert kwargs["requested_by"] == "scheduler"
         assert kwargs["ingress_metadata"]["schedule_job_id"] == job.id

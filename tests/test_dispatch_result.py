@@ -1,4 +1,5 @@
 """Tests for DISPATCH_RESULT event — payload contract and feishu routing."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,6 +11,7 @@ from hermit.plugin.hooks import HooksEngine
 # ---------------------------------------------------------------------------
 # Payload contract
 # ---------------------------------------------------------------------------
+
 
 class TestDispatchResultEvent:
     def test_event_exists(self) -> None:
@@ -87,20 +89,40 @@ class TestDispatchResultEvent:
         assert feishu_calls == ["oc_xyz"]
         assert slack_calls == ["#eng"]
 
+    def test_enum_registration_matches_string_fire(self) -> None:
+        hooks = HooksEngine()
+        received: list[str] = []
+
+        hooks.register(HookEvent.DISPATCH_RESULT, lambda *, title, **kw: received.append(title))
+        hooks.fire(
+            "dispatch_result",
+            source="scheduler",
+            title="Async reminder",
+            result_text="ping",
+            success=True,
+            error=None,
+            notify={"feishu_chat_id": "oc_xyz"},
+            metadata={},
+        )
+
+        assert received == ["Async reminder"]
+
 
 # ---------------------------------------------------------------------------
 # Feishu handler routing
 # ---------------------------------------------------------------------------
 
+
 class TestFeishuDispatchResultHandler:
     def _make_handler(self):
         from hermit.builtin.feishu.hooks import _on_dispatch_result
+
         return _on_dispatch_result
 
     def test_skips_when_no_feishu_chat_id(self) -> None:
         handler = self._make_handler()
         # Should not raise — just return silently
-        handler(
+        result = handler(
             source="scheduler",
             title="Test",
             result_text="hello",
@@ -108,6 +130,7 @@ class TestFeishuDispatchResultHandler:
             error=None,
             notify={},
         )
+        assert result is None
 
     def test_sends_to_feishu_chat_id(self) -> None:
         handler = self._make_handler()
@@ -115,20 +138,31 @@ class TestFeishuDispatchResultHandler:
         with (
             patch("hermit.builtin.feishu.hooks.build_lark_client") as mock_client,
             patch("hermit.builtin.feishu.reply._should_use_card", return_value=False),
-            patch("hermit.builtin.feishu.reply.send_text_message") as mock_send,
+            patch(
+                "hermit.builtin.feishu.reply.send_text_message", return_value="om_test"
+            ) as mock_send,
         ):
             mock_client.return_value = MagicMock()
-            handler(
+            result = handler(
                 source="scheduler",
                 title="Daily",
                 result_text="Done.",
                 success=True,
                 error=None,
-                notify={"feishu_chat_id": "oc_test"},
+                notify={"feishu_chat_id": "oc_test", "delivery_mode": "new_message"},
+                metadata={"job_id": "job-1"},
             )
             mock_send.assert_called_once()
             _, chat_id, _ = mock_send.call_args[0]
             assert chat_id == "oc_test"
+            assert result == {
+                "channel": "feishu",
+                "status": "success",
+                "mode": "new_message",
+                "target": "oc_test",
+                "message_id": "om_test",
+                "error": None,
+            }
 
     def test_failed_result_includes_error_in_text(self) -> None:
         handler = self._make_handler()
@@ -155,3 +189,32 @@ class TestFeishuDispatchResultHandler:
         assert sent_texts
         assert "failed" in sent_texts[0]
         assert "timeout after 60s" in sent_texts[0]
+
+    def test_missing_message_id_marks_delivery_failure(self) -> None:
+        handler = self._make_handler()
+
+        with (
+            patch("hermit.builtin.feishu.hooks.build_lark_client") as mock_client,
+            patch("hermit.builtin.feishu.reply._should_use_card", return_value=False),
+            patch("hermit.builtin.feishu.reply.send_text_message", return_value=None) as mock_send,
+        ):
+            mock_client.return_value = MagicMock()
+            result = handler(
+                source="scheduler",
+                title="Daily",
+                result_text="Done.",
+                success=True,
+                error=None,
+                notify={"feishu_chat_id": "oc_test", "delivery_mode": "new_message"},
+                metadata={"job_id": "job-2"},
+            )
+
+        mock_send.assert_called_once()
+        assert result == {
+            "channel": "feishu",
+            "status": "failure",
+            "mode": "new_message",
+            "target": "oc_test",
+            "message_id": None,
+            "error": "message.create returned no message_id",
+        }

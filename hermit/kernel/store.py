@@ -450,7 +450,13 @@ class KernelStore(
                     finished_at REAL NOT NULL,
                     success INTEGER NOT NULL,
                     result_text TEXT NOT NULL,
-                    error TEXT
+                    error TEXT,
+                    delivery_status TEXT,
+                    delivery_channel TEXT,
+                    delivery_mode TEXT,
+                    delivery_target TEXT,
+                    delivery_message_id TEXT,
+                    delivery_error TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_tasks_conversation ON tasks(conversation_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_ingresses_conversation ON ingresses(conversation_id, created_at DESC);
@@ -518,6 +524,12 @@ class KernelStore(
             self._ensure_column("step_attempts", "working_state_ref", "TEXT")
             self._ensure_column("step_attempts", "environment_ref", "TEXT")
             self._ensure_column("step_attempts", "action_request_ref", "TEXT")
+            self._ensure_column("schedule_history", "delivery_status", "TEXT")
+            self._ensure_column("schedule_history", "delivery_channel", "TEXT")
+            self._ensure_column("schedule_history", "delivery_mode", "TEXT")
+            self._ensure_column("schedule_history", "delivery_target", "TEXT")
+            self._ensure_column("schedule_history", "delivery_message_id", "TEXT")
+            self._ensure_column("schedule_history", "delivery_error", "TEXT")
             self._ensure_column("step_attempts", "policy_result_ref", "TEXT")
             self._ensure_column("step_attempts", "approval_packet_ref", "TEXT")
             self._ensure_column("step_attempts", "pending_execution_ref", "TEXT")

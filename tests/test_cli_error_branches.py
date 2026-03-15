@@ -108,6 +108,10 @@ def test_cli_schedule_and_autostart_cover_validation_and_not_found(
         main_mod.app,
         ["schedule", "add", "--name", "x", "--prompt", "y", "--once", "not-a-date"],
     )
+    add_past_once = runner.invoke(
+        main_mod.app,
+        ["schedule", "add", "--name", "x", "--prompt", "y", "--once", "2020-01-01T00:00:00"],
+    )
     remove_missing = runner.invoke(main_mod.app, ["schedule", "remove", "missing"])
     enable_missing = runner.invoke(main_mod.app, ["schedule", "enable", "missing"])
     disable_missing = runner.invoke(main_mod.app, ["schedule", "disable", "missing"])
@@ -123,6 +127,8 @@ def test_cli_schedule_and_autostart_cover_validation_and_not_found(
     assert ">= 60" in add_invalid_interval.output
     assert add_invalid_datetime.exit_code == 1
     assert "invalid datetime format" in add_invalid_datetime.output.lower()
+    assert add_past_once.exit_code == 1
+    assert "must be in the future" in add_past_once.output.lower()
     assert remove_missing.exit_code == 1
     assert "no task with id" in remove_missing.output
     assert enable_missing.exit_code == 1
