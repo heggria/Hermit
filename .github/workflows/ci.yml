@@ -46,8 +46,20 @@ jobs:
         include:
           - os: ubuntu-latest
             sync_args: --extra dev
+            shard: 1
+            shard_total: 2
+          - os: ubuntu-latest
+            sync_args: --extra dev
+            shard: 2
+            shard_total: 2
           - os: macos-latest
             sync_args: --extra dev --extra macos
+            shard: 1
+            shard_total: 2
+          - os: macos-latest
+            sync_args: --extra dev --extra macos
+            shard: 2
+            shard_total: 2
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -69,8 +81,26 @@ jobs:
       - name: Sync dependencies
         run: uv sync ${{ matrix.sync_args }}
 
+      - name: Select test shard
+        run: |
+          python - <<'PY' > .pytest-shard
+          from pathlib import Path
+
+          files = sorted(str(path) for path in Path("tests").glob("test*.py"))
+          shard = ${{ matrix.shard }}
+          shard_total = ${{ matrix.shard_total }}
+          selected = [path for index, path in enumerate(files) if index % shard_total == shard - 1]
+
+          if not selected:
+              raise SystemExit(f"no tests selected for shard {shard}/{shard_total}")
+
+          print("\n".join(selected))
+          PY
+          echo "Shard ${{ matrix.shard }}/${{ matrix.shard_total }} will run:"
+          cat .pytest-shard
+
       - name: Run test suite
-        run: uv run pytest -q
+        run: uv run pytest -q $(tr '\n' ' ' < .pytest-shard)
 
   package:
     needs:
