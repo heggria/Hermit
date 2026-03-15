@@ -597,6 +597,39 @@ def test_feishu_adapter_patch_task_topic_returns_false_without_message_id(tmp_pa
     assert adapter._patch_task_topic(ctx.task_id) is False
 
 
+def test_feishu_adapter_patch_task_topic_returns_false_for_terminal_task(tmp_path) -> None:
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    controller = TaskController(store)
+    ctx = controller.start_task(
+        conversation_id="oc_chat:user_1",
+        goal="长任务",
+        source_channel="feishu",
+        kind="respond",
+    )
+    controller.finalize_result(
+        ctx,
+        status="succeeded",
+        result_preview="完成",
+        result_text="完成",
+    )
+    store.update_conversation_metadata(
+        "oc_chat:user_1",
+        {
+            "feishu_task_topics": {
+                ctx.task_id: {
+                    "root_message_id": "om_root",
+                }
+            }
+        },
+    )
+
+    adapter = FeishuAdapter()
+    adapter._client = object()
+    adapter._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
+
+    assert adapter._patch_task_topic(ctx.task_id) is False
+
+
 def test_feishu_adapter_reissues_only_feishu_oc_approval_cards(monkeypatch) -> None:
     approvals = [
         SimpleNamespace(approval_id="approval-skip-source", task_id="task-skip-source"),

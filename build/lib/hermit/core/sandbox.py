@@ -255,7 +255,7 @@ class CommandSandbox:
             failure_progress=failure_progress,
         ):
             try:
-                job.proc.wait(timeout=min(self.budget.observation_poll_interval, 0.05))
+                job.proc.wait(timeout=min(self.budget.observation_poll_interval, 0.1))
             except subprocess.TimeoutExpired:
                 pass
             running = job.proc.poll() is None

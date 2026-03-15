@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 
@@ -17,23 +18,53 @@ _SENSITIVE_ABS_PREFIXES = (
     "/Library",
     "/System",
 )
+_SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|", "&"}
+_PYTHON_WRITE_RE = re.compile(
+    r"""(?ix)
+    (
+        \.write_text\(
+        |\.write_bytes\(
+        |\.mkdir\(
+        |\.touch\(
+        |\bopen\([^)]*,\s*['"](?:w|a|x|wb|ab|xb|w\+|a\+|x\+)['"]
+        |\bos\.remove\(
+        |\bos\.unlink\(
+        |\bshutil\.rmtree\(
+        |\.unlink\(
+    )
+    """
+)
+_PATHLIB_HOME_RE = re.compile(r"""Path\.home\(\)\s*((?:/\s*['"][^'"]+['"]\s*)+)""")
+_PATHLIB_LITERAL_RE = re.compile(
+    r"""Path\(\s*['"]([^'"]+)['"]\s*\)\s*((?:/\s*['"][^'"]+['"]\s*)*)"""
+)
+_PATHLIB_SEGMENT_RE = re.compile(r"""['"]([^'"]+)['"]""")
 
 
 def derive_command_observables(command: str, *, workspace_root: str = "") -> dict[str, object]:
+    lowered = command.lower()
     observables: dict[str, object] = {
         "command_preview": command,
         "command_flags": {
-            "writes_disk": any(token in command for token in (">", ">>", "tee ", "mv ", "cp ", "touch ", "mkdir ")),
-            "deletes_files": "rm " in command or "trash " in command.lower(),
-            "sudo": "sudo " in command.lower(),
-            "curl_pipe_sh": "curl" in command.lower() and "| sh" in command.lower(),
-            "git_push": "git push" in command.lower(),
-            "network_access": any(token in command.lower() for token in ("curl ", "wget ", "http://", "https://")),
+            "writes_disk": any(
+                token in command for token in (">", ">>", "tee ", "mv ", "cp ", "touch ", "mkdir ")
+            )
+            or bool(_PYTHON_WRITE_RE.search(command)),
+            "deletes_files": "rm " in lowered
+            or "trash " in lowered
+            or any(
+                token in lowered for token in (".unlink(", "os.remove(", "os.unlink(", "rmtree(")
+            ),
+            "sudo": "sudo " in lowered,
+            "curl_pipe_sh": "curl" in lowered and "| sh" in lowered,
+            "git_push": "git push" in lowered,
+            "network_access": any(
+                token in lowered for token in ("curl ", "wget ", "http://", "https://")
+            ),
         },
         "network_hosts": _extract_hosts(command),
         "target_paths": _extract_command_paths(command, workspace_root=workspace_root),
     }
-    lowered = command.lower()
     if "git push" in lowered:
         observables["vcs_operation"] = "git_push"
     elif "git commit" in lowered:
@@ -47,13 +78,23 @@ def derive_request(request: ActionRequest) -> ActionRequest:
     derived = dict(request.derived)
     tool_input = request.tool_input if isinstance(request.tool_input, dict) else {}
     workspace_root = str(request.context.get("workspace_root", "") or "")
-    if request.tool_name in {"read_file", "write_file", "write_hermit_file", "read_hermit_file", "list_hermit_files"}:
+    if request.tool_name in {
+        "read_file",
+        "write_file",
+        "write_hermit_file",
+        "read_hermit_file",
+        "list_hermit_files",
+    }:
         target = str(tool_input.get("path", "")).strip()
         if target:
             target_path = _resolve_target(target, workspace_root)
             derived["target_paths"] = [target_path]
-            derived["sensitive_paths"] = [target_path] if _is_sensitive_path(target_path, workspace_root) else []
-            outside_workspace = bool(workspace_root and not _inside_workspace(target_path, workspace_root))
+            derived["sensitive_paths"] = (
+                [target_path] if _is_sensitive_path(target_path, workspace_root) else []
+            )
+            outside_workspace = bool(
+                workspace_root and not _inside_workspace(target_path, workspace_root)
+            )
             derived["outside_workspace"] = outside_workspace
             if outside_workspace:
                 derived["outside_workspace_roots"] = [_outside_workspace_root(target_path)]
@@ -68,9 +109,12 @@ def derive_request(request: ActionRequest) -> ActionRequest:
 
 def _resolve_target(target: str, workspace_root: str) -> str:
     try:
+        candidate = Path(target).expanduser()
+        if candidate.is_absolute():
+            return str(candidate.resolve())
         if workspace_root:
-            return str((Path(workspace_root) / target).expanduser().resolve())
-        return str(Path(target).expanduser().resolve())
+            return str((Path(workspace_root).expanduser().resolve() / candidate).resolve())
+        return str(candidate.resolve())
     except OSError:
         return target
 
@@ -141,18 +185,52 @@ def _extract_command_paths(command: str, *, workspace_root: str) -> list[str]:
     if not tokens:
         return paths
 
+    segment: list[str] = []
+    for token in tokens:
+        if token in _SHELL_SEGMENT_SEPARATORS:
+            paths.extend(_extract_segment_paths(segment, workspace_root=workspace_root))
+            segment = []
+            continue
+        segment.append(token)
+    paths.extend(_extract_segment_paths(segment, workspace_root=workspace_root))
+    paths.extend(_extract_embedded_python_paths(command, workspace_root=workspace_root))
+    return list(dict.fromkeys(path for path in paths if path))
+
+
+def _extract_segment_paths(tokens: list[str], *, workspace_root: str) -> list[str]:
+    if not tokens:
+        return []
+    paths: list[str] = []
     command_name = tokens[0].lower()
     if command_name in {"touch", "mkdir", "rm"}:
         for token in tokens[1:]:
             if token.startswith("-"):
                 continue
             paths.append(_resolve_target(token, workspace_root))
-    elif command_name in {"cp", "mv"} and len(tokens) >= 3:
-        destination = tokens[-1]
-        if not destination.startswith("-"):
-            paths.append(_resolve_target(destination, workspace_root))
+    elif command_name in {"cp", "mv"}:
+        candidates = [token for token in tokens[1:] if not token.startswith("-")]
+        if candidates:
+            paths.append(_resolve_target(candidates[-1], workspace_root))
 
     for index, token in enumerate(tokens[:-1]):
         if token in {">", ">>"}:
             paths.append(_resolve_target(tokens[index + 1], workspace_root))
-    return list(dict.fromkeys(path for path in paths if path))
+    return paths
+
+
+def _extract_embedded_python_paths(command: str, *, workspace_root: str) -> list[str]:
+    paths: list[str] = []
+    for raw_suffix in _PATHLIB_HOME_RE.findall(command):
+        parts = _PATHLIB_SEGMENT_RE.findall(raw_suffix)
+        if parts:
+            paths.append(str((Path.home() / Path(*parts)).resolve()))
+
+    for base, raw_suffix in _PATHLIB_LITERAL_RE.findall(command):
+        base_path = Path(_resolve_target(base, workspace_root))
+        parts = _PATHLIB_SEGMENT_RE.findall(raw_suffix)
+        candidate = base_path / Path(*parts) if parts else base_path
+        try:
+            paths.append(str(candidate.expanduser().resolve()))
+        except OSError:
+            paths.append(str(candidate))
+    return list(dict.fromkeys(paths))

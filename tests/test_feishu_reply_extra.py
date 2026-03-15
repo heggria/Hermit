@@ -95,9 +95,9 @@ def test_reply_progress_and_resolution_cards_preserve_operator_context() -> None
     completed = build_completion_status_card("Finished cleanly", locale="en-US")
     errored = build_error_card("Need retry", locale="en-US")
 
-    assert format_tool_start_hint("grok_search", {"query": "latest model release"}, locale="en-US").startswith(
-        "Running Deep search"
-    )
+    assert format_tool_start_hint(
+        "grok_search", {"query": "latest model release"}, locale="en-US"
+    ).startswith("Running Deep search")
     assert format_tool_step_text(step) == 'Deep search  "latest model release"  1.5s'
     assert progress["config"]["summary"]["content"] == "Still working"
     assert progress["body"]["elements"][0]["content"].startswith("**Deep search**")
@@ -131,7 +131,10 @@ def test_reply_helper_branches_cover_key_input_summaries_and_compaction() -> Non
     builder = RichCardBuilder("Body", locale="en-US")
     assert builder._compact_paragraphs("a\n\nb") == "a\nb"
     assert builder._compact_paragraphs("- item\n\nnext") == "- item\n\nnext"
-    assert builder._compact_paragraphs("```py\nprint(1)\n```\n\nTail") == "```py\nprint(1)\n```\n\nTail"
+    assert (
+        builder._compact_paragraphs("```py\nprint(1)\n```\n\nTail")
+        == "```py\nprint(1)\n```\n\nTail"
+    )
 
     block_elements = builder._build_block_elements("1. item\n## Next\nBody")
     heading = next(element for element in block_elements if element.get("content") == "**Next**")
@@ -140,7 +143,13 @@ def test_reply_helper_branches_cover_key_input_summaries_and_compaction() -> Non
 
 def test_build_approval_and_task_topic_cards_cover_rich_branches() -> None:
     steps = [
-        ToolStep(name="grok_search", display="Deep search", key_input='"query"', summary="ok", elapsed_ms=1234),
+        ToolStep(
+            name="grok_search",
+            display="Deep search",
+            key_input='"query"',
+            summary="ok",
+            elapsed_ms=1234,
+        ),
         ToolStep(name="read_file", display="Read file", key_input="", summary="ok", elapsed_ms=250),
     ]
     card = build_approval_card(
@@ -179,8 +188,16 @@ def test_build_approval_and_task_topic_cards_cover_rich_branches() -> None:
     elements = card["body"]["elements"]
     assert card["header"]["title"]["content"] == "Confirm action"
     assert any(element["tag"] == "collapsible_panel" for element in elements)
-    assert any("Impact" in element.get("content", "") for element in elements if element["tag"] == "markdown")
-    assert any("/tmp/demo.txt" in element.get("content", "") for element in elements if element["tag"] == "markdown")
+    assert any(
+        "Impact" in element.get("content", "")
+        for element in elements
+        if element["tag"] == "markdown"
+    )
+    assert any(
+        "/tmp/demo.txt" in element.get("content", "")
+        for element in elements
+        if element["tag"] == "markdown"
+    )
     assert denied["header"]["template"] == "red"
     assert processed["header"]["template"] == "grey"
     assert topic["header"]["template"] == "red"
@@ -323,3 +340,26 @@ def test_reply_senders_cover_failure_fallbacks(monkeypatch) -> None:
     assert reply_card_return_id(client, "om_1", {"schema": "2.0"}) is None
     with pytest.raises(RuntimeError, match="Failed to upload image"):
         upload_image_path(client, Path(__file__))
+
+
+def test_patch_card_returns_false_on_request_exception() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.im = type(
+                "IM",
+                (),
+                {
+                    "v1": type(
+                        "V1",
+                        (),
+                        {
+                            "message": type("MessageAPI", (), {"patch": self.patch})(),
+                        },
+                    )()
+                },
+            )()
+
+        def patch(self, request):
+            raise RuntimeError("network down")
+
+    assert patch_card(Client(), "om_1", {"schema": "2.0"}) is False

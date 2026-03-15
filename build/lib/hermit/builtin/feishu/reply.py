@@ -862,7 +862,11 @@ def patch_card(client: Any, message_id: str, card: dict) -> bool:
         )
         .build()
     )
-    response = client.im.v1.message.patch(request)
+    try:
+        response = client.im.v1.message.patch(request)
+    except Exception:
+        log.exception("patch card request failed: message_id=%s", message_id)
+        return False
     if not response.success():
         log.error("patch card failed: code=%s msg=%s", response.code, response.msg)
         return False

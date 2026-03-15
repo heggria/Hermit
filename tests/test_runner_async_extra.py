@@ -395,6 +395,31 @@ def test_runner_process_claimed_attempt_resume_and_error_paths() -> None:
     assert controller.finalized[-1][2].startswith("[API Error]")
 
 
+def test_runner_process_claimed_attempt_emits_dispatch_result_for_kernel_managed_failure(
+    tmp_path: Path,
+) -> None:
+    runner, agent, _session_manager, pm, controller, store = _make_runner(tmp_path)
+
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"})
+    agent.resume_result = AgentResult(
+        text="[Capability Denied] Workspace lease no longer covers this write.",
+        turns=1,
+        tool_calls=0,
+        messages=[],
+        execution_status="failed",
+        status_managed_by_kernel=True,
+    )
+
+    errored = runner.process_claimed_attempt("attempt-4")
+
+    assert errored.execution_status == "failed"
+    assert controller.finalized == []
+    assert pm.post_run == ["[Capability Denied] Workspace lease no longer covers this write."]
+    assert pm.hooks.calls and pm.hooks.calls[0][0][0] == "dispatch_result"
+    assert pm.hooks.calls[0][1]["success"] is False
+    assert pm.hooks.calls[0][1]["error"] == errored.text
+
+
 def test_runner_dispatch_control_action_covers_kernel_introspection_paths(monkeypatch) -> None:
     runner, _agent, _session_manager, _pm, _controller, _store = _make_runner()
 

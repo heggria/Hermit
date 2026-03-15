@@ -962,6 +962,65 @@ def test_feishu_refresh_prunes_resolved_approval_mapping(monkeypatch, tmp_path) 
     assert patched_topics == [(ctx.task_id, {"message_id": "om_approval"})]
 
 
+def test_feishu_refresh_skips_progress_patch_for_terminal_topic_cards(
+    monkeypatch, tmp_path
+) -> None:
+    from hermit.builtin.feishu.adapter import FeishuAdapter
+
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    controller = TaskController(store)
+    ctx = controller.start_task(
+        conversation_id="oc_chat:user_1",
+        goal="结束任务",
+        source_channel="feishu",
+        kind="respond",
+    )
+    controller.finalize_result(
+        ctx,
+        status="succeeded",
+        result_preview="完成。",
+        result_text="完成。",
+    )
+    store.update_conversation_metadata(
+        "oc_chat:user_1",
+        {
+            "feishu_task_topics": {
+                ctx.task_id: {
+                    "chat_id": "oc_chat",
+                    "root_message_id": "om_result",
+                    "completion_reply_sent": False,
+                    "card_mode": "topic",
+                    "topic_signature": "existing-result-signature",
+                }
+            }
+        },
+    )
+
+    adapter = FeishuAdapter()
+    adapter._client = object()
+    adapter._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
+    monkeypatch.setattr(adapter, "_schedule_topic_refresh", lambda: None)
+
+    patched_topics: list[tuple[str, dict[str, Any]]] = []
+    patched_terminal: list[tuple[str, dict[str, Any]]] = []
+
+    monkeypatch.setattr(
+        adapter,
+        "_patch_task_topic",
+        lambda task_id, **kwargs: patched_topics.append((task_id, kwargs)) or True,
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_patch_terminal_result_card",
+        lambda task_id, **kwargs: patched_terminal.append((task_id, kwargs)) or True,
+    )
+
+    adapter._refresh_task_topics()
+
+    assert patched_topics == []
+    assert patched_terminal == [(ctx.task_id, {"message_id": "om_result"})]
+
+
 def test_feishu_adapter_scheduler_read_skill_sends_get_before_schedule_mutation(
     monkeypatch,
 ) -> None:

@@ -654,9 +654,10 @@ class FeishuAdapter:
                             mappings[task_id] = updated
                             mappings_changed = True
                         continue
-                    self._patch_task_topic(task_id, message_id=message_id)
                     if task.status in _TERMINAL_TASK_STATUSES:
                         self._patch_terminal_result_card(task_id, message_id=message_id)
+                        continue
+                    self._patch_task_topic(task_id, message_id=message_id)
                 if mappings_changed:
                     metadata["feishu_task_topics"] = mappings
                     store.update_conversation_metadata(conversation_id, metadata)
@@ -1016,6 +1017,8 @@ class FeishuAdapter:
             return False
         task = store.get_task(task_id)
         if task is None:
+            return False
+        if task.status in _TERMINAL_TASK_STATUSES:
             return False
         mapping = self._task_topic_mapping(task.conversation_id, task_id)
         root_message_id = message_id or str(mapping.get("root_message_id", "") or "")
