@@ -217,16 +217,9 @@ class Settings(BaseSettings):
         _set_if_present(values, "openai_base_url", env_file_values.get("HERMIT_OPENAI_BASE_URL"))
         _set_if_present(values, "openai_headers", env_file_values.get("HERMIT_OPENAI_HEADERS"))
         _set_if_present(values, "locale", env_file_values.get("HERMIT_LOCALE"))
+        _set_if_present(values, "feishu_app_id", env_file_values.get("HERMIT_FEISHU_APP_ID"))
         _set_if_present(
-            values,
-            "feishu_app_id",
-            env_file_values.get("HERMIT_FEISHU_APP_ID") or env_file_values.get("FEISHU_APP_ID"),
-        )
-        _set_if_present(
-            values,
-            "feishu_app_secret",
-            env_file_values.get("HERMIT_FEISHU_APP_SECRET")
-            or env_file_values.get("FEISHU_APP_SECRET"),
+            values, "feishu_app_secret", env_file_values.get("HERMIT_FEISHU_APP_SECRET")
         )
         _set_if_present(
             values, "feishu_thread_progress", env_file_values.get("HERMIT_FEISHU_THREAD_PROGRESS")
@@ -312,15 +305,9 @@ class Settings(BaseSettings):
         _override_if_present(values, "openai_base_url", os.environ.get("HERMIT_OPENAI_BASE_URL"))
         _override_if_present(values, "openai_headers", os.environ.get("HERMIT_OPENAI_HEADERS"))
         _override_if_present(values, "locale", os.environ.get("HERMIT_LOCALE"))
+        _override_if_present(values, "feishu_app_id", os.environ.get("HERMIT_FEISHU_APP_ID"))
         _override_if_present(
-            values,
-            "feishu_app_id",
-            os.environ.get("HERMIT_FEISHU_APP_ID") or os.environ.get("FEISHU_APP_ID"),
-        )
-        _override_if_present(
-            values,
-            "feishu_app_secret",
-            os.environ.get("HERMIT_FEISHU_APP_SECRET") or os.environ.get("FEISHU_APP_SECRET"),
+            values, "feishu_app_secret", os.environ.get("HERMIT_FEISHU_APP_SECRET")
         )
         _override_if_present(
             values, "feishu_thread_progress", os.environ.get("HERMIT_FEISHU_THREAD_PROGRESS")

@@ -424,8 +424,8 @@ class AgentRunner:
             self.session_manager.save(session)
             return DispatchResult(text=text, is_command=True)
 
-        if action == "approve_always_directory":
-            approvals.approve_always_directory(approval_id, resolved_by="user")
+        if action == "approve_mutable_workspace":
+            approvals.approve_mutable_workspace(approval_id, resolved_by="user")
         else:
             approvals.approve_once(approval_id, resolved_by="user")
         self.task_controller.enqueue_resume(approval.step_attempt_id)
@@ -931,7 +931,7 @@ class AgentRunner:
         on_tool_call: Optional[ToolCallback] = None,
         on_tool_start: Optional[ToolStartCallback] = None,
     ) -> DispatchResult:
-        if action in {"approve_once", "approve_always_directory", "deny"}:
+        if action in {"approve_once", "approve_mutable_workspace", "deny"}:
             return self._resolve_approval(
                 session_id,
                 action=action,
@@ -1139,31 +1139,22 @@ class AgentRunner:
             return DispatchResult(
                 text=json.dumps(payload, ensure_ascii=False, indent=2), is_command=True
             )
-        if action == "grant_list":
-            payload = [
-                grant.__dict__
-                for grant in store.list_path_grants(
-                    subject_kind="conversation",
-                    subject_ref=session_id,
-                    limit=50,
-                )
-            ]
+        if action == "capability_list":
+            payload = [grant.__dict__ for grant in store.list_capability_grants(limit=50)]
             return DispatchResult(
                 text=json.dumps(payload, ensure_ascii=False, indent=2), is_command=True
             )
-        if action == "grant_revoke":
-            grant = store.get_path_grant(target_id)
+        if action == "capability_revoke":
+            grant = store.get_capability_grant(target_id)
             if grant is None:
                 return DispatchResult(
                     text=_t("kernel.runner.grant_not_found", runner=self, grant_id=target_id),
                     is_command=True,
                 )
-            store.update_path_grant(
+            store.update_capability_grant(
                 target_id,
                 status="revoked",
-                actor="user",
-                event_type="grant.revoked",
-                payload={"status": "revoked"},
+                revoked_at=time.time(),
             )
             return DispatchResult(
                 text=_t("kernel.runner.grant_revoked", runner=self, grant_id=target_id),
@@ -1269,8 +1260,8 @@ class AgentRunner:
             self.session_manager.save(session)
             return DispatchResult(text=text, is_command=True)
 
-        if action == "approve_always_directory":
-            approvals.approve_always_directory(approval_id, resolved_by="user")
+        if action == "approve_mutable_workspace":
+            approvals.approve_mutable_workspace(approval_id, resolved_by="user")
         else:
             approvals.approve_once(approval_id, resolved_by="user")
         task_ctx = self.task_controller.context_for_attempt(approval.step_attempt_id)

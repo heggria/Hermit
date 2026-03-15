@@ -452,7 +452,7 @@ def test_feishu_adapter_ingests_images_via_kernel_executor(tmp_path) -> None:
     }
     assert task is not None
     assert task.parent_task_id is None
-    assert task.requested_by == "feishu_adapter"
+    assert task.requested_by_principal_id == "principal_feishu_adapter"
     assert task.status == "completed"
     receipt = store.list_receipts(task_id=task.task_id, limit=1)[0]
     assert receipt.action_type == "attachment_ingest"

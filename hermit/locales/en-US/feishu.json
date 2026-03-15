@@ -75,7 +75,7 @@
   "feishu.adapter.card_action.already_handled": "This approval has already been handled: {status}",
   "feishu.adapter.card_action.executor_stopped": "The background worker has stopped; the approval was not submitted.",
   "feishu.adapter.card_action.approved_once": "Approved. Continuing execution.",
-  "feishu.adapter.card_action.approved_always": "Approved and remembered for this directory. Continuing execution.",
+  "feishu.adapter.card_action.approved_mutable_workspace": "Approved mutable workspace lease. Continuing execution.",
   "feishu.adapter.card_action.denied": "Denied. This action will not continue.",
   "feishu.adapter.card_action.denied_detail": "This approval was denied, so the current operation will not continue.\nIf you still want to proceed, send the request again and approve the new approval request.",
   "feishu.adapter.reissue.recovery_hint": "After the service recovers, buttons on older approval cards may no longer work; use this new card, or reply with \"approve {approval_id}\" / \"deny {approval_id}\".",

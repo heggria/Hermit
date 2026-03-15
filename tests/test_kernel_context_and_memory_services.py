@@ -23,7 +23,7 @@ def _context(tmp_path: Path) -> TaskExecutionContext:
         step_id="step-1",
         step_attempt_id="attempt-1",
         source_channel="feishu",
-        actor="assistant",
+        actor_principal_id="principal_assistant",
         policy_profile="strict",
         workspace_root=str(tmp_path),
         created_at=123.0,
@@ -108,7 +108,7 @@ def test_task_execution_context_roundtrip_and_environment_capture(tmp_path: Path
 
     assert restored == ctx
     assert defaulted.source_channel == "unknown"
-    assert defaulted.actor == "user"
+    assert defaulted.actor_principal_id == "principal_user"
     assert defaulted.policy_profile == "default"
     assert env["cwd"] == str(tmp_path)
     assert env["platform"]

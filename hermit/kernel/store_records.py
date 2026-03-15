@@ -3,16 +3,16 @@ from __future__ import annotations
 import sqlite3
 
 from hermit.builtin.scheduler.models import ScheduledJob
+from hermit.capabilities.models import CapabilityGrantRecord
+from hermit.identity.models import PrincipalRecord
 from hermit.kernel.models import (
     ApprovalRecord,
     ArtifactRecord,
     BeliefRecord,
     ConversationRecord,
     DecisionRecord,
-    ExecutionPermitRecord,
     IngressRecord,
     MemoryRecord,
-    PathGrantRecord,
     ReceiptRecord,
     RollbackRecord,
     StepAttemptRecord,
@@ -20,6 +20,7 @@ from hermit.kernel.models import (
     TaskRecord,
 )
 from hermit.kernel.store_support import _json_loads
+from hermit.workspaces.models import WorkspaceLeaseRecord
 
 
 class KernelStoreRecordMixin:
@@ -50,13 +51,14 @@ class KernelStoreRecordMixin:
             goal=str(row["goal"]),
             status=str(row["status"]),
             priority=str(row["priority"]),
-            owner=str(row["owner"]),
+            owner_principal_id=str(row["owner_principal_id"]),
             policy_profile=str(row["policy_profile"]),
             source_channel=str(row["source_channel"]),
             parent_task_id=row["parent_task_id"],
+            task_contract_ref=row["task_contract_ref"],
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
-            requested_by=row["requested_by"],
+            requested_by_principal_id=row["requested_by_principal_id"],
         )
 
     def _step_from_row(self, row: sqlite3.Row) -> StepRecord:
@@ -68,8 +70,14 @@ class KernelStoreRecordMixin:
             attempt=int(row["attempt"]),
             input_ref=row["input_ref"],
             output_ref=row["output_ref"],
+            title=row["title"],
+            contract_ref=row["contract_ref"],
+            depends_on=list(_json_loads(row["depends_on_json"])),
+            max_attempts=int(row["max_attempts"] or 1),
             started_at=row["started_at"],
             finished_at=row["finished_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     def _step_attempt_from_row(self, row: sqlite3.Row) -> StepAttemptRecord:
@@ -84,8 +92,20 @@ class KernelStoreRecordMixin:
             waiting_reason=row["waiting_reason"],
             approval_id=row["approval_id"],
             decision_id=row["decision_id"],
-            permit_id=row["permit_id"],
+            capability_grant_id=row["capability_grant_id"],
+            workspace_lease_id=row["workspace_lease_id"],
             state_witness_ref=row["state_witness_ref"],
+            context_pack_ref=row["context_pack_ref"],
+            working_state_ref=row["working_state_ref"],
+            environment_ref=row["environment_ref"],
+            action_request_ref=row["action_request_ref"],
+            policy_result_ref=row["policy_result_ref"],
+            approval_packet_ref=row["approval_packet_ref"],
+            pending_execution_ref=row["pending_execution_ref"],
+            idempotency_key=row["idempotency_key"],
+            executor_mode=row["executor_mode"],
+            policy_version=row["policy_version"],
+            resume_from_ref=row["resume_from_ref"],
             superseded_by_step_attempt_id=row["superseded_by_step_attempt_id"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
@@ -96,7 +116,7 @@ class KernelStoreRecordMixin:
             ingress_id=str(row["ingress_id"]),
             conversation_id=str(row["conversation_id"]),
             source_channel=str(row["source_channel"]),
-            actor=row["actor"],
+            actor_principal_id=row["actor_principal_id"],
             raw_text=str(row["raw_text"]),
             normalized_text=str(row["normalized_text"]),
             prompt_ref=row["prompt_ref"],
@@ -126,6 +146,11 @@ class KernelStoreRecordMixin:
             producer=str(row["producer"]),
             retention_class=str(row["retention_class"]),
             trust_tier=str(row["trust_tier"]),
+            artifact_class=row["artifact_class"],
+            media_type=row["media_type"],
+            byte_size=int(row["byte_size"]) if row["byte_size"] is not None else None,
+            sensitivity_class=row["sensitivity_class"],
+            lineage_ref=row["lineage_ref"],
             metadata=_json_loads(row["metadata_json"]),
             created_at=float(row["created_at"]),
         )
@@ -140,11 +165,15 @@ class KernelStoreRecordMixin:
             approval_type=str(row["approval_type"]),
             requested_action=_json_loads(row["requested_action_json"]),
             request_packet_ref=row["request_packet_ref"],
+            requested_action_ref=row["requested_action_ref"],
+            approval_packet_ref=row["approval_packet_ref"] or row["request_packet_ref"],
+            policy_result_ref=row["policy_result_ref"],
             decision_ref=row["decision_ref"],
             state_witness_ref=row["state_witness_ref"],
             requested_at=float(row["requested_at"]),
+            expires_at=row["expires_at"],
             resolved_at=row["resolved_at"],
-            resolved_by=row["resolved_by"],
+            resolved_by_principal_id=row["resolved_by_principal_id"],
             resolution=_json_loads(row["resolution_json"]),
         )
 
@@ -157,23 +186,43 @@ class KernelStoreRecordMixin:
             decision_type=str(row["decision_type"]),
             verdict=str(row["verdict"]),
             reason=str(row["reason"]),
+            summary=row["summary"] or row["reason"],
+            rationale=row["rationale"] or row["reason"],
             evidence_refs=list(_json_loads(row["evidence_refs_json"])),
             policy_ref=row["policy_ref"],
             approval_ref=row["approval_ref"],
             action_type=row["action_type"],
-            decided_by=str(row["decided_by"]),
+            risk_level=row["risk_level"],
+            reversible=bool(row["reversible"]) if row["reversible"] is not None else None,
+            decided_by_principal_id=str(row["decided_by_principal_id"]),
             created_at=float(row["created_at"]),
         )
 
-    def _execution_permit_from_row(self, row: sqlite3.Row) -> ExecutionPermitRecord:
-        return ExecutionPermitRecord(
-            permit_id=str(row["permit_id"]),
+    def _principal_from_row(self, row: sqlite3.Row) -> PrincipalRecord:
+        return PrincipalRecord(
+            principal_id=str(row["principal_id"]),
+            principal_type=str(row["principal_type"]),
+            display_name=str(row["display_name"]),
+            source_channel=row["source_channel"],
+            external_ref=row["external_ref"],
+            status=str(row["status"]),
+            metadata=dict(_json_loads(row["metadata_json"])),
+            created_at=float(row["created_at"]),
+            updated_at=float(row["updated_at"]),
+        )
+
+    def _capability_grant_from_row(self, row: sqlite3.Row) -> CapabilityGrantRecord:
+        return CapabilityGrantRecord(
+            grant_id=str(row["grant_id"]),
             task_id=str(row["task_id"]),
             step_id=str(row["step_id"]),
             step_attempt_id=str(row["step_attempt_id"]),
             decision_ref=str(row["decision_ref"]),
             approval_ref=row["approval_ref"],
             policy_ref=row["policy_ref"],
+            issued_to_principal_id=str(row["issued_to_principal_id"]),
+            issued_by_principal_id=str(row["issued_by_principal_id"]),
+            workspace_lease_ref=row["workspace_lease_ref"],
             action_class=str(row["action_class"]),
             resource_scope=list(_json_loads(row["resource_scope_json"])),
             constraints=dict(_json_loads(row["constraints_json"])),
@@ -182,6 +231,25 @@ class KernelStoreRecordMixin:
             issued_at=float(row["issued_at"]),
             expires_at=row["expires_at"],
             consumed_at=row["consumed_at"],
+            revoked_at=row["revoked_at"],
+        )
+
+    def _workspace_lease_from_row(self, row: sqlite3.Row) -> WorkspaceLeaseRecord:
+        return WorkspaceLeaseRecord(
+            lease_id=str(row["lease_id"]),
+            task_id=str(row["task_id"]),
+            step_attempt_id=str(row["step_attempt_id"]),
+            workspace_id=str(row["workspace_id"]),
+            root_path=str(row["root_path"]),
+            holder_principal_id=str(row["holder_principal_id"]),
+            mode=str(row["mode"]),
+            resource_scope=list(_json_loads(row["resource_scope_json"])),
+            environment_ref=row["environment_ref"],
+            status=str(row["status"]),
+            acquired_at=float(row["acquired_at"]),
+            expires_at=row["expires_at"],
+            released_at=row["released_at"],
+            metadata=dict(_json_loads(row["metadata_json"] or "{}")),
         )
 
     def _receipt_from_row(self, row: sqlite3.Row) -> ReceiptRecord:
@@ -191,6 +259,7 @@ class KernelStoreRecordMixin:
             step_id=str(row["step_id"]),
             step_attempt_id=str(row["step_attempt_id"]),
             action_type=str(row["action_type"]),
+            receipt_class=row["receipt_class"] or row["action_type"],
             input_refs=list(_json_loads(row["input_refs_json"])),
             environment_ref=row["environment_ref"],
             policy_result=_json_loads(row["policy_result_json"]),
@@ -199,14 +268,18 @@ class KernelStoreRecordMixin:
             result_summary=str(row["result_summary"]),
             result_code=str(row["result_code"]),
             decision_ref=row["decision_ref"],
-            permit_ref=row["permit_ref"],
-            grant_ref=row["grant_ref"],
+            capability_grant_ref=row["capability_grant_ref"],
+            workspace_lease_ref=row["workspace_lease_ref"],
             policy_ref=row["policy_ref"],
+            action_request_ref=row["action_request_ref"],
+            policy_result_ref=row["policy_result_ref"] or row["policy_ref"],
             witness_ref=row["witness_ref"],
             idempotency_key=row["idempotency_key"],
             receipt_bundle_ref=row["receipt_bundle_ref"],
             proof_mode=str(row["proof_mode"] or "none"),
+            verifiability=row["verifiability"],
             signature=row["signature"],
+            signer_ref=row["signer_ref"],
             rollback_supported=bool(row["rollback_supported"]),
             rollback_strategy=row["rollback_strategy"],
             rollback_status=str(row["rollback_status"] or "not_requested"),
@@ -279,24 +352,6 @@ class KernelStoreRecordMixin:
             artifact_refs=list(_json_loads(row["artifact_refs_json"])),
             created_at=float(row["created_at"]),
             executed_at=row["executed_at"],
-        )
-
-    def _path_grant_from_row(self, row: sqlite3.Row) -> PathGrantRecord:
-        return PathGrantRecord(
-            grant_id=str(row["grant_id"]),
-            subject_kind=str(row["subject_kind"]),
-            subject_ref=str(row["subject_ref"]),
-            action_class=str(row["action_class"]),
-            path_prefix=str(row["path_prefix"]),
-            path_display=str(row["path_display"]),
-            created_by=str(row["created_by"]),
-            approval_ref=row["approval_ref"],
-            decision_ref=row["decision_ref"],
-            policy_ref=row["policy_ref"],
-            status=str(row["status"]),
-            created_at=float(row["created_at"]),
-            expires_at=row["expires_at"],
-            last_used_at=row["last_used_at"],
         )
 
     def _schedule_from_row(self, row: sqlite3.Row) -> ScheduledJob:

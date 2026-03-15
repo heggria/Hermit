@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import platform
-import sys
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
+
+from hermit.workspaces import capture_execution_environment as capture_workspace_environment
 
 
 @dataclass
@@ -15,7 +14,7 @@ class TaskExecutionContext:
     step_id: str
     step_attempt_id: str
     source_channel: str
-    actor: str = "user"
+    actor_principal_id: str = "principal_user"
     policy_profile: str = "default"
     workspace_root: str = ""
     ingress_metadata: dict[str, Any] = field(default_factory=dict)
@@ -28,7 +27,7 @@ class TaskExecutionContext:
             "step_id": self.step_id,
             "step_attempt_id": self.step_attempt_id,
             "source_channel": self.source_channel,
-            "actor": self.actor,
+            "actor_principal_id": self.actor_principal_id,
             "policy_profile": self.policy_profile,
             "workspace_root": self.workspace_root,
             "ingress_metadata": dict(self.ingress_metadata),
@@ -43,7 +42,9 @@ class TaskExecutionContext:
             step_id=str(data["step_id"]),
             step_attempt_id=str(data["step_attempt_id"]),
             source_channel=str(data.get("source_channel", "unknown")),
-            actor=str(data.get("actor", "user")),
+            actor_principal_id=str(
+                data.get("actor_principal_id", data.get("actor", "principal_user"))
+            ),
             policy_profile=str(data.get("policy_profile", "default")),
             workspace_root=str(data.get("workspace_root", "")),
             ingress_metadata=dict(data.get("ingress_metadata", {}) or {}),
@@ -83,10 +84,5 @@ class CompiledProviderInput:
     source_mode: str = "compiled"
 
 
-def capture_execution_environment(*, cwd: Path) -> dict[str, Any]:
-    return {
-        "cwd": str(cwd),
-        "os": platform.platform(),
-        "python": sys.version,
-        "platform": sys.platform,
-    }
+def capture_execution_environment(*, cwd):
+    return capture_workspace_environment(cwd=cwd)

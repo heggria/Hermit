@@ -67,11 +67,11 @@ _RAW_CONTROL_TEXT = {
 _RAW_CONTROL_PREFIXES = (
     "批准 ",
     "批准一次 ",
-    "始终允许此目录 ",
+    "批准可变工作区 ",
     "拒绝 ",
     "approve ",
     "approve_once ",
-    "approve_always_directory ",
+    "approve_mutable_workspace ",
     "deny ",
 )
 _SCHEDULE_REACTION_TOOLS = frozenset(
@@ -1205,7 +1205,7 @@ class FeishuAdapter:
 
         if (
             value.get("kind") != "approval"
-            or action_type not in {"approve_once", "approve_always_directory", "deny"}
+            or action_type not in {"approve_once", "approve_mutable_workspace", "deny"}
             or not approval_id
         ):
             return self._card_action_response(
@@ -1256,10 +1256,10 @@ class FeishuAdapter:
                 level="error",
             )
 
-        if action_type in {"approve_once", "approve_always_directory"}:
+        if action_type in {"approve_once", "approve_mutable_workspace"}:
             action_text = self._t("feishu.adapter.card_action.approved_once")
-            if action_type == "approve_always_directory":
-                action_text = self._t("feishu.adapter.card_action.approved_always")
+            if action_type == "approve_mutable_workspace":
+                action_text = self._t("feishu.adapter.card_action.approved_mutable_workspace")
             return self._card_action_response(
                 action_text,
                 level="success",
@@ -1683,7 +1683,7 @@ class FeishuAdapter:
             control = self._runner.task_controller.resolve_text_command(session_id, raw_text)
             if control is not None and control[0] in {
                 "approve_once",
-                "approve_always_directory",
+                "approve_mutable_workspace",
                 "deny",
             }:
                 result = self._resolve_approval_from_feishu(

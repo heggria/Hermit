@@ -5,12 +5,19 @@ Instructions for Codex and other agentic tooling working in the Hermit repositor
 ## Project Skills
 
 - Service redeploy skill: [`skills/hermit-service-redeploy/SKILL.md`](skills/hermit-service-redeploy/SKILL.md)
+- README Excalidraw assets skill: [`skills/hermit-readme-excalidraw-assets/SKILL.md`](skills/hermit-readme-excalidraw-assets/SKILL.md)
 
 Use it when:
 
 - modifying code in the `hermit serve` execution path
 - changing builtin plugins, adapters, scheduler, webhook, or Feishu integration
 - changing installation, packaging, or local runtime loading behavior
+
+Use the README Excalidraw assets skill when:
+
+- editing launch-style README diagrams or documentation hero diagrams
+- updating `docs/site/assets/*.excalidraw.json`, `.svg`, or `.png`
+- regenerating GitHub-safe PNG assets from Excalidraw-styled SVG diagrams
 
 For this kind of work, the closing step must include local redeployment and verification as defined by that skill. Source edits alone, or a simple reload, are not enough.
 

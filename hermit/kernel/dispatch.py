@@ -96,7 +96,8 @@ class KernelDispatchService:
             context = dict(attempt.context or {})
             context["recovered_after_interrupt"] = True
             context["interrupt_recovered_at"] = now
-            if getattr(attempt, "permit_id", None):
+            capability_grant_id = getattr(attempt, "capability_grant_id", None)
+            if capability_grant_id:
                 context["recovery_required"] = True
                 context["reentry_required"] = True
                 context["reentry_reason"] = "worker_interrupted"

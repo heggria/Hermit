@@ -433,7 +433,7 @@ def test_checkpoint_memories_promotes_durable_memory_via_kernel(tmp_path) -> Non
         receipt = store.list_receipts(task_id=task.task_id, limit=1)[0]
         assert receipt.action_type == "memory_write"
         assert receipt.decision_ref is not None
-        assert receipt.permit_ref is not None
+        assert receipt.capability_grant_ref is not None
     finally:
         store.close()
 

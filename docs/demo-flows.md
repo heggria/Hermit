@@ -94,7 +94,7 @@ Notes:
 
 If you are preparing homepage or launch assets, the highest-signal captures are:
 
-- one `hermit task show` screenshot with approvals, receipts, and permits visible
+- one `hermit task show` screenshot with approvals, capability grants, workspace leases, and receipts visible
 - one short terminal clip covering `task proof` and `task receipts`
 - one rollback clip only if you can truthfully show a supported receipt class
 

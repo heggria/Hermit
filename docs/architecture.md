@@ -55,7 +55,7 @@ CLI / Chat / Feishu / Scheduler / Webhook
                               v
                    Context Compiler + Policy Engine
                               |
-                   Approval / Decision / Permit
+           Approval / Decision / WorkspaceLease / CapabilityGrant
                               |
                               v
                          Tool Executor
@@ -133,13 +133,17 @@ Important modules include:
 - `policy/`
 - `approvals.py`
 - `decisions.py`
-- `permits.py`
-- `path_grants.py`
+- `context_compiler.py`
+- `memory_governance.py`
+
+Canonical domain packages for the spec hard cut now live alongside the kernel:
+
+- `hermit/identity/`
+- `hermit/capabilities/`
+- `hermit/workspaces/`
 - `receipts.py`
 - `proofs.py`
 - `rollbacks.py`
-- `context_compiler.py`
-- `memory_governance.py`
 
 ## First-Class Kernel Objects
 
@@ -150,8 +154,9 @@ Hermit already defines first-class records for:
 - `StepAttemptRecord`
 - `ApprovalRecord`
 - `DecisionRecord`
-- `ExecutionPermitRecord`
-- `PathGrantRecord`
+- `PrincipalRecord`
+- `CapabilityGrantRecord`
+- `WorkspaceLeaseRecord`
 - `ArtifactRecord`
 - `ReceiptRecord`
 - `BeliefRecord`
@@ -170,7 +175,7 @@ The current implementation includes:
 
 - a local SQLite-backed kernel database
 - a dedicated `events` table
-- task-related tables for approvals, receipts, decisions, permits, grants, beliefs, memory records, and rollbacks
+- task-related tables for principals, approvals, decisions, capability grants, workspace leases, receipts, beliefs, memory records, and rollbacks
 - projection rebuild paths
 - event hash chaining for verification-oriented proof work
 
@@ -185,7 +190,7 @@ For governed execution, the interesting path is:
 3. context is compiled from working state, beliefs, memories, and artifacts
 4. the policy engine evaluates the proposed action
 5. if needed, the kernel creates a decision and requests approval
-6. if authorized, a scoped permit or grant is issued
+6. if authorized, the kernel acquires a workspace lease and issues a scoped capability grant
 7. the executor performs the action
 8. the kernel stores artifacts and issues a receipt
 9. proof and rollback services can later inspect or act on the result
@@ -199,8 +204,8 @@ The governance path is primarily visible through:
 - policy evaluation
 - approval records and approval copy generation
 - decision records
-- execution permits
-- path grants
+- capability grants
+- workspace leases
 - witness and drift handling
 
 Hermit's executor already uses these concepts to distinguish read-like actions from consequential effectful actions.
@@ -236,7 +241,7 @@ Hermit already contains:
 - proof export
 - rollback execution for supported receipts
 
-This is enough to say the repo has meaningful verifiable-execution primitives. It is not enough to say the full verifiable story is done. The current proof baseline is hash-linked events plus sealed receipt bundles; signed receipts and inclusion-proof exports remain future work and are surfaced as missing proof coverage rather than implied completeness.
+This is enough to say the repo has meaningful verifiable-execution primitives. It is not enough to say the full verifiable story is done. The current proof baseline is hash-linked events plus sealed receipt bundles; stronger signed receipts and inclusion-proof exports are available only when local signing is configured, and are surfaced as conditional capability plus task-level proof coverage or missing proof coverage rather than implied completeness.
 
 See [receipts-and-proofs.md](./receipts-and-proofs.md).
 

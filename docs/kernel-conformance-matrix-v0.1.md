@@ -5,6 +5,7 @@ This document tracks how the current repository maps to the `v0.1` kernel spec. 
 Status legend:
 
 - `implemented`: shipped in code and covered by tests or operator output
+- `conditional`: available when a local configuration or task-specific capability is present, but not a repository-level blocker
 - `partial`: kernel primitive exists, but not yet fully closed across every surface
 - `planned`: named in the spec or roadmap, but not yet claimable
 
@@ -22,7 +23,7 @@ Status legend:
 | Artifact-native context is the default runtime path | `implemented` | `hermit/kernel/context_compiler.py`, `hermit/kernel/provider_input.py`, `hermit/kernel/artifacts.py` | `tests/test_context_compiler.py`, `tests/test_kernel_coverage_boost.py` |
 | Memory writes are evidence-bound and kernel-backed | `implemented` | `hermit/kernel/knowledge.py`, `hermit/kernel/memory_governance.py`, `hermit/builtin/memory/hooks.py` | `tests/test_memory_governance.py`, `tests/test_memory_hooks.py`, CLI `memory export` |
 | Verifiable profile exposes proof coverage and exportable bundles | `implemented` | `hermit/kernel/proofs.py`, `hermit/kernel/store_ledger.py`, `hermit/main.py` | `tests/test_task_kernel.py`, CLI `task proof-export` |
-| Signed proofs and inclusion proofs are available | `implemented` | `hermit/kernel/proofs.py`, `hermit/kernel/store_ledger.py` | `tests/test_kernel_store_tasks_support.py`, CLI `task claim-status` |
+| Strong signed proofs and inclusion proofs are available when signing is configured | `conditional` | `hermit/kernel/proofs.py`, `hermit/kernel/store_ledger.py` | `tests/test_kernel_store_tasks_support.py`, CLI `task claim-status` |
 
 ## Current Hard-Cut Boundaries
 
@@ -45,6 +46,6 @@ The repo can now gate and surface claims through code:
 
 - `Core`: claimable through the conformance matrix and `task claim-status`
 - `Governed`: claimable through the same gate once task/operator surfaces are green
-- `Verifiable`: claimable as a baseline profile, with stronger task-level readiness depending on exported proof coverage
+- `Verifiable`: claimable as a baseline profile, with stronger task-level readiness depending on exported proof coverage and local signing configuration
 
 The repo still keeps compatibility surfaces, so these claims apply to the kernel contract rather than every legacy runtime affordance.

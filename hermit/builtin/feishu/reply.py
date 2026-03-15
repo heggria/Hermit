@@ -1,4 +1,5 @@
 """Feishu message sending / replying helpers using lark-oapi SDK."""
+
 from __future__ import annotations
 
 import json
@@ -56,10 +57,12 @@ _MARKDOWN_SIGNAL = re.compile(
 
 # Tools that are internal housekeeping steps and should NOT be shown to the user
 # as work-progress items (e.g. adding an emoji reaction to ack a message).
-_SKIP_TOOLS: frozenset[str] = frozenset({
-    "feishu_react",            # emoji reaction — internal ack, not a user task
-    "image_store_from_feishu", # image pre-processing — internal, not user-visible
-})
+_SKIP_TOOLS: frozenset[str] = frozenset(
+    {
+        "feishu_react",  # emoji reaction — internal ack, not a user task
+        "image_store_from_feishu",  # image pre-processing — internal, not user-visible
+    }
+)
 
 # Plain-text labels for tool names shown in progress cards. No emoji.
 _TOOL_DISPLAY_KEYS: dict[str, str] = {
@@ -102,7 +105,9 @@ _TASK_TOPIC_LABEL_KEYS: dict[str, str] = {
 }
 
 
-def _t(message_key: str, *, locale: str | None = None, default: str | None = None, **kwargs: object) -> str:
+def _t(
+    message_key: str, *, locale: str | None = None, default: str | None = None, **kwargs: object
+) -> str:
     return tr(message_key, locale=resolve_locale(locale), default=default, **kwargs)
 
 
@@ -130,9 +135,9 @@ class ToolStep:
     """Records one completed tool invocation for progress display."""
 
     name: str
-    display: str    # plain-text label, e.g. "深度搜索"
+    display: str  # plain-text label, e.g. "深度搜索"
     key_input: str  # key argument extracted for display, e.g. '"Iran situation today"'
-    summary: str    # brief result snippet
+    summary: str  # brief result snippet
     elapsed_ms: int
 
 
@@ -145,8 +150,11 @@ def _extract_key_input(name: str, tool_input: dict) -> str:
         url = str(tool_input.get("url", ""))
         return url[:60] + "…" if len(url) > 60 else url
     if name in (
-        "read_file", "write_file",
-        "read_hermit_file", "write_hermit_file", "list_hermit_files",
+        "read_file",
+        "write_file",
+        "read_hermit_file",
+        "write_hermit_file",
+        "list_hermit_files",
     ):
         p = str(tool_input.get("path", tool_input.get("filename", "")))
         return ("…" + p[-40:]) if len(p) > 40 else p
@@ -534,7 +542,9 @@ class RichCardBuilder:
             "schema": "2.0",
             "config": {
                 "update_multi": True,
-                "summary": {"content": _strip_markdown_for_summary(summary_source, locale=self.locale)},
+                "summary": {
+                    "content": _strip_markdown_for_summary(summary_source, locale=self.locale)
+                },
             },
             "body": {
                 "padding": "8px 12px 12px 12px",
@@ -575,7 +585,7 @@ class RichCardBuilder:
         header_match = re.match(r"^#\s+(.+)\n?", text)
         if not header_match:
             return "", text
-        return header_match.group(1).strip(), text[header_match.end():].lstrip("\n")
+        return header_match.group(1).strip(), text[header_match.end() :].lstrip("\n")
 
     @staticmethod
     def _extract_topology(text: str) -> tuple[str, list[tuple[str, str]]]:
@@ -601,11 +611,13 @@ class RichCardBuilder:
                 continue
             elements.extend(self._build_text_elements(token_value))
         for note_content in notes:
-            elements.append(_markdown_element(
-                f"*{note_content}*",
-                text_size="small",
-                margin="10px 0 0 0",
-            ))
+            elements.append(
+                _markdown_element(
+                    f"*{note_content}*",
+                    text_size="small",
+                    margin="10px 0 0 0",
+                )
+            )
         return elements
 
     @staticmethod
@@ -653,8 +665,14 @@ class RichCardBuilder:
             intro, sections = _extract_section_blocks(seg_value)
             if intro:
                 intro_compacted = self._compact_paragraphs(intro)
-                intro_size = "medium" if len(intro_compacted) <= 120 and "\n" not in intro_compacted else "normal"
-                elements.append(_markdown_element(intro_compacted, text_size=intro_size, margin="0 0 6px 0"))
+                intro_size = (
+                    "medium"
+                    if len(intro_compacted) <= 120 and "\n" not in intro_compacted
+                    else "normal"
+                )
+                elements.append(
+                    _markdown_element(intro_compacted, text_size=intro_size, margin="0 0 6px 0")
+                )
             if sections:
                 # Track previous content to detect list→heading transitions.
                 # When a markdown element ends with a list item, Feishu's renderer
@@ -733,9 +751,7 @@ def send_thread_text_reply(client: Any, message_id: str, text: str) -> bool:
     )
     response = client.im.v1.message.reply(request)
     if not response.success():
-        log.error(
-            "thread reply failed: code=%s msg=%s", response.code, response.msg
-        )
+        log.error("thread reply failed: code=%s msg=%s", response.code, response.msg)
         return False
     return True
 
@@ -774,9 +790,7 @@ def reply_with_card(client: Any, message_id: str, text: str, *, locale: str | No
     )
     response = client.im.v1.message.reply(request)
     if not response.success():
-        log.warning(
-            "card reply failed (code=%s), falling back to text", response.code
-        )
+        log.warning("card reply failed (code=%s), falling back to text", response.code)
         return send_text_reply(client, message_id, text)
     return True
 
@@ -844,9 +858,7 @@ def patch_card(client: Any, message_id: str, card: dict) -> bool:
         PatchMessageRequest.builder()
         .message_id(message_id)
         .request_body(
-            PatchMessageRequestBody.builder()
-            .content(json.dumps(card, ensure_ascii=False))
-            .build()
+            PatchMessageRequestBody.builder().content(json.dumps(card, ensure_ascii=False)).build()
         )
         .build()
     )
@@ -864,12 +876,7 @@ def upload_image_path(client: Any, path: Path, image_type: str = "message") -> s
     with path.open("rb") as fh:
         response = client.im.v1.image.create(
             CreateImageRequest.builder()
-            .request_body(
-                CreateImageRequestBody.builder()
-                .image_type(image_type)
-                .image(fh)
-                .build()
-            )
+            .request_body(CreateImageRequestBody.builder().image_type(image_type).image(fh).build())
             .build()
         )
     if not response.success() or response.data is None or not response.data.image_key:
@@ -888,7 +895,9 @@ def smart_reply(client: Any, message_id: str, text: str, *, locale: str | None =
     return send_text_reply(client, message_id, text)
 
 
-def smart_send_message(client: Any, chat_id: str, text: str, *, locale: str | None = None) -> Optional[str]:
+def smart_send_message(
+    client: Any, chat_id: str, text: str, *, locale: str | None = None
+) -> Optional[str]:
     """Send a new message to a chat using the same card/text heuristic as smart_reply()."""
     if _should_use_card(text):
         card = build_result_card(text, locale=locale)
@@ -944,7 +953,10 @@ def build_approval_card(
                 "elements": [
                     {
                         "tag": "button",
-                        "text": {"tag": "plain_text", "content": _t("feishu.reply.approval.button.deny", locale=locale)},
+                        "text": {
+                            "tag": "plain_text",
+                            "content": _t("feishu.reply.approval.button.deny", locale=locale),
+                        },
                         "type": "default",
                         "width": "fill",
                         "behaviors": [
@@ -967,7 +979,10 @@ def build_approval_card(
                 "elements": [
                     {
                         "tag": "button",
-                        "text": {"tag": "plain_text", "content": _t("feishu.reply.approval.button.once", locale=locale)},
+                        "text": {
+                            "tag": "plain_text",
+                            "content": _t("feishu.reply.approval.button.once", locale=locale),
+                        },
                         "type": "primary_filled",
                         "width": "fill",
                         "behaviors": [
@@ -990,7 +1005,10 @@ def build_approval_card(
                 "elements": [
                     {
                         "tag": "button",
-                        "text": {"tag": "plain_text", "content": _t("feishu.reply.approval.button.always", locale=locale)},
+                        "text": {
+                            "tag": "plain_text",
+                            "content": _t("feishu.reply.approval.button.always", locale=locale),
+                        },
                         "type": "primary",
                         "width": "fill",
                         "behaviors": [
@@ -998,7 +1016,7 @@ def build_approval_card(
                                 "type": "callback",
                                 "value": {
                                     "kind": "approval",
-                                    "action": "approve_always_directory",
+                                    "action": "approve_mutable_workspace",
                                     "approval_id": approval_id,
                                 },
                             }
@@ -1015,7 +1033,9 @@ def build_approval_card(
     if clean_detail and clean_detail != clean_text:
         detail_content = clean_detail
         if not sections:
-            detail_content = f"**{_t('feishu.reply.approval.why_title', locale=locale)}**\n{clean_detail}"
+            detail_content = (
+                f"**{_t('feishu.reply.approval.why_title', locale=locale)}**\n{clean_detail}"
+            )
         body_elements.append(
             _markdown_element(
                 detail_content,
@@ -1038,8 +1058,7 @@ def build_approval_card(
         if not section_title or not section_items:
             continue
         rendered_items = "\n".join(
-            f"- {sanitize_for_feishu(item, locale=locale)}"
-            for item in section_items
+            f"- {sanitize_for_feishu(item, locale=locale)}" for item in section_items
         )
         body_elements.append(
             _markdown_element(
@@ -1049,17 +1068,29 @@ def build_approval_card(
             )
         )
     if target_path:
-        body_elements.append(_markdown_element(
-            _t("feishu.reply.approval.target_path", locale=locale, target_path=sanitize_for_feishu(target_path, locale=locale)),
-            text_size="small",
-            margin="0 0 6px 0",
-        ))
+        body_elements.append(
+            _markdown_element(
+                _t(
+                    "feishu.reply.approval.target_path",
+                    locale=locale,
+                    target_path=sanitize_for_feishu(target_path, locale=locale),
+                ),
+                text_size="small",
+                margin="0 0 6px 0",
+            )
+        )
     if workspace_root:
-        body_elements.append(_markdown_element(
-            _t("feishu.reply.approval.workspace_root", locale=locale, workspace_root=sanitize_for_feishu(workspace_root, locale=locale)),
-            text_size="small",
-            margin="0 0 6px 0",
-        ))
+        body_elements.append(
+            _markdown_element(
+                _t(
+                    "feishu.reply.approval.workspace_root",
+                    locale=locale,
+                    workspace_root=sanitize_for_feishu(workspace_root, locale=locale),
+                ),
+                text_size="small",
+                margin="0 0 6px 0",
+            )
+        )
     if grant_scope_dir:
         body_elements.append(
             _markdown_element(
@@ -1121,7 +1152,11 @@ def build_approval_card(
                     "header": {
                         "title": {
                             "tag": "plain_text",
-                            "content": _t("feishu.reply.approval.completed_steps", locale=locale, count=len(steps)),
+                            "content": _t(
+                                "feishu.reply.approval.completed_steps",
+                                locale=locale,
+                                count=len(steps),
+                            ),
                         },
                     },
                     "elements": [
@@ -1137,7 +1172,10 @@ def build_approval_card(
             "summary": {"content": _t("feishu.reply.approval.waiting_summary", locale=locale)},
         },
         "header": {
-            "title": {"content": title or _t("feishu.reply.approval.waiting_title", locale=locale), "tag": "plain_text"},
+            "title": {
+                "content": title or _t("feishu.reply.approval.waiting_title", locale=locale),
+                "tag": "plain_text",
+            },
             "template": "orange",
         },
         "body": {
@@ -1228,7 +1266,10 @@ def build_error_card(hint: str | None = None, *, locale: str | None = None) -> d
             "summary": {"content": _t("feishu.reply.error.summary", locale=locale)},
         },
         "header": {
-            "title": {"content": _t("feishu.reply.error.title", locale=locale), "tag": "plain_text"},
+            "title": {
+                "content": _t("feishu.reply.error.title", locale=locale),
+                "tag": "plain_text",
+            },
             "template": "red",
         },
         "body": {
@@ -1263,9 +1304,7 @@ def reply_card_return_id(client: Any, message_id: str, card: dict) -> Optional[s
     )
     response = client.im.v1.message.reply(request)
     if not response.success():
-        log.warning(
-            "reply_card_return_id failed: code=%s msg=%s", response.code, response.msg
-        )
+        log.warning("reply_card_return_id failed: code=%s msg=%s", response.code, response.msg)
         return None
     return getattr(response.data, "message_id", None)
 
@@ -1303,7 +1342,10 @@ def build_progress_card(
             "summary": {"content": hint},
         },
         "header": {
-            "title": {"content": _t("feishu.reply.progress.title", locale=locale), "tag": "plain_text"},
+            "title": {
+                "content": _t("feishu.reply.progress.title", locale=locale),
+                "tag": "plain_text",
+            },
             "template": "blue",
         },
         "body": {
@@ -1321,12 +1363,16 @@ def build_task_topic_card(
 ) -> dict:
     items = list(topic.get("items", []) or [])
     elements: list[dict[str, Any]] = []
-    current_hint = str(topic.get("current_hint", "") or _t("feishu.reply.progress.default", locale=locale))
+    current_hint = str(
+        topic.get("current_hint", "") or _t("feishu.reply.progress.default", locale=locale)
+    )
     current_phase = str(topic.get("current_phase", "") or "").strip()
     status = str(topic.get("status", "running") or "running")
     current_progress_percent = topic.get("current_progress_percent")
     try:
-        current_percent = int(current_progress_percent) if current_progress_percent is not None else None
+        current_percent = (
+            int(current_progress_percent) if current_progress_percent is not None else None
+        )
     except (TypeError, ValueError):
         current_percent = None
 
@@ -1337,7 +1383,11 @@ def build_task_topic_card(
         current_parts.append(f"{current_percent}%")
     current_header = " · ".join(current_parts)
     current_default = _t("feishu.reply.task_topic.current", locale=locale)
-    current_text = f"**{current_header}**\n{current_hint}" if current_header else f"**{current_default}**\n{current_hint}"
+    current_text = (
+        f"**{current_header}**\n{current_hint}"
+        if current_header
+        else f"**{current_default}**\n{current_hint}"
+    )
     elements.append(_markdown_element(current_text, margin="0 0 12px 0"))
 
     terminal_status = status in {"completed", "failed", "cancelled"}
@@ -1352,11 +1402,7 @@ def build_task_topic_card(
             progress_percent = int(percent) if percent is not None else None
         except (TypeError, ValueError):
             progress_percent = None
-        if (
-            phase == current_phase
-            and progress_percent == current_percent
-            and text == current_hint
-        ):
+        if phase == current_phase and progress_percent == current_percent and text == current_hint:
             continue
         if terminal_status and kind == "task.started":
             continue
@@ -1382,7 +1428,10 @@ def build_task_topic_card(
             "summary": {"content": current_hint},
         },
         "header": {
-            "title": {"content": title or _t("feishu.reply.task_topic.default_title", locale=locale), "tag": "plain_text"},
+            "title": {
+                "content": title or _t("feishu.reply.task_topic.default_title", locale=locale),
+                "tag": "plain_text",
+            },
             "template": template,
         },
         "body": {
@@ -1392,7 +1441,9 @@ def build_task_topic_card(
     }
 
 
-def build_result_card_with_process(text: str, steps: list[ToolStep], *, locale: str | None = None) -> dict:
+def build_result_card_with_process(
+    text: str, steps: list[ToolStep], *, locale: str | None = None
+) -> dict:
     """Build the final result card, appending a collapsible work-process panel.
 
     When *steps* is empty the function behaves identically to build_result_card().

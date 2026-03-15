@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -578,6 +579,68 @@ def test_task_controller_resume_attempt_clears_worker_interrupt_recovery_flag(tm
     assert refreshed.context["execution_mode"] == "resume"
     assert refreshed.context["phase"] == "observing"
     assert any(event["event_type"] == "step_attempt.reentry_resumed" for event in events)
+
+
+def test_task_controller_resume_attempt_prefers_resume_artifact_over_context_snapshot(
+    tmp_path,
+) -> None:
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    controller = TaskController(store)
+    ctx = controller.start_task(
+        conversation_id="oc_recovery_artifact",
+        goal="resume interrupted attempt",
+        source_channel="chat",
+        kind="respond",
+    )
+
+    snapshot_path = tmp_path / "kernel" / "runtime-snapshot.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "kind": "runtime_snapshot",
+                "payload": {"suspend_kind": "observing"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshot_artifact = store.create_artifact(
+        task_id=ctx.task_id,
+        step_id=ctx.step_id,
+        kind="runtime.snapshot",
+        uri=str(snapshot_path),
+        content_hash="snapshot",
+        producer="test",
+        retention_class="audit",
+        trust_tier="observed",
+    )
+    store.update_step_attempt(
+        ctx.step_attempt_id,
+        status="blocked",
+        waiting_reason="worker_interrupted_recovery_required",
+        resume_from_ref=snapshot_artifact.artifact_id,
+        context={
+            "workspace_root": str(tmp_path),
+            "phase": "awaiting_approval",
+            "recovery_required": True,
+            "reentry_required": True,
+            "reentry_reason": "worker_interrupted",
+            "reentry_boundary": "observation_resolution",
+            "runtime_snapshot": {
+                "schema_version": 2,
+                "kind": "runtime_snapshot",
+                "payload": {"suspend_kind": "awaiting_approval"},
+            },
+        },
+    )
+
+    resumed = controller.resume_attempt(ctx.step_attempt_id)
+    refreshed = store.get_step_attempt(ctx.step_attempt_id)
+
+    assert resumed.step_attempt_id == ctx.step_attempt_id
+    assert refreshed is not None
+    assert refreshed.context["phase"] == "observing"
 
 
 def test_kernel_dispatch_service_reaps_failed_futures_and_wakes(monkeypatch) -> None:

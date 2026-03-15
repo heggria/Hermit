@@ -123,11 +123,11 @@ hermit task rollback <receipt_id>
 hermit task projections-rebuild --all
 ```
 
-Path-grant commands:
+Capability-grant commands:
 
 ```bash
-hermit task grant list
-hermit task grant revoke <grant_id>
+hermit task capability list
+hermit task capability revoke <grant_id>
 ```
 
 These commands are part of what makes Hermit feel like a governed kernel rather than only a conversational shell.

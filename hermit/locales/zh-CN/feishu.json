@@ -75,7 +75,7 @@
   "feishu.adapter.card_action.already_handled": "该审批已处理：{status}",
   "feishu.adapter.card_action.executor_stopped": "后台处理器已停止，审批未提交。",
   "feishu.adapter.card_action.approved_once": "已通过，正在继续执行。",
-  "feishu.adapter.card_action.approved_always": "已通过，并记住此目录授权，正在继续执行。",
+  "feishu.adapter.card_action.approved_mutable_workspace": "已批准可变工作区租约，正在继续执行。",
   "feishu.adapter.card_action.denied": "已拒绝，本次操作不会继续执行。",
   "feishu.adapter.card_action.denied_detail": "本次审批已拒绝，当前操作不会继续。\n如需继续，请重新发起请求；届时你可以对新的审批请求再次进行批准。",
   "feishu.adapter.reissue.recovery_hint": "服务恢复后，旧审批卡片的按钮可能已失效；请使用这张新卡片，或直接回复“批准 {approval_id}”/“拒绝 {approval_id}”。",

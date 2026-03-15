@@ -429,15 +429,15 @@ def _promote_memories_via_kernel(
     if not kernel_db_path or not kernel_artifacts_dir or not new_entries:
         return False
 
+    from hermit.capabilities import CapabilityGrantError, CapabilityGrantService
     from hermit.kernel.artifacts import ArtifactStore
-    from hermit.kernel.context import capture_execution_environment
     from hermit.kernel.controller import TaskController
     from hermit.kernel.decisions import DecisionService
     from hermit.kernel.knowledge import BeliefService, MemoryRecordService
-    from hermit.kernel.permits import CapabilityGrantError, ExecutionPermitService
     from hermit.kernel.policy import ActionRequest, PolicyEngine
     from hermit.kernel.receipts import ReceiptService
     from hermit.kernel.store import KernelStore
+    from hermit.workspaces import WorkspaceLeaseService, capture_execution_environment
 
     store = KernelStore(Path(kernel_db_path))
     try:
@@ -455,9 +455,12 @@ def _promote_memories_via_kernel(
         decision_service = DecisionService(store)
         belief_service = BeliefService(store)
         memory_service = MemoryRecordService(store, mirror_path=Path(settings.memory_file))
-        permit_service = ExecutionPermitService(store)
+        capability_service = CapabilityGrantService(store)
+        workspace_lease_service = WorkspaceLeaseService(store, artifact_store)
         receipt_service = ReceiptService(store, artifact_store)
         request_id = f"memreq_{uuid.uuid4().hex[:12]}"
+        holder_principal_id = "memory_hook"
+        workspace_root = str(Path(settings.memory_file).parent.resolve())
 
         transcript = _format_transcript(messages)
         transcript_ref = _store_memory_artifact(
@@ -565,17 +568,30 @@ def _promote_memories_via_kernel(
             action_type="memory_write",
             decided_by="memory_hook",
         )
-        permit_id = permit_service.issue(
+        workspace_lease = workspace_lease_service.acquire(
+            task_id=ctx.task_id,
+            step_attempt_id=ctx.step_attempt_id,
+            workspace_id="memory_store",
+            root_path=workspace_root,
+            holder_principal_id=holder_principal_id,
+            mode="mutable",
+            resource_scope=["memory_store", str(Path(settings.memory_file).resolve())],
+        )
+        capability_grant_id = capability_service.issue(
             task_id=ctx.task_id,
             step_id=ctx.step_id,
             step_attempt_id=ctx.step_attempt_id,
             decision_ref=decision_id,
             approval_ref=None,
             policy_ref=policy_ref,
+            issued_to_principal_id=holder_principal_id,
+            issued_by_principal_id="kernel",
+            workspace_lease_ref=workspace_lease.lease_id,
             action_class="memory_write",
             resource_scope=["memory_store"],
             idempotency_key=request_id,
             constraints={
+                "lease_root_path": workspace_root,
                 "mode": mode,
                 "entry_count": len(new_entries),
                 "categories": sorted({entry.category for entry in new_entries}),
@@ -585,15 +601,17 @@ def _promote_memories_via_kernel(
             ctx.step_attempt_id,
             status="dispatching",
             decision_id=decision_id,
-            permit_id=permit_id,
+            capability_grant_id=capability_grant_id,
+            workspace_lease_id=workspace_lease.lease_id,
         )
         store.update_step(ctx.step_id, status="dispatching")
         try:
-            permit_service.enforce(
-                permit_id,
+            capability_service.enforce(
+                capability_grant_id,
                 action_class="memory_write",
                 resource_scope=["memory_store"],
                 constraints={
+                    "lease_root_path": workspace_root,
                     "mode": mode,
                     "entry_count": len(new_entries),
                     "categories": sorted({entry.category for entry in new_entries}),
@@ -602,13 +620,13 @@ def _promote_memories_via_kernel(
         except CapabilityGrantError as exc:
             store.append_event(
                 event_type="dispatch.denied",
-                entity_type="execution_permit",
-                entity_id=permit_id,
+                entity_type="capability_grant",
+                entity_id=capability_grant_id,
                 task_id=ctx.task_id,
                 step_id=ctx.step_id,
                 actor="kernel",
                 payload={
-                    "permit_ref": permit_id,
+                    "capability_grant_ref": capability_grant_id,
                     "decision_ref": decision_id,
                     "error_code": exc.code,
                     "error": str(exc),
@@ -620,7 +638,8 @@ def _promote_memories_via_kernel(
                 status="failed",
                 waiting_reason=str(exc),
                 decision_id=decision_id,
-                permit_id=permit_id,
+                capability_grant_id=capability_grant_id,
+                workspace_lease_id=workspace_lease.lease_id,
             )
             store.update_step(ctx.step_id, status="failed")
             controller.finalize_result(ctx, status="failed")
@@ -704,14 +723,15 @@ def _promote_memories_via_kernel(
             result_summary=f"Promoted {len(new_entries)} durable memory entries via {mode}.",
             result_code="succeeded",
             decision_ref=decision_id,
-            permit_ref=permit_id,
+            capability_grant_ref=capability_grant_id,
+            workspace_lease_ref=workspace_lease.lease_id,
             policy_ref=policy_ref,
             idempotency_key=request_id,
             rollback_supported=True,
             rollback_strategy="supersede_or_invalidate",
             rollback_artifact_refs=[rollback_ref],
         )
-        permit_service.consume(permit_id)
+        capability_service.consume(capability_grant_id)
         controller.finalize_result(ctx, status="succeeded")
         return True
     finally:

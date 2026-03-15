@@ -29,17 +29,21 @@ def test_cli_plugin_and_task_commands_cover_error_paths(tmp_path: Path, monkeypa
         "_get_kernel_store",
         lambda: SimpleNamespace(
             get_task=lambda task_id: None,
-            get_path_grant=lambda grant_id: None,
+            get_capability_grant=lambda grant_id: None,
             get_memory_record=lambda memory_id: None,
         ),
     )
 
     runner = CliRunner()
-    install_exists = runner.invoke(main_mod.app, ["plugin", "install", "https://example.com/existing.git"])
-    install_failed = runner.invoke(main_mod.app, ["plugin", "install", "https://example.com/new.git"])
+    install_exists = runner.invoke(
+        main_mod.app, ["plugin", "install", "https://example.com/existing.git"]
+    )
+    install_failed = runner.invoke(
+        main_mod.app, ["plugin", "install", "https://example.com/new.git"]
+    )
     info_missing = runner.invoke(main_mod.app, ["plugin", "info", "missing"])
     task_show_missing = runner.invoke(main_mod.app, ["task", "show", "task-missing"])
-    grant_missing = runner.invoke(main_mod.app, ["task", "grant", "revoke", "grant-missing"])
+    grant_missing = runner.invoke(main_mod.app, ["task", "capability", "revoke", "grant-missing"])
     memory_inspect_missing = runner.invoke(main_mod.app, ["memory", "inspect", "memory-missing"])
     memory_inspect_require_target = runner.invoke(main_mod.app, ["memory", "inspect"])
 
@@ -52,14 +56,19 @@ def test_cli_plugin_and_task_commands_cover_error_paths(tmp_path: Path, monkeypa
     assert task_show_missing.exit_code == 1
     assert "Task not found" in task_show_missing.output
     assert grant_missing.exit_code == 1
-    assert "Grant not found" in grant_missing.output
+    assert "Capability grant not found" in grant_missing.output
     assert memory_inspect_missing.exit_code == 1
     assert "Memory not found" in memory_inspect_missing.output
     assert memory_inspect_require_target.exit_code == 1
-    assert "Provide either a memory_id argument or --claim-text." in memory_inspect_require_target.output
+    assert (
+        "Provide either a memory_id argument or --claim-text."
+        in memory_inspect_require_target.output
+    )
 
 
-def test_cli_schedule_and_autostart_cover_validation_and_not_found(tmp_path: Path, monkeypatch) -> None:
+def test_cli_schedule_and_autostart_cover_validation_and_not_found(
+    tmp_path: Path, monkeypatch
+) -> None:
     store = SimpleNamespace(
         update_schedule=lambda job_id, enabled: None,
         delete_schedule=lambda job_id: False,
@@ -78,7 +87,18 @@ def test_cli_schedule_and_autostart_cover_validation_and_not_found(tmp_path: Pat
     runner = CliRunner()
     add_invalid_choice = runner.invoke(
         main_mod.app,
-        ["schedule", "add", "--name", "x", "--prompt", "y", "--cron", "* * * * *", "--interval", "60"],
+        [
+            "schedule",
+            "add",
+            "--name",
+            "x",
+            "--prompt",
+            "y",
+            "--cron",
+            "* * * * *",
+            "--interval",
+            "60",
+        ],
     )
     add_invalid_interval = runner.invoke(
         main_mod.app,

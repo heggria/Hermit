@@ -12,14 +12,14 @@ hooks = "hooks:register"
 
 [variables.feishu_app_id]
 setting = "feishu_app_id"
-env = ["HERMIT_FEISHU_APP_ID", "FEISHU_APP_ID"]
+env = ["HERMIT_FEISHU_APP_ID"]
 required = true
 description_key = "plugin.feishu.variable.app_id"
 description = "Feishu app id"
 
 [variables.feishu_app_secret]
 setting = "feishu_app_secret"
-env = ["HERMIT_FEISHU_APP_SECRET", "FEISHU_APP_SECRET"]
+env = ["HERMIT_FEISHU_APP_SECRET"]
 required = true
 secret = true
 description_key = "plugin.feishu.variable.app_secret"

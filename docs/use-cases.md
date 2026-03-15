@@ -21,9 +21,9 @@ Scenario:
 
 Why Hermit fits:
 
-- task, approval, permit, and receipt semantics already exist
+- task, approval, capability grant, workspace lease, and receipt semantics already exist
 - the operator can inspect task history and proof summaries later
-- path grants and governed execution align better with "ask before crossing the workspace boundary"
+- workspace leases and governed execution align better with "ask before crossing the workspace boundary"
 
 Why it matters:
 

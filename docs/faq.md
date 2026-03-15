@@ -20,7 +20,7 @@ No. The spec defines the target architecture. The current repository is an alpha
 
 ## Does Hermit already have real kernel objects, or is that mostly aspirational?
 
-It already has real kernel records and services for tasks, approvals, decisions, permits, path grants, artifacts, receipts, beliefs, memory records, rollbacks, conversations, and ingresses.
+It already has real kernel records and services for tasks, approvals, decisions, principals, capability grants, workspace leases, artifacts, receipts, beliefs, memory records, rollbacks, conversations, and ingresses.
 
 ## Is Hermit fully event-sourced?
 

@@ -8,6 +8,7 @@ Disabled by default; opt-in via ``hermit autostart enable``.
 On non-macOS platforms every public function prints an informative message
 instead of raising an error.
 """
+
 from __future__ import annotations
 
 import os
@@ -23,7 +24,6 @@ from typing import Optional
 from hermit.i18n import tr
 
 _LABEL_PREFIX = "com.hermit.serve"
-_LEGACY_LABEL_PREFIXES = ("com.moltforge.serve",)
 _LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
 
@@ -57,15 +57,6 @@ def _base_dir_label_suffix(base_dir: Path) -> str:
 
 def _plist_path(adapter: str) -> Path:
     return _LAUNCH_AGENTS_DIR / f"{_label(adapter)}.plist"
-
-
-def _legacy_plist_paths() -> list[Path]:
-    if not _LAUNCH_AGENTS_DIR.exists():
-        return []
-    paths: list[Path] = []
-    for prefix in _LEGACY_LABEL_PREFIXES:
-        paths.extend(sorted(_LAUNCH_AGENTS_DIR.glob(f"{prefix}*.plist")))
-    return paths
 
 
 def _find_executable() -> Optional[Path]:
@@ -151,28 +142,6 @@ def _adapter_from_program_arguments(args: list[str]) -> Optional[str]:
     return None
 
 
-def _legacy_labels_for_adapter(adapter: str) -> list[str]:
-    labels = [prefix for prefix in _LEGACY_LABEL_PREFIXES]
-    labels.extend(f"{prefix}.{adapter}" for prefix in _LEGACY_LABEL_PREFIXES)
-    return labels
-
-
-def _cleanup_legacy_plists(adapter: str) -> list[Path]:
-    removed: list[Path] = []
-    for plist in _legacy_plist_paths():
-        args = _plist_program_arguments(plist)
-        legacy_adapter = _adapter_from_program_arguments(args)
-        if legacy_adapter not in (None, adapter):
-            continue
-        for label in _legacy_labels_for_adapter(adapter):
-            _launchctl("unload", str(plist))
-            _launchctl("remove", label)
-        if plist.exists():
-            plist.unlink()
-            removed.append(plist)
-    return removed
-
-
 def _list_managed_plists() -> list[Path]:
     """Return all Hermit LaunchAgent plist files in ~/Library/LaunchAgents."""
     if not _LAUNCH_AGENTS_DIR.exists():
@@ -181,9 +150,9 @@ def _list_managed_plists() -> list[Path]:
 
 
 def existing_adapters() -> list[str]:
-    """Return adapters discovered from current and legacy LaunchAgent plists."""
+    """Return adapters discovered from current Hermit LaunchAgent plists."""
     adapters: set[str] = set()
-    for plist in [*_list_managed_plists(), *_legacy_plist_paths()]:
+    for plist in _list_managed_plists():
         args = _plist_program_arguments(plist)
         adapter = _adapter_from_program_arguments(args)
         if adapter:
@@ -209,10 +178,7 @@ def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
     if exe is None:
         return _t(
             "autostart.enable.missing_executable",
-            (
-                "Cannot find the hermit executable. "
-                "Make sure it is installed and available in PATH."
-            ),
+            ("Cannot find the hermit executable. Make sure it is installed and available in PATH."),
         )
 
     if log_dir is None:
@@ -221,7 +187,6 @@ def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
     _LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     plist = _plist_path(adapter)
-    removed_legacy = _cleanup_legacy_plists(adapter)
 
     # Reload if already present (update exe path or log dir).
     if plist.exists() and _is_loaded(adapter):
@@ -251,13 +216,6 @@ def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
         plist=plist,
         logs=log_dir,
     )
-    if removed_legacy:
-        removed_text = ", ".join(str(path) for path in removed_legacy)
-        message += _t(
-            "autostart.enable.removed_legacy",
-            "\nRemoved legacy LaunchAgents: {paths}",
-            paths=removed_text,
-        )
     return message
 
 

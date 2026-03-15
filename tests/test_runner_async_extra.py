@@ -309,7 +309,7 @@ def test_runner_enqueue_approval_resume_handles_missing_deny_and_grant() -> None
         "oc_1", action="deny", approval_id="approval-1", reason="not-safe"
     )
     granted = runner.enqueue_approval_resume(
-        "oc_1", action="approve_always_directory", approval_id="approval-1"
+        "oc_1", action="approve_mutable_workspace", approval_id="approval-1"
     )
 
     assert denied.is_command is True
@@ -330,7 +330,7 @@ def test_runner_enqueue_approval_resume_handles_missing_deny_and_grant() -> None
             {
                 "status": "granted",
                 "resolved_by": "user",
-                "resolution": {"status": "granted", "mode": "always_directory"},
+                "resolution": {"status": "granted", "mode": "mutable_workspace"},
             },
         ),
     ]
@@ -414,9 +414,9 @@ def test_runner_dispatch_control_action_covers_kernel_introspection_paths(monkey
         list_tasks=lambda limit=20: [TaskRecord("task-1")],
         list_events=lambda task_id, limit=100: [{"event_type": "task.completed"}],
         list_receipts=lambda task_id, limit=50: [ReceiptRecord("receipt-1")],
-        list_path_grants=lambda **kwargs: [grant],
-        get_path_grant=lambda grant_id: grant if grant_id == "grant-1" else None,
-        update_path_grant=lambda *args, **kwargs: None,
+        list_capability_grants=lambda **kwargs: [grant],
+        get_capability_grant=lambda grant_id: grant if grant_id == "grant-1" else None,
+        update_capability_grant=lambda *args, **kwargs: None,
         list_schedules=lambda: [job],
         list_schedule_history=lambda **kwargs: [record],
         update_schedule=lambda job_id, enabled: job if job_id == "job-1" else None,
@@ -507,11 +507,13 @@ def test_runner_dispatch_control_action_covers_kernel_introspection_paths(monkey
     )
     assert (
         '"grant_id": "grant-1"'
-        in runner._dispatch_control_action("oc_1", action="grant_list", target_id="").text
+        in runner._dispatch_control_action("oc_1", action="capability_list", target_id="").text
     )
     assert (
-        "Revoked grant"
-        in runner._dispatch_control_action("oc_1", action="grant_revoke", target_id="grant-1").text
+        "Revoked capability grant"
+        in runner._dispatch_control_action(
+            "oc_1", action="capability_revoke", target_id="grant-1"
+        ).text
     )
     assert (
         '"id": "job-1"'
@@ -540,7 +542,7 @@ def test_runner_dispatch_control_action_covers_kernel_introspection_paths(monkey
     assert (
         "not found"
         in runner._dispatch_control_action(
-            "oc_1", action="grant_revoke", target_id="missing"
+            "oc_1", action="capability_revoke", target_id="missing"
         ).text.lower()
     )
     assert (

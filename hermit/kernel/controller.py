@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from hermit.i18n import resolve_locale, tr
@@ -69,6 +71,24 @@ class TaskController:
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
+
+    def _runtime_snapshot_payload(self, attempt: Any) -> dict[str, Any]:
+        resume_from_ref = str(getattr(attempt, "resume_from_ref", "") or "").strip()
+        if resume_from_ref:
+            artifact = self.store.get_artifact(resume_from_ref)
+            if artifact is not None:
+                try:
+                    snapshot = json.loads(Path(str(artifact.uri)).read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    snapshot = {}
+                if isinstance(snapshot, dict):
+                    payload = snapshot.get("payload")
+                    if isinstance(payload, dict):
+                        return dict(payload)
+        context = dict(getattr(attempt, "context", {}) or {})
+        snapshot = dict(context.get("runtime_snapshot", {}) or {})
+        payload = snapshot.get("payload")
+        return dict(payload) if isinstance(payload, dict) else {}
 
     def source_from_session(self, session_id: str) -> str:
         if session_id.startswith("webhook-"):
@@ -1011,8 +1031,7 @@ class TaskController:
         ):
             return self.enqueue_resume(step_attempt_id)
         if bool(context.get("recovery_required")):
-            snapshot = dict(context.get("runtime_snapshot", {}) or {})
-            payload = dict(snapshot.get("payload", {}) or {})
+            payload = self._runtime_snapshot_payload(attempt)
             context["execution_mode"] = "resume"
             context["phase"] = (
                 "observing"

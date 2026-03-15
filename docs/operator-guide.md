@@ -25,8 +25,8 @@ This is the fastest way to see:
 - task metadata
 - pending or recent approvals
 - recent decisions
-- recent execution permits
-- recent path grants for the conversation
+- recent capability grants
+- recent workspace leases for the task
 
 ## Inspect Task History
 
@@ -92,22 +92,22 @@ hermit task resume <approval_id>
 
 ## Work With Path Grants
 
-List recent path grants:
+List recent capability grants:
 
 ```bash
-hermit task grant list
+hermit task capability list
 ```
 
-Filter grants by conversation:
+Approve a mutable workspace lease for the blocked attempt:
 
 ```bash
-hermit task grant list --conversation-id <conversation_id>
+hermit task approve-mutable-workspace <approval_id>
 ```
 
-Revoke a grant:
+Revoke a capability grant:
 
 ```bash
-hermit task grant revoke <grant_id>
+hermit task capability revoke <grant_id>
 ```
 
 ## Roll Back Supported Receipts

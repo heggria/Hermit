@@ -1,4 +1,5 @@
 """Tests for the webhook plugin — routes, signature verification, dispatch."""
+
 from __future__ import annotations
 
 import hashlib
@@ -22,6 +23,7 @@ from hermit.plugin.hooks import HooksEngine
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def simple_config() -> WebhookConfig:
@@ -132,13 +134,16 @@ def _seed_proof_records(store: KernelStore) -> tuple[str, str]:
         evidence_refs=["artifact_action"],
         action_type="write_local",
     )
-    permit = store.create_execution_permit(
+    grant = store.create_capability_grant(
         task_id=task.task_id,
         step_id=step.step_id,
         step_attempt_id=attempt.step_attempt_id,
         decision_ref=decision.decision_id,
         approval_ref=None,
         policy_ref="policy_1",
+        issued_to_principal_id="user",
+        issued_by_principal_id="kernel",
+        workspace_lease_ref=None,
         action_class="write_local",
         resource_scope=["workspace"],
         constraints={"target_paths": ["workspace/example.txt"]},
@@ -158,7 +163,7 @@ def _seed_proof_records(store: KernelStore) -> tuple[str, str]:
         result_summary="webhook proof receipt",
         result_code="succeeded",
         decision_ref=decision.decision_id,
-        permit_ref=permit.permit_id,
+        capability_grant_ref=grant.grant_id,
         policy_ref="policy_1",
     )
     return task.task_id, receipt.receipt_id
@@ -167,6 +172,7 @@ def _seed_proof_records(store: KernelStore) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Route registration and health endpoints
 # ---------------------------------------------------------------------------
+
 
 class TestWebhookServerEndpoints:
     def test_health_endpoint(self, simple_config, hooks) -> None:
@@ -200,7 +206,9 @@ class TestWebhookServerEndpoints:
         enqueue_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
         dispatch_events: list[dict[str, Any]] = []
         hooks.register(str(HookEvent.DISPATCH_RESULT), lambda **kw: dispatch_events.append(kw))
-        runner.enqueue_ingress = lambda *args, **kwargs: enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_1")  # type: ignore[method-assign]
+        runner.enqueue_ingress = lambda *args, **kwargs: (
+            enqueue_calls.append((args, kwargs)) or SimpleNamespace(task_id="task_1")
+        )  # type: ignore[method-assign]
         server._runner = runner
 
         payload = {"action": "opened", "repository": {"full_name": "org/repo"}}
@@ -220,6 +228,7 @@ class TestWebhookServerEndpoints:
 # ---------------------------------------------------------------------------
 # Signature verification
 # ---------------------------------------------------------------------------
+
 
 class TestSignatureVerification:
     def _sign(self, body: bytes, secret: str) -> str:
@@ -263,7 +272,9 @@ class TestControlEndpoints:
     def _sign(body: bytes, secret: str) -> str:
         return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
-    def test_list_tasks_requires_valid_signature(self, control_config, hooks, tmp_path: Path) -> None:
+    def test_list_tasks_requires_valid_signature(
+        self, control_config, hooks, tmp_path: Path
+    ) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         task_id, _approval_id = _seed_kernel_records(store)
         server = WebhookServer(control_config, hooks)
@@ -281,7 +292,9 @@ class TestControlEndpoints:
         assert resp.status_code == 200
         assert resp.json()["tasks"][0]["task_id"] == task_id
 
-    def test_pending_approvals_endpoint_lists_kernel_records(self, control_config, hooks, tmp_path: Path) -> None:
+    def test_pending_approvals_endpoint_lists_kernel_records(
+        self, control_config, hooks, tmp_path: Path
+    ) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         _task_id, approval_id = _seed_kernel_records(store)
         server = WebhookServer(control_config, hooks)
@@ -299,7 +312,9 @@ class TestControlEndpoints:
         assert resp.status_code == 200
         assert resp.json()["approvals"][0]["approval_id"] == approval_id
 
-    def test_proof_endpoints_return_summary_and_export(self, control_config, hooks, tmp_path: Path) -> None:
+    def test_proof_endpoints_return_summary_and_export(
+        self, control_config, hooks, tmp_path: Path
+    ) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         task_id, receipt_id = _seed_proof_records(store)
         server = WebhookServer(control_config, hooks)
@@ -326,7 +341,9 @@ class TestControlEndpoints:
         assert export.json()["proof_bundle_ref"]
         assert store.get_receipt(receipt_id).receipt_bundle_ref is not None
 
-    def test_case_and_projection_endpoints_return_operator_payload(self, control_config, hooks, tmp_path: Path) -> None:
+    def test_case_and_projection_endpoints_return_operator_payload(
+        self, control_config, hooks, tmp_path: Path
+    ) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         task_id, _receipt_id = _seed_proof_records(store)
         server = WebhookServer(control_config, hooks)
@@ -355,7 +372,9 @@ class TestControlEndpoints:
         assert rebuild_resp.status_code == 200
         assert rebuild_resp.json()["task"]["task_id"] == task_id
 
-    def test_proof_endpoints_require_valid_signature(self, control_config, hooks, tmp_path: Path) -> None:
+    def test_proof_endpoints_require_valid_signature(
+        self, control_config, hooks, tmp_path: Path
+    ) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         task_id, _receipt_id = _seed_proof_records(store)
         server = WebhookServer(control_config, hooks)
@@ -371,7 +390,9 @@ class TestControlEndpoints:
         )
         assert resp.status_code == 401
 
-    def test_approve_endpoint_uses_task_conversation(self, control_config, hooks, tmp_path: Path) -> None:
+    def test_approve_endpoint_uses_task_conversation(
+        self, control_config, hooks, tmp_path: Path
+    ) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         _task_id, approval_id = _seed_kernel_records(store)
         resolve = MagicMock(return_value=SimpleNamespace(text="approved"))
@@ -394,7 +415,9 @@ class TestControlEndpoints:
 
         assert resp.status_code == 200
         assert resp.json()["status"] == "approved"
-        resolve.assert_called_once_with("webhook-control", action="approve", approval_id=approval_id)
+        resolve.assert_called_once_with(
+            "webhook-control", action="approve", approval_id=approval_id
+        )
 
     def test_deny_endpoint_forwards_reason(self, control_config, hooks, tmp_path: Path) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
@@ -430,6 +453,7 @@ class TestControlEndpoints:
 # ---------------------------------------------------------------------------
 # Prompt template rendering
 # ---------------------------------------------------------------------------
+
 
 class TestPromptRendering:
     def test_prompt_built_from_payload(self, simple_config, hooks) -> None:
@@ -472,6 +496,7 @@ class TestPromptRendering:
 # DISPATCH_RESULT event fired after processing
 # ---------------------------------------------------------------------------
 
+
 class TestDispatchResultFired:
     def test_fires_dispatch_result_on_success(self, simple_config, hooks) -> None:
         server = _make_server(simple_config, hooks)
@@ -510,6 +535,7 @@ class TestDispatchResultFired:
 # Config loading
 # ---------------------------------------------------------------------------
 
+
 class TestLoadConfig:
     def test_empty_config_returns_defaults(self, tmp_path: Path) -> None:
         settings = MagicMock()
@@ -522,18 +548,22 @@ class TestLoadConfig:
 
     def test_loads_routes_from_json(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "webhooks.json"
-        cfg_file.write_text(json.dumps({
-            "host": "127.0.0.1",
-            "port": 9000,
-            "routes": {
-                "github": {
-                    "path": "/webhook/github",
-                    "secret": "abc",
-                    "prompt_template": "PR: {pull_request.title}",
-                    "notify": {"feishu_chat_id": "oc_x"},
+        cfg_file.write_text(
+            json.dumps(
+                {
+                    "host": "127.0.0.1",
+                    "port": 9000,
+                    "routes": {
+                        "github": {
+                            "path": "/webhook/github",
+                            "secret": "abc",
+                            "prompt_template": "PR: {pull_request.title}",
+                            "notify": {"feishu_chat_id": "oc_x"},
+                        }
+                    },
                 }
-            },
-        }))
+            )
+        )
         settings = MagicMock()
         settings.base_dir = tmp_path
         settings.webhook_host = None

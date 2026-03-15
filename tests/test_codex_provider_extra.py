@@ -1,23 +1,11 @@
 from __future__ import annotations
 
 import json
-import sys
-import types
 import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-if "hermit.kernel.permits" not in sys.modules:
-    permits_module = types.ModuleType("hermit.kernel.permits")
-
-    class ExecutionPermitService:  # pragma: no cover - test import shim
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-    permits_module.ExecutionPermitService = ExecutionPermitService
-    sys.modules["hermit.kernel.permits"] = permits_module
 
 from hermit.core.tools import ToolSpec
 from hermit.provider.contracts import ProviderEvent, ProviderRequest

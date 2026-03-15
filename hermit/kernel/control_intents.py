@@ -13,7 +13,10 @@ class ControlIntent:
 
 _APPROVE_RE = re.compile(r"^(?:/task\s+approve|批准|approve)\s+([a-z0-9_]+)$", re.IGNORECASE)
 _APPROVE_ONCE_RE = re.compile(r"^(?:批准一次|approve_once)\s+([a-z0-9_]+)$", re.IGNORECASE)
-_APPROVE_ALWAYS_DIR_RE = re.compile(r"^(?:始终允许此目录|approve_always_directory)\s+([a-z0-9_]+)$", re.IGNORECASE)
+_APPROVE_MUTABLE_WORKSPACE_RE = re.compile(
+    r"^(?:批准可变工作区|approve_mutable_workspace|approve-mutable-workspace)\s+([a-z0-9_]+)$",
+    re.IGNORECASE,
+)
 _DENY_RE = re.compile(r"^(?:/task\s+deny|拒绝|deny)\s+([a-z0-9_]+)(?:\s+(.+))?$", re.IGNORECASE)
 
 _TASK_CASE_RE = re.compile(
@@ -45,7 +48,7 @@ _ROLLBACK_WITH_ID_RE = re.compile(
     re.IGNORECASE,
 )
 _TASK_GRANT_REVOKE_RE = re.compile(
-    r"^(?:撤销授权|撤销grant|revoke\s+grant)\s+([a-z0-9_]+)$",
+    r"^(?:撤销能力授权|撤销授权|撤销capability|revoke\s+capability)\s+([a-z0-9_]+)$",
     re.IGNORECASE,
 )
 _SCHEDULE_HISTORY_RE = re.compile(
@@ -161,9 +164,10 @@ _LOWER_ROLLBACK_LATEST_TEXTS = {
 }
 _LOWER_GRANT_LIST_TEXTS = {
     "查看授权",
-    "授权列表",
-    "查看grant",
-    "grant列表",
+    "查看能力授权",
+    "能力授权列表",
+    "查看capability",
+    "capability列表",
 }
 _LOWER_SCHEDULE_LIST_TEXTS = {
     "定时任务列表",
@@ -172,7 +176,16 @@ _LOWER_SCHEDULE_LIST_TEXTS = {
     "查看调度",
     "schedule list",
 }
-_PENDING_APPROVE_TEXT = {"开始执行", "执行吧", "确认执行", "继续执行", "approve", "通过", "批准", "同意"}
+_PENDING_APPROVE_TEXT = {
+    "开始执行",
+    "执行吧",
+    "确认执行",
+    "继续执行",
+    "approve",
+    "通过",
+    "批准",
+    "同意",
+}
 
 
 def parse_control_intent(
@@ -193,9 +206,9 @@ def parse_control_intent(
     match = _APPROVE_ONCE_RE.match(stripped)
     if match:
         return ControlIntent("approve_once", match.group(1))
-    match = _APPROVE_ALWAYS_DIR_RE.match(stripped)
+    match = _APPROVE_MUTABLE_WORKSPACE_RE.match(stripped)
     if match:
-        return ControlIntent("approve_always_directory", match.group(1))
+        return ControlIntent("approve_mutable_workspace", match.group(1))
     match = _DENY_RE.match(stripped)
     if match:
         return ControlIntent("deny", match.group(1), match.group(2) or "")
@@ -259,10 +272,10 @@ def parse_control_intent(
         return ControlIntent("rollback", latest_receipt_id)
 
     if lowered in _LOWER_GRANT_LIST_TEXTS:
-        return ControlIntent("grant_list")
+        return ControlIntent("capability_list")
     match = _TASK_GRANT_REVOKE_RE.match(stripped)
     if match:
-        return ControlIntent("grant_revoke", match.group(1))
+        return ControlIntent("capability_revoke", match.group(1))
 
     if lowered in _LOWER_SCHEDULE_LIST_TEXTS:
         return ControlIntent("schedule_list")
@@ -279,7 +292,16 @@ def parse_control_intent(
     if match:
         return ControlIntent("schedule_remove", match.group(1))
 
-    if lowered in {"重建这个任务的projection", "重建当前任务projection", "重建这个任务投影", "重建当前任务投影"} and latest_task_id:
+    if (
+        lowered
+        in {
+            "重建这个任务的projection",
+            "重建当前任务projection",
+            "重建这个任务投影",
+            "重建当前任务投影",
+        }
+        and latest_task_id
+    ):
         return ControlIntent("projection_rebuild", latest_task_id)
     if lowered in {"重建所有projection", "重建所有投影"}:
         return ControlIntent("projection_rebuild_all")

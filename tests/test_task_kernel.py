@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from hermit.builtin.scheduler.models import JobExecutionRecord, ScheduledJob
+from hermit.capabilities import CapabilityGrantError
 from hermit.core.runner import AgentRunner
 from hermit.core.session import Session, SessionManager
 from hermit.core.tools import ToolRegistry, ToolSpec
@@ -23,7 +24,6 @@ from hermit.kernel.contracts import known_action_classes
 from hermit.kernel.controller import TaskController
 from hermit.kernel.dispatch import KernelDispatchService
 from hermit.kernel.executor import ToolExecutor
-from hermit.kernel.permits import CapabilityGrantError
 from hermit.kernel.policy import PolicyEngine
 from hermit.kernel.policy.models import ActionRequest
 from hermit.kernel.progress_summary import ProgressSummary
@@ -904,8 +904,8 @@ def test_task_controller_prefers_latest_pending_approval_for_natural_language(
         "",
     )
     assert controller.resolve_text_command(
-        "chat-approval", f"始终允许此目录 {approval.approval_id}"
-    ) == ("approve_always_directory", approval.approval_id, "")
+        "chat-approval", f"批准可变工作区 {approval.approval_id}"
+    ) == ("approve_mutable_workspace", approval.approval_id, "")
 
 
 def test_task_controller_resolves_natural_language_case_and_rollback(tmp_path: Path) -> None:
@@ -931,16 +931,21 @@ def test_task_controller_resolves_natural_language_case_and_rollback(tmp_path: P
 def test_task_controller_resolves_other_natural_language_commands(tmp_path: Path) -> None:
     store, _artifacts, controller, executor, ctx = _kernel_runtime(tmp_path)
     executor.execute(ctx, "write_file", {"path": "nl-more.txt", "content": "hello\n"})
-    grant = store.create_path_grant(
-        subject_kind="conversation",
-        subject_ref="chat-kernel",
-        action_class="write_local",
-        path_prefix=str((tmp_path / "workspace").resolve()),
-        path_display="workspace",
-        created_by="user",
+    grant = store.create_capability_grant(
+        task_id=ctx.task_id,
+        step_id=ctx.step_id,
+        step_attempt_id=ctx.step_attempt_id,
+        decision_ref="decision_nl",
         approval_ref=None,
-        decision_ref=None,
         policy_ref=None,
+        issued_to_principal_id="user",
+        issued_by_principal_id="kernel",
+        workspace_lease_ref=None,
+        action_class="write_local",
+        resource_scope=[str((tmp_path / "workspace").resolve())],
+        constraints={"target_paths": [str((tmp_path / "workspace").resolve())]},
+        idempotency_key="nl-grant",
+        expires_at=None,
     )
     job = ScheduledJob.create(
         name="Daily", prompt="run", schedule_type="interval", interval_seconds=60
@@ -980,9 +985,9 @@ def test_task_controller_resolves_other_natural_language_commands(tmp_path: Path
         ctx.task_id,
         "",
     )
-    assert controller.resolve_text_command("chat-kernel", "查看授权") == ("grant_list", "", "")
+    assert controller.resolve_text_command("chat-kernel", "查看授权") == ("capability_list", "", "")
     assert controller.resolve_text_command("chat-kernel", f"撤销授权 {grant.grant_id}") == (
-        "grant_revoke",
+        "capability_revoke",
         grant.grant_id,
         "",
     )
@@ -1083,16 +1088,16 @@ def test_tool_executor_executes_previewed_workspace_write_without_approval_and_i
     assert receipt.approval_ref is None
     assert receipt.action_type == "write_local"
     assert receipt.decision_ref == executed.decision_id
-    assert receipt.permit_ref == executed.permit_id
+    assert receipt.capability_grant_ref == executed.capability_grant_id
     assert receipt.policy_ref == executed.policy_ref
     assert receipt.result_code == "succeeded"
     assert len(receipt.input_refs) == 1
     assert len(receipt.output_refs) == 1
     assert receipt.environment_ref is not None
     decision = store.get_decision(executed.decision_id or "")
-    permit = store.get_execution_permit(executed.permit_id or "")
+    grant = store.get_capability_grant(executed.capability_grant_id or "")
     assert decision is not None and decision.verdict == "allow"
-    assert permit is not None and permit.status == "consumed"
+    assert grant is not None and grant.status == "consumed"
     assert receipt.receipt_bundle_ref is not None
     assert receipt.proof_mode == "hash_chained"
     bundle_artifact = store.get_artifact(receipt.receipt_bundle_ref)
@@ -1200,7 +1205,7 @@ def test_tool_executor_enforces_permit_before_dispatch(
             "scope_mismatch", "Capability grant no longer covers this write."
         )
 
-    monkeypatch.setattr(executor.permit_service, "enforce", _raise_denied)
+    monkeypatch.setattr(executor.capability_service, "enforce", _raise_denied)
 
     result = executor.execute(
         ctx,
@@ -1215,18 +1220,18 @@ def test_tool_executor_enforces_permit_before_dispatch(
 
     attempt = store.get_step_attempt(ctx.step_attempt_id)
     task = store.get_task(ctx.task_id)
-    permit = store.get_execution_permit(result.permit_id or "")
+    grant = store.get_capability_grant(result.capability_grant_id or "")
     receipt = store.get_receipt(result.receipt_id or "")
     projection = store.build_task_projection(ctx.task_id)
 
     assert attempt is not None and attempt.status == "failed"
     assert task is not None and task.status == "failed"
-    assert permit is not None and permit.status == "issued"
+    assert grant is not None and grant.status == "issued"
     assert receipt is not None and receipt.result_code == "dispatch_denied"
     assert any(
         event["event_type"] == "dispatch.denied" for event in store.list_events(task_id=ctx.task_id)
     )
-    assert projection["permits"][result.permit_id]["status"] == "issued"
+    assert projection["capability_grants"][result.capability_grant_id]["status"] == "issued"
     assert projection["receipts"][result.receipt_id]["result_code"] == "dispatch_denied"
 
 
@@ -1516,12 +1521,14 @@ def test_tool_executor_workspace_external_write_approve_once_requires_reapproval
     )
 
     assert approved.blocked is False
-    assert approved.grant_ref is None
+    assert approved.capability_grant_id is not None
+    assert approved.workspace_lease_id is not None
     assert target.read_text(encoding="utf-8") == "one\n"
 
     receipt = store.list_receipts(task_id=ctx.task_id, limit=10)[0]
     assert receipt.approval_ref == blocked.approval_id
-    assert receipt.grant_ref is None
+    assert receipt.capability_grant_ref == approved.capability_grant_id
+    assert receipt.workspace_lease_ref == approved.workspace_lease_id
     assert "one-time approval" in receipt.result_summary
 
     blocked_again = executor.execute(
@@ -1535,7 +1542,7 @@ def test_tool_executor_workspace_external_write_approve_once_requires_reapproval
     assert blocked_again.approval_id != blocked.approval_id
 
 
-def test_tool_executor_workspace_external_write_always_directory_creates_grant(
+def test_tool_executor_workspace_external_write_mutable_workspace_creates_lease(
     tmp_path: Path,
 ) -> None:
     store, _artifacts, _controller, executor, ctx = _kernel_runtime(tmp_path)
@@ -1553,7 +1560,7 @@ def test_tool_executor_workspace_external_write_always_directory_creates_grant(
     assert blocked.blocked is True
     assert blocked.approval_id is not None
 
-    ApprovalService(store).approve_always_directory(blocked.approval_id)
+    ApprovalService(store).approve_mutable_workspace(blocked.approval_id)
     approved = executor.execute(
         ctx,
         "write_file",
@@ -1561,37 +1568,34 @@ def test_tool_executor_workspace_external_write_always_directory_creates_grant(
     )
 
     assert approved.blocked is False
-    assert approved.grant_ref is not None
+    assert approved.workspace_lease_id is not None
+    assert approved.capability_grant_id is not None
     assert first_target.read_text(encoding="utf-8") == "sunny\n"
 
-    grants = store.list_path_grants(
-        subject_kind="conversation",
-        subject_ref=ctx.conversation_id,
+    leases = store.list_workspace_leases(
+        step_attempt_id=ctx.step_attempt_id,
         status="active",
-        action_class="write_local",
         limit=10,
     )
-    assert len(grants) == 1
-    assert grants[0].grant_id == approved.grant_ref
-    assert grants[0].path_prefix == str(outside_dir.resolve())
+    assert len(leases) == 1
+    assert leases[0].lease_id == approved.workspace_lease_id
+    assert leases[0].root_path == str(outside_dir.resolve())
 
-    auto_allowed = executor.execute(
+    blocked_again = executor.execute(
         ctx,
         "write_file",
         {"path": str(second_target), "content": "memo\n"},
     )
 
-    assert auto_allowed.blocked is False
-    assert auto_allowed.approval_id is None
-    assert auto_allowed.grant_ref == approved.grant_ref
-    assert second_target.read_text(encoding="utf-8") == "memo\n"
+    assert blocked_again.blocked is True
+    assert blocked_again.approval_id is not None
 
     receipts = store.list_receipts(task_id=ctx.task_id, limit=10)
-    assert receipts[0].grant_ref == approved.grant_ref
-    assert "existing directory grant" in receipts[0].result_summary
+    assert receipts[0].workspace_lease_ref == approved.workspace_lease_id
+    assert receipts[0].capability_grant_ref == approved.capability_grant_id
     events = store.list_events(limit=100)
-    assert any(event["event_type"] == "grant.created" for event in events)
-    assert any(event["event_type"] == "grant.used" for event in events)
+    assert any(event["event_type"] == "workspace_lease.acquired" for event in events)
+    assert any(event["event_type"] == "capability_grant.issued" for event in events)
 
 
 def test_policy_engine_denies_dangerous_shell_and_approves_git_push(tmp_path: Path) -> None:
@@ -1928,6 +1932,13 @@ def test_observation_progress_events_are_deduped_and_ready_return_resumes_attemp
 
     assert blocked.suspended is True
     assert blocked.waiting_kind == "observing"
+    attempt = store.get_step_attempt(ctx.step_attempt_id)
+    assert attempt is not None
+    assert attempt.pending_execution_ref is not None
+    stripped_context = dict(attempt.context)
+    stripped_context.pop("runtime_snapshot", None)
+    stripped_context.pop("pending_observation_execution", None)
+    store.update_step_attempt(ctx.step_attempt_id, context=stripped_context)
 
     first_poll = executor.poll_observation(ctx.step_attempt_id, now=time.time())
     second_poll = executor.poll_observation(ctx.step_attempt_id, now=time.time())
@@ -1962,6 +1973,7 @@ def test_observation_progress_events_are_deduped_and_ready_return_resumes_attemp
     attempt = store.get_step_attempt(ctx.step_attempt_id)
     assert attempt is not None
     assert "runtime_snapshot" not in attempt.context
+    assert attempt.pending_execution_ref is None
 
 
 def test_task_topic_projection_prefers_progress_milestones() -> None:
@@ -2183,13 +2195,13 @@ def test_executor_marks_unknown_outcome_and_reconciles_local_write(tmp_path: Pat
     assert "[Execution Requires Attention]" in str(result.model_content)
     assert (workspace / "maybe.txt").read_text(encoding="utf-8") == "hello\n"
     attempt = store.get_step_attempt(ctx.step_attempt_id)
-    permit = store.get_execution_permit(result.permit_id or "")
+    grant = store.get_capability_grant(result.capability_grant_id or "")
     receipt = store.list_receipts(task_id=ctx.task_id, limit=1)[0]
     assert attempt is not None and attempt.status == "reconciling"
     assert store.get_task(ctx.task_id).status == "reconciling"
-    assert permit is not None and permit.status == "uncertain"
+    assert grant is not None and grant.status == "uncertain"
     assert receipt.result_code == "reconciled_applied"
-    assert receipt.permit_ref == result.permit_id
+    assert receipt.capability_grant_ref == result.capability_grant_id
     assert any(
         event["event_type"] == "outcome.uncertain"
         for event in store.list_events(task_id=ctx.task_id)
@@ -2648,16 +2660,21 @@ def test_runner_approve_resumes_attempt_and_finalizes_task(tmp_path: Path) -> No
 def test_runner_dispatches_natural_language_case_and_rollback_without_slash(tmp_path: Path) -> None:
     store, artifacts, controller, executor, ctx = _kernel_runtime(tmp_path)
     executor.execute(ctx, "write_file", {"path": "runner-nl.txt", "content": "after\n"})
-    grant = store.create_path_grant(
-        subject_kind="conversation",
-        subject_ref="chat-kernel",
-        action_class="write_local",
-        path_prefix=str((tmp_path / "workspace").resolve()),
-        path_display="workspace",
-        created_by="user",
+    grant = store.create_capability_grant(
+        task_id=ctx.task_id,
+        step_id=ctx.step_id,
+        step_attempt_id=ctx.step_attempt_id,
+        decision_ref="decision_runner",
         approval_ref=None,
-        decision_ref=None,
         policy_ref=None,
+        issued_to_principal_id="user",
+        issued_by_principal_id="kernel",
+        workspace_lease_ref=None,
+        action_class="write_local",
+        resource_scope=[str((tmp_path / "workspace").resolve())],
+        constraints={"target_paths": [str((tmp_path / "workspace").resolve())]},
+        idempotency_key="runner-grant",
+        expires_at=None,
     )
     job = ScheduledJob.create(
         name="RunnerJob", prompt="run", schedule_type="interval", interval_seconds=60
@@ -2711,10 +2728,8 @@ def test_runner_dispatches_natural_language_case_and_rollback_without_slash(tmp_
         proof_result.is_command is True
         and json.loads(proof_result.text)["task"]["task_id"] == ctx.task_id
     )
-    assert (
-        grant_result.is_command is True
-        and json.loads(grant_result.text)[0]["grant_id"] == grant.grant_id
-    )
+    assert grant_result.is_command is True
+    assert any(item["grant_id"] == grant.grant_id for item in json.loads(grant_result.text))
     assert (
         schedule_result.is_command is True and json.loads(schedule_result.text)[0]["id"] == job.id
     )
@@ -2726,7 +2741,10 @@ def test_runner_dispatches_natural_language_case_and_rollback_without_slash(tmp_
         schedule_disable_result.is_command is True
         and "Disabled task" in schedule_disable_result.text
     )
-    assert grant_revoke_result.is_command is True and "Revoked grant" in grant_revoke_result.text
+    assert (
+        grant_revoke_result.is_command is True
+        and "Revoked capability grant" in grant_revoke_result.text
+    )
 
 
 def test_rollback_service_restores_local_write_from_prestate(tmp_path: Path) -> None:
@@ -2772,10 +2790,10 @@ def test_executor_and_rollback_localize_core_copy(monkeypatch, tmp_path: Path) -
         {"path": "localized.txt", "content": "after\n"},
     )
     auth_reason = executor._authorization_reason(  # type: ignore[attr-defined]
-        policy=SimpleNamespace(reason=""), approval_mode="once", grant_id=None
+        policy=SimpleNamespace(reason=""), approval_mode="once"
     )
     success_summary = executor._successful_result_summary(  # type: ignore[attr-defined]
-        tool_name="write_file", approval_mode="once", grant_id=None
+        tool_name="write_file", approval_mode="once"
     )
 
     result = executor.execute(

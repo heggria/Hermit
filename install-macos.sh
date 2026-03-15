@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMP_DIR=""
 ENV_FILE="$HOME/.hermit/.env"
 WHEEL_DIR=""
+CLEAN_SCRIPT=""
 
 cleanup() {
   if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
@@ -34,6 +35,14 @@ else
   git clone --depth 1 --branch "$REPO_REF" https://github.com/heggria/Hermit.git "$REPO_DIR" >/dev/null
 fi
 
+CLEAN_SCRIPT="$REPO_DIR/scripts/clean_build_artifacts.py"
+
+clean_local_build_artifacts() {
+  if [[ -f "$CLEAN_SCRIPT" ]]; then
+    python3 "$CLEAN_SCRIPT" "$REPO_DIR" >/dev/null
+  fi
+}
+
 if ! command -v uv >/dev/null 2>&1; then
   echo "-> Installing uv..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -43,6 +52,7 @@ fi
 echo "-> Installing Hermit..."
 # Console scripts resolve Hermit from the tool environment, so local installs
 # still need a real reinstall into site-packages instead of editable mode.
+clean_local_build_artifacts
 uv tool install --python 3.11 --force --reinstall --refresh --no-cache "$REPO_DIR[macos]" -q
 
 UV_BIN="$(uv tool dir 2>/dev/null || echo "$HOME/.local/bin")"
@@ -61,6 +71,7 @@ if [[ -x "$TOOL_PY" ]]; then
   mkdir -p "$WHEEL_DIR"
   (
     cd "$REPO_DIR"
+    clean_local_build_artifacts
     uv build --wheel --no-sources --out-dir "$WHEEL_DIR" >/dev/null
   )
   WHEEL_PATH="$(find "$WHEEL_DIR" -maxdepth 1 -name 'hermit_agent-*.whl' | head -n 1)"

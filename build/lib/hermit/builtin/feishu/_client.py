@@ -1,4 +1,5 @@
 """Shared Feishu lark-oapi client factory."""
+
 from __future__ import annotations
 
 import os
@@ -8,8 +9,7 @@ from typing import Any
 def build_lark_client(settings: object | None = None) -> Any:
     """Build a lark-oapi Client from settings or environment variables.
 
-    Reads HERMIT_FEISHU_APP_ID / HERMIT_FEISHU_APP_SECRET (with
-    legacy FEISHU_APP_ID / FEISHU_APP_SECRET as fallbacks).
+    Reads HERMIT_FEISHU_APP_ID / HERMIT_FEISHU_APP_SECRET.
 
     Raises RuntimeError if credentials are not configured.
     """
@@ -22,12 +22,11 @@ def build_lark_client(settings: object | None = None) -> Any:
             settings = None
 
     app_id = str(
-        getattr(settings, "feishu_app_id", None)
-        or os.environ.get("HERMIT_FEISHU_APP_ID", os.environ.get("FEISHU_APP_ID", ""))
+        getattr(settings, "feishu_app_id", None) or os.environ.get("HERMIT_FEISHU_APP_ID", "")
     )
     app_secret = str(
         getattr(settings, "feishu_app_secret", None)
-        or os.environ.get("HERMIT_FEISHU_APP_SECRET", os.environ.get("FEISHU_APP_SECRET", ""))
+        or os.environ.get("HERMIT_FEISHU_APP_SECRET", "")
     )
     if not app_id or not app_secret:
         raise RuntimeError(

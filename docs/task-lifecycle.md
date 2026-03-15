@@ -19,7 +19,7 @@ Ingress / operator action
    StepAttempt
         |
         v
-Policy / Decision / Approval / Permit
+Policy / Decision / Approval / WorkspaceLease / CapabilityGrant
         |
         v
     Execution
@@ -80,7 +80,8 @@ This is one of Hermit's most important differentiators. Recoverable work does no
 - waiting reason
 - approval linkage
 - decision linkage
-- permit linkage
+- capability grant linkage
+- workspace lease linkage
 - state witness references
 
 That gives the system better semantics for pause, resume, supersession, and retry.
@@ -92,8 +93,8 @@ When a step attempt reaches consequential execution, the kernel can route it thr
 - policy evaluation
 - decision recording
 - approval handling
-- scoped permit issuance
-- path grant enforcement
+- workspace lease issuance
+- scoped capability grant issuance
 
 This is where the task lifecycle becomes governed execution rather than direct model-to-tool dispatch.
 
@@ -119,7 +120,7 @@ For important actions, that means a receipt tying together:
 - input and output references
 - policy result
 - approval and decision references
-- permit or grant references
+- capability grant and workspace lease references
 - result code
 - rollback relationship when supported
 

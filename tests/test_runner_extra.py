@@ -288,10 +288,10 @@ def test_runner_resolve_approval_handles_missing_deny_and_approve_paths() -> Non
         execution_status="failed",
     )
     approved = runner._resolve_approval(
-        "session", action="approve_always_directory", approval_id="approval-1"
+        "session", action="approve_mutable_workspace", approval_id="approval-1"
     )
     assert approved.text == "approved"
-    assert controller.store.resolved[-1]["resolution"]["mode"] == "always_directory"
+    assert controller.store.resolved[-1]["resolution"]["mode"] == "mutable_workspace"
     assert controller.finalized[-1][1] == "failed"
     assert controller.finalized[-1][2] == "approved"
     assert controller.finalized[-1][3] == "approved"

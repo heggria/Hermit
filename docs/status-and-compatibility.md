@@ -19,7 +19,7 @@ That means:
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Task ledger and core records | shipped | task, step, step attempt, approval, decision, permit, grant, artifact, receipt, belief, memory, rollback, conversation, ingress |
+| Task ledger and core records | shipped | task, step, step attempt, approval, decision, principal, capability grant, workspace lease, artifact, receipt, belief, memory, rollback, conversation, ingress |
 | Governed execution | shipped | policy, approval, and scoped authority are already real in the codebase |
 | Proof summaries and proof export | shipped | usable today through the task CLI |
 | Rollback | shipped with scoped coverage | supported for governed receipt classes; not every historical action type has a rollback strategy |

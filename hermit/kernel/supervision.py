@@ -24,15 +24,14 @@ class SupervisionService:
         claims = cached.get("claims") or task_claim_status(self.store, task_id, proof_summary=proof)
         latest_receipt = proof.get("latest_receipt")
         latest_decision = proof.get("latest_decision")
-        latest_permit = proof.get("latest_permit")
+        latest_capability_grant = proof.get("latest_capability_grant")
+        latest_workspace_lease = proof.get("latest_workspace_lease")
         approvals = list(cached["projection"]["approvals"].values())
         approvals.sort(key=lambda item: float(item.get("last_event_at") or 0), reverse=True)
         latest_approval = approvals[0] if approvals else None
-        latest_grant = None
-        if latest_receipt and latest_receipt.get("grant_ref"):
-            grant = self.store.get_path_grant(str(latest_receipt["grant_ref"]))
-            latest_grant = grant.__dict__ if grant is not None else None
-        target_paths = list((latest_permit or {}).get("constraints", {}).get("target_paths", []))
+        target_paths = list(
+            (latest_capability_grant or {}).get("constraints", {}).get("target_paths", [])
+        )
         latest_memory = cached["knowledge"][0] if cached["knowledge"] else None
         reentry = self._reentry_observability(task_id)
         rollback = None
@@ -48,7 +47,8 @@ class SupervisionService:
                 "step_attempt_count": len(cached["projection"]["step_attempts"]),
                 "approval_count": len(cached["projection"]["approvals"]),
                 "decision_count": len(cached["projection"]["decisions"]),
-                "permit_count": len(cached["projection"]["permits"]),
+                "capability_grant_count": len(cached["projection"]["capability_grants"]),
+                "workspace_lease_count": len(cached["projection"]["workspace_leases"]),
                 "receipt_count": len(cached["projection"]["receipts"]),
                 "belief_count": len(cached["projection"]["beliefs"]),
                 "memory_count": len(cached["projection"]["memory_records"]),
@@ -58,8 +58,8 @@ class SupervisionService:
                 "evidence_refs": list((latest_decision or {}).get("evidence_refs", [])),
                 "approval": latest_approval,
                 "authority": {
-                    "permit": latest_permit,
-                    "grant": latest_grant,
+                    "capability_grant": latest_capability_grant,
+                    "workspace_lease": latest_workspace_lease,
                     "target_paths": target_paths,
                     "rollback_available": bool((latest_receipt or {}).get("rollback_supported")),
                     "rollback_strategy": (latest_receipt or {}).get("rollback_strategy"),
@@ -162,7 +162,7 @@ class SupervisionService:
             "resolution": ingress.resolution,
             "chosen_task_id": ingress.chosen_task_id,
             "parent_task_id": ingress.parent_task_id,
-            "actor": ingress.actor,
+            "actor_principal_id": ingress.actor_principal_id,
             "source_channel": ingress.source_channel,
             "raw_excerpt": self._trim(str(ingress.raw_text or ""), 240),
             "reply_to_ref": ingress.reply_to_ref,

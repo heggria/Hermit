@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import time
+from pathlib import Path
 from typing import Any
 
+from hermit.capabilities.models import CapabilityGrantRecord
+from hermit.identity.models import PrincipalRecord
 from hermit.kernel.models import (
     ApprovalRecord,
     ArtifactRecord,
     BeliefRecord,
     DecisionRecord,
-    ExecutionPermitRecord,
     MemoryRecord,
-    PathGrantRecord,
     ReceiptRecord,
     RollbackRecord,
 )
 from hermit.kernel.store_support import _UNSET
+from hermit.workspaces.models import WorkspaceLeaseRecord
 
 
 class KernelLedgerStoreMixin:
@@ -31,16 +34,29 @@ class KernelLedgerStoreMixin:
         retention_class: str = "default",
         trust_tier: str = "observed",
         metadata: dict[str, Any] | None = None,
+        artifact_class: str | None = None,
+        media_type: str | None = None,
+        byte_size: int | None = None,
+        sensitivity_class: str | None = None,
+        lineage_ref: str | None = None,
     ) -> ArtifactRecord:
         artifact_id = self._id("artifact")
         created_at = time.time()
+        artifact_class_value = artifact_class or self._artifact_class_for_kind(kind)
+        media_type_value = media_type or self._artifact_media_type(kind=kind, uri=uri)
+        byte_size_value = byte_size if byte_size is not None else self._artifact_byte_size(uri)
+        sensitivity_class_value = sensitivity_class or self._artifact_sensitivity(retention_class)
+        lineage_ref_value = (
+            lineage_ref or str((metadata or {}).get("lineage_ref", "") or "") or None
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO artifacts (
                     artifact_id, task_id, step_id, kind, uri, content_hash, producer,
-                    retention_class, trust_tier, metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    retention_class, trust_tier, artifact_class, media_type, byte_size,
+                    sensitivity_class, lineage_ref, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     artifact_id,
@@ -52,6 +68,11 @@ class KernelLedgerStoreMixin:
                     producer,
                     retention_class,
                     trust_tier,
+                    artifact_class_value,
+                    media_type_value,
+                    byte_size_value,
+                    sensitivity_class_value,
+                    lineage_ref_value,
                     json.dumps(metadata or {}, ensure_ascii=False),
                     created_at,
                 ),
@@ -66,6 +87,11 @@ class KernelLedgerStoreMixin:
             producer=producer,
             retention_class=retention_class,
             trust_tier=trust_tier,
+            artifact_class=artifact_class_value,
+            media_type=media_type_value,
+            byte_size=byte_size_value,
+            sensitivity_class=sensitivity_class_value,
+            lineage_ref=lineage_ref_value,
             metadata=metadata or {},
             created_at=created_at,
         )
@@ -88,6 +114,57 @@ class KernelLedgerStoreMixin:
             rows = self._rows(query, params)
         return [self._artifact_from_row(row) for row in rows]
 
+    @staticmethod
+    def _artifact_class_for_kind(kind: str) -> str:
+        prefix = str(kind or "").split("/", 1)[0]
+        return prefix.replace(".", "_") or "artifact"
+
+    @staticmethod
+    def _artifact_media_type(*, kind: str, uri: str) -> str | None:
+        guessed, _encoding = mimetypes.guess_type(uri)
+        if guessed:
+            return guessed
+        if str(kind).startswith("context.pack/"):
+            return "application/json"
+        if kind in {"action_request", "policy_evaluation", "environment", "environment.snapshot"}:
+            return "application/json"
+        if kind in {"approval_packet", "receipt.bundle", "context.manifest"}:
+            return "application/json"
+        if kind.startswith("runtime."):
+            return "application/json"
+        return None
+
+    @staticmethod
+    def _artifact_byte_size(uri: str) -> int | None:
+        try:
+            return Path(uri).expanduser().stat().st_size
+        except OSError:
+            return None
+
+    @staticmethod
+    def _artifact_sensitivity(retention_class: str) -> str:
+        if retention_class in {"audit", "task"}:
+            return "operator_internal"
+        return "default"
+
+    def get_principal(self, principal_id: str) -> PrincipalRecord | None:
+        with self._lock:
+            row = self._row("SELECT * FROM principals WHERE principal_id = ?", (principal_id,))
+        return self._principal_from_row(row) if row is not None else None
+
+    def list_principals(
+        self, *, status: str | None = None, limit: int = 100
+    ) -> list[PrincipalRecord]:
+        if status:
+            query = "SELECT * FROM principals WHERE status = ? ORDER BY updated_at DESC LIMIT ?"
+            params: tuple[Any, ...] = (status, limit)
+        else:
+            query = "SELECT * FROM principals ORDER BY updated_at DESC LIMIT ?"
+            params = (limit,)
+        with self._lock:
+            rows = self._rows(query, params)
+        return [self._principal_from_row(row) for row in rows]
+
     def create_decision(
         self,
         *,
@@ -101,22 +178,33 @@ class KernelLedgerStoreMixin:
         policy_ref: str | None = None,
         approval_ref: str | None = None,
         action_type: str | None = None,
+        summary: str | None = None,
+        rationale: str | None = None,
+        risk_level: str | None = None,
+        reversible: bool | None = None,
         decided_by: str = "kernel",
     ) -> DecisionRecord:
         decision_id = self._id("decision")
         created_at = time.time()
+        decided_by_principal_id = self._ensure_principal_id(decided_by)
+        rationale_text = str(rationale or reason or "").strip()
+        summary_text = str(summary or rationale_text or reason or "").strip()
         payload = {
             "task_id": task_id,
             "step_id": step_id,
             "step_attempt_id": step_attempt_id,
             "decision_type": decision_type,
             "verdict": verdict,
-            "reason": reason,
+            "reason": rationale_text,
+            "summary": summary_text,
+            "rationale": rationale_text,
             "evidence_refs": list(evidence_refs or []),
             "policy_ref": policy_ref,
             "approval_ref": approval_ref,
             "action_type": action_type,
-            "decided_by": decided_by,
+            "risk_level": risk_level,
+            "reversible": reversible,
+            "decided_by_principal_id": decided_by_principal_id,
             "created_at": created_at,
         }
         with self._lock, self._conn:
@@ -124,8 +212,9 @@ class KernelLedgerStoreMixin:
                 """
                 INSERT INTO decisions (
                     decision_id, task_id, step_id, step_attempt_id, decision_type, verdict, reason,
-                    evidence_refs_json, policy_ref, approval_ref, action_type, decided_by, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    summary, rationale, evidence_refs_json, policy_ref, approval_ref, action_type,
+                    risk_level, reversible, decided_by_principal_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     decision_id,
@@ -134,12 +223,16 @@ class KernelLedgerStoreMixin:
                     step_attempt_id,
                     decision_type,
                     verdict,
-                    reason,
+                    rationale_text,
+                    summary_text,
+                    rationale_text,
                     json.dumps(list(evidence_refs or []), ensure_ascii=False),
                     policy_ref,
                     approval_ref,
                     action_type,
-                    decided_by,
+                    risk_level,
+                    None if reversible is None else int(bool(reversible)),
+                    decided_by_principal_id,
                     created_at,
                 ),
             )
@@ -175,7 +268,7 @@ class KernelLedgerStoreMixin:
             rows = self._rows(query, params)
         return [self._decision_from_row(row) for row in rows]
 
-    def create_execution_permit(
+    def create_capability_grant(
         self,
         *,
         task_id: str,
@@ -184,15 +277,20 @@ class KernelLedgerStoreMixin:
         decision_ref: str,
         approval_ref: str | None,
         policy_ref: str | None,
+        issued_to_principal_id: str | None = None,
+        issued_by_principal_id: str | None = None,
+        workspace_lease_ref: str | None = None,
         action_class: str,
         resource_scope: list[str],
         constraints: dict[str, Any] | None,
         idempotency_key: str | None,
         expires_at: float | None,
         status: str = "issued",
-    ) -> ExecutionPermitRecord:
-        permit_id = self._id("permit")
+    ) -> CapabilityGrantRecord:
+        grant_id = self._id("grant")
         issued_at = time.time()
+        issued_to = self._ensure_principal_id(issued_to_principal_id or "kernel")
+        issued_by = self._ensure_principal_id(issued_by_principal_id or "kernel")
         payload = {
             "task_id": task_id,
             "step_id": step_id,
@@ -200,6 +298,9 @@ class KernelLedgerStoreMixin:
             "decision_ref": decision_ref,
             "approval_ref": approval_ref,
             "policy_ref": policy_ref,
+            "issued_to_principal_id": issued_to,
+            "issued_by_principal_id": issued_by,
+            "workspace_lease_ref": workspace_lease_ref,
             "action_class": action_class,
             "resource_scope": list(resource_scope),
             "constraints": dict(constraints or {}),
@@ -207,23 +308,30 @@ class KernelLedgerStoreMixin:
             "status": status,
             "issued_at": issued_at,
             "expires_at": expires_at,
+            "consumed_at": None,
+            "revoked_at": None,
         }
         with self._lock, self._conn:
             self._conn.execute(
                 """
-                INSERT INTO execution_permits (
-                    permit_id, task_id, step_id, step_attempt_id, decision_ref, approval_ref, policy_ref,
-                    action_class, resource_scope_json, constraints_json, idempotency_key, status, issued_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO capability_grants (
+                    grant_id, task_id, step_id, step_attempt_id, decision_ref, approval_ref, policy_ref,
+                    issued_to_principal_id, issued_by_principal_id, workspace_lease_ref,
+                    action_class, resource_scope_json, constraints_json, idempotency_key,
+                    status, issued_at, expires_at, consumed_at, revoked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 (
-                    permit_id,
+                    grant_id,
                     task_id,
                     step_id,
                     step_attempt_id,
                     decision_ref,
                     approval_ref,
                     policy_ref,
+                    issued_to,
+                    issued_by,
+                    workspace_lease_ref,
                     action_class,
                     json.dumps(list(resource_scope), ensure_ascii=False),
                     json.dumps(dict(constraints or {}), ensure_ascii=False),
@@ -235,253 +343,239 @@ class KernelLedgerStoreMixin:
             )
             self._append_event_tx(
                 event_id=self._id("event"),
-                event_type="permit.issued",
-                entity_type="execution_permit",
-                entity_id=permit_id,
+                event_type="capability_grant.issued",
+                entity_type="capability_grant",
+                entity_id=grant_id,
                 task_id=task_id,
                 step_id=step_id,
-                actor="kernel",
+                actor=issued_by,
                 payload=payload,
             )
-        permit = self.get_execution_permit(permit_id)
-        assert permit is not None
-        return permit
+        grant = self.get_capability_grant(grant_id)
+        assert grant is not None
+        return grant
 
-    def get_execution_permit(self, permit_id: str) -> ExecutionPermitRecord | None:
+    def get_capability_grant(self, grant_id: str) -> CapabilityGrantRecord | None:
         with self._lock:
-            row = self._row("SELECT * FROM execution_permits WHERE permit_id = ?", (permit_id,))
-        return self._execution_permit_from_row(row) if row is not None else None
+            row = self._row("SELECT * FROM capability_grants WHERE grant_id = ?", (grant_id,))
+        return self._capability_grant_from_row(row) if row is not None else None
 
-    def update_execution_permit(
+    def update_capability_grant(
         self,
-        permit_id: str,
+        grant_id: str,
         *,
         status: str,
         consumed_at: float | None | object = _UNSET,
+        revoked_at: float | None | object = _UNSET,
     ) -> None:
-        permit = self.get_execution_permit(permit_id)
-        if permit is None:
+        grant = self.get_capability_grant(grant_id)
+        if grant is None:
             return
-        updated_consumed_at = permit.consumed_at if consumed_at is _UNSET else consumed_at
+        updated_consumed_at = grant.consumed_at if consumed_at is _UNSET else consumed_at
+        updated_revoked_at = grant.revoked_at if revoked_at is _UNSET else revoked_at
         with self._lock, self._conn:
             self._conn.execute(
                 """
-                UPDATE execution_permits
-                SET status = ?, consumed_at = ?
-                WHERE permit_id = ?
+                UPDATE capability_grants
+                SET status = ?, consumed_at = ?, revoked_at = ?
+                WHERE grant_id = ?
                 """,
-                (status, updated_consumed_at, permit_id),
+                (status, updated_consumed_at, updated_revoked_at, grant_id),
             )
             self._append_event_tx(
                 event_id=self._id("event"),
-                event_type=f"permit.{status}",
-                entity_type="execution_permit",
-                entity_id=permit_id,
-                task_id=permit.task_id,
-                step_id=permit.step_id,
-                actor="kernel",
+                event_type=f"capability_grant.{status}",
+                entity_type="capability_grant",
+                entity_id=grant_id,
+                task_id=grant.task_id,
+                step_id=grant.step_id,
+                actor=grant.issued_by_principal_id,
                 payload={
-                    "task_id": permit.task_id,
-                    "step_id": permit.step_id,
-                    "step_attempt_id": permit.step_attempt_id,
-                    "decision_ref": permit.decision_ref,
-                    "approval_ref": permit.approval_ref,
-                    "policy_ref": permit.policy_ref,
-                    "action_class": permit.action_class,
-                    "resource_scope": list(permit.resource_scope),
-                    "constraints": dict(permit.constraints),
+                    "task_id": grant.task_id,
+                    "step_id": grant.step_id,
+                    "step_attempt_id": grant.step_attempt_id,
+                    "decision_ref": grant.decision_ref,
+                    "approval_ref": grant.approval_ref,
+                    "policy_ref": grant.policy_ref,
+                    "issued_to_principal_id": grant.issued_to_principal_id,
+                    "issued_by_principal_id": grant.issued_by_principal_id,
+                    "workspace_lease_ref": grant.workspace_lease_ref,
+                    "action_class": grant.action_class,
+                    "resource_scope": list(grant.resource_scope),
+                    "constraints": dict(grant.constraints),
                     "status": status,
-                    "issued_at": permit.issued_at,
-                    "expires_at": permit.expires_at,
+                    "issued_at": grant.issued_at,
+                    "expires_at": grant.expires_at,
                     "consumed_at": updated_consumed_at,
+                    "revoked_at": updated_revoked_at,
                 },
             )
 
-    def list_execution_permits(
+    def list_capability_grants(
         self, *, task_id: str | None = None, limit: int = 50
-    ) -> list[ExecutionPermitRecord]:
+    ) -> list[CapabilityGrantRecord]:
         if task_id:
             query = (
-                "SELECT * FROM execution_permits WHERE task_id = ? ORDER BY issued_at DESC LIMIT ?"
+                "SELECT * FROM capability_grants WHERE task_id = ? ORDER BY issued_at DESC LIMIT ?"
             )
             params: tuple[Any, ...] = (task_id, limit)
         else:
-            query = "SELECT * FROM execution_permits ORDER BY issued_at DESC LIMIT ?"
+            query = "SELECT * FROM capability_grants ORDER BY issued_at DESC LIMIT ?"
             params = (limit,)
         with self._lock:
             rows = self._rows(query, params)
-        return [self._execution_permit_from_row(row) for row in rows]
+        return [self._capability_grant_from_row(row) for row in rows]
 
-    def create_capability_grant(self, **kwargs: Any) -> ExecutionPermitRecord:
-        return self.create_execution_permit(**kwargs)
-
-    def get_capability_grant(self, permit_id: str) -> ExecutionPermitRecord | None:
-        return self.get_execution_permit(permit_id)
-
-    def update_capability_grant(self, permit_id: str, **kwargs: Any) -> None:
-        self.update_execution_permit(permit_id, **kwargs)
-
-    def list_capability_grants(
-        self, *, task_id: str | None = None, limit: int = 50
-    ) -> list[ExecutionPermitRecord]:
-        return self.list_execution_permits(task_id=task_id, limit=limit)
-
-    def create_path_grant(
+    def create_workspace_lease(
         self,
         *,
-        subject_kind: str,
-        subject_ref: str,
-        action_class: str,
-        path_prefix: str,
-        path_display: str,
-        created_by: str,
-        approval_ref: str | None,
-        decision_ref: str | None,
-        policy_ref: str | None,
+        task_id: str,
+        step_attempt_id: str,
+        workspace_id: str,
+        root_path: str,
+        holder_principal_id: str,
+        mode: str,
+        resource_scope: list[str],
+        environment_ref: str | None,
+        expires_at: float | None,
         status: str = "active",
-        expires_at: float | None = None,
-    ) -> PathGrantRecord:
-        grant_id = self._id("grant")
-        created_at = time.time()
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkspaceLeaseRecord:
+        lease_id = self._id("lease")
+        acquired_at = time.time()
         payload = {
-            "subject_kind": subject_kind,
-            "subject_ref": subject_ref,
-            "action_class": action_class,
-            "path_prefix": path_prefix,
-            "path_display": path_display,
-            "created_by": created_by,
-            "approval_ref": approval_ref,
-            "decision_ref": decision_ref,
-            "policy_ref": policy_ref,
+            "task_id": task_id,
+            "step_attempt_id": step_attempt_id,
+            "workspace_id": workspace_id,
+            "root_path": root_path,
+            "holder_principal_id": holder_principal_id,
+            "mode": mode,
+            "resource_scope": list(resource_scope),
+            "environment_ref": environment_ref,
             "status": status,
+            "metadata": dict(metadata or {}),
+            "acquired_at": acquired_at,
             "expires_at": expires_at,
+            "released_at": None,
         }
         with self._lock, self._conn:
             self._conn.execute(
                 """
-                INSERT INTO path_grants (
-                    grant_id, subject_kind, subject_ref, action_class, path_prefix, path_display,
-                    created_by, approval_ref, decision_ref, policy_ref, status, created_at, expires_at, last_used_at
+                INSERT INTO workspace_leases (
+                    lease_id, task_id, step_attempt_id, workspace_id, root_path, holder_principal_id,
+                    mode, resource_scope_json, environment_ref, status, metadata_json,
+                    acquired_at, expires_at, released_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
-                    grant_id,
-                    subject_kind,
-                    subject_ref,
-                    action_class,
-                    path_prefix,
-                    path_display,
-                    created_by,
-                    approval_ref,
-                    decision_ref,
-                    policy_ref,
+                    lease_id,
+                    task_id,
+                    step_attempt_id,
+                    workspace_id,
+                    root_path,
+                    holder_principal_id,
+                    mode,
+                    json.dumps(list(resource_scope), ensure_ascii=False),
+                    environment_ref,
                     status,
-                    created_at,
+                    json.dumps(dict(metadata or {}), ensure_ascii=False),
+                    acquired_at,
                     expires_at,
                 ),
             )
             self._append_event_tx(
                 event_id=self._id("event"),
-                event_type="grant.created",
-                entity_type="path_grant",
-                entity_id=grant_id,
-                task_id=None,
-                step_id=None,
-                actor=created_by,
+                event_type="workspace_lease.acquired",
+                entity_type="workspace_lease",
+                entity_id=lease_id,
+                task_id=task_id,
+                actor=holder_principal_id,
                 payload=payload,
             )
-        grant = self.get_path_grant(grant_id)
-        assert grant is not None
-        return grant
+        lease = self.get_workspace_lease(lease_id)
+        assert lease is not None
+        return lease
 
-    def get_path_grant(self, grant_id: str) -> PathGrantRecord | None:
+    def get_workspace_lease(self, lease_id: str) -> WorkspaceLeaseRecord | None:
         with self._lock:
-            row = self._row("SELECT * FROM path_grants WHERE grant_id = ?", (grant_id,))
-        return self._path_grant_from_row(row) if row is not None else None
+            row = self._row("SELECT * FROM workspace_leases WHERE lease_id = ?", (lease_id,))
+        return self._workspace_lease_from_row(row) if row is not None else None
 
-    def list_path_grants(
+    def update_workspace_lease(
+        self,
+        lease_id: str,
+        *,
+        status: str | object = _UNSET,
+        expires_at: float | None | object = _UNSET,
+        released_at: float | None | object = _UNSET,
+        actor: str = "kernel",
+    ) -> None:
+        lease = self.get_workspace_lease(lease_id)
+        if lease is None:
+            return
+        updated_status = lease.status if status is _UNSET else str(status)
+        updated_expires_at = lease.expires_at if expires_at is _UNSET else expires_at
+        updated_released_at = lease.released_at if released_at is _UNSET else released_at
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                UPDATE workspace_leases
+                SET status = ?, expires_at = ?, released_at = ?
+                WHERE lease_id = ?
+                """,
+                (updated_status, updated_expires_at, updated_released_at, lease_id),
+            )
+            self._append_event_tx(
+                event_id=self._id("event"),
+                event_type=f"workspace_lease.{updated_status}",
+                entity_type="workspace_lease",
+                entity_id=lease_id,
+                task_id=lease.task_id,
+                actor=actor,
+                payload={
+                    "task_id": lease.task_id,
+                    "step_attempt_id": lease.step_attempt_id,
+                    "workspace_id": lease.workspace_id,
+                    "root_path": lease.root_path,
+                    "holder_principal_id": lease.holder_principal_id,
+                    "mode": lease.mode,
+                    "resource_scope": list(lease.resource_scope),
+                    "environment_ref": lease.environment_ref,
+                    "status": updated_status,
+                    "acquired_at": lease.acquired_at,
+                    "expires_at": updated_expires_at,
+                    "released_at": updated_released_at,
+                    "metadata": dict(lease.metadata),
+                },
+            )
+
+    def list_workspace_leases(
         self,
         *,
-        subject_kind: str | None = None,
-        subject_ref: str | None = None,
+        task_id: str | None = None,
+        step_attempt_id: str | None = None,
         status: str | None = None,
-        action_class: str | None = None,
         limit: int = 50,
-    ) -> list[PathGrantRecord]:
+    ) -> list[WorkspaceLeaseRecord]:
         clauses: list[str] = []
         params: list[Any] = []
-        if subject_kind:
-            clauses.append("subject_kind = ?")
-            params.append(subject_kind)
-        if subject_ref:
-            clauses.append("subject_ref = ?")
-            params.append(subject_ref)
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if step_attempt_id:
+            clauses.append("step_attempt_id = ?")
+            params.append(step_attempt_id)
         if status:
             clauses.append("status = ?")
             params.append(status)
-        if action_class:
-            clauses.append("action_class = ?")
-            params.append(action_class)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
         with self._lock:
             rows = self._rows(
-                f"SELECT * FROM path_grants {where} ORDER BY created_at DESC LIMIT ?",
+                f"SELECT * FROM workspace_leases {where} ORDER BY acquired_at DESC LIMIT ?",
                 tuple(params),
             )
-        return [self._path_grant_from_row(row) for row in rows]
-
-    def update_path_grant(
-        self,
-        grant_id: str,
-        *,
-        status: str | object = _UNSET,
-        expires_at: float | None | object = _UNSET,
-        last_used_at: float | None | object = _UNSET,
-        actor: str = "kernel",
-        event_type: str | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> None:
-        grant = self.get_path_grant(grant_id)
-        if grant is None:
-            return
-        updated_status = grant.status if status is _UNSET else str(status)
-        updated_expires_at = grant.expires_at if expires_at is _UNSET else expires_at
-        updated_last_used_at = grant.last_used_at if last_used_at is _UNSET else last_used_at
-        with self._lock, self._conn:
-            self._conn.execute(
-                """
-                UPDATE path_grants
-                SET status = ?, expires_at = ?, last_used_at = ?
-                WHERE grant_id = ?
-                """,
-                (updated_status, updated_expires_at, updated_last_used_at, grant_id),
-            )
-            if event_type:
-                self._append_event_tx(
-                    event_id=self._id("event"),
-                    event_type=event_type,
-                    entity_type="path_grant",
-                    entity_id=grant_id,
-                    task_id=None,
-                    step_id=None,
-                    actor=actor,
-                    payload={
-                        "subject_kind": grant.subject_kind,
-                        "subject_ref": grant.subject_ref,
-                        "action_class": grant.action_class,
-                        "path_prefix": grant.path_prefix,
-                        "path_display": grant.path_display,
-                        "created_by": grant.created_by,
-                        "approval_ref": grant.approval_ref,
-                        "decision_ref": grant.decision_ref,
-                        "policy_ref": grant.policy_ref,
-                        "status": updated_status,
-                        "expires_at": updated_expires_at,
-                        "last_used_at": updated_last_used_at,
-                        **(payload or {}),
-                    },
-                )
+        return [self._workspace_lease_from_row(row) for row in rows]
 
     def create_belief(
         self,
@@ -1036,31 +1130,43 @@ class KernelLedgerStoreMixin:
         approval_type: str,
         requested_action: dict[str, Any],
         request_packet_ref: str | None,
+        requested_action_ref: str | None = None,
+        approval_packet_ref: str | None = None,
+        policy_result_ref: str | None = None,
         decision_ref: str | None = None,
         state_witness_ref: str | None = None,
+        expires_at: float | None = None,
     ) -> ApprovalRecord:
         approval_id = self._id("approval")
         requested_at = time.time()
+        approval_packet_ref = approval_packet_ref or request_packet_ref
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO approvals (
                     approval_id, task_id, step_id, step_attempt_id, status,
-                    approval_type, requested_action_json, request_packet_ref, decision_ref, state_witness_ref,
-                    requested_at, resolution_json
-                ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, '{}')
+                    approval_type, requested_action_json, request_packet_ref, requested_action_ref,
+                    approval_packet_ref, policy_result_ref, decision_ref, state_witness_ref,
+                    requested_at, expires_at, resolution_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval_id,
                     task_id,
                     step_id,
                     step_attempt_id,
+                    "pending",
                     approval_type,
                     json.dumps(requested_action, ensure_ascii=False),
                     request_packet_ref,
+                    requested_action_ref,
+                    approval_packet_ref,
+                    policy_result_ref,
                     decision_ref,
                     state_witness_ref,
                     requested_at,
+                    expires_at,
+                    "{}",
                 ),
             )
             self._append_event_tx(
@@ -1074,10 +1180,14 @@ class KernelLedgerStoreMixin:
                 payload={
                     **requested_action,
                     "status": "pending",
+                    "requested_action_ref": requested_action_ref,
                     "decision_ref": decision_ref,
                     "request_packet_ref": request_packet_ref,
+                    "approval_packet_ref": approval_packet_ref,
+                    "policy_result_ref": policy_result_ref,
                     "state_witness_ref": state_witness_ref,
                     "requested_at": requested_at,
+                    "expires_at": expires_at,
                     "resolved_at": None,
                     "resolved_by": None,
                     "resolution": {},
@@ -1135,14 +1245,21 @@ class KernelLedgerStoreMixin:
         approval = self.get_approval(approval_id)
         if approval is None:
             return
+        resolved_by_principal_id = self._ensure_principal_id(resolved_by)
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE approvals
-                SET status = ?, resolved_at = ?, resolved_by = ?, resolution_json = ?
+                SET status = ?, resolved_at = ?, resolved_by_principal_id = ?, resolution_json = ?
                 WHERE approval_id = ?
                 """,
-                (status, now, resolved_by, json.dumps(resolution, ensure_ascii=False), approval_id),
+                (
+                    status,
+                    now,
+                    resolved_by_principal_id,
+                    json.dumps(resolution, ensure_ascii=False),
+                    approval_id,
+                ),
             )
             self._append_event_tx(
                 event_id=self._id("event"),
@@ -1155,7 +1272,7 @@ class KernelLedgerStoreMixin:
                 payload={
                     "status": status,
                     "resolved_at": now,
-                    "resolved_by": resolved_by,
+                    "resolved_by_principal_id": resolved_by_principal_id,
                     "resolution": resolution,
                 },
             )
@@ -1208,6 +1325,7 @@ class KernelLedgerStoreMixin:
         step_id: str,
         step_attempt_id: str,
         action_type: str,
+        receipt_class: str | None = None,
         input_refs: list[str],
         environment_ref: str | None,
         policy_result: dict[str, Any],
@@ -1216,14 +1334,18 @@ class KernelLedgerStoreMixin:
         result_summary: str,
         result_code: str = "succeeded",
         decision_ref: str | None = None,
-        permit_ref: str | None = None,
-        grant_ref: str | None = None,
+        capability_grant_ref: str | None = None,
+        workspace_lease_ref: str | None = None,
         policy_ref: str | None = None,
+        action_request_ref: str | None = None,
+        policy_result_ref: str | None = None,
         witness_ref: str | None = None,
         idempotency_key: str | None = None,
         receipt_bundle_ref: str | None = None,
         proof_mode: str = "hash_only",
+        verifiability: str | None = None,
         signature: str | None = None,
+        signer_ref: str | None = None,
         rollback_supported: bool = False,
         rollback_strategy: str | None = None,
         rollback_status: str = "not_requested",
@@ -1232,17 +1354,20 @@ class KernelLedgerStoreMixin:
     ) -> ReceiptRecord:
         receipt_id = self._id("receipt")
         created_at = time.time()
+        receipt_class = receipt_class or action_type
+        policy_result_ref = policy_result_ref or policy_ref
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO receipts (
-                    receipt_id, task_id, step_id, step_attempt_id, action_type,
+                    receipt_id, task_id, step_id, step_attempt_id, action_type, receipt_class,
                     input_refs_json, environment_ref, policy_result_json,
                     approval_ref, output_refs_json, result_summary, result_code,
-                    decision_ref, permit_ref, grant_ref, policy_ref, witness_ref, idempotency_key,
-                    receipt_bundle_ref, proof_mode, signature, rollback_supported, rollback_strategy,
+                    decision_ref, capability_grant_ref, workspace_lease_ref, policy_ref, action_request_ref,
+                    policy_result_ref, witness_ref, idempotency_key, receipt_bundle_ref, proof_mode,
+                    verifiability, signature, signer_ref, rollback_supported, rollback_strategy,
                     rollback_status, rollback_ref, rollback_artifact_refs_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     receipt_id,
@@ -1250,6 +1375,7 @@ class KernelLedgerStoreMixin:
                     step_id,
                     step_attempt_id,
                     action_type,
+                    receipt_class,
                     json.dumps(input_refs, ensure_ascii=False),
                     environment_ref,
                     json.dumps(policy_result, ensure_ascii=False),
@@ -1258,14 +1384,18 @@ class KernelLedgerStoreMixin:
                     result_summary,
                     result_code,
                     decision_ref,
-                    permit_ref,
-                    grant_ref,
+                    capability_grant_ref,
+                    workspace_lease_ref,
                     policy_ref,
+                    action_request_ref,
+                    policy_result_ref,
                     witness_ref,
                     idempotency_key,
                     receipt_bundle_ref,
                     proof_mode,
+                    verifiability,
                     signature,
+                    signer_ref,
                     int(rollback_supported),
                     rollback_strategy,
                     rollback_status,
@@ -1287,6 +1417,7 @@ class KernelLedgerStoreMixin:
                     "step_id": step_id,
                     "step_attempt_id": step_attempt_id,
                     "action_type": action_type,
+                    "receipt_class": receipt_class,
                     "input_refs": input_refs,
                     "environment_ref": environment_ref,
                     "policy_result": policy_result,
@@ -1295,14 +1426,18 @@ class KernelLedgerStoreMixin:
                     "result_summary": result_summary,
                     "result_code": result_code,
                     "decision_ref": decision_ref,
-                    "permit_ref": permit_ref,
-                    "grant_ref": grant_ref,
+                    "capability_grant_ref": capability_grant_ref,
+                    "workspace_lease_ref": workspace_lease_ref,
                     "policy_ref": policy_ref,
+                    "action_request_ref": action_request_ref,
+                    "policy_result_ref": policy_result_ref,
                     "witness_ref": witness_ref,
                     "idempotency_key": idempotency_key,
                     "receipt_bundle_ref": receipt_bundle_ref,
                     "proof_mode": proof_mode,
+                    "verifiability": verifiability,
                     "signature": signature,
+                    "signer_ref": signer_ref,
                     "rollback_supported": rollback_supported,
                     "rollback_strategy": rollback_strategy,
                     "rollback_status": rollback_status,
@@ -1316,6 +1451,7 @@ class KernelLedgerStoreMixin:
             step_id=step_id,
             step_attempt_id=step_attempt_id,
             action_type=action_type,
+            receipt_class=receipt_class,
             input_refs=input_refs,
             environment_ref=environment_ref,
             policy_result=policy_result,
@@ -1324,14 +1460,18 @@ class KernelLedgerStoreMixin:
             result_summary=result_summary,
             result_code=result_code,
             decision_ref=decision_ref,
-            permit_ref=permit_ref,
-            grant_ref=grant_ref,
+            capability_grant_ref=capability_grant_ref,
+            workspace_lease_ref=workspace_lease_ref,
             policy_ref=policy_ref,
+            action_request_ref=action_request_ref,
+            policy_result_ref=policy_result_ref,
             witness_ref=witness_ref,
             idempotency_key=idempotency_key,
             receipt_bundle_ref=receipt_bundle_ref,
             proof_mode=proof_mode,
+            verifiability=verifiability,
             signature=signature,
+            signer_ref=signer_ref,
             rollback_supported=rollback_supported,
             rollback_strategy=rollback_strategy,
             rollback_status=rollback_status,
@@ -1346,7 +1486,9 @@ class KernelLedgerStoreMixin:
         *,
         receipt_bundle_ref: str | object = _UNSET,
         proof_mode: str | object = _UNSET,
+        verifiability: str | object = _UNSET,
         signature: str | None | object = _UNSET,
+        signer_ref: str | None | object = _UNSET,
     ) -> None:
         receipt = self.get_receipt(receipt_id)
         if receipt is None:
@@ -1355,15 +1497,24 @@ class KernelLedgerStoreMixin:
             receipt.receipt_bundle_ref if receipt_bundle_ref is _UNSET else receipt_bundle_ref
         )
         updated_proof_mode = receipt.proof_mode if proof_mode is _UNSET else proof_mode
+        updated_verifiability = receipt.verifiability if verifiability is _UNSET else verifiability
         updated_signature = receipt.signature if signature is _UNSET else signature
+        updated_signer_ref = receipt.signer_ref if signer_ref is _UNSET else signer_ref
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE receipts
-                SET receipt_bundle_ref = ?, proof_mode = ?, signature = ?
+                SET receipt_bundle_ref = ?, proof_mode = ?, verifiability = ?, signature = ?, signer_ref = ?
                 WHERE receipt_id = ?
                 """,
-                (updated_bundle_ref, updated_proof_mode, updated_signature, receipt_id),
+                (
+                    updated_bundle_ref,
+                    updated_proof_mode,
+                    updated_verifiability,
+                    updated_signature,
+                    updated_signer_ref,
+                    receipt_id,
+                ),
             )
             self._append_event_tx(
                 event_id=self._id("event"),
@@ -1376,7 +1527,9 @@ class KernelLedgerStoreMixin:
                 payload={
                     "receipt_bundle_ref": updated_bundle_ref,
                     "proof_mode": updated_proof_mode,
+                    "verifiability": updated_verifiability,
                     "signature": updated_signature,
+                    "signer_ref": updated_signer_ref,
                 },
             )
 

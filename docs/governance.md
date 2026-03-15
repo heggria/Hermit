@@ -33,8 +33,8 @@ The current repository already contains records for:
 
 - `Decision`
 - `Approval`
-- `ExecutionPermit`
-- `PathGrant`
+- `CapabilityGrant`
+- `WorkspaceLease`
 
 These work alongside task and step-attempt records so authority is attached to concrete execution context.
 
@@ -42,7 +42,7 @@ These work alongside task and step-attempt records so authority is attached to c
 
 The governed execution path is:
 
-`action request -> policy evaluation -> decision -> approval if required -> scoped permit or grant -> execution -> receipt`
+`action request -> policy evaluation -> decision -> approval if required -> workspace lease -> scoped capability grant -> execution -> receipt`
 
 Important implications:
 
@@ -107,8 +107,8 @@ Hermit aims for scoped authority rather than ambient authority.
 
 The current implementation already uses:
 
-- **execution permits** for scoped action authorization
-- **path grants** for path-bounded authority
+- **capability grants** for scoped action authorization
+- **workspace leases** for mutable or scoped workspace authority
 
 This is the practical answer to "what authority allowed it?"
 
@@ -132,7 +132,7 @@ Safe claims:
 
 - policy evaluation is already in the executor path
 - approval objects and approval resolution are already implemented
-- decision, permit, and grant records already exist
+- decision, principal, capability grant, and workspace lease records already exist
 - the task CLI already exposes governed execution to operators
 
 Careful claims:

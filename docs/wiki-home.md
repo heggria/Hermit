@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/heggria/Hermit/main/docs/site/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="72" height="72">
+
 # Hermit Wiki
 
 Hermit is a local-first governed agent kernel for durable, inspectable, artifact-native work.
@@ -35,6 +37,7 @@ This wiki is a reading mirror of the canonical documentation in the main reposit
 - [Repository README](../README.md)
 - [Documentation map](../README.md#documentation-map)
 - [Kernel spec v0.1](./kernel-spec-v0.1.md)
+- [Kernel spec section checklist](./kernel-spec-v0.1-section-checklist.md)
 - [Contributing](../CONTRIBUTING.md)
 
 ## Notes

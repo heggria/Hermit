@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -102,10 +103,10 @@ task_app = typer.Typer(
         "Task kernel inspection and approval commands.",
     )
 )
-task_grant_app = typer.Typer(
+task_capability_app = typer.Typer(
     help=_cli_t(
-        "cli.task_grant.help",
-        "Path grant inspection and revocation commands.",
+        "cli.task_capability.help",
+        "Capability grant inspection and revocation commands.",
     )
 )
 memory_app = typer.Typer(
@@ -122,7 +123,7 @@ app.add_typer(profiles_app, name="profiles")
 app.add_typer(auth_app, name="auth")
 app.add_typer(task_app, name="task")
 app.add_typer(memory_app, name="memory")
-task_app.add_typer(task_grant_app, name="grant")
+task_app.add_typer(task_capability_app, name="capability")
 
 DIM = "\033[2m"
 CYAN = "\033[36m"
@@ -1739,45 +1740,41 @@ def task_show(
             )
             typer.echo(_t("cli.task.show.indented", "    {value}", value=decision.reason))
 
-    permits = store.list_execution_permits(task_id=task_id, limit=20)
-    if permits:
-        typer.echo("\n" + _t("cli.task.show.permits", "Recent execution permits:"))
-        for permit in permits:
+    capability_grants = store.list_capability_grants(task_id=task_id, limit=20)
+    if capability_grants:
+        typer.echo("\n" + _t("cli.task.show.capability_grants", "Recent capability grants:"))
+        for grant in capability_grants:
             typer.echo(
                 _t(
-                    "cli.task.show.permit_item",
-                    "  [{permit_id}] {status} {action_class}",
-                    permit_id=permit.permit_id,
-                    status=permit.status,
-                    action_class=permit.action_class,
+                    "cli.task.show.capability_grant_item",
+                    "  [{grant_id}] {status} {action_class}",
+                    grant_id=grant.grant_id,
+                    status=grant.status,
+                    action_class=grant.action_class,
                 )
             )
             typer.echo(
                 _t(
                     "cli.task.show.decision_ref",
                     "    decision_ref={decision_ref}",
-                    decision_ref=permit.decision_ref,
+                    decision_ref=grant.decision_ref,
                 )
             )
 
-    if task is not None:
-        grants = store.list_path_grants(
-            subject_kind="conversation",
-            subject_ref=task.conversation_id,
-            limit=20,
-        )
-        if grants:
-            typer.echo("\n" + _t("cli.task.show.grants", "Recent path grants:"))
-            for grant in grants:
-                typer.echo(
-                    _t(
-                        "cli.task.show.grant_item",
-                        "  [{grant_id}] {status} {path_display}",
-                        grant_id=grant.grant_id,
-                        status=grant.status,
-                        path_display=grant.path_display,
-                    )
+    workspace_leases = store.list_workspace_leases(task_id=task_id, limit=20)
+    if workspace_leases:
+        typer.echo("\n" + _t("cli.task.show.workspace_leases", "Recent workspace leases:"))
+        for lease in workspace_leases:
+            typer.echo(
+                _t(
+                    "cli.task.show.workspace_lease_item",
+                    "  [{lease_id}] {status} {mode} root={root_path}",
+                    lease_id=lease.lease_id,
+                    status=lease.status,
+                    mode=lease.mode,
+                    root_path=lease.root_path,
                 )
+            )
     case = SupervisionService(store).build_task_case(task_id)
     claims = dict(case["operator_answers"].get("claims", {}) or {})
     task_gate = dict(claims.get("task_gate", {}) or {})
@@ -1996,15 +1993,15 @@ def task_approve(
     _task_resolution("approve_once", approval_id)
 
 
-@task_app.command("approve-always-directory")
-def task_approve_always_directory(
+@task_app.command("approve-mutable-workspace")
+def task_approve_mutable_workspace(
     approval_id: str = typer.Argument(
         ...,
         help=_cli_t("cli.task.common.approval_id", "Approval ID."),
     ),
 ) -> None:
-    """Approve and always allow this directory for the current conversation."""
-    _task_resolution("approve_always_directory", approval_id)
+    """Approve a mutable workspace lease for the current blocked attempt."""
+    _task_resolution("approve_mutable_workspace", approval_id)
 
 
 @task_app.command("deny")
@@ -2033,69 +2030,68 @@ def task_resume(
     _task_resolution("approve_once", approval_id)
 
 
-def _task_grant_list(
-    conversation_id: Optional[str] = typer.Option(
-        None,
-        help=_cli_t("cli.task.grant.conversation_id", "Optional conversation ID filter."),
-    ),
+def _task_capability_list(
     limit: int = typer.Option(
         50,
-        help=_cli_t("cli.task.grant.limit", "Maximum number of grants to show."),
+        help=_cli_t("cli.task.capability.limit", "Maximum number of grants to show."),
     ),
 ) -> None:
-    """Show active and recent path grants."""
+    """Show active and recent capability grants."""
     store = _get_kernel_store()
-    payload = [
-        grant.__dict__
-        for grant in store.list_path_grants(
-            subject_kind="conversation" if conversation_id else None,
-            subject_ref=conversation_id,
-            limit=limit,
-        )
-    ]
+    payload = [grant.__dict__ for grant in store.list_capability_grants(limit=limit)]
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def _task_grant_revoke(
-    grant_id: str = typer.Argument(..., help=_cli_t("cli.task.grant.grant_id", "Grant ID.")),
+def _task_capability_revoke(
+    grant_id: str = typer.Argument(
+        ..., help=_cli_t("cli.task.capability.grant_id", "Capability grant ID.")
+    ),
 ) -> None:
-    """Revoke a path grant."""
+    """Revoke a capability grant."""
     store = _get_kernel_store()
-    grant = store.get_path_grant(grant_id)
+    grant = store.get_capability_grant(grant_id)
     if grant is None:
-        typer.echo(_t("cli.task.grant.not_found", "Grant not found: {grant_id}", grant_id=grant_id))
+        typer.echo(
+            _t(
+                "cli.task.capability.not_found",
+                "Capability grant not found: {grant_id}",
+                grant_id=grant_id,
+            )
+        )
         raise typer.Exit(1)
-    store.update_path_grant(
+    store.update_capability_grant(
         grant_id,
         status="revoked",
-        actor="user",
-        event_type="grant.revoked",
-        payload={"status": "revoked"},
+        revoked_at=time.time(),
     )
-    typer.echo(_t("cli.task.grant.revoked", "Revoked grant '{grant_id}'.", grant_id=grant_id))
+    typer.echo(
+        _t(
+            "cli.task.capability.revoked",
+            "Revoked capability grant '{grant_id}'.",
+            grant_id=grant_id,
+        )
+    )
 
 
-@task_grant_app.command("list")
-def task_grant_list(
-    conversation_id: Optional[str] = typer.Option(
-        None,
-        help=_cli_t("cli.task.grant.conversation_id", "Optional conversation ID filter."),
-    ),
+@task_capability_app.command("list")
+def task_capability_list(
     limit: int = typer.Option(
         50,
-        help=_cli_t("cli.task.grant.limit", "Maximum number of grants to show."),
+        help=_cli_t("cli.task.capability.limit", "Maximum number of grants to show."),
     ),
 ) -> None:
-    """Show active and recent path grants."""
-    _task_grant_list(conversation_id=conversation_id, limit=limit)
+    """Show active and recent capability grants."""
+    _task_capability_list(limit=limit)
 
 
-@task_grant_app.command("revoke")
-def task_grant_revoke(
-    grant_id: str = typer.Argument(..., help=_cli_t("cli.task.grant.grant_id", "Grant ID.")),
+@task_capability_app.command("revoke")
+def task_capability_revoke(
+    grant_id: str = typer.Argument(
+        ..., help=_cli_t("cli.task.capability.grant_id", "Capability grant ID.")
+    ),
 ) -> None:
-    """Revoke a path grant."""
-    _task_grant_revoke(grant_id)
+    """Revoke a capability grant."""
+    _task_capability_revoke(grant_id)
 
 
 @memory_app.command("inspect")

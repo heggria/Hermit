@@ -7,22 +7,30 @@ import os
 import time
 from typing import Any
 
+from hermit.capabilities.models import CapabilityGrantRecord
 from hermit.kernel.artifacts import ArtifactStore
-from hermit.kernel.models import (
-    ApprovalRecord,
-    DecisionRecord,
-    ExecutionPermitRecord,
-    PathGrantRecord,
-    ReceiptRecord,
-)
+from hermit.kernel.models import ApprovalRecord, DecisionRecord, ReceiptRecord
 from hermit.kernel.store import KernelStore
 from hermit.kernel.store_support import _canonical_json, _canonical_json_from_raw, _sha256_hex
+from hermit.workspaces.models import WorkspaceLeaseRecord
 
 _PROOF_MODE_HASH_ONLY = "hash_only"
 _PROOF_MODE_HASH_CHAINED = "hash_chained"
 _PROOF_MODE_SIGNED = "signed"
 _PROOF_MODE_SIGNED_WITH_INCLUSION_PROOF = "signed_with_inclusion_proof"
 _MISSING_PROOF_FEATURES = ("signature", "inclusion_proof")
+
+
+def proof_capabilities(*, signing_secret: str | None = None) -> dict[str, Any]:
+    configured_secret = str(
+        signing_secret or os.environ.get("HERMIT_PROOF_SIGNING_SECRET", "")
+    ).strip()
+    signing_configured = bool(configured_secret)
+    return {
+        "baseline_verifiable_available": True,
+        "signing_configured": signing_configured,
+        "strong_signed_proofs_available": signing_configured,
+    }
 
 
 class ProofService:
@@ -62,7 +70,7 @@ class ProofService:
                 entity_type=str(row["entity_type"]),
                 entity_id=str(row["entity_id"]),
                 event_type=str(row["event_type"]),
-                actor=str(row["actor"]),
+                actor=str(row["actor_principal_id"]),
                 payload_json=payload_json,
                 occurred_at=float(row["occurred_at"]),
                 causation_id=row["causation_id"],
@@ -96,12 +104,14 @@ class ProofService:
             raise KeyError(f"Task not found: {task_id}")
         receipts = self.store.list_receipts(task_id=task_id, limit=200)
         decisions = self.store.list_decisions(task_id=task_id, limit=20)
-        permits = self.store.list_execution_permits(task_id=task_id, limit=20)
+        grants = self.store.list_capability_grants(task_id=task_id, limit=20)
+        leases = self.store.list_workspace_leases(task_id=task_id, limit=20)
         verification = self.verify_task_chain(task_id)
         projection = self.store.build_task_projection(task_id)
         latest_receipt = receipts[0] if receipts else None
         latest_decision = decisions[0] if decisions else None
-        latest_permit = permits[0] if permits else None
+        latest_grant = grants[0] if grants else None
+        latest_lease = leases[0] if leases else None
         missing_receipt_bundles = [
             receipt.receipt_id
             for receipt in receipts
@@ -111,6 +121,7 @@ class ProofService:
             "task": task.__dict__,
             "proof_mode": self._summary_proof_mode(receipts),
             "strongest_export_mode": self._strongest_export_mode(receipts),
+            "proof_capabilities": proof_capabilities(signing_secret=self.signing_secret),
             "proof_coverage": self._proof_coverage(receipts),
             "chain_verification": verification,
             "head_hash": verification["head_hash"],
@@ -119,7 +130,8 @@ class ProofService:
             "missing_receipt_bundle_count": len(missing_receipt_bundles),
             "missing_receipt_bundle_receipts": missing_receipt_bundles,
             "latest_decision": latest_decision.__dict__ if latest_decision is not None else None,
-            "latest_permit": latest_permit.__dict__ if latest_permit is not None else None,
+            "latest_capability_grant": latest_grant.__dict__ if latest_grant is not None else None,
+            "latest_workspace_lease": latest_lease.__dict__ if latest_lease is not None else None,
             "latest_receipt": latest_receipt.__dict__ if latest_receipt is not None else None,
             "projection": {
                 "events_processed": projection["events_processed"],
@@ -128,7 +140,8 @@ class ProofService:
                 "step_attempt_count": len(projection["step_attempts"]),
                 "approval_count": len(projection["approvals"]),
                 "decision_count": len(projection["decisions"]),
-                "permit_count": len(projection["permits"]),
+                "capability_grant_count": len(projection["capability_grants"]),
+                "workspace_lease_count": len(projection["workspace_leases"]),
                 "receipt_count": len(projection["receipts"]),
             },
         }
@@ -164,9 +177,11 @@ class ProofService:
             proof_mode=_PROOF_MODE_SIGNED
             if signature_meta is not None
             else _PROOF_MODE_HASH_CHAINED,
+            verifiability="signed_receipt" if signature_meta is not None else "baseline_verifiable",
             signature=json.dumps(signature_meta, ensure_ascii=False)
             if signature_meta is not None
             else None,
+            signer_ref=signature_meta.get("key_id") if signature_meta is not None else None,
         )
         return receipt_bundle_ref
 
@@ -207,10 +222,22 @@ class ProofService:
             "approval_refs": sorted(
                 {receipt.approval_ref for receipt in receipts if receipt.approval_ref}
             ),
-            "permit_refs": sorted(
-                {receipt.permit_ref for receipt in receipts if receipt.permit_ref}
+            "capability_grant_refs": sorted(
+                {
+                    receipt.capability_grant_ref
+                    for receipt in receipts
+                    if receipt.capability_grant_ref
+                }
             ),
-            "grants": [grant.__dict__ for grant in self._grants_for_receipts(receipts)],
+            "workspace_lease_refs": sorted(
+                {receipt.workspace_lease_ref for receipt in receipts if receipt.workspace_lease_ref}
+            ),
+            "capability_grants": [
+                grant.__dict__ for grant in self._capability_grants_for_receipts(receipts)
+            ],
+            "workspace_leases": [
+                lease.__dict__ for lease in self._workspace_leases_for_receipts(receipts)
+            ],
             "artifact_hash_index": self._artifact_hash_index(
                 task_id, receipts, receipt_bundle_refs, context_manifest_refs
             ),
@@ -226,6 +253,8 @@ class ProofService:
                 self.store.update_receipt_proof_fields(
                     receipt.receipt_id,
                     proof_mode=_PROOF_MODE_SIGNED_WITH_INCLUSION_PROOF,
+                    verifiability="strong_signed_with_inclusion_proof",
+                    signer_ref=self.signing_key_id if self.signing_secret else receipt.signer_ref,
                 )
         signature_meta = self._signature_metadata(proof_payload, artifact_kind="proof.bundle")
         if signature_meta is not None:
@@ -254,27 +283,39 @@ class ProofService:
         decision = (
             self.store.get_decision(receipt.decision_ref or "") if receipt.decision_ref else None
         )
-        action_request_ref = self._action_request_ref(decision)
+        task = self.store.get_task(receipt.task_id)
+        conversation_id = getattr(task, "conversation_id", None)
+        memory_refs: list[str] = []
+        if conversation_id:
+            for record in self.store.list_memory_records(
+                status="active",
+                conversation_id=conversation_id,
+                limit=200,
+            ):
+                if record.task_id == receipt.task_id or record.conversation_id == conversation_id:
+                    memory_refs.append(record.memory_id)
+                if len(memory_refs) >= 50:
+                    break
+        action_request_ref = receipt.action_request_ref or self._action_request_ref(decision)
         evidence_refs = list(decision.evidence_refs) if decision is not None else []
         return {
             "schema": "context.manifest/v1",
             "task_id": receipt.task_id,
             "step_id": receipt.step_id,
             "step_attempt_id": receipt.step_attempt_id,
-            "action_type": receipt.action_type,
+            "action_type": receipt.receipt_class or receipt.action_type,
             "action_request_ref": action_request_ref,
-            "policy_ref": receipt.policy_ref,
+            "policy_ref": receipt.policy_result_ref or receipt.policy_ref,
             "approval_ref": receipt.approval_ref,
             "decision_ref": receipt.decision_ref,
-            "permit_ref": receipt.permit_ref,
+            "capability_grant_ref": receipt.capability_grant_ref,
+            "workspace_lease_ref": receipt.workspace_lease_ref,
             "witness_ref": receipt.witness_ref,
             "input_refs": list(receipt.input_refs),
             "output_refs": list(receipt.output_refs),
             "environment_ref": receipt.environment_ref,
             "evidence_refs": evidence_refs,
-            "memory_refs": [
-                record.memory_id for record in self.store.list_memory_records(limit=50)
-            ],
+            "memory_refs": memory_refs,
         }
 
     def _build_receipt_bundle_payload(
@@ -286,12 +327,16 @@ class ProofService:
         approval = (
             self.store.get_approval(receipt.approval_ref or "") if receipt.approval_ref else None
         )
-        permit = (
-            self.store.get_execution_permit(receipt.permit_ref or "")
-            if receipt.permit_ref
+        capability_grant = (
+            self.store.get_capability_grant(receipt.capability_grant_ref or "")
+            if receipt.capability_grant_ref
             else None
         )
-        grant = self.store.get_path_grant(receipt.grant_ref or "") if receipt.grant_ref else None
+        workspace_lease = (
+            self.store.get_workspace_lease(receipt.workspace_lease_ref or "")
+            if receipt.workspace_lease_ref
+            else None
+        )
         verification = self.verify_task_chain(receipt.task_id)
         return {
             "schema": "receipt.bundle/v1",
@@ -299,20 +344,25 @@ class ProofService:
             "proof_mode": _PROOF_MODE_HASH_CHAINED,
             "proof_coverage": self._proof_coverage([receipt]),
             "result_code": receipt.result_code,
-            "action_type": receipt.action_type,
+            "action_type": receipt.receipt_class or receipt.action_type,
+            "receipt_class": receipt.receipt_class or receipt.action_type,
+            "action_request_ref": receipt.action_request_ref,
             "input_hashes": self._artifact_hashes(receipt.input_refs),
             "output_hashes": self._artifact_hashes(receipt.output_refs),
             "environment_hash": self._artifact_hash(receipt.environment_ref),
             "policy_result_hash": _sha256_hex(_canonical_json(receipt.policy_result)),
             "approval_packet_hash": self._approval_packet_hash(approval),
-            "capability_grant_hash": self._capability_grant_hash(permit, grant),
+            "capability_grant_hash": self._capability_grant_hash(capability_grant, workspace_lease),
             "decision_ref": receipt.decision_ref,
-            "permit_ref": receipt.permit_ref,
-            "grant_ref": receipt.grant_ref,
+            "capability_grant_ref": receipt.capability_grant_ref,
+            "workspace_lease_ref": receipt.workspace_lease_ref,
             "witness_ref": receipt.witness_ref,
             "idempotency_key": receipt.idempotency_key,
             "context_manifest_ref": context_manifest_ref,
             "task_event_head_hash": verification["head_hash"],
+            "policy_result_ref": receipt.policy_result_ref or receipt.policy_ref,
+            "verifiability": receipt.verifiability,
+            "signer_ref": receipt.signer_ref,
             "rollback_supported": receipt.rollback_supported,
             "rollback_strategy": receipt.rollback_strategy,
             "rollback_status": receipt.rollback_status,
@@ -462,19 +512,28 @@ class ProofService:
         return artifact.content_hash if artifact is not None else None
 
     def _approval_packet_hash(self, approval: ApprovalRecord | None) -> str | None:
-        if approval is None or not approval.request_packet_ref:
+        if approval is None:
             return None
-        return self._artifact_hash(approval.request_packet_ref)
+        packet_ref = approval.approval_packet_ref or approval.request_packet_ref
+        if not packet_ref:
+            return None
+        return self._artifact_hash(packet_ref)
 
     def _capability_grant_hash(
         self,
-        permit: ExecutionPermitRecord | None,
-        grant: PathGrantRecord | None,
+        grant: CapabilityGrantRecord | None,
+        lease: WorkspaceLeaseRecord | None,
     ) -> str | None:
-        if permit is not None:
-            return _sha256_hex(_canonical_json(permit.__dict__))
+        if grant is not None and lease is not None:
+            return _sha256_hex(
+                _canonical_json(
+                    {"capability_grant": grant.__dict__, "workspace_lease": lease.__dict__}
+                )
+            )
         if grant is not None:
             return _sha256_hex(_canonical_json(grant.__dict__))
+        if lease is not None:
+            return _sha256_hex(_canonical_json(lease.__dict__))
         return None
 
     def _action_request_ref(self, decision: DecisionRecord | None) -> str | None:
@@ -520,17 +579,33 @@ class ProofService:
             }
         return index
 
-    def _grants_for_receipts(self, receipts: list[ReceiptRecord]) -> list[PathGrantRecord]:
-        grants: list[PathGrantRecord] = []
+    def _capability_grants_for_receipts(
+        self, receipts: list[ReceiptRecord]
+    ) -> list[CapabilityGrantRecord]:
+        grants: list[CapabilityGrantRecord] = []
         seen: set[str] = set()
         for receipt in receipts:
-            if not receipt.grant_ref or receipt.grant_ref in seen:
+            if not receipt.capability_grant_ref or receipt.capability_grant_ref in seen:
                 continue
-            grant = self.store.get_path_grant(receipt.grant_ref)
+            grant = self.store.get_capability_grant(receipt.capability_grant_ref)
             if grant is not None:
-                seen.add(receipt.grant_ref)
+                seen.add(receipt.capability_grant_ref)
                 grants.append(grant)
         return grants
+
+    def _workspace_leases_for_receipts(
+        self, receipts: list[ReceiptRecord]
+    ) -> list[WorkspaceLeaseRecord]:
+        leases: list[WorkspaceLeaseRecord] = []
+        seen: set[str] = set()
+        for receipt in receipts:
+            if not receipt.workspace_lease_ref or receipt.workspace_lease_ref in seen:
+                continue
+            lease = self.store.get_workspace_lease(receipt.workspace_lease_ref)
+            if lease is not None:
+                seen.add(receipt.workspace_lease_ref)
+                leases.append(lease)
+        return leases
 
     def _store_sealed_artifact(
         self,

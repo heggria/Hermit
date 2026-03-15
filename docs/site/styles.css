@@ -39,6 +39,23 @@ a {
   padding: 24px 0 28px;
 }
 
+.hero-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.hero-mark {
+  width: 88px;
+  height: 88px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow);
+}
+
 .eyebrow {
   display: inline-block;
   padding: 7px 12px;
@@ -202,5 +219,16 @@ a {
   .page {
     width: min(100% - 24px, 1120px);
     padding-top: 36px;
+  }
+
+  .hero-brand {
+    gap: 12px;
+  }
+
+  .hero-mark {
+    width: 72px;
+    height: 72px;
+    padding: 14px;
+    border-radius: 22px;
   }
 }

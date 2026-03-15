@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from hermit.kernel.knowledge import MemoryRecordService
-from hermit.kernel.store import KernelStore
+from hermit.kernel.store import KernelSchemaError, KernelStore
 
 
 def test_memory_record_roundtrips_new_schema_fields(tmp_path: Path) -> None:
@@ -81,7 +81,7 @@ def test_active_memory_query_excludes_expired_invalidated_and_revoked(tmp_path: 
         store.close()
 
 
-def test_schema_v3_database_migrates_content_to_claim_text(tmp_path: Path) -> None:
+def test_schema_v3_database_requires_hard_cut_archive_or_delete(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.db"
     conn = sqlite3.connect(db_path)
     try:
@@ -155,15 +155,15 @@ def test_schema_v3_database_migrates_content_to_claim_text(tmp_path: Path) -> No
     finally:
         conn.close()
 
-    store = KernelStore(db_path)
     try:
-        loaded = store.get_memory_record("memory-legacy")
-        assert loaded is not None
-        assert loaded.claim_text == "旧 content 字段"
-        assert loaded.status == "invalidated"
-        assert loaded.invalidation_reason == "superseded"
-    finally:
-        store.close()
+        KernelStore(db_path)
+    except KernelSchemaError as exc:
+        message = str(exc)
+        assert "schema_version=3" in message
+        assert "requires schema_version=6" in message
+        assert "Archive or delete" in message
+    else:
+        raise AssertionError("KernelStore should hard-fail for schema_version=3")
 
 
 def test_memory_mirror_exports_scope_and_retention_metadata(tmp_path: Path) -> None:

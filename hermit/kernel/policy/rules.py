@@ -145,7 +145,6 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
     target_paths = list(request.derived.get("target_paths", []))
     sensitive_paths = list(request.derived.get("sensitive_paths", []))
     outside_workspace = bool(request.derived.get("outside_workspace"))
-    grant_ref = str(request.context.get("path_grant_ref", "") or "").strip()
     planning_required = bool(request.context.get("planning_required", False))
     selected_plan_ref = str(request.context.get("selected_plan_ref", "") or "").strip()
     if (
@@ -199,7 +198,7 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 reasons=[
                     PolicyReason(
                         "protected_path",
-                        "Protected system or credential paths cannot be allowlisted.",
+                        "Protected system or credential paths cannot receive mutable workspace approval.",
                         "error",
                     )
                 ],
@@ -234,28 +233,6 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 risk_level="critical",
             )
         )
-
-    if request.action_class in {"write_local", "patch_file"} and outside_workspace and grant_ref:
-        outcomes.append(
-            RuleOutcome(
-                verdict="allow_with_receipt",
-                reasons=[
-                    PolicyReason(
-                        "path_grant", "Existing path grant allows this out-of-workspace write."
-                    )
-                ],
-                obligations=PolicyObligations(
-                    require_receipt=True,
-                    require_preview=request.supports_preview,
-                ),
-                normalized_constraints={
-                    "allowed_paths": target_paths,
-                    "grant_ref": grant_ref,
-                },
-                risk_level=request.risk_hint or "high",
-            )
-        )
-        return outcomes
 
     if request.action_class in {"write_local", "patch_file"} and outside_workspace:
         outcomes.append(

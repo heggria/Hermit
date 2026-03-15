@@ -19,7 +19,8 @@ class KernelProjectionStoreMixin:
             "step_attempts": {},
             "approvals": {},
             "decisions": {},
-            "permits": {},
+            "capability_grants": {},
+            "workspace_leases": {},
             "receipts": {},
             "beliefs": {},
             "memory_records": {},
@@ -32,7 +33,8 @@ class KernelProjectionStoreMixin:
             "step_attempt": projection["step_attempts"],
             "approval": projection["approvals"],
             "decision": projection["decisions"],
-            "execution_permit": projection["permits"],
+            "capability_grant": projection["capability_grants"],
+            "workspace_lease": projection["workspace_leases"],
             "receipt": projection["receipts"],
             "belief": projection["beliefs"],
             "memory_record": projection["memory_records"],
@@ -129,7 +131,14 @@ class KernelProjectionStoreMixin:
                     payload_json = excluded.payload_json,
                     updated_at = excluded.updated_at
                 """,
-                (task_id, schema_version, event_head_hash, json.dumps(payload, ensure_ascii=False), now, now),
+                (
+                    task_id,
+                    schema_version,
+                    event_head_hash,
+                    json.dumps(payload, ensure_ascii=False),
+                    now,
+                    now,
+                ),
             )
 
     def upsert_conversation_projection_cache(

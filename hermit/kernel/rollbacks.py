@@ -5,13 +5,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from hermit.capabilities import CapabilityGrantService
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.decisions import DecisionService
 from hermit.kernel.models import ReceiptRecord
-from hermit.kernel.permits import ExecutionPermitService
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.store import KernelStore
+from hermit.workspaces import WorkspaceLeaseService
 
 
 class RollbackService:
@@ -19,8 +20,9 @@ class RollbackService:
         self.store = store
         self.artifact_store = artifact_store or ArtifactStore(store.db_path.parent / "artifacts")
         self.decisions = DecisionService(store)
-        self.permits = ExecutionPermitService(store)
+        self.capabilities = CapabilityGrantService(store)
         self.receipts = ReceiptService(store, self.artifact_store)
+        self.workspace_leases = WorkspaceLeaseService(store, self.artifact_store)
 
     def execute(self, receipt_id: str) -> dict[str, Any]:
         receipt = self.store.get_receipt(receipt_id)
@@ -59,23 +61,34 @@ class RollbackService:
             decision_type="rollback_execution",
             verdict="allow",
             reason=f"Operator requested rollback of {receipt.receipt_id}.",
-            evidence_refs=[ref for ref in [receipt.receipt_bundle_ref, *receipt.rollback_artifact_refs] if ref],
+            evidence_refs=[
+                ref for ref in [receipt.receipt_bundle_ref, *receipt.rollback_artifact_refs] if ref
+            ],
             action_type="rollback",
             decided_by="operator",
         )
-        permit_id = self.permits.issue(
+        holder_principal_id = "rollback_service"
+        workspace_lease_id = self._acquire_workspace_lease(
+            receipt,
+            attempt.step_attempt_id,
+            holder_principal_id=holder_principal_id,
+        )
+        capability_grant_id = self.capabilities.issue(
             task_id=receipt.task_id,
             step_id=step.step_id,
             step_attempt_id=attempt.step_attempt_id,
             decision_ref=decision_id,
             approval_ref=None,
             policy_ref=None,
+            issued_to_principal_id=holder_principal_id,
+            issued_by_principal_id="kernel",
+            workspace_lease_ref=workspace_lease_id,
             action_class="rollback",
             resource_scope=list(receipt.rollback_artifact_refs),
             idempotency_key=f"rollback:{receipt.receipt_id}",
             constraints={"receipt_ref": receipt.receipt_id, "strategy": strategy},
         )
-        self.permits.consume(permit_id)
+        self.capabilities.consume(capability_grant_id)
         try:
             output_payload = self._apply_rollback(receipt, strategy)
             output_uri, output_hash = self.artifact_store.store_json(output_payload)
@@ -95,7 +108,11 @@ class RollbackService:
                 step_id=step.step_id,
                 step_attempt_id=attempt.step_attempt_id,
                 action_type="rollback",
-                input_refs=[ref for ref in [receipt.receipt_bundle_ref, *receipt.rollback_artifact_refs] if ref],
+                input_refs=[
+                    ref
+                    for ref in [receipt.receipt_bundle_ref, *receipt.rollback_artifact_refs]
+                    if ref
+                ],
                 environment_ref=None,
                 policy_result={"verdict": "allow", "reason": "Operator-triggered rollback."},
                 approval_ref=None,
@@ -103,10 +120,15 @@ class RollbackService:
                 result_summary=output_payload["result_summary"],
                 result_code="succeeded",
                 decision_ref=decision_id,
-                permit_ref=permit_id,
+                capability_grant_ref=capability_grant_id,
+                workspace_lease_ref=workspace_lease_id,
                 rollback_supported=False,
             )
-            self.store.update_rollback(rollback.rollback_id, status="succeeded", result_summary=output_payload["result_summary"])
+            self.store.update_rollback(
+                rollback.rollback_id,
+                status="succeeded",
+                result_summary=output_payload["result_summary"],
+            )
             self.store.update_receipt_rollback_fields(
                 receipt.receipt_id,
                 rollback_status="succeeded",
@@ -123,15 +145,54 @@ class RollbackService:
             }
         except Exception as exc:
             summary = str(exc)
-            self.store.update_rollback(rollback.rollback_id, status="failed", result_summary=summary)
+            self.store.update_rollback(
+                rollback.rollback_id, status="failed", result_summary=summary
+            )
             self.store.update_receipt_rollback_fields(
                 receipt.receipt_id,
                 rollback_status="failed",
                 rollback_ref=rollback.rollback_id,
             )
             self.store.update_step(step.step_id, status="failed")
-            self.store.update_step_attempt(attempt.step_attempt_id, status="failed", waiting_reason=summary)
+            self.store.update_step_attempt(
+                attempt.step_attempt_id, status="failed", waiting_reason=summary
+            )
             return {"rollback_id": rollback.rollback_id, "status": "failed", "error": summary}
+
+    def _acquire_workspace_lease(
+        self,
+        receipt: ReceiptRecord,
+        step_attempt_id: str,
+        *,
+        holder_principal_id: str,
+    ) -> str | None:
+        root_path = self._rollback_root_path(receipt)
+        if not root_path:
+            return None
+        lease = self.workspace_leases.acquire(
+            task_id=receipt.task_id,
+            step_attempt_id=step_attempt_id,
+            workspace_id="rollback",
+            root_path=root_path,
+            holder_principal_id=holder_principal_id,
+            mode="mutable",
+            resource_scope=[root_path],
+            ttl_seconds=300,
+        )
+        return lease.lease_id
+
+    def _rollback_root_path(self, receipt: ReceiptRecord) -> str | None:
+        if receipt.workspace_lease_ref:
+            original_lease = self.store.get_workspace_lease(receipt.workspace_lease_ref)
+            if original_lease is not None and original_lease.root_path:
+                return original_lease.root_path
+        if receipt.action_type in {"write_local", "patch_file"} and receipt.rollback_artifact_refs:
+            prestate = self._prestate_payload(receipt)
+            return str(Path(str(prestate["path"])).expanduser().resolve().parent)
+        if receipt.action_type == "vcs_mutation" and receipt.rollback_artifact_refs:
+            prestate = self._prestate_payload(receipt)
+            return str(Path(str(prestate["repo_path"])).expanduser().resolve())
+        return None
 
     def _apply_rollback(self, receipt: ReceiptRecord, strategy: str) -> dict[str, Any]:
         if receipt.action_type in {"write_local", "patch_file"} and strategy == "file_restore":
@@ -142,14 +203,24 @@ class RollbackService:
                 target_path.write_text(str(prestate.get("content", "")), encoding="utf-8")
             elif target_path.exists():
                 target_path.unlink()
-            return {"result_summary": self._t("kernel.rollback.result.file_restore", target_path=target_path)}
+            return {
+                "result_summary": self._t(
+                    "kernel.rollback.result.file_restore", target_path=target_path
+                )
+            }
         if receipt.action_type == "vcs_mutation" and strategy == "git_revert_or_reset":
             prestate = self._prestate_payload(receipt)
             repo_path = Path(str(prestate["repo_path"]))
             head = str(prestate["head"])
             if bool(prestate.get("dirty")):
                 raise RuntimeError(self._t("kernel.rollback.error.dirty_repo"))
-            subprocess.run(["git", "reset", "--hard", head], cwd=repo_path, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "reset", "--hard", head],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             return {"result_summary": self._t("kernel.rollback.result.git_reset", head=head)}
         if receipt.action_type == "memory_write" and strategy == "supersede_or_invalidate":
             targets = self._prestate_payload(receipt)
@@ -163,7 +234,9 @@ class RollbackService:
                     count=len(targets.get("memory_ids", [])),
                 )
             }
-        raise RuntimeError(self._t("kernel.rollback.error.strategy_not_executable", strategy=strategy))
+        raise RuntimeError(
+            self._t("kernel.rollback.error.strategy_not_executable", strategy=strategy)
+        )
 
     def _mark_unsupported(self, receipt: ReceiptRecord, summary: str) -> dict[str, Any]:
         if receipt.rollback_status != "unsupported":

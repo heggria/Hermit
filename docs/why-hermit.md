@@ -64,7 +64,7 @@ Hermit pushes effectful work through:
 - policy evaluation
 - decision recording
 - approval when required
-- scoped authority records such as permits and grants
+- scoped authority records such as capability grants and workspace leases
 
 The point is not merely to say "human-in-the-loop." The point is to make authority explicit.
 
@@ -104,7 +104,7 @@ For important actions, Hermit wants the kernel to retain a structured account of
 - outputs
 - policy result
 - approvals
-- permits or grants
+- capability grants and workspace leases
 - execution environment
 - result summary
 - rollback relationship when supported
@@ -118,7 +118,7 @@ Hermit is early, but the repo is not empty rhetoric.
 Today the codebase already contains:
 
 - a local kernel ledger
-- first-class records for tasks, approvals, permits, receipts, beliefs, memory records, rollbacks, conversations, and ingresses
+- first-class records for tasks, approvals, principals, capability grants, workspace leases, receipts, beliefs, memory records, rollbacks, conversations, and ingresses
 - governed executor paths with policy and approval handling
 - proof summaries, proof export, and rollback support for selected receipts
 - context compilation and memory governance primitives

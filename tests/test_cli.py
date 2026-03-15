@@ -577,13 +577,16 @@ def test_task_explain_command_summarizes_authority_chain(tmp_path, monkeypatch) 
         evidence_refs=["artifact_action", "artifact_policy"],
         action_type="write_local",
     )
-    permit = store.create_execution_permit(
+    grant = store.create_capability_grant(
         task_id=task.task_id,
         step_id=step.step_id,
         step_attempt_id=attempt.step_attempt_id,
         decision_ref=decision.decision_id,
         approval_ref=None,
         policy_ref="policy_1",
+        issued_to_principal_id="user",
+        issued_by_principal_id="kernel",
+        workspace_lease_ref=None,
         action_class="write_local",
         resource_scope=["workspace"],
         constraints={"target_paths": ["workspace/example.txt"]},
@@ -603,7 +606,7 @@ def test_task_explain_command_summarizes_authority_chain(tmp_path, monkeypatch) 
         result_summary="write_file executed successfully",
         result_code="succeeded",
         decision_ref=decision.decision_id,
-        permit_ref=permit.permit_id,
+        capability_grant_ref=grant.grant_id,
         policy_ref="policy_1",
     )
 
@@ -614,7 +617,9 @@ def test_task_explain_command_summarizes_authority_chain(tmp_path, monkeypatch) 
     payload = json.loads(result.output)
     assert payload["task"]["task_id"] == task.task_id
     assert payload["operator_answers"]["why_execute"] == "Policy allowed this write."
-    assert payload["operator_answers"]["authority"]["permit"]["permit_id"] == permit.permit_id
+    assert (
+        payload["operator_answers"]["authority"]["capability_grant"]["grant_id"] == grant.grant_id
+    )
     assert payload["operator_answers"]["authority"]["target_paths"] == ["workspace/example.txt"]
     assert (
         payload["operator_answers"]["outcome"]["result_summary"]
@@ -650,13 +655,16 @@ def test_task_proof_commands_report_and_export_proof_bundle(tmp_path, monkeypatc
         evidence_refs=["artifact_action"],
         action_type="write_local",
     )
-    permit = store.create_execution_permit(
+    grant = store.create_capability_grant(
         task_id=task.task_id,
         step_id=step.step_id,
         step_attempt_id=attempt.step_attempt_id,
         decision_ref=decision.decision_id,
         approval_ref=None,
         policy_ref="policy_1",
+        issued_to_principal_id="user",
+        issued_by_principal_id="kernel",
+        workspace_lease_ref=None,
         action_class="write_local",
         resource_scope=["workspace"],
         constraints={"target_paths": ["workspace/example.txt"]},
@@ -676,7 +684,7 @@ def test_task_proof_commands_report_and_export_proof_bundle(tmp_path, monkeypatc
         result_summary="legacy receipt",
         result_code="succeeded",
         decision_ref=decision.decision_id,
-        permit_ref=permit.permit_id,
+        capability_grant_ref=grant.grant_id,
         policy_ref="policy_1",
     )
 
@@ -755,6 +763,59 @@ def test_task_claim_status_command_reports_repo_and_task_gates(tmp_path, monkeyp
     assert refreshed_receipt.proof_mode == "signed_with_inclusion_proof"
 
 
+def test_task_claim_status_reports_conditional_strong_proofs_without_signing(
+    tmp_path, monkeypatch
+) -> None:
+    from hermit.config import get_settings
+    from hermit.kernel.store import KernelStore
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.delenv("HERMIT_PROOF_SIGNING_SECRET", raising=False)
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-claims-conditional", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-claims-conditional",
+        title="CLI Conditional Claim Task",
+        goal="Inspect conditional claim gate",
+        source_channel="chat",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    store.create_receipt(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        action_type="write_local",
+        input_refs=[],
+        environment_ref=None,
+        policy_result={"decision": "allow"},
+        approval_ref=None,
+        output_refs=[],
+        result_summary="claim receipt",
+        result_code="succeeded",
+    )
+    ProofService(store).export_task_proof(task.task_id)
+
+    runner = CliRunner()
+    repo_result = runner.invoke(app, ["task", "claim-status"])
+    task_result = runner.invoke(app, ["task", "claim-status", task.task_id])
+
+    assert repo_result.exit_code == 0
+    repo_payload = json.loads(repo_result.output)
+    assert repo_payload["profiles"]["verifiable"]["claimable"] is True
+    assert repo_payload["conditional_capabilities"]["strong_signed_proofs_available"] is False
+    signed_row = next(row for row in repo_payload["rows"] if row["id"] == "signed_proofs")
+    assert signed_row["status"] == "conditional"
+
+    assert task_result.exit_code == 0
+    task_payload = json.loads(task_result.output)
+    assert task_payload["task_gate"]["verifiable_ready"] is True
+    assert task_payload["task_gate"]["strong_verifiable_ready"] is False
+
+
 def test_task_case_and_projection_rebuild_commands(tmp_path, monkeypatch) -> None:
     from hermit.config import get_settings
     from hermit.kernel.store import KernelStore
@@ -783,13 +844,16 @@ def test_task_case_and_projection_rebuild_commands(tmp_path, monkeypatch) -> Non
         evidence_refs=[],
         action_type="write_local",
     )
-    permit = store.create_execution_permit(
+    grant = store.create_capability_grant(
         task_id=task.task_id,
         step_id=step.step_id,
         step_attempt_id=attempt.step_attempt_id,
         decision_ref=decision.decision_id,
         approval_ref=None,
         policy_ref="policy_case",
+        issued_to_principal_id="user",
+        issued_by_principal_id="kernel",
+        workspace_lease_ref=None,
         action_class="write_local",
         resource_scope=["workspace"],
         constraints={"target_paths": ["workspace/case.txt"]},
@@ -809,7 +873,7 @@ def test_task_case_and_projection_rebuild_commands(tmp_path, monkeypatch) -> Non
         result_summary="case result",
         result_code="succeeded",
         decision_ref=decision.decision_id,
-        permit_ref=permit.permit_id,
+        capability_grant_ref=grant.grant_id,
         policy_ref="policy_case",
     )
     background = store.create_task(
@@ -1079,7 +1143,7 @@ def test_task_list_uses_english_cli_copy(monkeypatch, tmp_path) -> None:
     assert f"[{task.task_id}] {task.status} chat English Task" in list_result.output
 
 
-def test_task_grant_subcommands_list_and_revoke(monkeypatch, tmp_path) -> None:
+def test_task_capability_subcommands_list_and_revoke(monkeypatch, tmp_path) -> None:
     from hermit.config import get_settings
     from hermit.kernel.store import KernelStore
 
@@ -1088,27 +1152,41 @@ def test_task_grant_subcommands_list_and_revoke(monkeypatch, tmp_path) -> None:
     get_settings.cache_clear()
 
     store = KernelStore(base_dir / "kernel" / "state.db")
-    grant = store.create_path_grant(
-        subject_kind="conversation",
-        subject_ref="cli-grants",
-        action_class="write_local",
-        path_prefix=str((tmp_path / "Desktop").resolve()),
-        path_display=str((tmp_path / "Desktop").resolve()),
-        created_by="user",
-        approval_ref="approval_1",
+    store.ensure_conversation("cli-grants", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-grants",
+        title="Capability CLI Task",
+        goal="Inspect capability commands",
+        source_channel="chat",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    grant = store.create_capability_grant(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
         decision_ref="decision_1",
+        approval_ref="approval_1",
         policy_ref="policy_1",
+        issued_to_principal_id="user",
+        issued_by_principal_id="kernel",
+        workspace_lease_ref=None,
+        action_class="write_local",
+        resource_scope=[str((tmp_path / "Desktop").resolve())],
+        constraints={"target_paths": [str((tmp_path / "Desktop").resolve())]},
+        idempotency_key="cli-capability",
+        expires_at=None,
     )
 
     runner = CliRunner()
-    list_result = runner.invoke(app, ["task", "grant", "list", "--conversation-id", "cli-grants"])
-    revoke_result = runner.invoke(app, ["task", "grant", "revoke", grant.grant_id])
+    list_result = runner.invoke(app, ["task", "capability", "list"])
+    revoke_result = runner.invoke(app, ["task", "capability", "revoke", grant.grant_id])
 
     assert list_result.exit_code == 0
     assert grant.grant_id in list_result.output
     assert revoke_result.exit_code == 0
-    assert f"已撤销授权 '{grant.grant_id}'。" in revoke_result.output
-    assert store.get_path_grant(grant.grant_id).status == "revoked"
+    assert f"已撤销能力授权 '{grant.grant_id}'。" in revoke_result.output
+    assert store.get_capability_grant(grant.grant_id).status == "revoked"
 
 
 def test_notify_reload_uses_settings_scheduler_chat_id(monkeypatch, tmp_path) -> None:

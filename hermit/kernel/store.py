@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 import time
@@ -7,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
+from hermit.identity.models import PrincipalRecord
 from hermit.kernel.store_ledger import KernelLedgerStoreMixin
 from hermit.kernel.store_projection import KernelProjectionStoreMixin
 from hermit.kernel.store_records import KernelStoreRecordMixin
@@ -14,10 +16,12 @@ from hermit.kernel.store_scheduler import KernelSchedulerStoreMixin
 from hermit.kernel.store_support import _canonical_json, _canonical_json_from_raw, _sha256_hex
 from hermit.kernel.store_tasks import KernelTaskStoreMixin
 
-_SCHEMA_VERSION = "5"
+_SCHEMA_VERSION = "6"
+_MIGRATABLE_SCHEMA_VERSIONS = {"5", _SCHEMA_VERSION}
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "conversation_projection_cache",
+    "principals",
     "ingresses",
     "tasks",
     "steps",
@@ -27,8 +31,8 @@ _KNOWN_KERNEL_TABLES = {
     "approvals",
     "receipts",
     "decisions",
-    "execution_permits",
-    "path_grants",
+    "capability_grants",
+    "workspace_leases",
     "beliefs",
     "memory_records",
     "rollbacks",
@@ -91,7 +95,7 @@ class KernelStore(
             "SELECT value FROM kernel_meta WHERE key = 'schema_version'"
         ).fetchone()
         version = str(row[0]) if row is not None else ""
-        if version not in {"3", "4", _SCHEMA_VERSION}:
+        if version not in _MIGRATABLE_SCHEMA_VERSIONS:
             raise KernelSchemaError(
                 f"Existing kernel database at {self.db_path} has schema_version={version or 'unknown'}, "
                 f"but Hermit requires schema_version={_SCHEMA_VERSION}. "
@@ -131,11 +135,22 @@ class KernelStore(
                     built_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS principals (
+                    principal_id TEXT PRIMARY KEY,
+                    principal_type TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    source_channel TEXT,
+                    external_ref TEXT,
+                    status TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS ingresses (
                     ingress_id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL,
                     source_channel TEXT NOT NULL,
-                    actor TEXT,
+                    actor_principal_id TEXT,
                     raw_text TEXT NOT NULL,
                     normalized_text TEXT NOT NULL,
                     prompt_ref TEXT,
@@ -160,11 +175,12 @@ class KernelStore(
                     goal TEXT NOT NULL,
                     status TEXT NOT NULL,
                     priority TEXT NOT NULL,
-                    owner TEXT NOT NULL,
+                    owner_principal_id TEXT NOT NULL,
                     policy_profile TEXT NOT NULL,
                     source_channel TEXT NOT NULL,
                     parent_task_id TEXT,
-                    requested_by TEXT,
+                    task_contract_ref TEXT,
+                    requested_by_principal_id TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -176,8 +192,14 @@ class KernelStore(
                     attempt INTEGER NOT NULL,
                     input_ref TEXT,
                     output_ref TEXT,
+                    title TEXT,
+                    contract_ref TEXT,
+                    depends_on_json TEXT NOT NULL DEFAULT '[]',
+                    max_attempts INTEGER NOT NULL DEFAULT 1,
                     started_at REAL,
-                    finished_at REAL
+                    finished_at REAL,
+                    created_at REAL,
+                    updated_at REAL
                 );
                 CREATE TABLE IF NOT EXISTS step_attempts (
                     step_attempt_id TEXT PRIMARY KEY,
@@ -190,8 +212,20 @@ class KernelStore(
                     waiting_reason TEXT,
                     approval_id TEXT,
                     decision_id TEXT,
-                    permit_id TEXT,
+                    capability_grant_id TEXT,
+                    workspace_lease_id TEXT,
                     state_witness_ref TEXT,
+                    context_pack_ref TEXT,
+                    working_state_ref TEXT,
+                    environment_ref TEXT,
+                    action_request_ref TEXT,
+                    policy_result_ref TEXT,
+                    approval_packet_ref TEXT,
+                    pending_execution_ref TEXT,
+                    idempotency_key TEXT,
+                    executor_mode TEXT,
+                    policy_version TEXT,
+                    resume_from_ref TEXT,
                     superseded_by_step_attempt_id TEXT,
                     started_at REAL,
                     finished_at REAL
@@ -204,7 +238,7 @@ class KernelStore(
                     entity_type TEXT NOT NULL,
                     entity_id TEXT NOT NULL,
                     event_type TEXT NOT NULL,
-                    actor TEXT NOT NULL,
+                    actor_principal_id TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     occurred_at REAL NOT NULL,
                     causation_id TEXT,
@@ -223,6 +257,11 @@ class KernelStore(
                     producer TEXT NOT NULL,
                     retention_class TEXT NOT NULL,
                     trust_tier TEXT NOT NULL,
+                    artifact_class TEXT,
+                    media_type TEXT,
+                    byte_size INTEGER,
+                    sensitivity_class TEXT,
+                    lineage_ref TEXT,
                     metadata_json TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
@@ -234,44 +273,53 @@ class KernelStore(
                     decision_type TEXT NOT NULL,
                     verdict TEXT NOT NULL,
                     reason TEXT NOT NULL,
+                    summary TEXT,
+                    rationale TEXT,
                     evidence_refs_json TEXT NOT NULL,
                     policy_ref TEXT,
                     approval_ref TEXT,
                     action_type TEXT,
-                    decided_by TEXT NOT NULL,
+                    risk_level TEXT,
+                    reversible INTEGER,
+                    decided_by_principal_id TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS execution_permits (
-                    permit_id TEXT PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS workspace_leases (
+                    lease_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    step_attempt_id TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    root_path TEXT NOT NULL,
+                    holder_principal_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    resource_scope_json TEXT NOT NULL,
+                    environment_ref TEXT,
+                    status TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    acquired_at REAL NOT NULL,
+                    expires_at REAL,
+                    released_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS capability_grants (
+                    grant_id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL,
                     step_id TEXT NOT NULL,
                     step_attempt_id TEXT NOT NULL,
                     decision_ref TEXT NOT NULL,
                     approval_ref TEXT,
                     policy_ref TEXT,
+                    issued_to_principal_id TEXT NOT NULL,
+                    issued_by_principal_id TEXT NOT NULL,
+                    workspace_lease_ref TEXT,
                     action_class TEXT NOT NULL,
                     resource_scope_json TEXT NOT NULL,
+                    constraints_json TEXT NOT NULL,
                     idempotency_key TEXT,
                     status TEXT NOT NULL,
                     issued_at REAL NOT NULL,
                     expires_at REAL,
-                    consumed_at REAL
-                );
-                CREATE TABLE IF NOT EXISTS path_grants (
-                    grant_id TEXT PRIMARY KEY,
-                    subject_kind TEXT NOT NULL,
-                    subject_ref TEXT NOT NULL,
-                    action_class TEXT NOT NULL,
-                    path_prefix TEXT NOT NULL,
-                    path_display TEXT NOT NULL,
-                    created_by TEXT NOT NULL,
-                    approval_ref TEXT,
-                    decision_ref TEXT,
-                    policy_ref TEXT,
-                    status TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    expires_at REAL,
-                    last_used_at REAL
+                    consumed_at REAL,
+                    revoked_at REAL
                 );
                 CREATE TABLE IF NOT EXISTS approvals (
                     approval_id TEXT PRIMARY KEY,
@@ -282,11 +330,15 @@ class KernelStore(
                     approval_type TEXT NOT NULL,
                     requested_action_json TEXT NOT NULL,
                     request_packet_ref TEXT,
+                    requested_action_ref TEXT,
+                    approval_packet_ref TEXT,
+                    policy_result_ref TEXT,
                     decision_ref TEXT,
                     state_witness_ref TEXT,
                     requested_at REAL NOT NULL,
+                    expires_at REAL,
                     resolved_at REAL,
-                    resolved_by TEXT,
+                    resolved_by_principal_id TEXT,
                     resolution_json TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS receipts (
@@ -295,6 +347,7 @@ class KernelStore(
                     step_id TEXT NOT NULL,
                     step_attempt_id TEXT NOT NULL,
                     action_type TEXT NOT NULL,
+                    receipt_class TEXT,
                     input_refs_json TEXT NOT NULL,
                     environment_ref TEXT,
                     policy_result_json TEXT NOT NULL,
@@ -303,14 +356,18 @@ class KernelStore(
                     result_summary TEXT NOT NULL,
                     result_code TEXT NOT NULL,
                     decision_ref TEXT,
-                    permit_ref TEXT,
-                    grant_ref TEXT,
+                    capability_grant_ref TEXT,
+                    workspace_lease_ref TEXT,
                     policy_ref TEXT,
+                    action_request_ref TEXT,
+                    policy_result_ref TEXT,
                     witness_ref TEXT,
                     idempotency_key TEXT,
                     receipt_bundle_ref TEXT,
                     proof_mode TEXT NOT NULL DEFAULT 'none',
+                    verifiability TEXT,
                     signature TEXT,
+                    signer_ref TEXT,
                     created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS beliefs (
@@ -403,24 +460,33 @@ class KernelStore(
                 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, requested_at);
                 CREATE INDEX IF NOT EXISTS idx_receipts_task ON receipts(task_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_decisions_task ON decisions(task_id, created_at);
-                CREATE INDEX IF NOT EXISTS idx_permits_task ON execution_permits(task_id, issued_at);
-                CREATE INDEX IF NOT EXISTS idx_path_grants_subject ON path_grants(subject_kind, subject_ref, status, action_class);
-                CREATE INDEX IF NOT EXISTS idx_path_grants_prefix ON path_grants(path_prefix);
+                CREATE INDEX IF NOT EXISTS idx_capability_grants_task ON capability_grants(task_id, issued_at);
+                CREATE INDEX IF NOT EXISTS idx_workspace_leases_attempt ON workspace_leases(step_attempt_id, acquired_at);
+                CREATE INDEX IF NOT EXISTS idx_workspace_leases_holder ON workspace_leases(holder_principal_id, status, acquired_at);
                 CREATE INDEX IF NOT EXISTS idx_beliefs_scope ON beliefs(scope_kind, scope_ref, status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_records_status ON memory_records(status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_rollbacks_receipt ON rollbacks(receipt_ref, created_at DESC);
                 """
             )
-            self._ensure_column("receipts", "grant_ref", "TEXT")
             self._ensure_column("receipts", "receipt_bundle_ref", "TEXT")
             self._ensure_column("receipts", "proof_mode", "TEXT NOT NULL DEFAULT 'none'")
             self._ensure_column("receipts", "signature", "TEXT")
             self._ensure_column("receipts", "rollback_supported", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column("receipts", "rollback_strategy", "TEXT")
-            self._ensure_column("receipts", "rollback_status", "TEXT NOT NULL DEFAULT 'not_requested'")
+            self._ensure_column(
+                "receipts", "rollback_status", "TEXT NOT NULL DEFAULT 'not_requested'"
+            )
             self._ensure_column("receipts", "rollback_ref", "TEXT")
-            self._ensure_column("receipts", "rollback_artifact_refs_json", "TEXT NOT NULL DEFAULT '[]'")
-            self._ensure_column("execution_permits", "constraints_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(
+                "receipts", "rollback_artifact_refs_json", "TEXT NOT NULL DEFAULT '[]'"
+            )
+            self._ensure_column("tasks", "task_contract_ref", "TEXT")
+            self._ensure_column("steps", "title", "TEXT")
+            self._ensure_column("steps", "contract_ref", "TEXT")
+            self._ensure_column("steps", "depends_on_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column("steps", "max_attempts", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column("steps", "created_at", "REAL")
+            self._ensure_column("steps", "updated_at", "REAL")
             self._ensure_column("events", "event_hash", "TEXT")
             self._ensure_column("events", "prev_event_hash", "TEXT")
             self._ensure_column("events", "hash_chain_algo", "TEXT")
@@ -428,24 +494,60 @@ class KernelStore(
             self._ensure_column("conversations", "focus_reason", "TEXT")
             self._ensure_column("conversations", "focus_updated_at", "REAL")
             self._ensure_column("beliefs", "claim_text", "TEXT")
-            self._ensure_column("beliefs", "structured_assertion_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(
+                "beliefs", "structured_assertion_json", "TEXT NOT NULL DEFAULT '{}'"
+            )
             self._ensure_column("beliefs", "promotion_candidate", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column("memory_records", "claim_text", "TEXT")
-            self._ensure_column("memory_records", "structured_assertion_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(
+                "memory_records", "structured_assertion_json", "TEXT NOT NULL DEFAULT '{}'"
+            )
             self._ensure_column("memory_records", "scope_kind", "TEXT")
             self._ensure_column("memory_records", "scope_ref", "TEXT")
             self._ensure_column("memory_records", "promotion_reason", "TEXT")
             self._ensure_column("memory_records", "retention_class", "TEXT")
-            self._ensure_column("memory_records", "supersedes_memory_ids_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(
+                "memory_records", "supersedes_memory_ids_json", "TEXT NOT NULL DEFAULT '[]'"
+            )
             self._ensure_column("memory_records", "superseded_by_memory_id", "TEXT")
             self._ensure_column("memory_records", "invalidation_reason", "TEXT")
             self._ensure_column("memory_records", "expires_at", "REAL")
             self._ensure_column("step_attempts", "queue_priority", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column("step_attempts", "superseded_by_step_attempt_id", "TEXT")
+            self._ensure_column("step_attempts", "context_pack_ref", "TEXT")
+            self._ensure_column("step_attempts", "working_state_ref", "TEXT")
+            self._ensure_column("step_attempts", "environment_ref", "TEXT")
+            self._ensure_column("step_attempts", "action_request_ref", "TEXT")
+            self._ensure_column("step_attempts", "policy_result_ref", "TEXT")
+            self._ensure_column("step_attempts", "approval_packet_ref", "TEXT")
+            self._ensure_column("step_attempts", "pending_execution_ref", "TEXT")
+            self._ensure_column("step_attempts", "idempotency_key", "TEXT")
+            self._ensure_column("step_attempts", "executor_mode", "TEXT")
+            self._ensure_column("step_attempts", "policy_version", "TEXT")
+            self._ensure_column("step_attempts", "resume_from_ref", "TEXT")
+            self._ensure_column("artifacts", "artifact_class", "TEXT")
+            self._ensure_column("artifacts", "media_type", "TEXT")
+            self._ensure_column("artifacts", "byte_size", "INTEGER")
+            self._ensure_column("artifacts", "sensitivity_class", "TEXT")
+            self._ensure_column("artifacts", "lineage_ref", "TEXT")
+            self._ensure_column("decisions", "summary", "TEXT")
+            self._ensure_column("decisions", "rationale", "TEXT")
+            self._ensure_column("decisions", "risk_level", "TEXT")
+            self._ensure_column("decisions", "reversible", "INTEGER")
+            self._ensure_column("approvals", "requested_action_ref", "TEXT")
+            self._ensure_column("approvals", "approval_packet_ref", "TEXT")
+            self._ensure_column("approvals", "policy_result_ref", "TEXT")
+            self._ensure_column("approvals", "expires_at", "REAL")
+            self._ensure_column("receipts", "receipt_class", "TEXT")
+            self._ensure_column("receipts", "action_request_ref", "TEXT")
+            self._ensure_column("receipts", "policy_result_ref", "TEXT")
+            self._ensure_column("receipts", "verifiability", "TEXT")
+            self._ensure_column("receipts", "signer_ref", "TEXT")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue ON step_attempts(status, queue_priority DESC, started_at ASC)"
             )
             self._migrate_memory_schema_v4()
+            self._migrate_kernel_convergence_v6()
             self._backfill_event_hash_chain()
             self._conn.execute(
                 """
@@ -457,8 +559,7 @@ class KernelStore(
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
-            str(row["name"])
-            for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            str(row["name"]) for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
         }
         if column in existing:
             return
@@ -532,6 +633,65 @@ class KernelStore(
             (time.time(),),
         )
 
+    def _migrate_kernel_convergence_v6(self) -> None:
+        now = time.time()
+        self._conn.execute(
+            """
+            UPDATE steps
+            SET title = COALESCE(NULLIF(title, ''), kind),
+                max_attempts = COALESCE(NULLIF(max_attempts, 0), 1),
+                created_at = COALESCE(created_at, started_at, ?),
+                updated_at = COALESCE(updated_at, finished_at, started_at, ?)
+            WHERE title IS NULL
+               OR title = ''
+               OR max_attempts IS NULL
+               OR max_attempts = 0
+               OR created_at IS NULL
+               OR updated_at IS NULL
+            """,
+            (now, now),
+        )
+        self._conn.execute(
+            """
+            UPDATE decisions
+            SET summary = COALESCE(NULLIF(summary, ''), reason),
+                rationale = COALESCE(NULLIF(rationale, ''), reason)
+            WHERE summary IS NULL
+               OR summary = ''
+               OR rationale IS NULL
+               OR rationale = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE approvals
+            SET approval_packet_ref = COALESCE(NULLIF(approval_packet_ref, ''), request_packet_ref)
+            WHERE approval_packet_ref IS NULL OR approval_packet_ref = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE receipts
+            SET receipt_class = COALESCE(NULLIF(receipt_class, ''), action_type),
+                policy_result_ref = COALESCE(NULLIF(policy_result_ref, ''), policy_ref),
+                verifiability = COALESCE(
+                    NULLIF(verifiability, ''),
+                    CASE
+                        WHEN proof_mode = 'signed_with_inclusion_proof' THEN 'strong_signed_with_inclusion_proof'
+                        WHEN proof_mode = 'signed' THEN 'signed_receipt'
+                        WHEN receipt_bundle_ref IS NOT NULL AND receipt_bundle_ref != '' THEN 'baseline_verifiable'
+                        ELSE 'hash_linked_only'
+                    END
+                )
+            WHERE receipt_class IS NULL
+               OR receipt_class = ''
+               OR policy_result_ref IS NULL
+               OR policy_result_ref = ''
+               OR verifiability IS NULL
+               OR verifiability = ''
+            """
+        )
+
     def _id(self, prefix: str) -> str:
         return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
@@ -542,6 +702,92 @@ class KernelStore(
     def _rows(self, query: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         cursor = self._conn.execute(query, tuple(params))
         return list(cursor.fetchall())
+
+    def _infer_principal_type(self, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized in {"user", "operator", "human"}:
+            return "user"
+        if normalized in {"kernel", "hermit", "system"}:
+            return "kernel"
+        if normalized in {"feishu", "scheduler", "webhook", "mcp", "cli"}:
+            return "adapter"
+        return "service"
+
+    def _principal_slug(self, value: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+        return slug or "unknown"
+
+    def ensure_principal(
+        self,
+        *,
+        principal_type: str,
+        display_name: str,
+        principal_id: str | None = None,
+        source_channel: str | None = None,
+        external_ref: str | None = None,
+        status: str = "active",
+        metadata: dict[str, Any] | None = None,
+    ) -> PrincipalRecord:
+        now = time.time()
+        resolved_id = principal_id or f"principal_{self._principal_slug(display_name)}"
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO principals (
+                    principal_id, principal_type, display_name, source_channel, external_ref,
+                    status, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(principal_id) DO UPDATE SET
+                    principal_type = excluded.principal_type,
+                    display_name = excluded.display_name,
+                    source_channel = COALESCE(excluded.source_channel, principals.source_channel),
+                    external_ref = COALESCE(excluded.external_ref, principals.external_ref),
+                    status = excluded.status,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    resolved_id,
+                    principal_type,
+                    display_name,
+                    source_channel,
+                    external_ref,
+                    status,
+                    _canonical_json(metadata or {}),
+                    now,
+                    now,
+                ),
+            )
+            row = self._row("SELECT * FROM principals WHERE principal_id = ?", (resolved_id,))
+        assert row is not None
+        return self._principal_from_row(row)
+
+    def _ensure_principal_id(
+        self,
+        actor: str | None,
+        *,
+        source_channel: str | None = None,
+        principal_type: str | None = None,
+    ) -> str:
+        raw = str(actor or "kernel").strip()
+        if not raw:
+            raw = "kernel"
+        inferred_type = principal_type or self._infer_principal_type(raw)
+        principal_id = (
+            raw if raw.startswith("principal_") else f"principal_{self._principal_slug(raw)}"
+        )
+        display_name = (
+            raw.replace("principal_", "").replace("_", " ") if raw.startswith("principal_") else raw
+        )
+        self.ensure_principal(
+            principal_type=inferred_type,
+            display_name=display_name,
+            principal_id=principal_id,
+            source_channel=source_channel,
+            external_ref=None if raw.startswith("principal_") else raw,
+            metadata={"legacy_actor": raw},
+        )
+        return principal_id
 
     def _append_event_tx(
         self,
@@ -557,6 +803,7 @@ class KernelStore(
         causation_id: str | None = None,
         correlation_id: str | None = None,
     ) -> str:
+        actor_principal_id = self._ensure_principal_id(actor)
         payload_json = _canonical_json(payload or {})
         occurred_at = time.time()
         prev_event_hash = self._latest_task_event_hash(task_id)
@@ -567,7 +814,7 @@ class KernelStore(
             entity_type=entity_type,
             entity_id=entity_id,
             event_type=event_type,
-            actor=actor,
+            actor=actor_principal_id,
             payload_json=payload_json,
             occurred_at=occurred_at,
             causation_id=causation_id,
@@ -578,7 +825,7 @@ class KernelStore(
             """
             INSERT INTO events (
                 event_id, task_id, step_id, entity_type, entity_id, event_type,
-                actor, payload_json, occurred_at, causation_id, correlation_id,
+                actor_principal_id, payload_json, occurred_at, causation_id, correlation_id,
                 event_hash, prev_event_hash, hash_chain_algo
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -589,7 +836,7 @@ class KernelStore(
                 entity_type,
                 entity_id,
                 event_type,
-                actor,
+                actor_principal_id,
                 payload_json,
                 occurred_at,
                 causation_id,
@@ -665,7 +912,7 @@ class KernelStore(
                     entity_type=str(row["entity_type"]),
                     entity_id=str(row["entity_id"]),
                     event_type=str(row["event_type"]),
-                    actor=str(row["actor"]),
+                    actor=str(row["actor_principal_id"]),
                     payload_json=str(row["payload_json"]),
                     occurred_at=float(row["occurred_at"]),
                     causation_id=row["causation_id"],

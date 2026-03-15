@@ -1,5 +1,9 @@
 # Hermit
 
+<p align="center">
+  <img src="./docs/site/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="96" height="96">
+</p>
+
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
 [![CI](https://github.com/heggria/Hermit/actions/workflows/ci.yml/badge.svg)](https://github.com/heggria/Hermit/actions/workflows/ci.yml)
@@ -7,33 +11,27 @@
 [![License](https://img.shields.io/badge/license-MIT-black)](./LICENSE)
 [![Docs](https://img.shields.io/badge/docs-github%20pages-0F172A)](https://heggria.github.io/Hermit/)
 
-> **Hermit is a local-first governed agent kernel.**
+> **Hermit turns agent work into governed, inspectable, local-first execution.**
 >
-> It is built for durable tasks, scoped execution, artifact-native context, evidence-bound memory, and important actions that end with receipts instead of hand-wavy tool logs.
+> Same model loop. Different operator contract: approve before side effects, inspect receipts after execution, and roll back supported actions when needed.
 
 Hermit gives you:
 
 - approvals before consequential actions
-- receipts and proof summaries after execution
+- receipts, proof, and task state after the run
 - rollback-aware recovery for supported receipt classes
 
 If you want an agent you can inspect, interrupt, approve, audit, and recover locally, that is the point of Hermit.
 
+Hermit is a local-first governed agent kernel for durable, operator-trust-oriented workflows.
+
 Docs site: [heggria.github.io/Hermit](https://heggria.github.io/Hermit/)
 
-## What You Notice Immediately
+## Same Model Loop, Different Operator Contract
 
-```mermaid
-flowchart TB
-    A["Approval before side effects"] --> B["Receipts and proof after execution"]
-    B --> C["Rollback-aware recovery"]
-    C --> D["Artifact-native context and governed memory"]
+![Generic agent vs Hermit](./docs/site/assets/png/hermit-vs-generic-agent.png)
 
-    style A fill:#f5efe6,stroke:#a35f3f,color:#1f1b17,stroke-width:2px
-    style B fill:#f7f1e8,stroke:#a17a28,color:#1f1b17,stroke-width:2px
-    style C fill:#eef2e7,stroke:#5d7a46,color:#1f1b17,stroke-width:2px
-    style D fill:#efe9f6,stroke:#75608f,color:#1f1b17,stroke-width:2px
-```
+Most agent tools optimize for "helpful right now." Hermit optimizes for "still legible after the run."
 
 ## Install In One Command
 
@@ -53,7 +51,7 @@ It also tries to sync compatible local settings when Hermit does not already hav
 
 It does not blindly overwrite existing `~/.hermit/.env` values, and it does not auto-convert OpenClaw OAuth tokens into `~/.codex/auth.json`.
 
-## See It In One Flow
+## One Task, Still Visible Afterward
 
 Hermit is easiest to understand when one task turns into an inspectable record instead of disappearing into tool logs.
 
@@ -71,7 +69,7 @@ If that task emitted a rollback-capable receipt:
 hermit task rollback <receipt_id>
 ```
 
-The point of Hermit is not only that the model can do work. The point is that the work stays visible after execution: task state, approvals, receipts, proof material, and supported recovery paths.
+The point of Hermit is not only that the model can do work. The point is that the work stays visible afterward: task state, approvals, receipts, proof material, and supported recovery paths.
 
 If you want a recording-ready walkthrough, start with [docs/demo-flows.md](./docs/demo-flows.md).
 
@@ -79,32 +77,20 @@ Real CLI example from this repository's task kernel:
 
 ![Hermit task show, proof, and rollback demo](./docs/site/assets/task-proof-rollback-demo.png)
 
-The mechanics behind that demo are not "model called tool, trust the log." They are a governed path:
+The execution path itself is governed, not implied:
 
-```mermaid
-flowchart LR
-    A["CLI / Chat / Feishu / Scheduler / Webhook"] --> B["Task -> Step -> StepAttempt"]
-    B --> C["Policy + Approval + Scoped authority"]
-    C --> D["Tool execution"]
-    D --> E["Receipt + Proof"]
-    E --> F["Rollback when supported"]
+![Hermit's governed execution path](./docs/site/assets/png/hermit-governed-path.png)
 
-    style A fill:#f5efe6,stroke:#a35f3f,color:#1f1b17,stroke-width:2px
-    style B fill:#fbf8f2,stroke:#c9b8a4,color:#1f1b17,stroke-width:2px
-    style C fill:#f8ecdf,stroke:#c98c69,color:#1f1b17,stroke-width:2px
-    style D fill:#fbf8f2,stroke:#c9b8a4,color:#1f1b17,stroke-width:2px
-    style E fill:#fbf8f2,stroke:#c9b8a4,color:#1f1b17,stroke-width:2px
-    style F fill:#eef2e7,stroke:#5d7a46,color:#1f1b17,stroke-width:2px
-```
+## Why It Feels Different
 
-## Why People Star It
+![What makes Hermit different](./docs/site/assets/png/hermit-differentiators.png)
 
-- it treats work as durable tasks instead of disposable chat turns
-- it inserts policy and approvals between the model and side effects
-- it closes important actions with receipts instead of vague tool logs
-- it keeps local state, artifacts, and memory inspectable
+- durable tasks instead of disposable chat turns
+- policy and approvals between the model and side effects
+- receipts and proof instead of vague tool logs
+- artifact-native context and evidence-bound memory instead of transcript-only state
 
-## Why Hermit
+## What Hermit Actually Is
 
 Most agent systems are optimized to be helpful in the moment. Hermit is optimized to stay legible after the moment.
 
@@ -112,7 +98,7 @@ Most agents treat execution as "the model called a tool." Hermit treats executio
 
 `task -> step -> step attempt -> policy -> approval -> scoped authority -> execution -> receipt -> proof / rollback`
 
-The point is not merely to call tools. The point is to make durable work inspectable and controllable.
+The point is not merely to call tools. The point is to make durable work inspectable, controllable, and recoverable.
 
 ### Core ideas
 
@@ -153,17 +139,17 @@ Hermit is still early, but it is already past the "idea only" stage.
 
 Today the repository already ships:
 
-- a real kernel ledger with first-class records for `Task`, `Step`, `StepAttempt`, `Approval`, `Decision`, `ExecutionPermit`, `PathGrant`, `Artifact`, `Receipt`, `Belief`, `MemoryRecord`, `Rollback`, `Conversation`, and `Ingress`
+- a real kernel ledger with first-class records for `Task`, `Step`, `StepAttempt`, `Approval`, `Decision`, `Principal`, `CapabilityGrant`, `WorkspaceLease`, `Artifact`, `Receipt`, `Belief`, `MemoryRecord`, `Rollback`, `Conversation`, and `Ingress`
 - event-backed task history with hash-chained verification primitives
-- governed tool execution with policy evaluation, approval handling, and scoped permits
+- governed tool execution with policy evaluation, approval handling, workspace leases, and capability grants
 - receipt issuance, proof summaries, proof export, and rollback execution for supported receipts
 - local-first runtime surfaces across CLI, long-running `serve`, scheduler, webhook, and Feishu ingress
 
 Current state, stated plainly:
 
-- **Core** is close to a claimable alpha kernel
-- **Governed execution** is already materially visible in the codebase
-- **Verifiable execution** has strong primitives, but should still be treated as in-progress
+- **Core**, **Governed**, and baseline **Verifiable** kernel profiles are claimable through the conformance matrix and CLI
+- **Strong task-level verifiability still depends on proof coverage**: the strongest readiness signal is determined per exported task, not just at the repository level
+- **These claims apply to the kernel contract** rather than every compatibility surface or legacy runtime affordance
 - **Kernel-first hard cut** is now real for tool governance: builtin tools, plugin tools, delegation tools, and MCP tools must declare explicit governance metadata instead of relying on name-based inference
 - **Approval resolution is part of the ledger**: grant and deny transitions now emit decision + receipt records with proof bundles, while `approval.consumed` remains an event-only transition
 - **Claimability is surfaced in the product**: CLI/operator views now expose kernel claim status, durable re-entry state, and proof readiness instead of requiring manual source inspection
@@ -241,30 +227,7 @@ These commands matter because a task does not end at tool execution; it ends wit
 
 ## Architecture At A Glance
 
-```mermaid
-flowchart TB
-    subgraph S["Operator surfaces"]
-        A["CLI"]
-        B["Chat"]
-        C["Feishu"]
-        D["Scheduler"]
-        E["Webhook"]
-    end
-
-    S --> K["Task kernel"]
-    K --> T["Task controller"]
-    K --> X["Context compiler"]
-    K --> P["Policy engine"]
-    K --> R["Execution layer"]
-    R --> L["Ledger + Projections + Receipts + Proof + Rollback + Memory"]
-
-    style K fill:#f8ecdf,stroke:#c98c69,color:#1f1b17,stroke-width:2px
-    style T fill:#fbf8f2,stroke:#c9b8a4,color:#1f1b17
-    style X fill:#fbf8f2,stroke:#c9b8a4,color:#1f1b17
-    style P fill:#fbf8f2,stroke:#c9b8a4,color:#1f1b17
-    style R fill:#fbf8f2,stroke:#c9b8a4,color:#1f1b17
-    style L fill:#f5efe6,stroke:#a35f3f,color:#1f1b17,stroke-width:2px
-```
+![Hermit architecture overview](./docs/site/assets/png/hermit-architecture-overview.png)
 
 The current repo still contains runtime-era layers and operational surfaces. But the architectural center of gravity is shifting toward the task kernel and its governance law.
 
@@ -291,7 +254,7 @@ Examples:
 
 Suggested homepage assets:
 
-- a screenshot of `hermit task show` with approvals, receipts, and permits visible
+- a screenshot of `hermit task show` with approvals, capability grants, workspace leases, and receipts visible
 - a short terminal capture of `hermit task proof` and `hermit task rollback`
 - an architecture diagram showing the governed execution path
 
@@ -305,6 +268,7 @@ For a lightweight reading surface on GitHub, use the [project wiki](https://gith
 - [Why Hermit](./docs/why-hermit.md)
 - [Architecture](./docs/architecture.md)
 - [Kernel spec v0.1](./docs/kernel-spec-v0.1.md)
+- [Kernel spec section checklist](./docs/kernel-spec-v0.1-section-checklist.md)
 - [Kernel conformance matrix v0.1](./docs/kernel-conformance-matrix-v0.1.md)
 - [Governance](./docs/governance.md)
 - [Receipts and proofs](./docs/receipts-and-proofs.md)

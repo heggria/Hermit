@@ -6,57 +6,58 @@ CLAIM_ROWS: list[dict[str, Any]] = [
     {
         "id": "ingress_task_first",
         "label": "Every ingress is task-first and durable",
-        "status": "implemented",
+        "profiles": ["core", "governed", "verifiable"],
     },
     {
         "id": "event_backed_truth",
         "label": "Durable truth is event-backed and append-only",
-        "status": "implemented",
+        "profiles": ["core", "governed", "verifiable"],
     },
     {
         "id": "no_tool_bypass",
         "label": "No direct model-to-tool execution bypass",
-        "status": "implemented",
+        "profiles": ["core", "governed", "verifiable"],
     },
     {
         "id": "scoped_authority",
         "label": "Effectful execution uses scoped authority and approval packets",
-        "status": "implemented",
+        "profiles": ["governed", "verifiable"],
     },
     {
         "id": "receipts",
         "label": "Important actions emit receipts",
-        "status": "implemented",
+        "profiles": ["governed", "verifiable"],
     },
     {
         "id": "uncertain_outcome",
         "label": "Uncertain outcomes re-enter via observation or reconciliation",
-        "status": "implemented",
+        "profiles": ["governed", "verifiable"],
     },
     {
         "id": "durable_reentry",
         "label": "Input drift / witness drift / approval drift use durable re-entry",
-        "status": "implemented",
+        "profiles": ["governed", "verifiable"],
     },
     {
         "id": "artifact_context",
         "label": "Artifact-native context is the default runtime path",
-        "status": "implemented",
+        "profiles": ["core", "governed", "verifiable"],
     },
     {
         "id": "memory_evidence",
         "label": "Memory writes are evidence-bound and kernel-backed",
-        "status": "implemented",
+        "profiles": ["core", "governed", "verifiable"],
     },
     {
         "id": "proof_export",
         "label": "Verifiable profile exposes proof coverage and exportable bundles",
-        "status": "implemented",
+        "profiles": ["verifiable"],
     },
     {
         "id": "signed_proofs",
-        "label": "Signed proofs and inclusion proofs are available",
-        "status": "implemented",
+        "label": "Strong signed proofs and inclusion proofs are available when signing is configured",
+        "profiles": [],
+        "conditional": True,
     },
 ]
 

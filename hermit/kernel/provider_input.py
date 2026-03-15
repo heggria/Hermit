@@ -201,6 +201,17 @@ class ProviderInputCompiler:
             session_projection_ref=projection_payload.get("artifact_ref"),
         )
         context_pack_ref = self._store_context_pack(task_context=task_context, pack=pack)
+        working_state_ref = self._store_working_state(
+            task_context=task_context,
+            pack=pack,
+            context_pack_ref=context_pack_ref,
+        )
+        self.store.update_step_attempt(
+            task_context.step_attempt_id,
+            context_pack_ref=context_pack_ref,
+            working_state_ref=working_state_ref,
+            executor_mode="compiled_provider_input",
+        )
         compiled_text = self._render_message(
             projection_payload=projection_payload,
             context_pack=pack.to_payload(),
@@ -287,7 +298,7 @@ class ProviderInputCompiler:
                 {
                     "ingress_id": ingress.ingress_id,
                     "resolution": ingress.resolution,
-                    "actor": ingress.actor,
+                    "actor_principal_id": ingress.actor_principal_id,
                     "source_channel": ingress.source_channel,
                     "raw_excerpt": _trim(ingress.raw_text, 240),
                     "prompt_excerpt": _trim(str(ingress.prompt_ref or ""), 240),
@@ -383,6 +394,51 @@ class ProviderInputCompiler:
                 "artifact_ref": artifact.artifact_id,
                 "pack_hash": pack.pack_hash,
                 "kind": "context.pack/v3",
+            },
+        )
+        return artifact.artifact_id
+
+    def _store_working_state(
+        self,
+        *,
+        task_context: TaskExecutionContext,
+        pack: Any,
+        context_pack_ref: str | None,
+    ) -> str | None:
+        if self.artifact_store is None:
+            return None
+        payload = {
+            "kind": "working_state/v1",
+            "task_id": task_context.task_id,
+            "step_id": task_context.step_id,
+            "step_attempt_id": task_context.step_attempt_id,
+            "working_state": dict(pack.working_state or {}),
+            "pack_hash": pack.pack_hash,
+        }
+        uri, content_hash = self.artifact_store.store_json(payload)
+        artifact = self.store.create_artifact(
+            task_id=task_context.task_id,
+            step_id=task_context.step_id,
+            kind="working_state/v1",
+            uri=uri,
+            content_hash=content_hash,
+            producer="provider_input",
+            retention_class="audit",
+            trust_tier="derived",
+            metadata={"pack_hash": pack.pack_hash, "conversation_id": task_context.conversation_id},
+            lineage_ref=context_pack_ref,
+        )
+        self.store.append_event(
+            event_type="working_state.materialized",
+            entity_type="step_attempt",
+            entity_id=task_context.step_attempt_id,
+            task_id=task_context.task_id,
+            step_id=task_context.step_id,
+            actor="kernel",
+            payload={
+                "artifact_ref": artifact.artifact_id,
+                "pack_hash": pack.pack_hash,
+                "kind": "working_state/v1",
             },
         )
         return artifact.artifact_id

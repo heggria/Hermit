@@ -29,7 +29,8 @@ For important actions, the kernel should retain:
 - policy result
 - approval reference
 - decision reference
-- permit or grant reference
+- capability grant reference
+- workspace lease reference
 - execution environment reference
 - result code and summary
 - rollback relationship when supported
@@ -58,7 +59,7 @@ The current codebase already defines a receipt record with fields for:
 - action type
 - input and output artifact references
 - policy result
-- approval, decision, permit, and grant references
+- approval, decision, capability grant, and workspace lease references
 - witness references
 - proof metadata
 - rollback support and rollback status

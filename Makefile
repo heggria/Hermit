@@ -1,4 +1,6 @@
-.PHONY: install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-cov lint format bump-version release-prep release-tag version-check build package-check install-check check verify precommit-install
+.PHONY: install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-cov test-kernel-convergence lint format bump-version release-prep release-tag version-check build package-check install-check check verify precommit-install
+
+UV_CACHE_DIR ?= .uv-cache
 
 install:
 	@bash install.sh
@@ -16,7 +18,7 @@ menubar-app:
 	@hermit-menubar-install-app --adapter feishu --open
 
 mac-dmg:
-	@uv run python scripts/build_macos_dmg.py --adapter feishu --out-dir dist
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python scripts/build_macos_dmg.py --adapter feishu --out-dir dist
 
 env-up:
 	@bash scripts/hermit-envctl.sh $(if $(ENV),$(ENV),dev) up
@@ -49,20 +51,23 @@ dev-watch:
 	@bash scripts/hermit-watch.sh dev
 
 test:
-	@uv run pytest -q
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -q
+
+test-kernel-convergence:
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -q tests/test_provider_input_compiler.py tests/test_kernel_store_tasks_support.py tests/test_cli.py tests/test_docs_alignment.py
 
 test-cov:
-	@uv run pytest --cov=hermit --cov-report=term-missing
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest --cov=hermit --cov-report=term-missing
 
 lint:
-	@uv run ruff check .
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run ruff check .
 
 format:
-	@uv run ruff format .
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run ruff format .
 
 bump-version:
 	@test -n "$(VERSION)" || (echo "Usage: make bump-version VERSION=x.y.z" && exit 1)
-	@uv run python scripts/bump_version.py "$(VERSION)" --update-lock
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python scripts/bump_version.py "$(VERSION)" --update-lock
 
 release-prep:
 	@test -n "$(VERSION)" || (echo "Usage: make release-prep VERSION=x.y.z" && exit 1)
@@ -76,17 +81,17 @@ release-tag:
 	@echo "Created tag v$(VERSION). Push with: git push origin v$(VERSION)"
 
 version-check:
-	@uv run python scripts/check_release_version.py
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python scripts/check_release_version.py
 
 build:
 	@mkdir -p dist
 	@find dist -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-	@uv build --out-dir dist
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv build --out-dir dist
 
 install-check: build
 	@rm -rf .pkg-venv
-	@uv venv .pkg-venv
-	@uv pip install --python .pkg-venv/bin/python dist/*.whl
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv venv .pkg-venv
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv pip install --python .pkg-venv/bin/python dist/*.whl
 	@.pkg-venv/bin/hermit --help >/dev/null
 	@.pkg-venv/bin/hermit setup --help >/dev/null
 	@.pkg-venv/bin/hermit chat --help >/dev/null
@@ -94,7 +99,7 @@ install-check: build
 	@rm -rf .pkg-venv
 
 package-check: build
-	@uv run python scripts/check_release_version.py --dist-dir dist
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python scripts/check_release_version.py --dist-dir dist
 
 check:
 	@$(MAKE) lint

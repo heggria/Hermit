@@ -16,7 +16,7 @@ def configure_logging(level: str = "INFO") -> None:
         processors=[
             structlog.processors.TimeStamper(fmt="%H:%M:%S"),
             structlog.processors.add_log_level,
-            structlog.dev.ConsoleRenderer(pad_event=30),
+            structlog.dev.ConsoleRenderer(pad_event_to=30),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(resolved),
     )

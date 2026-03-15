@@ -11,7 +11,7 @@ from hermit.kernel.proofs import ProofService
 from hermit.kernel.store import KernelStore
 from hermit.kernel.topics import build_task_topic
 
-_PROJECTION_SCHEMA_VERSION = "tail-v7"
+_PROJECTION_SCHEMA_VERSION = "tail-v8"
 
 
 class ProjectionService:
@@ -78,10 +78,19 @@ class ProjectionService:
             for record in self.store.list_memory_records(conversation_id=conversation_id, limit=200)
         ]
         latest_context_pack_ref = None
-        for artifact in reversed(self.store.list_artifacts(task_id=task_id, limit=200)):
-            if artifact.kind.startswith("context.pack/"):
-                latest_context_pack_ref = artifact.artifact_id
+        latest_working_state_ref = None
+        for attempt in self.store.list_step_attempts(task_id=task_id, limit=200):
+            if latest_context_pack_ref is None and attempt.context_pack_ref:
+                latest_context_pack_ref = attempt.context_pack_ref
+            if latest_working_state_ref is None and attempt.working_state_ref:
+                latest_working_state_ref = attempt.working_state_ref
+            if latest_context_pack_ref is not None and latest_working_state_ref is not None:
                 break
+        if latest_context_pack_ref is None:
+            for artifact in reversed(self.store.list_artifacts(task_id=task_id, limit=200)):
+                if artifact.kind.startswith("context.pack/"):
+                    latest_context_pack_ref = artifact.artifact_id
+                    break
         latest_planning_decision_id = None
         for decision in self.store.list_decisions(task_id=task_id, limit=200):
             if decision.decision_type == "planning":
@@ -118,6 +127,7 @@ class ProjectionService:
             "beliefs": beliefs,
             "knowledge": knowledge,
             "latest_context_pack_ref": latest_context_pack_ref,
+            "latest_working_state_ref": latest_working_state_ref,
             "planning": planning_state.to_dict(),
             "selected_plan_ref": planning_state.selected_plan_ref,
             "latest_plan_artifact_refs": planning.latest_plan_artifact_refs(task_id),

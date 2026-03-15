@@ -9,12 +9,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from hermit.capabilities import CapabilityGrantError, CapabilityGrantService
 from hermit.core.tools import ToolRegistry, ToolSpec, serialize_tool_result
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.approval_copy import ApprovalCopyService
 from hermit.kernel.approvals import ApprovalService
 from hermit.kernel.artifacts import ArtifactStore
-from hermit.kernel.context import TaskExecutionContext, capture_execution_environment
+from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.contracts import contract_for
 from hermit.kernel.decisions import DecisionService
 from hermit.kernel.observation import (
@@ -24,8 +25,6 @@ from hermit.kernel.observation import (
     normalize_observation_progress,
     normalize_observation_ticket,
 )
-from hermit.kernel.path_grants import PathGrantService
-from hermit.kernel.permits import CapabilityGrantError, ExecutionPermitService
 from hermit.kernel.policy import (
     POLICY_RULES_VERSION,
     ActionRequest,
@@ -40,10 +39,12 @@ from hermit.kernel.progress_summary import (
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.reconcile import ReconcileService
 from hermit.kernel.store import KernelStore
+from hermit.workspaces import WorkspaceLeaseService, capture_execution_environment
 
 _BLOCK_TYPES = {"text", "image"}
 _RUNTIME_SNAPSHOT_KEY = "runtime_snapshot"
 _PENDING_EXECUTION_KEY = "pending_observation_execution"
+_PENDING_EXECUTION_KIND = "runtime.pending_execution"
 _RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
 _RUNTIME_SNAPSHOT_TTL_SECONDS = 24 * 60 * 60
 _RUNTIME_SNAPSHOT_MAX_BYTES = 256 * 1024
@@ -189,8 +190,8 @@ class ToolExecutionResult:
     policy_decision: PolicyDecision | None = None
     receipt_id: str | None = None
     decision_id: str | None = None
-    permit_id: str | None = None
-    grant_ref: str | None = None
+    capability_grant_id: str | None = None
+    workspace_lease_id: str | None = None
     policy_ref: str | None = None
     witness_ref: str | None = None
     result_code: str = "succeeded"
@@ -210,8 +211,8 @@ class ToolExecutor:
         approval_copy_service: ApprovalCopyService | None = None,
         receipt_service: ReceiptService,
         decision_service: DecisionService | None = None,
-        path_grant_service: PathGrantService | None = None,
-        permit_service: ExecutionPermitService | None = None,
+        capability_service: CapabilityGrantService | None = None,
+        workspace_lease_service: WorkspaceLeaseService | None = None,
         reconcile_service: ReconcileService | None = None,
         progress_summarizer: ProgressSummaryFormatter | None = None,
         progress_summary_keepalive_seconds: float = 15.0,
@@ -225,8 +226,10 @@ class ToolExecutor:
         self.approval_copy = approval_copy_service or ApprovalCopyService()
         self.receipt_service = receipt_service
         self.decision_service = decision_service or DecisionService(store)
-        self.path_grant_service = path_grant_service or PathGrantService(store)
-        self.permit_service = permit_service or ExecutionPermitService(store)
+        self.capability_service = capability_service or CapabilityGrantService(store)
+        self.workspace_lease_service = workspace_lease_service or WorkspaceLeaseService(
+            store, artifact_store
+        )
         self.reconcile_service = reconcile_service or ReconcileService()
         self.progress_summarizer = progress_summarizer
         self.progress_summary_keepalive_seconds = max(
@@ -279,14 +282,18 @@ class ToolExecutor:
         )
         if request_overrides:
             action_request = self._apply_request_overrides(action_request, request_overrides)
-        matched_grant = self._matching_path_grant(action_request)
-        if matched_grant is not None:
-            action_request.context["path_grant_ref"] = matched_grant.grant_id
-            action_request.context["path_grant_prefix"] = matched_grant.path_prefix
         action_ref = self._record_action_request(action_request, attempt_ctx)
         self._set_attempt_phase(attempt_ctx, "policy_pending", reason="policy_evaluation_started")
         policy = self.policy_engine.evaluate(action_request)
         policy_ref = self._record_policy_evaluation(action_request, policy, attempt_ctx)
+        self.store.update_step_attempt(
+            attempt_ctx.step_attempt_id,
+            action_request_ref=action_ref,
+            policy_result_ref=policy_ref,
+            idempotency_key=action_request.idempotency_key,
+            executor_mode="tool_executor",
+            policy_version=POLICY_RULES_VERSION,
+        )
         action_type = tool.action_class or self.policy_engine.infer_action_class(tool)
         governed = _is_governed_action(tool, policy)
 
@@ -298,6 +305,10 @@ class ToolExecutor:
         preview_artifact = None
         if policy.obligations.require_preview:
             preview_artifact = self._build_preview_artifact(tool, tool_input, attempt_ctx)
+            self.store.update_step_attempt(
+                attempt_ctx.step_attempt_id,
+                approval_packet_ref=preview_artifact,
+            )
 
         matched_approval, witness_ref, witness_drift = self._matching_approval(
             approval_record,
@@ -334,6 +345,9 @@ class ToolExecutor:
                 approval_id=None,
                 decision_id=decision_id,
                 state_witness_ref=witness_ref,
+                action_request_ref=action_ref,
+                policy_result_ref=policy_ref,
+                approval_packet_ref=preview_artifact,
             )
             self.store.update_step(attempt_ctx.step_id, status="failed")
             self.store.update_task_status(attempt_ctx.task_id, "failed")
@@ -399,6 +413,9 @@ class ToolExecutor:
                 approval_type=action_type,
                 requested_action=requested_action,
                 request_packet_ref=preview_artifact,
+                requested_action_ref=action_ref,
+                approval_packet_ref=preview_artifact,
+                policy_result_ref=policy_ref,
                 decision_ref=decision_id,
                 state_witness_ref=witness_ref,
             )
@@ -409,6 +426,9 @@ class ToolExecutor:
                 approval_id=approval_id,
                 decision_id=decision_id,
                 state_witness_ref=witness_ref,
+                action_request_ref=action_ref,
+                policy_result_ref=policy_ref,
+                approval_packet_ref=preview_artifact,
             )
             self.store.update_step(attempt_ctx.step_id, status="blocked")
             self.store.update_task_status(attempt_ctx.task_id, "blocked")
@@ -431,8 +451,9 @@ class ToolExecutor:
             )
 
         decision_id = None
-        permit_id = None
-        grant_id = matched_grant.grant_id if matched_grant is not None else None
+        capability_grant_id = None
+        workspace_lease_id = None
+        environment_ref = None
         approval_mode = ""
         if matched_approval is not None:
             approval_mode = str((matched_approval.resolution or {}).get("mode", "once") or "once")
@@ -446,14 +467,8 @@ class ToolExecutor:
                 policy_ref=policy_ref,
                 approval_ref=matched_approval.approval_id,
                 action_type=action_type,
-                decided_by=str(matched_approval.resolved_by or "user"),
+                decided_by=str(matched_approval.resolved_by_principal_id or "principal_user"),
             )
-            if approval_mode == "always_directory" and grant_id is None:
-                grant_id = self._ensure_directory_grant(
-                    approval_record=matched_approval,
-                    action_request=action_request,
-                    policy_ref=policy_ref,
-                )
         if governed:
             self._set_attempt_phase(
                 attempt_ctx, "authorized_pre_exec", reason="execution_authorized"
@@ -464,9 +479,7 @@ class ToolExecutor:
                 step_attempt_id=attempt_ctx.step_attempt_id,
                 decision_type="execution_authorization",
                 verdict="allow",
-                reason=self._authorization_reason(
-                    policy=policy, approval_mode=approval_mode, grant_id=grant_id
-                ),
+                reason=self._authorization_reason(policy=policy, approval_mode=approval_mode),
                 evidence_refs=[
                     ref for ref in [action_ref, policy_ref, preview_artifact, witness_ref] if ref
                 ],
@@ -474,35 +487,61 @@ class ToolExecutor:
                 approval_ref=matched_approval.approval_id if matched_approval is not None else None,
                 action_type=action_type,
             )
-            permit_id = self.permit_service.issue(
+            workspace_lease_id = self._ensure_workspace_lease(
+                attempt_ctx=attempt_ctx,
+                action_request=action_request,
+                approval_mode=approval_mode,
+            )
+            if workspace_lease_id is not None:
+                lease = self.store.get_workspace_lease(workspace_lease_id)
+                if lease is not None:
+                    environment_ref = lease.environment_ref
+            capability_grant_id = self.capability_service.issue(
                 task_id=attempt_ctx.task_id,
                 step_id=attempt_ctx.step_id,
                 step_attempt_id=attempt_ctx.step_attempt_id,
                 decision_ref=decision_id,
                 approval_ref=matched_approval.approval_id if matched_approval is not None else None,
                 policy_ref=policy_ref,
+                issued_to_principal_id=attempt_ctx.actor_principal_id,
+                issued_by_principal_id="kernel",
+                workspace_lease_ref=workspace_lease_id,
                 action_class=action_type,
                 resource_scope=list(action_request.resource_scopes),
                 idempotency_key=action_request.idempotency_key,
-                constraints=self._permit_constraints(action_request, grant_ref=grant_id),
+                constraints=self._capability_constraints(
+                    action_request,
+                    workspace_lease_id=workspace_lease_id,
+                ),
             )
             self.store.update_step_attempt(
                 attempt_ctx.step_attempt_id,
                 status="dispatching",
                 waiting_reason=None,
                 decision_id=decision_id,
-                permit_id=permit_id,
+                capability_grant_id=capability_grant_id,
+                workspace_lease_id=workspace_lease_id,
                 state_witness_ref=witness_ref,
+                action_request_ref=action_ref,
+                policy_result_ref=policy_ref,
+                approval_packet_ref=preview_artifact,
+                environment_ref=environment_ref,
+                idempotency_key=action_request.idempotency_key,
+                executor_mode="tool_executor",
+                policy_version=POLICY_RULES_VERSION,
             )
             self.store.update_step(attempt_ctx.step_id, status="dispatching")
 
-        if governed and permit_id is not None:
+        if governed and capability_grant_id is not None:
             try:
-                self.permit_service.enforce(
-                    permit_id,
+                self.capability_service.enforce(
+                    capability_grant_id,
                     action_class=action_type,
                     resource_scope=list(action_request.resource_scopes),
-                    constraints=self._permit_constraints(action_request, grant_ref=grant_id),
+                    constraints=self._capability_constraints(
+                        action_request,
+                        workspace_lease_id=workspace_lease_id,
+                    ),
                 )
             except CapabilityGrantError as exc:
                 return self._handle_dispatch_denied(
@@ -513,17 +552,18 @@ class ToolExecutor:
                     policy=policy,
                     policy_ref=policy_ref,
                     decision_id=decision_id,
-                    permit_id=permit_id,
-                    grant_ref=grant_id,
+                    capability_grant_id=capability_grant_id,
+                    workspace_lease_id=workspace_lease_id,
                     approval_ref=matched_approval.approval_id
                     if matched_approval is not None
                     else None,
                     witness_ref=witness_ref,
                     error=exc,
                     idempotency_key=action_request.idempotency_key,
+                    action_request_ref=action_ref,
+                    policy_result_ref=policy_ref,
+                    environment_ref=environment_ref,
                 )
-            if grant_id is not None:
-                self.path_grant_service.mark_used(grant_id)
             if matched_approval is not None:
                 self.store.consume_approval(matched_approval.approval_id)
 
@@ -538,8 +578,8 @@ class ToolExecutor:
             self._set_attempt_phase(attempt_ctx, "executing", reason="tool_handler_invoked")
             raw_result = tool.handler(tool_input)
         except Exception as exc:
-            if governed and permit_id is not None:
-                self.permit_service.mark_uncertain(permit_id)
+            if governed and capability_grant_id is not None:
+                self.capability_service.mark_uncertain(capability_grant_id)
                 return self._handle_uncertain_outcome(
                     tool=tool,
                     tool_name=tool_name,
@@ -548,8 +588,8 @@ class ToolExecutor:
                     policy=policy,
                     policy_ref=policy_ref,
                     decision_id=decision_id,
-                    permit_id=permit_id,
-                    grant_ref=grant_id,
+                    capability_grant_id=capability_grant_id,
+                    workspace_lease_id=workspace_lease_id,
                     approval_ref=matched_approval.approval_id
                     if matched_approval is not None
                     else None,
@@ -557,6 +597,9 @@ class ToolExecutor:
                     exc=exc,
                     idempotency_key=action_request.idempotency_key,
                     action_request=action_request,
+                    action_request_ref=action_ref,
+                    policy_result_ref=policy_ref,
+                    environment_ref=environment_ref,
                 )
             raise
 
@@ -573,11 +616,14 @@ class ToolExecutor:
                 policy=policy,
                 policy_ref=policy_ref,
                 decision_id=decision_id,
-                permit_id=permit_id,
-                grant_ref=grant_id,
+                capability_grant_id=capability_grant_id,
+                workspace_lease_id=workspace_lease_id,
                 approval_ref=matched_approval.approval_id if matched_approval is not None else None,
                 witness_ref=witness_ref,
                 action_request=action_request,
+                action_request_ref=action_ref,
+                approval_packet_ref=preview_artifact,
+                environment_ref=environment_ref,
                 approval_mode=approval_mode,
                 rollback_plan=rollback_plan,
             )
@@ -590,13 +636,18 @@ class ToolExecutor:
                 attempt_ctx.step_attempt_id,
                 status="receipt_pending",
                 decision_id=decision_id,
-                permit_id=permit_id,
+                capability_grant_id=capability_grant_id,
+                workspace_lease_id=workspace_lease_id,
                 state_witness_ref=witness_ref,
+                action_request_ref=action_ref,
+                policy_result_ref=policy_ref,
+                approval_packet_ref=preview_artifact,
+                environment_ref=environment_ref,
             )
             self.store.update_step(attempt_ctx.step_id, status="receipt_pending")
         if policy.requires_receipt:
-            if permit_id is not None:
-                self.permit_service.consume(permit_id)
+            if capability_grant_id is not None:
+                self.capability_service.consume(capability_grant_id)
             receipt_id = self._issue_receipt(
                 tool=tool,
                 tool_name=tool_name,
@@ -607,15 +658,17 @@ class ToolExecutor:
                 policy=policy,
                 policy_ref=policy_ref,
                 decision_ref=decision_id,
-                permit_ref=permit_id,
-                grant_ref=grant_id,
+                capability_grant_ref=capability_grant_id,
+                workspace_lease_ref=workspace_lease_id,
+                action_request_ref=action_ref,
+                policy_result_ref=policy_ref,
                 witness_ref=witness_ref,
+                environment_ref=environment_ref,
                 result_code="succeeded",
                 idempotency_key=action_request.idempotency_key,
                 result_summary=self._successful_result_summary(
                     tool_name=tool_name,
                     approval_mode=approval_mode,
-                    grant_id=grant_id,
                 ),
                 rollback_supported=rollback_plan["supported"],
                 rollback_strategy=rollback_plan["strategy"],
@@ -629,8 +682,8 @@ class ToolExecutor:
             policy_decision=policy,
             receipt_id=receipt_id,
             decision_id=decision_id,
-            permit_id=permit_id,
-            grant_ref=grant_id,
+            capability_grant_id=capability_grant_id,
+            workspace_lease_id=workspace_lease_id,
             policy_ref=policy_ref,
             witness_ref=witness_ref,
             result_code="succeeded",
@@ -671,10 +724,16 @@ class ToolExecutor:
         context["note_cursor_event_seq"] = note_cursor_event_seq
         context[_RUNTIME_SNAPSHOT_KEY] = envelope
         context["phase"] = suspend_kind
+        resume_from_ref = self._store_runtime_snapshot_artifact(
+            attempt_ctx=attempt_ctx,
+            envelope=envelope,
+            suspend_kind=suspend_kind,
+        )
         self.store.update_step_attempt(
             attempt_ctx.step_attempt_id,
             status=suspend_kind,
             context=context,
+            resume_from_ref=resume_from_ref,
         )
 
     def persist_blocked_state(
@@ -709,7 +768,7 @@ class ToolExecutor:
                     step_attempt_id=step_attempt_id,
                 )
             )
-        envelope = dict(attempt.context.get(_RUNTIME_SNAPSHOT_KEY, {}))
+        envelope = self._load_runtime_snapshot_envelope(attempt)
         if not envelope:
             return {}
         payload = self._runtime_snapshot_payload(envelope)
@@ -728,7 +787,12 @@ class ToolExecutor:
         context = dict(attempt.context)
         context.pop(_RUNTIME_SNAPSHOT_KEY, None)
         context.pop(_PENDING_EXECUTION_KEY, None)
-        self.store.update_step_attempt(step_attempt_id, context=context, waiting_reason=None)
+        self.store.update_step_attempt(
+            step_attempt_id,
+            context=context,
+            waiting_reason=None,
+            resume_from_ref=None,
+        )
 
     def clear_blocked_state(self, step_attempt_id: str) -> None:
         self.clear_suspended_state(step_attempt_id)
@@ -843,6 +907,67 @@ class ToolExecutor:
             )
         return [dict(message) for message in payload if isinstance(message, dict)]
 
+    def _store_runtime_snapshot_artifact(
+        self,
+        *,
+        attempt_ctx: TaskExecutionContext,
+        envelope: dict[str, Any],
+        suspend_kind: str,
+    ) -> str:
+        return self._store_json_artifact(
+            payload=envelope,
+            kind="runtime.snapshot",
+            attempt_ctx=attempt_ctx,
+            metadata={"suspend_kind": suspend_kind},
+        )
+
+    def _store_pending_execution_artifact(
+        self,
+        *,
+        attempt_ctx: TaskExecutionContext,
+        payload: dict[str, Any],
+    ) -> str:
+        return self._store_json_artifact(
+            payload={
+                "schema": "runtime.pending_execution/v1",
+                "payload": payload,
+            },
+            kind=_PENDING_EXECUTION_KIND,
+            attempt_ctx=attempt_ctx,
+            metadata={
+                "status": "observing",
+                "tool_name": str(payload.get("tool_name", "") or ""),
+            },
+        )
+
+    def _load_runtime_snapshot_envelope(self, attempt: Any) -> dict[str, Any]:
+        resume_from_ref = str(getattr(attempt, "resume_from_ref", "") or "").strip()
+        if resume_from_ref:
+            artifact = self.store.get_artifact(resume_from_ref)
+            if artifact is not None:
+                try:
+                    payload = json.loads(self.artifact_store.read_text(artifact.uri))
+                except (OSError, json.JSONDecodeError):
+                    payload = {}
+                if isinstance(payload, dict):
+                    return payload
+        return dict(attempt.context.get(_RUNTIME_SNAPSHOT_KEY, {}))
+
+    def _load_json_artifact_payload(self, artifact_ref: str) -> dict[str, Any]:
+        artifact = self.store.get_artifact(artifact_ref)
+        if artifact is None:
+            return {}
+        try:
+            payload = json.loads(self.artifact_store.read_text(artifact.uri))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        if payload.get("schema") == "runtime.pending_execution/v1":
+            nested = payload.get("payload")
+            return dict(nested) if isinstance(nested, dict) else {}
+        return payload
+
     def current_note_cursor(self, step_attempt_id: str) -> int:
         attempt = self.store.get_step_attempt(step_attempt_id)
         if attempt is None:
@@ -886,18 +1011,34 @@ class ToolExecutor:
         attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
         context = dict(attempt.context) if attempt is not None else {}
         context[_PENDING_EXECUTION_KEY] = payload
+        pending_execution_ref = self._store_pending_execution_artifact(
+            attempt_ctx=attempt_ctx,
+            payload=payload,
+        )
         self.store.update_step_attempt(
             attempt_ctx.step_attempt_id,
             context=context,
             decision_id=str(payload.get("decision_id", "") or "") or None,
-            permit_id=str(payload.get("permit_id", "") or "") or None,
+            capability_grant_id=str(payload.get("capability_grant_id", "") or "") or None,
+            workspace_lease_id=str(payload.get("workspace_lease_id", "") or "") or None,
             state_witness_ref=str(payload.get("witness_ref", "") or "") or None,
+            action_request_ref=str(payload.get("action_request_ref", "") or "") or None,
+            policy_result_ref=str(payload.get("policy_result_ref", "") or "") or None,
+            approval_packet_ref=str(payload.get("approval_packet_ref", "") or "") or None,
+            pending_execution_ref=pending_execution_ref,
+            idempotency_key=str(payload.get("idempotency_key", "") or "") or None,
+            environment_ref=str(payload.get("environment_ref", "") or "") or None,
         )
 
     def _load_pending_execution(self, step_attempt_id: str) -> dict[str, Any]:
         attempt = self.store.get_step_attempt(step_attempt_id)
         if attempt is None:
             return {}
+        pending_execution_ref = str(getattr(attempt, "pending_execution_ref", "") or "").strip()
+        if pending_execution_ref:
+            payload = self._load_json_artifact_payload(pending_execution_ref)
+            if payload:
+                return payload
         payload = attempt.context.get(_PENDING_EXECUTION_KEY, {})
         return dict(payload) if isinstance(payload, dict) else {}
 
@@ -907,7 +1048,11 @@ class ToolExecutor:
             return
         context = dict(attempt.context)
         context.pop(_PENDING_EXECUTION_KEY, None)
-        self.store.update_step_attempt(step_attempt_id, context=context)
+        self.store.update_step_attempt(
+            step_attempt_id,
+            context=context,
+            pending_execution_ref=None,
+        )
 
     def _handle_observation_submission(
         self,
@@ -920,11 +1065,14 @@ class ToolExecutor:
         policy: PolicyDecision,
         policy_ref: str | None,
         decision_id: str | None,
-        permit_id: str | None,
-        grant_ref: str | None,
+        capability_grant_id: str | None,
+        workspace_lease_id: str | None,
         approval_ref: str | None,
         witness_ref: str | None,
         action_request: ActionRequest,
+        action_request_ref: str | None,
+        approval_packet_ref: str | None,
+        environment_ref: str | None,
         approval_mode: str,
         rollback_plan: dict[str, Any],
     ) -> ToolExecutionResult:
@@ -938,12 +1086,16 @@ class ToolExecutor:
                 "policy": policy.to_dict(),
                 "policy_ref": policy_ref,
                 "decision_id": decision_id,
-                "permit_id": permit_id,
-                "grant_ref": grant_ref,
+                "capability_grant_id": capability_grant_id,
+                "workspace_lease_id": workspace_lease_id,
                 "approval_ref": approval_ref,
+                "action_request_ref": action_request_ref,
                 "witness_ref": witness_ref,
                 "idempotency_key": action_request.idempotency_key,
+                "policy_result_ref": policy_ref,
                 "approval_mode": approval_mode,
+                "approval_packet_ref": approval_packet_ref,
+                "environment_ref": environment_ref,
                 "rollback_plan": rollback_plan,
             },
         )
@@ -953,8 +1105,13 @@ class ToolExecutor:
             status="observing",
             waiting_reason=observation.topic_summary,
             decision_id=decision_id,
-            permit_id=permit_id,
+            capability_grant_id=capability_grant_id,
+            workspace_lease_id=workspace_lease_id,
             state_witness_ref=witness_ref,
+            action_request_ref=action_request_ref,
+            policy_result_ref=policy_ref,
+            approval_packet_ref=approval_packet_ref,
+            environment_ref=environment_ref,
         )
         self.store.update_step(attempt_ctx.step_id, status="blocked")
         self.store.update_task_status(attempt_ctx.task_id, "blocked")
@@ -986,8 +1143,8 @@ class ToolExecutor:
             approval_id=approval_ref,
             policy_decision=policy,
             decision_id=decision_id,
-            permit_id=permit_id,
-            grant_ref=grant_ref,
+            capability_grant_id=capability_grant_id,
+            workspace_lease_id=workspace_lease_id,
             policy_ref=policy_ref,
             witness_ref=witness_ref,
             result_code="observation_submitted",
@@ -1069,10 +1226,13 @@ class ToolExecutor:
         policy = PolicyDecision.from_dict(dict(pending.get("policy", {}) or {}))
         policy_ref = str(pending.get("policy_ref", "") or "") or None
         decision_ref = str(pending.get("decision_id", "") or "") or None
-        permit_ref = str(pending.get("permit_id", "") or "") or None
-        grant_ref = str(pending.get("grant_ref", "") or "") or None
+        capability_grant_ref = str(pending.get("capability_grant_id", "") or "") or None
+        workspace_lease_ref = str(pending.get("workspace_lease_id", "") or "") or None
         approval_ref = str(pending.get("approval_ref", "") or "") or None
         witness_ref = str(pending.get("witness_ref", "") or "") or None
+        action_request_ref = str(pending.get("action_request_ref", "") or "") or None
+        policy_result_ref = str(pending.get("policy_result_ref", "") or "") or None
+        environment_ref = str(pending.get("environment_ref", "") or "") or None
         approval_mode = str(pending.get("approval_mode", "") or "")
         rollback_plan = dict(pending.get("rollback_plan", {}) or {})
 
@@ -1088,8 +1248,8 @@ class ToolExecutor:
         )
         self._set_attempt_phase(attempt_ctx, "settling", reason="observation_finalized")
         if policy.requires_receipt:
-            if permit_ref and result_code == "succeeded":
-                self.permit_service.consume(permit_ref)
+            if capability_grant_ref and result_code == "succeeded":
+                self.capability_service.consume(capability_grant_ref)
             self._issue_receipt(
                 tool=tool,
                 tool_name=tool_name,
@@ -1100,9 +1260,12 @@ class ToolExecutor:
                 policy=policy,
                 policy_ref=policy_ref,
                 decision_ref=decision_ref,
-                permit_ref=permit_ref,
-                grant_ref=grant_ref,
+                capability_grant_ref=capability_grant_ref,
+                workspace_lease_ref=workspace_lease_ref,
+                action_request_ref=action_request_ref,
+                policy_result_ref=policy_result_ref,
                 witness_ref=witness_ref,
+                environment_ref=environment_ref,
                 result_code=result_code,
                 idempotency_key=str(pending.get("idempotency_key", "") or "") or None,
                 result_summary=summary
@@ -1110,7 +1273,6 @@ class ToolExecutor:
                 else self._successful_result_summary(
                     tool_name=tool_name,
                     approval_mode=approval_mode,
-                    grant_id=grant_ref,
                 ),
                 output_kind="tool_error" if is_error else "tool_output",
                 rollback_supported=bool(rollback_plan.get("supported", False)),
@@ -1411,12 +1573,25 @@ class ToolExecutor:
         envelope = self._runtime_snapshot_envelope(snapshot_payload)
         attempt = self.store.get_step_attempt(step_attempt_id)
         context = dict(attempt.context) if attempt is not None else {}
-        context[_RUNTIME_SNAPSHOT_KEY] = envelope
         if "note_cursor_event_seq" in snapshot_payload:
             context["note_cursor_event_seq"] = int(
                 snapshot_payload.get("note_cursor_event_seq", 0) or 0
             )
-        self.store.update_step_attempt(step_attempt_id, context=context)
+        context[_RUNTIME_SNAPSHOT_KEY] = envelope
+        if attempt is None:
+            return
+        resume_from_ref = self._store_runtime_snapshot_artifact(
+            attempt_ctx=self._attempt_context_from_snapshot(step_attempt_id),
+            envelope=envelope,
+            suspend_kind=str(
+                snapshot_payload.get("suspend_kind", attempt.status or "suspended") or "suspended"
+            ),
+        )
+        self.store.update_step_attempt(
+            step_attempt_id,
+            context=context,
+            resume_from_ref=resume_from_ref,
+        )
 
     def _apply_request_overrides(
         self,
@@ -1809,66 +1984,17 @@ class ToolExecutor:
                 return None, witness_ref, True
         return approval_record, witness_ref, False
 
-    def _matching_path_grant(self, action_request: ActionRequest) -> Any:
-        if action_request.action_class != "write_local":
-            return None
-        if not action_request.conversation_id:
-            return None
-        if not action_request.derived.get("outside_workspace"):
-            return None
-        target_paths = list(action_request.derived.get("target_paths", []))
-        if not target_paths:
-            return None
-        return self.path_grant_service.match(
-            conversation_id=str(action_request.conversation_id),
-            action_class=action_request.action_class,
-            target_path=str(target_paths[0]),
-        )
-
-    def _ensure_directory_grant(
-        self,
-        *,
-        approval_record: Any,
-        action_request: ActionRequest,
-        policy_ref: str | None,
-    ) -> str | None:
-        if action_request.action_class != "write_local" or not action_request.conversation_id:
-            return None
-        if not action_request.derived.get("outside_workspace"):
-            return None
-        path_prefix = str(
-            approval_record.requested_action.get("grant_scope_dir")
-            or action_request.derived.get("grant_candidate_prefix")
-            or ""
-        ).strip()
-        if not path_prefix:
-            return None
-        grant_id = self.path_grant_service.create(
-            conversation_id=str(action_request.conversation_id),
-            action_class=action_request.action_class,
-            path_prefix=path_prefix,
-            path_display=path_prefix,
-            created_by=str(approval_record.resolved_by or "user"),
-            approval_ref=approval_record.approval_id,
-            decision_ref=approval_record.decision_ref,
-            policy_ref=policy_ref,
-        )
-        resolution = dict(approval_record.resolution or {})
-        resolution["grant_ref"] = grant_id
-        self.store.update_approval_resolution(approval_record.approval_id, resolution)
-        return grant_id
-
     def _authorization_reason(
         self,
         *,
         policy: PolicyDecision,
         approval_mode: str,
-        grant_id: str | None,
     ) -> str:
-        if grant_id and approval_mode == "always_directory":
-            return _t("kernel.executor.authorization.always_directory")
-        if grant_id:
-            return _t("kernel.executor.authorization.existing_grant")
+        if approval_mode == "mutable_workspace":
+            return _t(
+                "kernel.executor.authorization.policy_allowed",
+                default="Allowed after mutable workspace approval.",
+            )
         if approval_mode == "once":
             return _t("kernel.executor.authorization.once")
         return policy.reason or _t("kernel.executor.authorization.policy_allowed")
@@ -1878,12 +2004,13 @@ class ToolExecutor:
         *,
         tool_name: str,
         approval_mode: str,
-        grant_id: str | None,
     ) -> str:
-        if grant_id and approval_mode == "always_directory":
-            return _t("kernel.executor.result.always_directory", tool_name=tool_name)
-        if grant_id:
-            return _t("kernel.executor.result.existing_grant", tool_name=tool_name)
+        if approval_mode == "mutable_workspace":
+            return _t(
+                "kernel.executor.result.success",
+                default="{tool_name} completed under mutable workspace lease.",
+                tool_name=tool_name,
+            )
         if approval_mode == "once":
             return _t("kernel.executor.result.once", tool_name=tool_name)
         return _t("kernel.executor.result.success", tool_name=tool_name)
@@ -1981,11 +2108,54 @@ class ToolExecutor:
         )
         return artifact.artifact_id
 
-    def _permit_constraints(
+    def _lease_root_path(
         self,
         action_request: ActionRequest,
         *,
-        grant_ref: str | None,
+        attempt_ctx: TaskExecutionContext,
+    ) -> str:
+        target_paths = [
+            str(path) for path in action_request.derived.get("target_paths", []) if path
+        ]
+        if target_paths:
+            try:
+                return str(Path(target_paths[0]).expanduser().resolve().parent)
+            except OSError:
+                return str(Path(target_paths[0]).expanduser())
+        workspace_root = str(attempt_ctx.workspace_root or "").strip()
+        return workspace_root
+
+    def _ensure_workspace_lease(
+        self,
+        *,
+        attempt_ctx: TaskExecutionContext,
+        action_request: ActionRequest,
+        approval_mode: str,
+    ) -> str | None:
+        lease_root = self._lease_root_path(action_request, attempt_ctx=attempt_ctx)
+        if not lease_root:
+            return None
+        existing = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
+        if existing is not None and existing.workspace_lease_id:
+            lease = self.workspace_lease_service.validate_active(existing.workspace_lease_id)
+            return lease.lease_id
+        lease_mode = "mutable" if approval_mode == "mutable_workspace" else "scoped"
+        lease = self.workspace_lease_service.acquire(
+            task_id=attempt_ctx.task_id,
+            step_attempt_id=attempt_ctx.step_attempt_id,
+            workspace_id=f"{attempt_ctx.task_id}:{attempt_ctx.step_id}",
+            root_path=lease_root,
+            holder_principal_id=attempt_ctx.actor_principal_id,
+            mode=lease_mode,
+            resource_scope=list(action_request.resource_scopes),
+        )
+        return lease.lease_id
+
+    def _capability_constraints(
+        self,
+        action_request: ActionRequest,
+        *,
+        workspace_lease_id: str | None,
     ) -> dict[str, Any]:
         constraints = dict(action_request.derived.get("constraints", {}))
         constraints.update(
@@ -1995,8 +2165,10 @@ class ToolExecutor:
                 "command_preview": action_request.derived.get("command_preview"),
             }
         )
-        if grant_ref:
-            constraints["grant_ref"] = grant_ref
+        if workspace_lease_id:
+            lease = self.store.get_workspace_lease(workspace_lease_id)
+            if lease is not None:
+                constraints["lease_root_path"] = lease.root_path
         return {key: value for key, value in constraints.items() if value not in (None, [], {}, "")}
 
     def _supersede_attempt_for_witness_drift(
@@ -2068,13 +2240,16 @@ class ToolExecutor:
         policy: PolicyDecision,
         policy_ref: str | None,
         decision_id: str | None,
-        permit_id: str,
-        grant_ref: str | None,
+        capability_grant_id: str,
+        workspace_lease_id: str | None,
         approval_ref: str | None,
         witness_ref: str | None,
         exc: Exception,
         idempotency_key: str | None,
         action_request: ActionRequest,
+        action_request_ref: str | None,
+        policy_result_ref: str | None,
+        environment_ref: str | None,
     ) -> ToolExecutionResult:
         action_type = tool.action_class or self.policy_engine.infer_action_class(tool)
         outcome = self.reconcile_service.reconcile(
@@ -2098,7 +2273,7 @@ class ToolExecutor:
             actor="kernel",
             payload={
                 "tool_name": tool_name,
-                "permit_ref": permit_id,
+                "capability_grant_ref": capability_grant_id,
                 "decision_ref": decision_id,
                 "result_code": result_code,
                 "error": str(exc),
@@ -2109,8 +2284,12 @@ class ToolExecutor:
             status="reconciling",
             waiting_reason=str(exc),
             decision_id=decision_id,
-            permit_id=permit_id,
+            capability_grant_id=capability_grant_id,
+            workspace_lease_id=workspace_lease_id,
             state_witness_ref=witness_ref,
+            action_request_ref=action_request_ref,
+            policy_result_ref=policy_result_ref,
+            environment_ref=environment_ref,
         )
         self.store.update_step(attempt_ctx.step_id, status="reconciling")
         self.store.update_task_status(attempt_ctx.task_id, task_status)
@@ -2124,9 +2303,12 @@ class ToolExecutor:
             policy=policy,
             policy_ref=policy_ref,
             decision_ref=decision_id,
-            permit_ref=permit_id,
-            grant_ref=grant_ref,
+            capability_grant_ref=capability_grant_id,
+            workspace_lease_ref=workspace_lease_id,
+            action_request_ref=action_request_ref,
+            policy_result_ref=policy_result_ref,
             witness_ref=witness_ref,
+            environment_ref=environment_ref,
             result_code=result_code,
             idempotency_key=idempotency_key,
             result_summary=summary,
@@ -2139,8 +2321,8 @@ class ToolExecutor:
             policy_decision=policy,
             receipt_id=receipt_id,
             decision_id=decision_id,
-            permit_id=permit_id,
-            grant_ref=grant_ref,
+            capability_grant_id=capability_grant_id,
+            workspace_lease_id=workspace_lease_id,
             policy_ref=policy_ref,
             witness_ref=witness_ref,
             result_code=result_code,
@@ -2170,22 +2352,25 @@ class ToolExecutor:
         policy: PolicyDecision,
         policy_ref: str | None,
         decision_id: str | None,
-        permit_id: str,
-        grant_ref: str | None,
+        capability_grant_id: str,
+        workspace_lease_id: str | None,
         approval_ref: str | None,
         witness_ref: str | None,
         error: CapabilityGrantError,
         idempotency_key: str | None,
+        action_request_ref: str | None,
+        policy_result_ref: str | None,
+        environment_ref: str | None,
     ) -> ToolExecutionResult:
         self.store.append_event(
             event_type="dispatch.denied",
-            entity_type="execution_permit",
-            entity_id=permit_id,
+            entity_type="capability_grant",
+            entity_id=capability_grant_id,
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
             actor="kernel",
             payload={
-                "permit_ref": permit_id,
+                "capability_grant_ref": capability_grant_id,
                 "decision_ref": decision_id,
                 "error_code": error.code,
                 "error": str(error),
@@ -2198,8 +2383,12 @@ class ToolExecutor:
             status="failed",
             waiting_reason=str(error),
             decision_id=decision_id,
-            permit_id=permit_id,
+            capability_grant_id=capability_grant_id,
+            workspace_lease_id=workspace_lease_id,
             state_witness_ref=witness_ref,
+            action_request_ref=action_request_ref,
+            policy_result_ref=policy_result_ref,
+            environment_ref=environment_ref,
             finished_at=now,
         )
         self.store.update_step(attempt_ctx.step_id, status="failed", finished_at=now)
@@ -2217,9 +2406,12 @@ class ToolExecutor:
                 policy=policy,
                 policy_ref=policy_ref,
                 decision_ref=decision_id,
-                permit_ref=permit_id,
-                grant_ref=grant_ref,
+                capability_grant_ref=capability_grant_id,
+                workspace_lease_ref=workspace_lease_id,
+                action_request_ref=action_request_ref,
+                policy_result_ref=policy_result_ref,
                 witness_ref=witness_ref,
+                environment_ref=environment_ref,
                 result_code="dispatch_denied",
                 idempotency_key=idempotency_key,
                 result_summary=str(error),
@@ -2233,8 +2425,8 @@ class ToolExecutor:
             policy_decision=policy,
             receipt_id=receipt_id,
             decision_id=decision_id,
-            permit_id=permit_id,
-            grant_ref=grant_ref,
+            capability_grant_id=capability_grant_id,
+            workspace_lease_id=workspace_lease_id,
             policy_ref=policy_ref,
             witness_ref=witness_ref,
             result_code="dispatch_denied",
@@ -2254,9 +2446,12 @@ class ToolExecutor:
         policy: PolicyDecision,
         policy_ref: str | None,
         decision_ref: str | None,
-        permit_ref: str | None,
-        grant_ref: str | None,
+        capability_grant_ref: str | None,
+        workspace_lease_ref: str | None,
+        action_request_ref: str | None = None,
+        policy_result_ref: str | None = None,
         witness_ref: str | None,
+        environment_ref: str | None = None,
         result_code: str,
         idempotency_key: str | None,
         result_summary: str | None = None,
@@ -2291,38 +2486,53 @@ class ToolExecutor:
             trust_tier="observed",
             metadata={"tool_name": tool_name},
         )
-        env_uri, env_hash = self.artifact_store.store_json(
-            capture_execution_environment(cwd=Path(attempt_ctx.workspace_root or "."))
-        )
-        env_artifact = self.store.create_artifact(
-            task_id=attempt_ctx.task_id,
-            step_id=attempt_ctx.step_id,
-            kind="environment",
-            uri=env_uri,
-            content_hash=env_hash,
-            producer="tool_executor",
-            retention_class="audit",
-            trust_tier="observed",
-            metadata={"tool_name": tool_name},
+        effective_environment_ref = environment_ref
+        if effective_environment_ref is None and workspace_lease_ref:
+            lease = self.store.get_workspace_lease(workspace_lease_ref)
+            if lease is not None and lease.environment_ref:
+                effective_environment_ref = lease.environment_ref
+        if effective_environment_ref is None:
+            env_uri, env_hash = self.artifact_store.store_json(
+                capture_execution_environment(cwd=Path(attempt_ctx.workspace_root or "."))
+            )
+            env_artifact = self.store.create_artifact(
+                task_id=attempt_ctx.task_id,
+                step_id=attempt_ctx.step_id,
+                kind="environment.snapshot",
+                uri=env_uri,
+                content_hash=env_hash,
+                producer="tool_executor",
+                retention_class="audit",
+                trust_tier="observed",
+                metadata={"tool_name": tool_name},
+            )
+            effective_environment_ref = env_artifact.artifact_id
+        self.store.update_step_attempt(
+            attempt_ctx.step_attempt_id,
+            environment_ref=effective_environment_ref,
         )
         return self.receipt_service.issue(
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
             step_attempt_id=attempt_ctx.step_attempt_id,
             action_type=tool.action_class or self.policy_engine.infer_action_class(tool),
+            receipt_class=tool.action_class or self.policy_engine.infer_action_class(tool),
             input_refs=[input_artifact.artifact_id],
-            environment_ref=env_artifact.artifact_id,
+            environment_ref=effective_environment_ref,
             policy_result=policy.to_dict(),
             approval_ref=approval_ref,
             output_refs=[output_artifact.artifact_id],
             result_summary=result_summary or f"{tool_name} executed successfully",
             result_code=result_code,
             decision_ref=decision_ref,
-            permit_ref=permit_ref,
-            grant_ref=grant_ref,
+            capability_grant_ref=capability_grant_ref,
+            workspace_lease_ref=workspace_lease_ref,
             policy_ref=policy_ref,
+            action_request_ref=action_request_ref,
+            policy_result_ref=policy_result_ref or policy_ref,
             witness_ref=witness_ref,
             idempotency_key=idempotency_key,
+            verifiability="baseline_verifiable" if policy.requires_receipt else "hash_linked_only",
             rollback_supported=rollback_supported,
             rollback_strategy=rollback_strategy,
             rollback_artifact_refs=rollback_artifact_refs,

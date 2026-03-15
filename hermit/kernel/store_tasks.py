@@ -58,7 +58,9 @@ class KernelTaskStoreMixin:
 
     def get_conversation(self, conversation_id: str) -> ConversationRecord | None:
         with self._lock:
-            row = self._row("SELECT * FROM conversations WHERE conversation_id = ?", (conversation_id,))
+            row = self._row(
+                "SELECT * FROM conversations WHERE conversation_id = ?", (conversation_id,)
+            )
         return self._conversation_from_row(row) if row is not None else None
 
     def list_conversations(self) -> list[str]:
@@ -74,7 +76,9 @@ class KernelTaskStoreMixin:
                 (json.dumps(metadata, ensure_ascii=False), now, conversation_id),
             )
 
-    def set_conversation_focus(self, conversation_id: str, *, task_id: str | None, reason: str = "") -> None:
+    def set_conversation_focus(
+        self, conversation_id: str, *, task_id: str | None, reason: str = ""
+    ) -> None:
         now = time.time()
         with self._lock, self._conn:
             self._conn.execute(
@@ -92,14 +96,21 @@ class KernelTaskStoreMixin:
             return None
         if conversation.focus_task_id:
             task = self.get_task(conversation.focus_task_id)
-            if task is not None and task.status in {"queued", "running", "blocked", "planning_ready"}:
+            if task is not None and task.status in {
+                "queued",
+                "running",
+                "blocked",
+                "planning_ready",
+            }:
                 return task.task_id
         open_tasks = self.list_open_tasks_for_conversation(conversation_id=conversation_id, limit=1)
         if not open_tasks:
             self.set_conversation_focus(conversation_id, task_id=None, reason="no_open_tasks")
             return None
         fallback = open_tasks[0]
-        self.set_conversation_focus(conversation_id, task_id=fallback.task_id, reason="fallback_latest_open")
+        self.set_conversation_focus(
+            conversation_id, task_id=fallback.task_id, reason="fallback_latest_open"
+        )
         return fallback.task_id
 
     def update_conversation_usage(
@@ -149,17 +160,25 @@ class KernelTaskStoreMixin:
         policy_profile: str = "default",
         parent_task_id: str | None = None,
         requested_by: str | None = None,
+        task_contract_ref: str | None = None,
         continuation_anchor: dict[str, Any] | None = None,
     ) -> TaskRecord:
         now = time.time()
         task_id = self._id("task")
+        owner_principal_id = self._ensure_principal_id(owner, source_channel=source_channel)
+        requested_by_principal_id = (
+            self._ensure_principal_id(requested_by, source_channel=source_channel)
+            if requested_by is not None
+            else None
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO tasks (
-                    task_id, conversation_id, title, goal, status, priority, owner,
-                    policy_profile, source_channel, parent_task_id, requested_by, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    task_id, conversation_id, title, goal, status, priority, owner_principal_id,
+                    policy_profile, source_channel, parent_task_id, task_contract_ref,
+                    requested_by_principal_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -168,11 +187,12 @@ class KernelTaskStoreMixin:
                     goal,
                     status,
                     priority,
-                    owner,
+                    owner_principal_id,
                     policy_profile,
                     source_channel,
                     parent_task_id,
-                    requested_by,
+                    task_contract_ref,
+                    requested_by_principal_id,
                     now,
                     now,
                 ),
@@ -194,11 +214,12 @@ class KernelTaskStoreMixin:
                     "goal": goal,
                     "status": status,
                     "priority": priority,
-                    "owner": owner,
+                    "owner_principal_id": owner_principal_id,
                     "policy_profile": policy_profile,
                     "source_channel": source_channel,
                     "parent_task_id": parent_task_id,
-                    "requested_by": requested_by,
+                    "task_contract_ref": task_contract_ref,
+                    "requested_by_principal_id": requested_by_principal_id,
                     "continuation_anchor": dict(continuation_anchor or {}),
                     "created_at": now,
                     "updated_at": now,
@@ -213,7 +234,9 @@ class KernelTaskStoreMixin:
             row = self._row("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
         return self._task_from_row(row) if row is not None else None
 
-    def list_tasks(self, *, conversation_id: str | None = None, status: str | None = None, limit: int = 50) -> list[TaskRecord]:
+    def list_tasks(
+        self, *, conversation_id: str | None = None, status: str | None = None, limit: int = 50
+    ) -> list[TaskRecord]:
         clauses = []
         params: list[Any] = []
         if conversation_id:
@@ -229,7 +252,9 @@ class KernelTaskStoreMixin:
             rows = self._rows(query, params)
         return [self._task_from_row(row) for row in rows]
 
-    def list_open_tasks_for_conversation(self, *, conversation_id: str, limit: int = 20) -> list[TaskRecord]:
+    def list_open_tasks_for_conversation(
+        self, *, conversation_id: str, limit: int = 20
+    ) -> list[TaskRecord]:
         with self._lock:
             rows = self._rows(
                 """
@@ -244,7 +269,9 @@ class KernelTaskStoreMixin:
             )
         return [self._task_from_row(row) for row in rows]
 
-    def update_task_status(self, task_id: str, status: str, *, payload: dict[str, Any] | None = None) -> None:
+    def update_task_status(
+        self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
+    ) -> None:
         now = time.time()
         with self._lock, self._conn:
             self._conn.execute(
@@ -269,16 +296,41 @@ class KernelTaskStoreMixin:
             )
         return self._task_from_row(row) if row is not None else None
 
-    def create_step(self, *, task_id: str, kind: str, status: str = "running") -> StepRecord:
+    def create_step(
+        self,
+        *,
+        task_id: str,
+        kind: str,
+        status: str = "running",
+        title: str | None = None,
+        contract_ref: str | None = None,
+        depends_on: list[str] | None = None,
+        max_attempts: int = 1,
+    ) -> StepRecord:
         now = time.time()
         step_id = self._id("step")
         with self._lock, self._conn:
             self._conn.execute(
                 """
-                INSERT INTO steps (step_id, task_id, kind, status, attempt, started_at)
-                VALUES (?, ?, ?, ?, 1, ?)
+                INSERT INTO steps (
+                    step_id, task_id, kind, status, attempt, title, contract_ref,
+                    depends_on_json, max_attempts, started_at, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (step_id, task_id, kind, status, now),
+                (
+                    step_id,
+                    task_id,
+                    kind,
+                    status,
+                    title or kind,
+                    contract_ref,
+                    json.dumps(list(depends_on or []), ensure_ascii=False),
+                    max(int(max_attempts or 1), 1),
+                    now,
+                    now,
+                    now,
+                ),
             )
             self._append_event_tx(
                 event_id=self._id("event"),
@@ -293,10 +345,16 @@ class KernelTaskStoreMixin:
                     "kind": kind,
                     "status": status,
                     "attempt": 1,
+                    "title": title or kind,
+                    "contract_ref": contract_ref,
+                    "depends_on": list(depends_on or []),
+                    "max_attempts": max(int(max_attempts or 1), 1),
                     "input_ref": None,
                     "output_ref": None,
                     "started_at": now,
                     "finished_at": None,
+                    "created_at": now,
+                    "updated_at": now,
                 },
             )
         step = self.get_step(step_id)
@@ -324,15 +382,22 @@ class KernelTaskStoreMixin:
             "status": status or step.status,
             "output_ref": output_ref if output_ref is not None else step.output_ref,
             "finished_at": finished_at if finished_at is not None else step.finished_at,
+            "updated_at": now,
         }
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE steps
-                SET status = ?, output_ref = ?, finished_at = ?
+                SET status = ?, output_ref = ?, finished_at = ?, updated_at = ?
                 WHERE step_id = ?
                 """,
-                (values["status"], values["output_ref"], values["finished_at"], step_id),
+                (
+                    values["status"],
+                    values["output_ref"],
+                    values["finished_at"],
+                    values["updated_at"],
+                    step_id,
+                ),
             )
             self._conn.execute(
                 "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
@@ -350,6 +415,10 @@ class KernelTaskStoreMixin:
                     "task_id": step.task_id,
                     "kind": step.kind,
                     "attempt": step.attempt,
+                    "title": step.title,
+                    "contract_ref": step.contract_ref,
+                    "depends_on": list(step.depends_on),
+                    "max_attempts": step.max_attempts,
                     **values,
                 },
             )
@@ -363,6 +432,17 @@ class KernelTaskStoreMixin:
         status: str = "running",
         context: dict[str, Any] | None = None,
         queue_priority: int = 0,
+        context_pack_ref: str | None = None,
+        working_state_ref: str | None = None,
+        environment_ref: str | None = None,
+        action_request_ref: str | None = None,
+        policy_result_ref: str | None = None,
+        approval_packet_ref: str | None = None,
+        pending_execution_ref: str | None = None,
+        idempotency_key: str | None = None,
+        executor_mode: str | None = None,
+        policy_version: str | None = None,
+        resume_from_ref: str | None = None,
     ) -> StepAttemptRecord:
         now = time.time()
         step_attempt_id = self._id("attempt")
@@ -370,8 +450,11 @@ class KernelTaskStoreMixin:
             self._conn.execute(
                 """
                 INSERT INTO step_attempts (
-                    step_attempt_id, task_id, step_id, attempt, status, context_json, queue_priority, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    step_attempt_id, task_id, step_id, attempt, status, context_json,
+                    queue_priority, context_pack_ref, working_state_ref, environment_ref,
+                    action_request_ref, policy_result_ref, approval_packet_ref, pending_execution_ref, idempotency_key,
+                    executor_mode, policy_version, resume_from_ref, started_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_attempt_id,
@@ -381,6 +464,17 @@ class KernelTaskStoreMixin:
                     status,
                     json.dumps(context or {}, ensure_ascii=False),
                     int(queue_priority),
+                    context_pack_ref,
+                    working_state_ref,
+                    environment_ref,
+                    action_request_ref,
+                    policy_result_ref,
+                    approval_packet_ref,
+                    pending_execution_ref,
+                    idempotency_key,
+                    executor_mode,
+                    policy_version,
+                    resume_from_ref,
                     now,
                 ),
             )
@@ -402,8 +496,20 @@ class KernelTaskStoreMixin:
                     "waiting_reason": None,
                     "approval_id": None,
                     "decision_id": None,
-                    "permit_id": None,
+                    "capability_grant_id": None,
+                    "workspace_lease_id": None,
                     "state_witness_ref": None,
+                    "context_pack_ref": context_pack_ref,
+                    "working_state_ref": working_state_ref,
+                    "environment_ref": environment_ref,
+                    "action_request_ref": action_request_ref,
+                    "policy_result_ref": policy_result_ref,
+                    "approval_packet_ref": approval_packet_ref,
+                    "pending_execution_ref": pending_execution_ref,
+                    "idempotency_key": idempotency_key,
+                    "executor_mode": executor_mode,
+                    "policy_version": policy_version,
+                    "resume_from_ref": resume_from_ref,
                     "superseded_by_step_attempt_id": None,
                     "started_at": now,
                     "finished_at": None,
@@ -413,7 +519,9 @@ class KernelTaskStoreMixin:
 
     def get_step_attempt(self, step_attempt_id: str) -> StepAttemptRecord | None:
         with self._lock:
-            row = self._row("SELECT * FROM step_attempts WHERE step_attempt_id = ?", (step_attempt_id,))
+            row = self._row(
+                "SELECT * FROM step_attempts WHERE step_attempt_id = ?", (step_attempt_id,)
+            )
         return self._step_attempt_from_row(row) if row is not None else None
 
     def list_step_attempts(
@@ -510,8 +618,20 @@ class KernelTaskStoreMixin:
         waiting_reason: str | None | object = _UNSET,
         approval_id: str | None | object = _UNSET,
         decision_id: str | None | object = _UNSET,
-        permit_id: str | None | object = _UNSET,
+        capability_grant_id: str | None | object = _UNSET,
+        workspace_lease_id: str | None | object = _UNSET,
         state_witness_ref: str | None | object = _UNSET,
+        context_pack_ref: str | None | object = _UNSET,
+        working_state_ref: str | None | object = _UNSET,
+        environment_ref: str | None | object = _UNSET,
+        action_request_ref: str | None | object = _UNSET,
+        policy_result_ref: str | None | object = _UNSET,
+        approval_packet_ref: str | None | object = _UNSET,
+        pending_execution_ref: str | None | object = _UNSET,
+        idempotency_key: str | None | object = _UNSET,
+        executor_mode: str | None | object = _UNSET,
+        policy_version: str | None | object = _UNSET,
+        resume_from_ref: str | None | object = _UNSET,
         superseded_by_step_attempt_id: str | None | object = _UNSET,
         finished_at: float | None | object = _UNSET,
     ) -> None:
@@ -520,12 +640,60 @@ class KernelTaskStoreMixin:
             return
         payload = {
             "status": status or attempt.status,
-            "queue_priority": attempt.queue_priority if queue_priority is _UNSET else queue_priority,
-            "waiting_reason": attempt.waiting_reason if waiting_reason is _UNSET else waiting_reason,
+            "queue_priority": attempt.queue_priority
+            if queue_priority is _UNSET
+            else queue_priority,
+            "waiting_reason": attempt.waiting_reason
+            if waiting_reason is _UNSET
+            else waiting_reason,
             "approval_id": attempt.approval_id if approval_id is _UNSET else approval_id,
             "decision_id": attempt.decision_id if decision_id is _UNSET else decision_id,
-            "permit_id": attempt.permit_id if permit_id is _UNSET else permit_id,
-            "state_witness_ref": attempt.state_witness_ref if state_witness_ref is _UNSET else state_witness_ref,
+            "capability_grant_id": (
+                attempt.capability_grant_id
+                if capability_grant_id is _UNSET
+                else capability_grant_id
+            ),
+            "workspace_lease_id": (
+                attempt.workspace_lease_id if workspace_lease_id is _UNSET else workspace_lease_id
+            ),
+            "state_witness_ref": attempt.state_witness_ref
+            if state_witness_ref is _UNSET
+            else state_witness_ref,
+            "context_pack_ref": (
+                attempt.context_pack_ref if context_pack_ref is _UNSET else context_pack_ref
+            ),
+            "working_state_ref": (
+                attempt.working_state_ref if working_state_ref is _UNSET else working_state_ref
+            ),
+            "environment_ref": (
+                attempt.environment_ref if environment_ref is _UNSET else environment_ref
+            ),
+            "action_request_ref": (
+                attempt.action_request_ref if action_request_ref is _UNSET else action_request_ref
+            ),
+            "policy_result_ref": (
+                attempt.policy_result_ref if policy_result_ref is _UNSET else policy_result_ref
+            ),
+            "approval_packet_ref": (
+                attempt.approval_packet_ref
+                if approval_packet_ref is _UNSET
+                else approval_packet_ref
+            ),
+            "pending_execution_ref": (
+                attempt.pending_execution_ref
+                if pending_execution_ref is _UNSET
+                else pending_execution_ref
+            ),
+            "idempotency_key": (
+                attempt.idempotency_key if idempotency_key is _UNSET else idempotency_key
+            ),
+            "executor_mode": (attempt.executor_mode if executor_mode is _UNSET else executor_mode),
+            "policy_version": (
+                attempt.policy_version if policy_version is _UNSET else policy_version
+            ),
+            "resume_from_ref": (
+                attempt.resume_from_ref if resume_from_ref is _UNSET else resume_from_ref
+            ),
             "superseded_by_step_attempt_id": (
                 attempt.superseded_by_step_attempt_id
                 if superseded_by_step_attempt_id is _UNSET
@@ -537,18 +705,32 @@ class KernelTaskStoreMixin:
             self._conn.execute(
                 """
                 UPDATE step_attempts
-                SET status = ?, context_json = ?, queue_priority = ?, waiting_reason = ?, approval_id = ?, decision_id = ?, permit_id = ?, state_witness_ref = ?, superseded_by_step_attempt_id = ?, finished_at = ?
+                SET status = ?, context_json = ?, queue_priority = ?, waiting_reason = ?, approval_id = ?, decision_id = ?, capability_grant_id = ?, workspace_lease_id = ?, state_witness_ref = ?, context_pack_ref = ?, working_state_ref = ?, environment_ref = ?, action_request_ref = ?, policy_result_ref = ?, approval_packet_ref = ?, pending_execution_ref = ?, idempotency_key = ?, executor_mode = ?, policy_version = ?, resume_from_ref = ?, superseded_by_step_attempt_id = ?, finished_at = ?
                 WHERE step_attempt_id = ?
                 """,
                 (
                     payload["status"],
-                    json.dumps(attempt.context if context is _UNSET else context, ensure_ascii=False),
+                    json.dumps(
+                        attempt.context if context is _UNSET else context, ensure_ascii=False
+                    ),
                     int(payload["queue_priority"] or 0),
                     payload["waiting_reason"],
                     payload["approval_id"],
                     payload["decision_id"],
-                    payload["permit_id"],
+                    payload["capability_grant_id"],
+                    payload["workspace_lease_id"],
                     payload["state_witness_ref"],
+                    payload["context_pack_ref"],
+                    payload["working_state_ref"],
+                    payload["environment_ref"],
+                    payload["action_request_ref"],
+                    payload["policy_result_ref"],
+                    payload["approval_packet_ref"],
+                    payload["pending_execution_ref"],
+                    payload["idempotency_key"],
+                    payload["executor_mode"],
+                    payload["policy_version"],
+                    payload["resume_from_ref"],
                     payload["superseded_by_step_attempt_id"],
                     payload["finished_at"],
                     step_attempt_id,
@@ -587,11 +769,16 @@ class KernelTaskStoreMixin:
     ) -> IngressRecord:
         now = time.time()
         ingress_id = self._id("ingress")
+        actor_principal_id = (
+            self._ensure_principal_id(actor, source_channel=source_channel)
+            if actor is not None
+            else None
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO ingresses (
-                    ingress_id, conversation_id, source_channel, actor, raw_text, normalized_text,
+                    ingress_id, conversation_id, source_channel, actor_principal_id, raw_text, normalized_text,
                     prompt_ref, reply_to_ref, quoted_message_ref, explicit_task_ref,
                     referenced_artifact_refs_json, status, resolution, chosen_task_id, parent_task_id,
                     confidence, margin, rationale_json, created_at, updated_at
@@ -601,7 +788,7 @@ class KernelTaskStoreMixin:
                     ingress_id,
                     conversation_id,
                     source_channel,
-                    actor,
+                    actor_principal_id,
                     raw_text,
                     normalized_text,
                     prompt_ref,
@@ -697,8 +884,12 @@ class KernelTaskStoreMixin:
         payload = {
             "status": ingress.status if status is _UNSET else status,
             "resolution": ingress.resolution if resolution is _UNSET else resolution,
-            "chosen_task_id": ingress.chosen_task_id if chosen_task_id is _UNSET else chosen_task_id,
-            "parent_task_id": ingress.parent_task_id if parent_task_id is _UNSET else parent_task_id,
+            "chosen_task_id": ingress.chosen_task_id
+            if chosen_task_id is _UNSET
+            else chosen_task_id,
+            "parent_task_id": ingress.parent_task_id
+            if parent_task_id is _UNSET
+            else parent_task_id,
             "confidence": ingress.confidence if confidence is _UNSET else confidence,
             "margin": ingress.margin if margin is _UNSET else margin,
             "rationale": ingress.rationale if rationale is _UNSET else rationale,
@@ -809,7 +1000,8 @@ class KernelTaskStoreMixin:
                 "entity_type": str(row["entity_type"]),
                 "entity_id": str(row["entity_id"]),
                 "event_type": str(row["event_type"]),
-                "actor": str(row["actor"]),
+                "actor_principal_id": str(row["actor_principal_id"]),
+                "actor": str(row["actor_principal_id"]),
                 "payload": _json_loads(row["payload_json"]),
                 "occurred_at": float(row["occurred_at"]),
                 "event_hash": row["event_hash"],

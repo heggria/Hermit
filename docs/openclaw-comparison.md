@@ -16,7 +16,7 @@ That is the key distinction to keep in mind.
 | --- | --- | --- |
 | Primary unit of work | task-first durable work | often more session-first or interaction-first |
 | Execution model | increasingly governed | often optimized first for flexible agent behavior |
-| Authority model | approvals, permits, path grants, receipts | varies, but often less centered on first-class governance objects |
+| Authority model | approvals, capability grants, workspace leases, receipts | varies, but often less centered on first-class governance objects |
 | Context model | artifact-native direction | often more transcript-centric or runtime-centric |
 | Memory model | evidence-bound direction with beliefs and memory records | varies by implementation |
 | Operator surface | task inspection, proof, approval, rollback | varies; usually less centered on a kernel ledger |

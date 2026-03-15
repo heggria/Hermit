@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from hermit.capabilities import CapabilityGrantService
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.contracts import contract_for
 from hermit.kernel.decisions import DecisionService
-from hermit.kernel.permits import ExecutionPermitService
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.store import KernelStore
 
@@ -27,7 +27,7 @@ class ApprovalService:
             ArtifactStore(store.db_path.parent / "artifacts") if self._governed_resolution else None
         )
         self.decisions = DecisionService(store) if self._governed_resolution else None
-        self.permits = ExecutionPermitService(store) if self._governed_resolution else None
+        self.capabilities = CapabilityGrantService(store) if self._governed_resolution else None
         self.receipts = (
             ReceiptService(store, self._artifact_store) if self._governed_resolution else None
         )
@@ -41,8 +41,12 @@ class ApprovalService:
         approval_type: str,
         requested_action: dict[str, Any],
         request_packet_ref: str | None,
+        requested_action_ref: str | None = None,
+        approval_packet_ref: str | None = None,
+        policy_result_ref: str | None = None,
         decision_ref: str | None = None,
         state_witness_ref: str | None = None,
+        expires_at: float | None = None,
     ) -> str:
         approval = self.store.create_approval(
             task_id=task_id,
@@ -51,8 +55,12 @@ class ApprovalService:
             approval_type=approval_type,
             requested_action=requested_action,
             request_packet_ref=request_packet_ref,
+            requested_action_ref=requested_action_ref,
+            approval_packet_ref=approval_packet_ref,
+            policy_result_ref=policy_result_ref,
             decision_ref=decision_ref,
             state_witness_ref=state_witness_ref,
+            expires_at=expires_at,
         )
         return approval.approval_id
 
@@ -72,14 +80,14 @@ class ApprovalService:
             resolution={"status": "granted", "mode": "once"},
         )
 
-    def approve_always_directory(
+    def approve_mutable_workspace(
         self, approval_id: str, *, resolved_by: str = "user"
     ) -> str | None:
         return self._resolve(
             approval_id,
             status="granted",
             resolved_by=resolved_by,
-            resolution={"status": "granted", "mode": "always_directory"},
+            resolution={"status": "granted", "mode": "mutable_workspace"},
         )
 
     def deny(self, approval_id: str, *, resolved_by: str = "user", reason: str = "") -> str | None:
@@ -127,7 +135,7 @@ class ApprovalService:
         if (
             not self._governed_resolution
             or self.decisions is None
-            or self.permits is None
+            or self.capabilities is None
             or self.receipts is None
         ):
             return None
@@ -149,7 +157,13 @@ class ApprovalService:
             approval.status, resolved_by=resolved_by, resolution=resolution
         )
         evidence_refs = [
-            ref for ref in [approval.request_packet_ref, approval.state_witness_ref] if ref
+            ref
+            for ref in [
+                approval.requested_action_ref,
+                approval.approval_packet_ref,
+                approval.state_witness_ref,
+            ]
+            if ref
         ]
         decision_id = self.decisions.record(
             task_id=approval.task_id,
@@ -165,13 +179,16 @@ class ApprovalService:
             decided_by=resolved_by,
         )
         idempotency_key = f"approval-resolution:{approval.approval_id}:{approval.status}:{mode}"
-        permit_id = self.permits.issue(
+        grant_id = self.capabilities.issue(
             task_id=approval.task_id,
             step_id=approval.step_id,
             step_attempt_id=approval.step_attempt_id,
             decision_ref=decision_id,
             approval_ref=approval.approval_id,
             policy_ref=policy_ref,
+            issued_to_principal_id=approval.resolved_by_principal_id or "principal_user",
+            issued_by_principal_id=resolved_by,
+            workspace_lease_ref=None,
             action_class="approval_resolution",
             resource_scope=[f"approval:{approval.approval_id}"],
             idempotency_key=idempotency_key,
@@ -183,7 +200,13 @@ class ApprovalService:
             step_attempt_id=approval.step_attempt_id,
             action_type="approval_resolution",
             input_refs=[
-                ref for ref in [approval.request_packet_ref, approval.state_witness_ref] if ref
+                ref
+                for ref in [
+                    approval.requested_action_ref,
+                    approval.approval_packet_ref,
+                    approval.state_witness_ref,
+                ]
+                if ref
             ],
             environment_ref=None,
             policy_result={
@@ -197,18 +220,20 @@ class ApprovalService:
             result_summary=self._result_summary(approval.status, resolution),
             result_code=str(approval.status),
             decision_ref=decision_id,
-            permit_ref=permit_id,
+            capability_grant_ref=grant_id,
             policy_ref=policy_ref,
+            action_request_ref=approval.requested_action_ref,
+            policy_result_ref=approval.policy_result_ref or policy_ref,
             witness_ref=approval.state_witness_ref,
             idempotency_key=idempotency_key,
             rollback_supported=False,
         )
-        self.permits.consume(permit_id)
+        self.capabilities.consume(grant_id)
         updated_resolution = dict(resolution)
         updated_resolution.update(
             {
                 "decision_ref": decision_id,
-                "permit_ref": permit_id,
+                "capability_grant_ref": grant_id,
                 "receipt_ref": receipt_id,
             }
         )

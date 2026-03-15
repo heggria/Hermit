@@ -6,6 +6,7 @@ from pathlib import Path
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.controller import TaskController
+from hermit.kernel.projections import ProjectionService
 from hermit.kernel.provider_input import ProviderInputCompiler
 from hermit.kernel.store import KernelStore
 
@@ -101,15 +102,24 @@ def test_compile_builds_context_pack_and_projection_refs(tmp_path: Path) -> None
 
     pack_artifact = store.get_artifact(compiled.context_pack_ref)
     projection_artifact = store.get_artifact(compiled.session_projection_ref)
+    attempt = store.get_step_attempt(ctx.step_attempt_id)
     assert pack_artifact is not None and pack_artifact.kind == "context.pack/v3"
     assert (
         projection_artifact is not None and projection_artifact.kind == "conversation.projection/v2"
     )
+    assert attempt is not None
+    assert attempt.context_pack_ref == compiled.context_pack_ref
+    assert attempt.working_state_ref is not None
     payload = json.loads(Path(pack_artifact.uri).read_text(encoding="utf-8"))
     assert payload["focus_summary"]["task_id"] == ctx.task_id
     assert payload["focus_summary"]["reason"] == "manual_focus"
     assert payload["bound_ingress_deltas"][0]["reply_to_ref"] == "om_root"
     assert payload["bound_ingress_deltas"][0]["quoted_message_ref"] == "om_quote"
+    working_state_artifact = store.get_artifact(attempt.working_state_ref or "")
+    assert working_state_artifact is not None and working_state_artifact.kind == "working_state/v1"
+    projection = ProjectionService(store).rebuild_task(ctx.task_id)
+    assert projection["latest_context_pack_ref"] == compiled.context_pack_ref
+    assert projection["latest_working_state_ref"] == attempt.working_state_ref
 
 
 def test_compile_carries_forward_terminal_outcome_into_context_pack(tmp_path: Path) -> None:
