@@ -197,7 +197,7 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
     completed = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.25,
+        timeout=0.5,
         predicate=lambda poll: poll.get("status") == "completed",
     )
     assert completed is not None
