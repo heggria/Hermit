@@ -5,8 +5,12 @@ on:
     branches:
       - main
     paths:
-      - "docs/site/**"
       - ".github/workflows/pages.yml"
+      - "docs/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "README.zh-CN.md"
+      - "scripts/check_install_docs_sync.py"
   workflow_dispatch:
 
 permissions:
@@ -21,25 +25,39 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Sync docs environment
+        run: uv sync --group docs
+
+      - name: Build docs
+        run: make docs-build
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b
         with:
-          path: docs/site
+          path: site
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import signal
 import subprocess
@@ -11,6 +12,15 @@ from pathlib import Path
 
 from watchfiles import Change, watch
 
+from hermit.companion.control import (
+    matching_process_pids,
+    process_exists,
+    read_pid,
+    watch_pid_path,
+)
+from hermit.companion.control import (
+    pid_path as serve_pid_path,
+)
 from hermit.executables import resolve_uv_bin
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -34,6 +44,11 @@ APP_PATHS = {
     "prod": Path.home() / "Applications" / "Hermit.app",
     "dev": Path.home() / "Applications" / "Hermit Dev.app",
     "test": Path.home() / "Applications" / "Hermit Test.app",
+}
+BASE_DIRS = {
+    "prod": Path.home() / ".hermit",
+    "dev": Path.home() / ".hermit-dev",
+    "test": Path.home() / ".hermit-test",
 }
 
 
@@ -122,6 +137,76 @@ def _spawn(env_name: str, adapter: str) -> subprocess.Popen[str]:
     )
 
 
+def _base_dir(env_name: str) -> Path:
+    return BASE_DIRS[env_name]
+
+
+def _remove_pid_file(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _ensure_single_watcher(env_name: str, adapter: str) -> Path:
+    pid_file = watch_pid_path(adapter, _base_dir(env_name))
+    existing_pid = read_pid(pid_file)
+    if existing_pid is not None and existing_pid != os.getpid():
+        if process_exists(existing_pid):
+            print(
+                f"Watcher already running for env='{env_name}' adapter='{adapter}' (PID {existing_pid}).",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise SystemExit(1)
+        print(f"Removing stale watcher PID file: {pid_file} (PID {existing_pid})", flush=True)
+        _remove_pid_file(pid_file)
+
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    atexit.register(_remove_pid_file, pid_file)
+    return pid_file
+
+
+def _wait_for_exit(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not process_exists(pid):
+            return True
+        time.sleep(0.1)
+    return not process_exists(pid)
+
+
+def _take_over_existing_service(env_name: str, adapter: str) -> None:
+    pid_file = serve_pid_path(adapter, _base_dir(env_name))
+    existing_pid = read_pid(pid_file)
+    if existing_pid is None:
+        return
+    if not process_exists(existing_pid):
+        print(f"Removing stale serve PID file: {pid_file} (PID {existing_pid})", flush=True)
+        _remove_pid_file(pid_file)
+        return
+
+    print(
+        f"Taking over existing service for env='{env_name}' adapter='{adapter}' (PID {existing_pid})...",
+        flush=True,
+    )
+    os.kill(existing_pid, signal.SIGTERM)
+    if _wait_for_exit(existing_pid):
+        return
+    print(f"Service PID {existing_pid} did not exit in time; sending SIGKILL.", flush=True)
+    os.kill(existing_pid, signal.SIGKILL)
+    _wait_for_exit(existing_pid, timeout=1.0)
+
+
+def _menubar_running(env_name: str, adapter: str) -> bool:
+    matches = matching_process_pids(
+        f"-m hermit.companion.menubar --adapter {adapter}",
+        base_dir=_base_dir(env_name),
+    )
+    return bool(matches)
+
+
 def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, cwd=ROOT_DIR, check=True)
 
@@ -132,6 +217,8 @@ def _ensure_macos_deps() -> None:
 
 def _ensure_menubar(env_name: str, adapter: str) -> None:
     if sys.platform != "darwin":
+        return
+    if _menubar_running(env_name, adapter):
         return
     app_path = APP_PATHS[env_name]
     _ensure_macos_deps()
@@ -145,13 +232,7 @@ def _ensure_menubar(env_name: str, adapter: str) -> None:
             ]
         )
     env = os.environ.copy()
-    env["HERMIT_BASE_DIR"] = str(
-        {
-            "prod": Path.home() / ".hermit",
-            "dev": Path.home() / ".hermit-dev",
-            "test": Path.home() / ".hermit-test",
-        }[env_name]
-    )
+    env["HERMIT_BASE_DIR"] = str(_base_dir(env_name))
     subprocess.run(["open", "-na", str(app_path)], cwd=ROOT_DIR, check=True, env=env)
 
 
@@ -172,6 +253,7 @@ def main() -> int:
     if not watch_paths:
         print("No existing watch paths found.", file=sys.stderr)
         return 1
+    _ensure_single_watcher(args.env, args.adapter)
 
     current: subprocess.Popen[str] | None = None
     stopping = False
@@ -194,6 +276,7 @@ def main() -> int:
         f"Starting Hermit dev service for env='{args.env}' adapter='{args.adapter}'",
         flush=True,
     )
+    _take_over_existing_service(args.env, args.adapter)
     if not args.no_menubar:
         print("Ensuring menubar companion is running...", flush=True)
         _ensure_menubar(args.env, args.adapter)

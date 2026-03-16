@@ -582,7 +582,7 @@ Length:
 # Hermit
 
 [![CI](https://github.com/heggria/Hermit/actions/workflows/ci.yml/badge.svg)](https://github.com/heggria/Hermit/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-black)](./LICENSE)
 
 > **Hermit is a local-first governed agent kernel.**
@@ -666,7 +666,7 @@ Current state, stated plainly:
 
 ### Requirements
 
-- Python `3.11+`
+- Python `3.13+`
 - [`uv`](https://docs.astral.sh/uv/) recommended
 - macOS only: `rumps` for the optional menu bar companion
 
@@ -681,7 +681,7 @@ This installs Hermit, initializes `~/.hermit`, and copies the basic local enviro
 Or do it manually:
 
 ```bash
-uv sync
+uv sync --group dev --group typecheck --group docs --group security --group release
 uv run hermit init
 ```
 

@@ -7,6 +7,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -14,62 +17,88 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
         with:
-          version: "0.8.15"
+          enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
-      - name: Sync dependencies
-        run: uv sync --extra dev
+      - name: Sync lint environment
+        run: uv sync --group dev
 
-      - name: Validate version metadata
-        run: make version-check
+      - name: Validate lockfile and version metadata
+        run: |
+          make lock-check
+          make version-check
+
+      - name: Run Ruff format check
+        run: uv run ruff format --check .
 
       - name: Run Ruff
-        run: uv run ruff check .
+        run: make lint
 
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - os: ubuntu-latest
-            sync_args: --extra dev
-          - os: macos-latest
-            sync_args: --extra dev --extra macos
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        shard_total: [10]
-
-    runs-on: ${{ matrix.variant.os }}
+  typecheck:
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
         with:
-          version: "0.8.15"
+          enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
-      - name: Sync dependencies
-        run: uv sync ${{ matrix.variant.sync_args }}
+      - name: Sync typecheck environment
+        run: uv sync --group dev --group typecheck
+
+      - name: Run Pyright
+        run: make typecheck
+
+  test-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+        shard: [1, 2, 3, 4]
+        shard_total: [4]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync test environment
+        run: uv sync --group dev
 
       - name: Select test shard
         run: |
@@ -83,74 +112,259 @@ jobs:
       - name: Run test suite
         run: uv run pytest -q -n auto $(tr '\n' ' ' < .pytest-shard)
 
-  package:
-    needs:
-      - lint
-      - test
+  test-macos:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+        shard: [1, 2, 3, 4]
+        shard_total: [4]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync test environment
+        run: uv sync --group dev --extra macos
+
+      - name: Select test shard
+        run: |
+          python scripts/select_test_shard.py \
+            --shard ${{ matrix.shard }} \
+            --shard-total ${{ matrix.shard_total }} \
+            > .pytest-shard
+          echo "Shard ${{ matrix.shard }}/${{ matrix.shard_total }} will run:"
+          cat .pytest-shard
+
+      - name: Run test suite
+        run: uv run pytest -q -n auto $(tr '\n' ' ' < .pytest-shard)
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Sync coverage environment
+        run: uv sync --group dev --group security
+
+      - name: Run coverage suite
+        run: make test-cov
+
+      - name: Enforce changed-lines coverage
+        if: github.event_name == 'pull_request'
+        run: make coverage-diff DIFF_RANGE=origin/${{ github.base_ref }}...HEAD
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  docs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
         with:
-          version: "0.8.15"
+          enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
-      - name: Sync dependencies
-        run: uv sync --extra dev
+      - name: Sync docs environment
+        run: uv sync --group docs
 
-      - name: Build distributions
-        run: make build
+      - name: Build docs
+        run: make docs-build
 
-      - name: Validate package metadata
-        run: make package-check
-
-      - name: Smoke test installation
-        run: make install-check
-
-      - name: Upload distributions
-        uses: actions/upload-artifact@v6
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: hermit-dist
-          path: dist/*
+          name: docs-site
+          path: site
 
-  macos-dmg:
-    needs:
-      - lint
-      - test
-    runs-on: macos-latest
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Run dependency review
+        if: github.event_name == 'pull_request'
+        uses: github/codeql-action/dependency-review-action@dd677812177e0c29f9c970a6c58d8607ae1bfefd
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Sync security environment
+        run: uv sync --group security
+
+      - name: Run pip-audit
+        run: make security
+
+      - name: Generate SBOM
+        run: make sbom
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: hermit-sbom
+          path: dist/hermit.sbom.json
+
+  package:
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
         with:
-          version: "0.8.15"
+          enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
-      - name: Sync dependencies
-        run: uv sync --extra dev --extra macos
+      - name: Sync package environment
+        run: uv sync --group dev --group release
+
+      - name: Build and validate distributions
+        run: |
+          make build
+          make package-check
+          make install-check
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: hermit-dist
+          path: dist/*
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Build and smoke-test Docker image
+        run: make docker-smoke
+
+  macos-dmg:
+    runs-on: macos-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Sync macOS packaging environment
+        run: uv sync --group dev --group release --extra macos
 
       - name: Build macOS DMG
         run: make mac-dmg
 
       - name: Upload macOS DMG
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: hermit-macos-dmg
           path: dist/*.dmg
+
+  release-verify:
+    needs:
+      - lint
+      - typecheck
+      - test-linux
+      - test-macos
+      - coverage
+      - docs
+      - security
+      - package
+      - docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+
+      - name: Sync release verification environment
+        run: uv sync --group dev --group release
+
+      - name: Verify release metadata
+        run: |
+          make version-check
+          make package-check

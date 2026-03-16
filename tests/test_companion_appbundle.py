@@ -33,10 +33,14 @@ def test_install_app_bundle_creates_expected_structure(tmp_path: Path, monkeypat
     assert (bundle / "Contents" / "MacOS" / "python3").is_symlink()
     launcher_text = launcher.read_text(encoding="utf-8")
     assert 'export HERMIT_PROFILE="codex-local"' in launcher_text
-    assert 'exec "$APP_ROOT/python3" -m hermit.companion.menubar --adapter "feishu"' in launcher_text
+    assert (
+        'exec "$APP_ROOT/python3" -m hermit.companion.menubar --adapter "feishu"' in launcher_text
+    )
 
 
-def test_install_app_bundle_uses_environment_specific_name_and_bundle_id(tmp_path: Path, monkeypatch) -> None:
+def test_install_app_bundle_uses_environment_specific_name_and_bundle_id(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(appbundle, "_bundle_python_target", lambda: Path("/usr/local/bin/python3"))
     monkeypatch.setattr(appbundle, "_project_root", lambda: None)
     monkeypatch.setattr(appbundle, "_install_bundle_icon", lambda resources_dir: None)
@@ -52,7 +56,9 @@ def test_install_app_bundle_uses_environment_specific_name_and_bundle_id(tmp_pat
     assert info["CFBundleIdentifier"] == "com.hermit.menubar.dev"
 
 
-def test_install_app_bundle_uses_uv_project_launcher_when_repo_available(tmp_path: Path, monkeypatch) -> None:
+def test_install_app_bundle_uses_uv_project_launcher_when_repo_available(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(appbundle, "_bundle_python_target", lambda: Path("/usr/local/bin/python3"))
     monkeypatch.setattr(appbundle, "_project_root", lambda: Path("/Users/beta/work/Hermit"))
     monkeypatch.setattr(appbundle, "_install_bundle_icon", lambda resources_dir: None)
@@ -67,7 +73,10 @@ def test_install_app_bundle_uses_uv_project_launcher_when_repo_available(tmp_pat
     assert not (bundle / "Contents" / "MacOS" / "python3").exists()
     assert 'source "/Users/beta/work/Hermit/scripts/hermit-common.sh"' in launcher_text
     assert 'UV_BIN="$(resolve_uv_bin)"' in launcher_text
-    assert 'exec "${UV_BIN}" run --project "/Users/beta/work/Hermit" --python 3.11 python -m hermit.companion.menubar --adapter "feishu"' in launcher_text
+    assert (
+        'exec "${UV_BIN}" run --project "/Users/beta/work/Hermit" --python 3.13 python -m hermit.companion.menubar --adapter "feishu"'
+        in launcher_text
+    )
     assert "/opt/homebrew/bin/uv" not in launcher_text
 
 
@@ -100,7 +109,10 @@ def test_base_dir_helpers_normalize_names(monkeypatch) -> None:
     assert appbundle._base_dir_slug(Path("/tmp/.workspace sandbox")) == "workspace-sandbox"
     assert appbundle._base_dir_slug(Path("/tmp/!!!")) == "custom"
     assert appbundle.app_name() == "Hermit Dev"
-    assert appbundle.bundle_id(Path("/tmp/.workspace sandbox")) == "com.hermit.menubar.workspace-sandbox"
+    assert (
+        appbundle.bundle_id(Path("/tmp/.workspace sandbox"))
+        == "com.hermit.menubar.workspace-sandbox"
+    )
     assert appbundle.app_path(base_dir=Path("/tmp/.hermit-dev")).name == "Hermit Dev.app"
 
 
@@ -202,7 +214,9 @@ def test_login_item_helpers_and_open_bundle(tmp_path: Path, monkeypatch) -> None
     scripts: list[str] = []
     popen_calls: list[list[str]] = []
 
-    monkeypatch.setattr(appbundle, "_run_osascript", lambda script: scripts.append(script) or "true")
+    monkeypatch.setattr(
+        appbundle, "_run_osascript", lambda script: scripts.append(script) or "true"
+    )
     monkeypatch.setattr(
         appbundle.subprocess,
         "Popen",
@@ -256,8 +270,12 @@ def test_parse_args_and_main_workflow(tmp_path: Path, monkeypatch, capsys) -> No
 
     monkeypatch.setattr(appbundle.sys, "platform", "darwin")
     monkeypatch.setattr(appbundle, "install_app_bundle", lambda **kwargs: bundle)
-    monkeypatch.setattr(appbundle, "enable_login_item", lambda target=None: f"Enabled login item for {bundle.stem}.")
-    monkeypatch.setattr(appbundle, "open_app_bundle", lambda target=None: opened.append(Path(target)))
+    monkeypatch.setattr(
+        appbundle, "enable_login_item", lambda target=None: f"Enabled login item for {bundle.stem}."
+    )
+    monkeypatch.setattr(
+        appbundle, "open_app_bundle", lambda target=None: opened.append(Path(target))
+    )
 
     exit_code = appbundle.main(
         [
@@ -288,7 +306,9 @@ def test_main_rejects_non_macos(monkeypatch, capsys) -> None:
     assert "only supported on macOS" in capsys.readouterr().err
 
 
-def test_appbundle_main_and_login_item_can_render_zh_cn(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_appbundle_main_and_login_item_can_render_zh_cn(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
     monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
     monkeypatch.setattr(appbundle.sys, "platform", "linux")
 

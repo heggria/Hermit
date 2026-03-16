@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -67,7 +66,7 @@ def build_dmg(
         )
         applications_link = stage_dir / "Applications"
         if not applications_link.exists():
-            os.symlink("/Applications", applications_link)
+            applications_link.symlink_to("/Applications")
 
         if dmg_path.exists():
             dmg_path.unlink()

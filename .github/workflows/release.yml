@@ -14,7 +14,7 @@ on:
 jobs:
   build-python:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: read
 
@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
 
@@ -41,49 +41,47 @@ jobs:
         run: git checkout "${{ steps.vars.outputs.release_tag }}"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
         with:
-          version: "0.8.15"
+          enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
-      - name: Sync dependencies
-        run: uv sync --extra dev
+      - name: Sync release environment
+        run: uv sync --group dev --group typecheck --group docs --group security --group release
 
-      - name: Verify project
+      - name: Verify project and release metadata
         env:
           RELEASE_TAG: ${{ steps.vars.outputs.release_tag }}
         run: |
           uv run python scripts/check_release_version.py --tag "$RELEASE_TAG"
-          make verify
+          make verify-release
 
       - name: Build distributions
         run: make build
 
-      - name: Validate built artifacts
+      - name: Generate release assets
         env:
           RELEASE_TAG: ${{ steps.vars.outputs.release_tag }}
         run: |
+          make sbom
           uv run python scripts/check_release_version.py --tag "$RELEASE_TAG" --dist-dir dist
           shasum -a 256 dist/* > dist/SHA256SUMS.txt
           uv run python scripts/generate_release_notes.py --tag "$RELEASE_TAG" --output dist/RELEASE_NOTES.md
-
-      - name: Prepare PyPI distributions
-        run: |
           mkdir -p pypi-dist
           cp dist/*.whl dist/*.tar.gz pypi-dist/
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: hermit-release-python-dist
           path: dist/*
 
       - name: Upload PyPI distributions
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: hermit-release-pypi-dist
           path: pypi-dist/*
@@ -91,13 +89,13 @@ jobs:
   build-macos-dmg:
     needs: build-python
     runs-on: macos-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
 
@@ -115,19 +113,19 @@ jobs:
         run: git checkout "${{ steps.vars.outputs.release_tag }}"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
         with:
-          version: "0.8.15"
+          enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
-      - name: Sync dependencies
-        run: uv sync --extra dev --extra macos
+      - name: Sync macOS release environment
+        run: uv sync --group dev --group release --extra macos
 
-      - name: Validate version metadata
+      - name: Validate release metadata
         env:
           RELEASE_TAG: ${{ steps.vars.outputs.release_tag }}
         run: uv run python scripts/check_release_version.py --tag "$RELEASE_TAG"
@@ -136,7 +134,7 @@ jobs:
         run: make mac-dmg
 
       - name: Upload macOS DMG bundle
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: hermit-release-macos-dmg
           path: dist/*.dmg
@@ -153,22 +151,66 @@ jobs:
       url: https://pypi.org/project/hermit-agent/
 
     steps:
-      - name: Download release bundle
-        uses: actions/download-artifact@v5
+      - name: Download PyPI distributions
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: hermit-release-pypi-dist
           path: dist
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e
         with:
           packages-dir: dist
+
+  attest-python:
+    needs: build-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: hermit-release-python-dist
+          path: dist
+
+      - name: Attest Python release bundle
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
+        with:
+          subject-path: "dist/*"
+
+  attest-macos:
+    needs: build-macos-dmg
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download macOS DMG bundle
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: hermit-release-macos-dmg
+          path: macos-dmg
+
+      - name: Attest macOS DMG bundle
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
+        with:
+          subject-path: "macos-dmg/*"
 
   github-release:
     needs:
       - build-python
       - build-macos-dmg
       - publish-pypi
+      - attest-python
+      - attest-macos
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -176,19 +218,19 @@ jobs:
 
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: hermit-release-python-dist
           path: dist
 
       - name: Download macOS DMG bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: hermit-release-macos-dmg
           path: macos-dmg
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
         with:
           tag_name: ${{ needs.build-python.outputs.release_tag }}
           body_path: dist/RELEASE_NOTES.md

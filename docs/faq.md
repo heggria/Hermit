@@ -58,7 +58,7 @@ Three groups:
 
 Start here:
 
-- [README.md](../README.md)
+- [Getting started](./getting-started.md)
 - [why-hermit.md](./why-hermit.md)
 - [architecture.md](./architecture.md)
 - [roadmap.md](./roadmap.md)

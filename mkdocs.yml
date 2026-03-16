@@ -1,0 +1,52 @@
+site_name: Hermit
+site_description: Local-first governed agent kernel for durable and inspectable AI work.
+site_url: https://heggria.github.io/Hermit/
+repo_url: https://github.com/heggria/Hermit
+repo_name: heggria/Hermit
+docs_dir: docs
+site_dir: site
+strict: true
+exclude_docs: |
+  oss-docs-redesign-proposal.md
+  wiki-home.md
+
+theme:
+  name: material
+  language: en
+  logo: assets/hermit-macos-icon.svg
+  favicon: assets/hermit-macos-icon.svg
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Demo Flows: demo-flows.md
+  - Why Hermit: why-hermit.md
+  - Architecture: architecture.md
+  - Governance: governance.md
+  - Task Lifecycle: task-lifecycle.md
+  - Receipts And Proofs: receipts-and-proofs.md
+  - Configuration: configuration.md
+  - CLI And Operations: cli-and-operations.md
+  - Providers And Profiles: providers-and-profiles.md
+  - Desktop Companion: desktop-companion.md
+  - Serve Troubleshooting: serve-troubleshooting.md
+  - FAQ: faq.md
+  - Roadmap: roadmap.md
+  - Status And Compatibility: status-and-compatibility.md

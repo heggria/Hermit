@@ -87,6 +87,8 @@ Triggers a graceful reload for the running adapter process.
 
 Use this when you want to rebuild configuration, plugins, and tools without treating the change as a full source-code hot reload.
 
+For local source edits, prefer `scripts/hermit-watch.sh dev` or `make env-watch ENV=dev` instead of repeatedly combining `serve` and `reload` by hand. Watch mode takes over the target environment, keeps only one watcher per adapter, and avoids duplicate menubar instances.
+
 ## Config, Profiles, And Auth
 
 Useful inspection commands:

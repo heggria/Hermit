@@ -1,14 +1,41 @@
+# Virtual environments
 .venv
-*.egg-info
-__pycache__
+.pkg-venv/
+
+# Python artifacts
 *.pyc
-.env
-.DS_Store
-.coverage*
-.pytest_cache/
-.ruff_cache/
+*.pyo
+*.egg
+*.egg-info
+.eggs/
+__pycache__
+
+# Build & distribution
 build/
 dist/
 dist-test/
+
+# Testing & coverage
+.coverage*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.hypothesis/
+
+# Linters & type checkers
+.ruff_cache/
+.pyright/
+.mypy_cache/
+
+# Generated output
+site/
+docs/site/
+reports/
+
+# OS & editor
+.DS_Store
+.env
+
+# Test artifacts
 *.cover
 MagicMock

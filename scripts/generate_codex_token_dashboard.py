@@ -24,6 +24,102 @@ CODEX_ROOTS = [
 CLAUDE_ROOT = Path("/Users/beta/.claude/projects")
 CURSOR_ROOT = Path("/Users/beta/.cursor/projects")
 
+# ---------------------------------------------------------------------------
+# Model pricing (USD per million tokens)
+# Source: https://platform.claude.com/docs/en/about-claude/pricing
+#         OpenAI API pricing page (approximate for GPT-5 / Codex models)
+# Update these values if pricing changes.
+# ---------------------------------------------------------------------------
+MODEL_PRICING: dict[str, dict[str, float]] = {
+    # OpenAI GPT-5.4 (Codex CLI)
+    "gpt-5.4": {
+        "input": 2.50, "cache_read": 0.25, "cache_write": 0.0,
+        "output": 15.0, "reasoning": 15.0,
+    },
+    "GPT-5 Codex": {
+        "input": 2.50, "cache_read": 0.25, "cache_write": 0.0,
+        "output": 15.0, "reasoning": 15.0,
+    },
+    # Claude 4.6
+    "claude-opus-4-6": {
+        "input": 5.0, "cache_read": 0.50, "cache_write": 6.25,
+        "output": 25.0, "reasoning": 25.0,
+    },
+    "claude-sonnet-4-6": {
+        "input": 3.0, "cache_read": 0.30, "cache_write": 3.75,
+        "output": 15.0, "reasoning": 15.0,
+    },
+    # Claude 4.5
+    "claude-opus-4-5": {
+        "input": 5.0, "cache_read": 0.50, "cache_write": 6.25,
+        "output": 25.0, "reasoning": 25.0,
+    },
+    "claude-sonnet-4-5": {
+        "input": 3.0, "cache_read": 0.30, "cache_write": 3.75,
+        "output": 15.0, "reasoning": 15.0,
+    },
+    # Claude 4
+    "claude-opus-4-1": {
+        "input": 15.0, "cache_read": 1.50, "cache_write": 18.75,
+        "output": 75.0, "reasoning": 75.0,
+    },
+    "claude-opus-4-0": {
+        "input": 15.0, "cache_read": 1.50, "cache_write": 18.75,
+        "output": 75.0, "reasoning": 75.0,
+    },
+    "claude-opus-4-2": {
+        "input": 15.0, "cache_read": 1.50, "cache_write": 18.75,
+        "output": 75.0, "reasoning": 75.0,
+    },
+    "claude-sonnet-4-0": {
+        "input": 3.0, "cache_read": 0.30, "cache_write": 3.75,
+        "output": 15.0, "reasoning": 15.0,
+    },
+    "claude-sonnet-4-2": {
+        "input": 3.0, "cache_read": 0.30, "cache_write": 3.75,
+        "output": 15.0, "reasoning": 15.0,
+    },
+    # Claude Haiku
+    "claude-haiku-4-5": {
+        "input": 1.0, "cache_read": 0.10, "cache_write": 1.25,
+        "output": 5.0, "reasoning": 5.0,
+    },
+    "claude-haiku-3-5": {
+        "input": 0.80, "cache_read": 0.08, "cache_write": 1.0,
+        "output": 4.0, "reasoning": 4.0,
+    },
+    "claude-3-haiku": {
+        "input": 0.25, "cache_read": 0.03, "cache_write": 0.30,
+        "output": 1.25, "reasoning": 1.25,
+    },
+    # Legacy Claude 3.5
+    "claude-3-5-sonnet": {
+        "input": 3.0, "cache_read": 0.30, "cache_write": 3.75,
+        "output": 15.0, "reasoning": 15.0,
+    },
+    "claude-3-5-haiku": {
+        "input": 0.80, "cache_read": 0.08, "cache_write": 1.0,
+        "output": 4.0, "reasoning": 4.0,
+    },
+    "claude-3-opus": {
+        "input": 15.0, "cache_read": 1.50, "cache_write": 18.75,
+        "output": 75.0, "reasoning": 75.0,
+    },
+}
+DEFAULT_PRICING: dict[str, float] = {
+    "input": 3.0, "cache_read": 0.30, "cache_write": 3.75,
+    "output": 15.0, "reasoning": 15.0,
+}
+
+
+def get_pricing(model: str) -> dict[str, float]:
+    """Get pricing for a model by prefix / substring match."""
+    model_lower = model.lower()
+    for pattern, pricing in MODEL_PRICING.items():
+        if model_lower.startswith(pattern.lower()) or pattern.lower() in model_lower:
+            return pricing
+    return DEFAULT_PRICING
+
 
 @dataclass
 class UsageEvent:
@@ -44,9 +140,47 @@ class UsageEvent:
             self.uncached_input + self.cache_read + self.cache_write + self.output + self.reasoning
         )
 
+    @property
+    def cost(self) -> float:
+        """Estimated cost in USD based on model pricing."""
+        p = get_pricing(self.model)
+        return (
+            self.uncached_input * p["input"]
+            + self.cache_read * p["cache_read"]
+            + self.cache_write * p["cache_write"]
+            + self.output * p["output"]
+            + self.reasoning * p["reasoning"]
+        ) / 1_000_000
+
+    @property
+    def cost_breakdown(self) -> dict[str, float]:
+        """Cost broken down by token type (USD)."""
+        p = get_pricing(self.model)
+        return {
+            "input": self.uncached_input * p["input"] / 1_000_000,
+            "cache_read": self.cache_read * p["cache_read"] / 1_000_000,
+            "cache_write": self.cache_write * p["cache_write"] / 1_000_000,
+            "output": self.output * p["output"] / 1_000_000,
+            "reasoning": self.reasoning * p["reasoning"] / 1_000_000,
+            # What cache reads would have cost at full input price
+            "cache_read_full_price": self.cache_read * p["input"] / 1_000_000,
+        }
+
 
 def fmt_int(value: int) -> str:
     return f"{value:,}"
+
+
+def fmt_usd(value: float) -> str:
+    if value >= 1000:
+        return f"${value:,.0f}"
+    if value >= 100:
+        return f"${value:.1f}"
+    if value >= 1:
+        return f"${value:.2f}"
+    if value >= 0.01:
+        return f"${value:.3f}"
+    return f"${value:.4f}"
 
 
 def fmt_short(value: int) -> str:
@@ -308,6 +442,13 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
             "messages": 0,
             "models": Counter(),
             "token_capable": False,
+            "cost": 0.0,
+            "cost_input": 0.0,
+            "cost_cache_read": 0.0,
+            "cost_cache_write": 0.0,
+            "cost_output": 0.0,
+            "cost_reasoning": 0.0,
+            "cost_cache_read_full_price": 0.0,
         }
     )
     daily = defaultdict(
@@ -320,6 +461,13 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
             "reasoning": 0,
             "messages": 0,
             "sources": defaultdict(int),
+            "cost": 0.0,
+            "cost_sources": defaultdict(float),
+            "cost_input": 0.0,
+            "cost_cache_read": 0.0,
+            "cost_cache_write": 0.0,
+            "cost_output": 0.0,
+            "cost_reasoning": 0.0,
         }
     )
     hourly = defaultdict(lambda: defaultdict(int))
@@ -338,13 +486,18 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
             "reasoning": 0,
             "messages": 0,
             "model": Counter(),
+            "cost": 0.0,
         }
     )
+    # Per-model cost tracking
+    model_costs: dict[str, float] = defaultdict(float)
 
     for event in sorted(events, key=lambda item: item.timestamp):
         local_ts = event.timestamp.astimezone(LOCAL_TZ)
         day_key = local_ts.date().isoformat()
         total = event.total
+        event_cost = event.cost
+        cb = event.cost_breakdown
 
         src = source_totals[event.source]
         src["total"] += total
@@ -358,6 +511,13 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
         src["models"][event.model] += max(1, event.activity_messages)
         if total > 0:
             src["token_capable"] = True
+        src["cost"] += event_cost
+        src["cost_input"] += cb["input"]
+        src["cost_cache_read"] += cb["cache_read"]
+        src["cost_cache_write"] += cb["cache_write"]
+        src["cost_output"] += cb["output"]
+        src["cost_reasoning"] += cb["reasoning"]
+        src["cost_cache_read_full_price"] += cb["cache_read_full_price"]
 
         day = daily[day_key]
         day["total"] += total
@@ -368,6 +528,13 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
         day["reasoning"] += event.reasoning
         day["messages"] += event.activity_messages
         day["sources"][event.source] += total
+        day["cost"] += event_cost
+        day["cost_sources"][event.source] += event_cost
+        day["cost_input"] += cb["input"]
+        day["cost_cache_read"] += cb["cache_read"]
+        day["cost_cache_write"] += cb["cache_write"]
+        day["cost_output"] += cb["output"]
+        day["cost_reasoning"] += cb["reasoning"]
 
         hourly[local_ts.hour][event.source] += total
         weekday_hour[local_ts.weekday()][local_ts.hour] += total
@@ -385,14 +552,19 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
         session["reasoning"] += event.reasoning
         session["messages"] += event.activity_messages
         session["model"][event.model] += max(1, event.activity_messages)
+        session["cost"] += event_cost
+
+        model_costs[event.model] += event_cost
 
     days = []
     current = START_LOCAL.date()
     running_total = 0
+    running_cost = 0.0
     while current <= NOW_LOCAL.date():
         key = current.isoformat()
         entry = daily[key]
         running_total += entry["total"]
+        running_cost += entry["cost"]
         days.append(
             {
                 "date": key,
@@ -406,6 +578,14 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
                 "messages": entry["messages"],
                 "sources": dict(entry["sources"]),
                 "cumulative": running_total,
+                "cost": round(entry["cost"], 4),
+                "cost_sources": dict(entry["cost_sources"]),
+                "cost_cumulative": round(running_cost, 4),
+                "cost_input": round(entry["cost_input"], 4),
+                "cost_cache_read": round(entry["cost_cache_read"], 4),
+                "cost_cache_write": round(entry["cost_cache_write"], 4),
+                "cost_output": round(entry["cost_output"], 4),
+                "cost_reasoning": round(entry["cost_reasoning"], 4),
             }
         )
         current += timedelta(days=1)
@@ -426,6 +606,13 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
                 "messages": values["messages"],
                 "top_model": top_model,
                 "token_capable": values["token_capable"],
+                "cost": round(values["cost"], 4),
+                "cost_input": round(values["cost_input"], 4),
+                "cost_cache_read": round(values["cost_cache_read"], 4),
+                "cost_cache_write": round(values["cost_cache_write"], 4),
+                "cost_output": round(values["cost_output"], 4),
+                "cost_reasoning": round(values["cost_reasoning"], 4),
+                "cost_cache_read_full_price": round(values["cost_cache_read_full_price"], 4),
             }
         )
 
@@ -455,6 +642,7 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
                     1,
                 ),
                 "top_model": values["model"].most_common(1)[0][0] if values["model"] else "-",
+                "cost": round(values["cost"], 4),
             }
         )
 
@@ -471,6 +659,26 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
     cache_ratio = ((cache_read_total + cache_write_total) / grand_total) if grand_total else 0.0
     token_capable_sources = [card for card in source_cards if card["token_capable"]]
     non_token_sources = [card for card in source_cards if not card["token_capable"]]
+
+    # Cost aggregates
+    grand_cost = sum(day["cost"] for day in days)
+    cost_peak_day = max(days, key=lambda item: item["cost"]) if days else None
+    session_costs = [s["cost"] for s in top_sessions if s["cost"] > 0]
+    total_messages = sum(card["messages"] for card in token_capable_sources)
+    cost_input_total = sum(day["cost_input"] for day in days)
+    cost_cache_read_total = sum(day["cost_cache_read"] for day in days)
+    cost_cache_write_total = sum(day["cost_cache_write"] for day in days)
+    cost_output_total = sum(day["cost_output"] for day in days)
+    cost_reasoning_total = sum(day["cost_reasoning"] for day in days)
+    cost_cache_read_full_price_total = sum(
+        card["cost_cache_read_full_price"] for card in source_cards
+    )
+    # Model cost breakdown list (sorted by cost desc)
+    model_cost_list = sorted(
+        [{"model": m, "cost": round(c, 4)} for m, c in model_costs.items() if c > 0],
+        key=lambda x: x["cost"],
+        reverse=True,
+    )
 
     weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     heatmap = []
@@ -511,6 +719,24 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
             "median_session_minutes": round(median(session_minutes), 1) if session_minutes else 0.0,
             "peak_day_label": peak_day["date"] if peak_day else "-",
             "peak_day_total": peak_day["total"] if peak_day else 0,
+            "grand_cost": round(grand_cost, 2),
+            "average_cost_per_day": round(grand_cost / max(1, len(days)), 2),
+            "median_session_cost": round(median(session_costs), 4) if session_costs else 0.0,
+            "cost_per_message": round(grand_cost / max(1, total_messages), 4),
+            "cost_peak_day_label": cost_peak_day["date"] if cost_peak_day else "-",
+            "cost_peak_day_total": round(cost_peak_day["cost"], 2) if cost_peak_day else 0,
+            "cost_input": round(cost_input_total, 2),
+            "cost_cache_read": round(cost_cache_read_total, 2),
+            "cost_cache_write": round(cost_cache_write_total, 2),
+            "cost_output": round(cost_output_total, 2),
+            "cost_reasoning": round(cost_reasoning_total, 2),
+            "cache_savings_usd": round(
+                cost_cache_read_full_price_total - cost_cache_read_total, 2
+            ),
+            "cache_savings_ratio": round(
+                (cost_cache_read_full_price_total - cost_cache_read_total)
+                / max(0.01, cost_cache_read_full_price_total), 3
+            ) if cost_cache_read_full_price_total > 0 else 0.0,
         },
         "source_cards": source_cards,
         "days": days,
@@ -518,6 +744,7 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
         "hourly": [{"hour": hour, **hourly[hour]} for hour in range(24)],
         "heatmap": heatmap,
         "source_colors": source_colors,
+        "model_costs": model_cost_list,
         "jokes": jokes,
         "notes": {
             "cursor_has_tokens": any(
@@ -527,581 +754,462 @@ def aggregate_dashboard(events: list[UsageEvent]) -> dict:
     }
 
 
-def build_html(data: dict) -> str:
-    payload = json.dumps(data, ensure_ascii=False)
-    return """<!DOCTYPE html>
+def _build_html_template() -> str:
+    return r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agent Usage Atlas</title>
-  <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" />
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
-  <style>
-    :root {
-      --bg: #f6f1e8;
-      --panel: rgba(255, 250, 244, 0.86);
-      --ink: #261f1a;
-      --muted: #6d645b;
-      --line: rgba(38,31,26,.08);
-      --codex: #e36b3f;
-      --claude: #d5a476;
-      --cursor: #4c6ef5;
-      --cache-read: #2f9e78;
-      --cache-write: #7e57c2;
-      --uncached: #f4b183;
-      --output: #3653b3;
-      --reason: #9153c5;
-      --shadow: 0 22px 56px rgba(38,31,26,.09);
-      --radius-xl: 28px;
-      --radius-lg: 22px;
-      --page: min(1440px, calc(100vw - 28px));
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 0% 0%, rgba(227,107,63,.14), transparent 24%),
-        radial-gradient(circle at 100% 12%, rgba(76,110,245,.12), transparent 24%),
-        radial-gradient(circle at 50% 100%, rgba(47,158,120,.08), transparent 30%),
-        linear-gradient(180deg, #f8f3eb 0%, #f4efe7 35%, #f7f2ea 100%);
-      font-family: ui-rounded, "SF Pro Display", "PingFang SC", sans-serif;
-      min-height: 100vh;
-    }
-    .page { width: var(--page); margin: 18px auto 48px; }
-    .hero, .two-col, .story-strip, .subgrid, .three-col {
-      display: grid;
-      gap: 20px;
-    }
-    .hero { grid-template-columns: 1.3fr .9fr; }
-    .story-strip { grid-template-columns: 1.15fr .85fr; margin-top: 20px; }
-    .two-col { grid-template-columns: 1.18fr .82fr; margin-top: 20px; }
-    .subgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 20px; }
-    .three-col { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 20px; }
-    .panel {
-      background: var(--panel);
-      border: 1px solid rgba(255,255,255,.55);
-      border-radius: var(--radius-xl);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(16px);
-    }
-    .hero-main, .section, .side { padding: 24px; }
-    .hero-main { position: relative; overflow: hidden; }
-    .hero-main:after {
-      content: "";
-      position: absolute;
-      width: 260px;
-      height: 260px;
-      right: -60px;
-      bottom: -80px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(213,164,118,.22), transparent 70%);
-    }
-    .eyebrow { display: inline-flex; align-items: center; gap: 10px; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
-    h1 { margin: 14px 0 10px; max-width: 10ch; font-size: clamp(40px, 6vw, 72px); line-height: .94; letter-spacing: -.05em; }
-    .hero-copy { max-width: 60ch; color: #433a33; line-height: 1.7; font-size: 16px; margin-top: 18px; }
-    .chip-row, .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
-    .chip, .legend span {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 14px;
-      border-radius: 999px;
-      background: rgba(255,255,255,.72);
-      border: 1px solid var(--line);
-      color: #4f4741;
-      font-size: 13px;
-    }
-    .side { display: grid; gap: 14px; }
-    .side-card, .source-card, .story-item {
-      background: rgba(255,255,255,.64);
-      border: 1px solid var(--line);
-      border-radius: var(--radius-lg);
-      padding: 16px;
-    }
-    .side-card .label, .mini .k {
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      font-size: 11px;
-    }
-    .side-card .value, .source-card .big { font-size: 30px; font-weight: 800; letter-spacing: -.04em; margin-top: 6px; }
-    .side-card .hint { color: #504943; line-height: 1.55; font-size: 13px; margin-top: 8px; }
-    .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 16px; }
-    .section-head h2 { margin: 0; font-size: 24px; letter-spacing: -.03em; }
-    .section-head span { color: var(--muted); font-size: 13px; }
-    .chart { width: 100%; min-height: 360px; }
-    .chart.tall { min-height: 430px; }
-    .chart.short { min-height: 300px; }
-    .source-card .title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 700; }
-    .pill {
-      font-size: 11px;
-      text-transform: uppercase;
-      color: var(--muted);
-      padding: 6px 9px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,.75);
-    }
-    .mini-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
-    .mini { padding: 12px; border-radius: 14px; background: rgba(255,255,255,.72); border: 1px solid var(--line); }
-    .mini .v { margin-top: 5px; font-size: 18px; font-weight: 700; }
-    .story { display: grid; gap: 12px; }
-    .story-item { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; }
-    .story-item i { color: var(--codex); margin-top: 3px; }
-    .note-list { display: grid; gap: 12px; }
-    .note { border-left: 4px solid var(--claude); padding: 10px 0 10px 14px; color: #4b443e; line-height: 1.6; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { color: var(--muted); text-transform: uppercase; font-size: 12px; letter-spacing: .08em; }
-    .tiny { color: var(--muted); font-size: 12px; }
-    .footer { margin-top: 16px; color: var(--muted); font-size: 12px; line-height: 1.65; }
-    @media (max-width: 1024px) {
-      .hero, .story-strip, .two-col, .subgrid, .three-col { grid-template-columns: 1fr; }
-      .page { width: min(100vw - 16px, 1440px); }
-      .hero-main, .section, .side { padding: 18px; }
-      h1 { max-width: none; }
-    }
-  </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Agent Usage Atlas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0e14;--surface:rgba(255,255,255,.04);--surface-hover:rgba(255,255,255,.07);
+  --border:rgba(255,255,255,.06);--border-light:rgba(255,255,255,.10);
+  --text:#e8e4df;--text-secondary:rgba(255,255,255,.50);--text-muted:rgba(255,255,255,.32);
+  --accent:#f0b866;--accent-dim:rgba(240,184,102,.15);
+  --codex:#ff8a50;--claude:#ffd43b;--cursor:#748ffc;
+  --uncached:#f4b183;--cache-read:#51cf66;--cache-write:#b197fc;--output:#74c0fc;--reason:#e599f7;
+  --cost:#ff6b6b;--savings:#51cf66;
+  --radius:20px;--radius-sm:14px;--radius-xs:10px;
+  --shadow:0 8px 32px rgba(0,0,0,.4);
+  --page:min(1520px,calc(100vw - 48px));
+  --font:'Inter',-apple-system,'PingFang SC','Noto Sans SC',sans-serif;
+}
+html{background:var(--bg);color:var(--text);font-family:var(--font);-webkit-font-smoothing:antialiased}
+body{
+  min-height:100vh;
+  background:
+    radial-gradient(ellipse 80% 60% at 10% 0%,rgba(255,138,80,.08),transparent),
+    radial-gradient(ellipse 60% 50% at 90% 10%,rgba(116,143,252,.06),transparent),
+    radial-gradient(ellipse 70% 40% at 50% 100%,rgba(81,207,102,.04),transparent),
+    var(--bg);
+}
+.page{width:var(--page);margin:0 auto;padding:32px 0 64px}
+/* ---- grid helpers ---- */
+.g{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.g-wide{grid-template-columns:1.25fr .75fr}
+.g-story{grid-template-columns:1.1fr .9fr}
+.mt{margin-top:16px}
+/* ---- panel ---- */
+.p{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:24px;backdrop-filter:blur(24px);transition:border-color .2s;
+}
+.p:hover{border-color:var(--border-light)}
+/* ---- hero ---- */
+.hero-wrap{position:relative;overflow:hidden;padding:40px 36px}
+.hero-wrap::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,138,80,.06),rgba(240,184,102,.04),transparent 70%);pointer-events:none}
+.hero-wrap::after{content:'';position:absolute;right:-80px;bottom:-80px;width:320px;height:320px;border-radius:50%;background:radial-gradient(circle,rgba(240,184,102,.10),transparent 70%);pointer-events:none}
+.eyebrow{display:flex;align-items:center;gap:8px;color:var(--accent);font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+h1{font-size:clamp(36px,5.2vw,64px);font-weight:900;line-height:.96;letter-spacing:-.04em;margin:16px 0 0;max-width:14ch;background:linear-gradient(135deg,var(--text),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero-copy{color:var(--text-secondary);line-height:1.7;font-size:15px;margin-top:18px;max-width:60ch;position:relative;z-index:1}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px;position:relative;z-index:1}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--text-secondary);font-size:12px;font-weight:500;transition:background .2s}
+.chip:hover{background:rgba(255,255,255,.10)}
+.chip i{font-size:11px}
+/* ---- side cards ---- */
+.side{display:grid;gap:12px;align-content:start}
+.sc{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:var(--radius-sm);padding:18px;transition:border-color .2s}
+.sc:hover{border-color:var(--border-light)}
+.sc .lbl{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted)}
+.sc .val{font-size:28px;font-weight:800;letter-spacing:-.03em;margin-top:6px;color:var(--text)}
+.sc .hint{font-size:12px;color:var(--text-secondary);line-height:1.55;margin-top:8px}
+/* ---- section head ---- */
+.sh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:14px}
+.sh h2{font-size:20px;font-weight:700;letter-spacing:-.02em}
+.sh span{color:var(--text-muted);font-size:12px}
+/* ---- source cards ---- */
+.src{position:relative;overflow:hidden}
+.src::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:var(--radius) var(--radius) 0 0}
+.src.codex::before{background:linear-gradient(90deg,var(--codex),transparent)}
+.src.claude::before{background:linear-gradient(90deg,var(--claude),transparent)}
+.src.cursor::before{background:linear-gradient(90deg,var(--cursor),transparent)}
+.src .title{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-weight:600;font-size:14px}
+.pill{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:rgba(255,255,255,.03)}
+.src .big{font-size:32px;font-weight:800;letter-spacing:-.03em}
+.src .sub{font-size:11px;color:var(--text-muted);margin-top:2px}
+.mg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.mi{padding:10px 12px;border-radius:var(--radius-xs);background:rgba(255,255,255,.03);border:1px solid var(--border)}
+.mi .k{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+.mi .v{font-size:15px;font-weight:700;margin-top:4px}
+/* ---- cost cards ---- */
+.cc{position:relative;overflow:hidden}
+.cc::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.cc.accent::before{background:linear-gradient(90deg,var(--cost),transparent)}
+.cc.save::before{background:linear-gradient(90deg,var(--savings),transparent)}
+.cc .big{font-size:30px;font-weight:800;letter-spacing:-.03em;margin-top:8px}
+/* ---- chart ---- */
+.chart{width:100%;height:400px}
+.chart.tall{height:460px}
+.chart.short{height:320px}
+.chart.sm{height:360px}
+/* ---- legend ---- */
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+/* ---- story ---- */
+.story{display:grid;gap:10px}
+.si{display:grid;grid-template-columns:20px 1fr;gap:10px;align-items:start;padding:12px 14px;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:var(--radius-xs)}
+.si i{color:var(--accent);margin-top:2px;font-size:13px}
+.si div{font-size:13px;color:var(--text-secondary);line-height:1.65}
+/* ---- notes ---- */
+.nl{display:grid;gap:8px;margin-top:12px}
+.note{border-left:3px solid var(--accent-dim);padding:8px 0 8px 14px;color:var(--text-secondary);font-size:12px;line-height:1.6}
+/* ---- table ---- */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--text-muted);text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:.10em}
+td{color:var(--text-secondary)}
+tr:hover td{background:rgba(255,255,255,.02)}
+.tiny{color:var(--text-muted);font-size:11px}
+.footer{margin-top:16px;color:var(--text-muted);font-size:11px;line-height:1.65}
+.footer code{background:rgba(255,255,255,.06);padding:2px 6px;border-radius:4px;font-size:11px}
+/* ---- section divider ---- */
+.divider{display:flex;align-items:center;gap:12px;margin:28px 0 20px;color:var(--text-muted);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+.divider::after{content:'';flex:1;height:1px;background:var(--border)}
+/* ---- responsive ---- */
+@media(max-width:1100px){.g2,.g3,.g4,.g-wide,.g-story{grid-template-columns:1fr}.page{width:calc(100vw - 24px);padding:16px 0 48px}.hero-wrap{padding:28px 24px}.p{padding:18px}}
+</style>
 </head>
 <body>
-  <main class="page">
-    <section class="hero">
-      <article class="panel hero-main">
-        <div class="eyebrow"><i class="fa-solid fa-chart-line"></i><span>Agent Usage Atlas</span></div>
-        <h1>从 3 月 8 日起 你把三个 Agent 栈打成了联赛积分榜</h1>
-        <p class="hero-copy" id="hero-copy"></p>
-        <div class="chip-row" id="hero-chips"></div>
-      </article>
-      <aside class="panel side" id="summary-side"></aside>
-    </section>
+<main class="page">
+  <!-- Hero -->
+  <section class="g g-wide">
+    <article class="p hero-wrap">
+      <div class="eyebrow"><i class="fa-solid fa-chart-line"></i> Agent Usage Atlas</div>
+      <h1>三个 Agent 栈的联赛积分榜</h1>
+      <p class="hero-copy" id="hero-copy"></p>
+      <div class="chips" id="hero-chips"></div>
+    </article>
+    <aside class="side" id="summary-side"></aside>
+  </section>
 
-    <section class="three-col" id="source-cards"></section>
+  <!-- Sources -->
+  <div class="divider"><i class="fa-solid fa-layer-group"></i> Sources</div>
+  <section class="g g3" id="source-cards"></section>
 
-    <section class="story-strip">
-      <article class="panel section">
-        <div class="section-head"><h2>这周剧情梗概</h2><span>把数字翻译成人话</span></div>
-        <div class="story" id="story-list"></div>
-      </article>
-      <article class="panel section">
-        <div class="section-head"><h2>来源玫瑰图</h2><span>体量 + 气质一起看</span></div>
-        <div class="chart short" id="rose-chart"></div>
-      </article>
-    </section>
+  <!-- Cost Overview -->
+  <div class="divider"><i class="fa-solid fa-dollar-sign"></i> Cost Analysis</div>
+  <section class="g g4" id="cost-cards"></section>
+  <section class="g g-wide mt">
+    <article class="p"><div class="sh"><h2>每日花费趋势</h2><span>按来源堆叠 + 累计花费线</span></div><div class="chart tall" id="daily-cost-chart"></div></article>
+    <article class="p"><div class="sh"><h2>花费结构拆解</h2><span>钱花在哪种 Token 上</span></div><div class="chart tall" id="cost-breakdown-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>模型花费排行</h2><span>哪些模型最烧钱</span></div><div class="chart sm" id="model-cost-chart"></div></article>
+    <article class="p"><div class="sh"><h2>来源花费桑基图</h2><span>从来源流到各类花费</span></div><div class="chart sm" id="cost-sankey-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>每日花费结构</h2><span>哪种 Token 最烧钱</span></div><div class="chart tall" id="daily-cost-type-chart"></div></article>
+    <article class="p"><div class="sh"><h2>花费日历</h2><span>每天花了多少钱</span></div><div class="chart sm" id="cost-calendar-chart"></div></article>
+  </section>
 
-    <section class="two-col">
-      <article class="panel section">
-        <div class="section-head"><h2>每日 Token 结构</h2><span>堆叠柱 + 累计线</span></div>
-        <div class="chart tall" id="daily-chart"></div>
-        <div class="legend">
-          <span><i class="dot" style="background:var(--uncached)"></i>Uncached Input</span>
-          <span><i class="dot" style="background:var(--cache-read)"></i>Cache Read</span>
-          <span><i class="dot" style="background:var(--cache-write)"></i>Cache Write</span>
-          <span><i class="dot" style="background:var(--output)"></i>Output + Reason</span>
-        </div>
-      </article>
-      <article class="panel section">
-        <div class="section-head"><h2>Token 流向桑基图</h2><span>从来源流到各类 token 桶</span></div>
-        <div class="chart tall" id="sankey-chart"></div>
-        <div class="note-list" id="source-notes"></div>
-      </article>
-    </section>
+  <!-- Token Analytics -->
+  <div class="divider"><i class="fa-solid fa-chart-bar"></i> Token Analytics</div>
+  <section class="g g-story">
+    <article class="p"><div class="sh"><h2>剧情梗概</h2><span>把数字翻译成人话</span></div><div class="story" id="story-list"></div></article>
+    <article class="p"><div class="sh"><h2>来源玫瑰图</h2><span>体量 + 气质一起看</span></div><div class="chart short" id="rose-chart"></div></article>
+  </section>
+  <section class="g g-wide mt">
+    <article class="p">
+      <div class="sh"><h2>每日 Token 结构</h2><span>堆叠柱 + 累计线</span></div>
+      <div class="chart tall" id="daily-chart"></div>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--uncached)"></i>Uncached Input</span>
+        <span><i class="dot" style="background:var(--cache-read)"></i>Cache Read</span>
+        <span><i class="dot" style="background:var(--cache-write)"></i>Cache Write</span>
+        <span><i class="dot" style="background:var(--output)"></i>Output + Reason</span>
+      </div>
+    </article>
+    <article class="p"><div class="sh"><h2>Token 流向桑基图</h2><span>从来源流到各类 token 桶</span></div><div class="chart tall" id="sankey-chart"></div><div class="nl" id="source-notes"></div></article>
+  </section>
 
-    <section class="two-col">
-      <article class="panel section">
-        <div class="section-head"><h2>活跃热区</h2><span>星期 × 小时，越深越忙</span></div>
-        <div class="chart tall" id="heatmap-chart"></div>
-      </article>
-      <article class="panel section">
-        <div class="section-head"><h2>来源能力雷达</h2><span>体量、缓存、输出、活跃度四维比较</span></div>
-        <div class="chart tall" id="radar-chart"></div>
-      </article>
-    </section>
+  <!-- Activity Patterns -->
+  <div class="divider"><i class="fa-solid fa-clock"></i> Activity Patterns</div>
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2>活跃热区</h2><span>星期 × 小时，越深越忙</span></div><div class="chart tall" id="heatmap-chart"></div></article>
+    <article class="p"><div class="sh"><h2>来源能力雷达</h2><span>体量、缓存、输出、活跃度四维比较</span></div><div class="chart tall" id="radar-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>Token 日历</h2><span>把高峰日钉在日历上</span></div><div class="chart sm" id="calendar-chart"></div></article>
+    <article class="p"><div class="sh"><h2>Timeline</h2><span>峰值、拐点与累计爬坡</span></div><div class="chart sm" id="timeline-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>Session 气泡图</h2><span>x=时长, y=token, 气泡=缓存</span></div><div class="chart sm" id="bubble-chart"></div></article>
+    <article class="p"><div class="sh"><h2>小时节奏图</h2><span>24 小时内谁最爱开工</span></div><div class="chart sm" id="tempo-chart"></div><div class="nl" id="tempo-notes"></div></article>
+  </section>
 
-    <section class="subgrid">
-      <article class="panel section">
-        <div class="section-head"><h2>Calendar Heatmap</h2><span>把高峰日钉在日历上</span></div>
-        <div class="chart" id="calendar-chart"></div>
-      </article>
-      <article class="panel section">
-        <div class="section-head"><h2>Timeline</h2><span>峰值、拐点与累计爬坡</span></div>
-        <div class="chart" id="timeline-chart"></div>
-      </article>
-    </section>
+  <!-- Sessions -->
+  <div class="divider"><i class="fa-solid fa-list-ol"></i> Session Leaderboard</div>
+  <section>
+    <article class="p">
+      <table id="session-table"></table>
+      <div class="footer">
+        数据源：Codex <code>~/.codex</code> 累计 usage 差值 · Claude <code>~/.claude/projects</code> 响应 usage 去重求和 · Cursor transcript 仅活动计数<br/>
+        花费为基于公开 API 定价的估算值 · 图表渲染 <code>Apache ECharts</code>
+      </div>
+    </article>
+  </section>
+</main>
 
-    <section class="subgrid">
-      <article class="panel section">
-        <div class="section-head"><h2>Session 气泡图</h2><span>x=时长, y=token, 气泡=缓存</span></div>
-        <div class="chart" id="bubble-chart"></div>
-      </article>
-      <article class="panel section">
-        <div class="section-head"><h2>小时节奏图</h2><span>24 小时内谁最爱开工</span></div>
-        <div class="chart" id="tempo-chart"></div>
-        <div class="note-list" id="tempo-notes"></div>
-      </article>
-    </section>
+<script>
+const data = __DATA__;
+const charts = [];
+const fmtInt = n => n.toLocaleString('en-US');
+const fmtShort = n => { const a=Math.abs(n); return a>=1e9?(n/1e9).toFixed(2)+'B':a>=1e6?(n/1e6).toFixed(2)+'M':a>=1e3?(n/1e3).toFixed(1)+'K':String(n) };
+const fmtPct = v => (v*100).toFixed(1)+'%';
+const fmtUSD = v => { if(v>=1000) return '$'+v.toLocaleString('en-US',{maximumFractionDigits:0}); if(v>=100) return '$'+v.toFixed(1); if(v>=1) return '$'+v.toFixed(2); if(v>=0.01) return '$'+v.toFixed(3); return '$'+v.toFixed(4) };
 
-    <section style="margin-top:20px;">
-      <article class="panel section">
-        <div class="section-head"><h2>Session 龙虎榜</h2><span>只列 token 可统计的 session</span></div>
-        <table id="session-table"></table>
-        <div class="footer">
-          数据源说明：Codex 来自 <code>~/.codex</code> 累计 usage 事件差值；Claude 来自 <code>~/.claude/projects</code> 的响应 usage 去重求和；Cursor 来自 transcript 活动文件，仅统计会话/消息活跃度，未发现稳定 token 字段。<br />
-          图表渲染采用 <code>Apache ECharts</code>，适合热力图、桑基图、雷达、散点与混合图这种多来源分析面板。
-        </div>
-      </article>
-    </section>
-  </main>
+const C = {Codex:'#ff8a50',Claude:'#ffd43b',Cursor:'#748ffc',uncached:'#f4b183',cacheRead:'#51cf66',cacheWrite:'#b197fc',output:'#74c0fc',reason:'#e599f7',cost:'#ff6b6b',savings:'#51cf66'};
+const TX = 'rgba(255,255,255,.65)';
+const AX = 'rgba(255,255,255,.06)';
+const TT = () => ({textStyle:{color:TX,fontFamily:"Inter, -apple-system, PingFang SC, sans-serif"},tooltip:{backgroundColor:'rgba(20,20,28,.92)',borderColor:'rgba(255,255,255,.08)',borderWidth:1,textStyle:{color:'#e8e4df',fontSize:12}},animationDuration:700,animationEasing:'cubicOut'});
+const IC = id => { const c=echarts.init(document.getElementById(id),null,{renderer:'canvas'}); charts.push(c); return c };
 
-  <script>
-    const data = __DATA__;
-    const charts = [];
-    const fmtInt = (n) => n.toLocaleString('en-US');
-    const fmtShort = (n) => {
-      const abs = Math.abs(n);
-      if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-      if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-      if (abs >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-      return String(n);
-    };
-    const fmtPct = (v) => (v * 100).toFixed(1) + '%';
-    const colors = { Codex: '#E36B3F', Claude: '#D5A476', Cursor: '#4C6EF5', uncached: '#F4B183', cacheRead: '#2F9E78', cacheWrite: '#7E57C2', output: '#3653B3', reason: '#9153C5' };
-    const textColor = '#564d45';
-    const axisLine = 'rgba(38,31,26,.08)';
+function renderHero(){
+  const t=data.totals;
+  document.getElementById('hero-copy').textContent=`统计窗口 ${data.range.start_local} → ${data.range.end_local}。Token 总处理量 ${fmtShort(t.grand_total)}，估算总花费 ${fmtUSD(t.grand_cost)}，缓存占 ${fmtPct(t.cache_ratio)}。你不是在聊天，你在给 Agent 排班。`;
+  document.getElementById('hero-chips').innerHTML=[
+    `<span class="chip"><i class="fa-solid fa-fire" style="color:var(--codex)"></i>${fmtShort(t.grand_total)} tokens</span>`,
+    `<span class="chip"><i class="fa-solid fa-dollar-sign" style="color:var(--cost)"></i>${fmtUSD(t.grand_cost)} cost</span>`,
+    `<span class="chip"><i class="fa-solid fa-database" style="color:var(--cache-read)"></i>${fmtPct(t.cache_ratio)} cached</span>`,
+    `<span class="chip"><i class="fa-solid fa-bolt" style="color:var(--accent)"></i>peak ${t.peak_day_label}</span>`,
+  ].join('');
+  const cards=[
+    {lbl:'Total Tokens',val:fmtShort(t.grand_total),hint:`日均 ${fmtShort(t.average_per_day)}，持续性工业作业。`},
+    {lbl:'Estimated Cost',val:fmtUSD(t.grand_cost),hint:`日均 ${fmtUSD(t.average_cost_per_day)}，每条消息 ${fmtUSD(t.cost_per_message)}。`},
+    {lbl:'Cache Stack',val:fmtShort(t.cache_read+t.cache_write),hint:`缓存占比 ${fmtPct(t.cache_ratio)}，重复上下文非常重。`},
+    {lbl:'Median Session',val:fmtShort(t.median_session_tokens),hint:`时长 ${t.median_session_minutes} min，花费 ${fmtUSD(t.median_session_cost)}。`},
+  ];
+  document.getElementById('summary-side').innerHTML=cards.map(c=>`<div class="sc"><div class="lbl">${c.lbl}</div><div class="val">${c.val}</div><div class="hint">${c.hint}</div></div>`).join('');
+}
 
-    function themeBase() {
-      return {
-        textStyle: { color: textColor, fontFamily: 'ui-rounded, SF Pro Display, PingFang SC, sans-serif' },
-        tooltip: { backgroundColor: 'rgba(36,30,26,.92)', borderWidth: 0, textStyle: { color: '#fff' } },
-        animationDuration: 900
-      };
-    }
+function renderSourceCards(){
+  document.getElementById('source-cards').innerHTML=data.source_cards.map(c=>{
+    const cls=c.source.toLowerCase();
+    const icon=c.source==='Codex'?'fa-terminal':c.source==='Claude'?'fa-feather-pointed':'fa-arrow-pointer';
+    return `<article class="p src ${cls}">
+      <div class="title"><span><i class="fa-solid ${icon}"></i> ${c.source}</span><span class="pill">${c.token_capable?'token-tracked':'activity-only'}</span></div>
+      <div class="big">${c.token_capable?fmtShort(c.total):fmtInt(c.messages)}</div>
+      <div class="sub">${c.token_capable?'tracked tokens':'transcript messages'}</div>
+      <div class="mg">
+        <div class="mi"><div class="k">Sessions</div><div class="v">${fmtInt(c.sessions)}</div></div>
+        <div class="mi"><div class="k">Est. Cost</div><div class="v" style="color:var(--cost)">${c.token_capable?fmtUSD(c.cost):'-'}</div></div>
+        <div class="mi"><div class="k">Top Model</div><div class="v" style="font-size:12px">${c.top_model}</div></div>
+        <div class="mi"><div class="k">Cache Read</div><div class="v">${c.token_capable?fmtShort(c.cache_read):'-'}</div></div>
+      </div></article>`}).join('');
+}
 
-    function initChart(id) {
-      const chart = echarts.init(document.getElementById(id), null, { renderer: 'canvas' });
-      charts.push(chart);
-      return chart;
-    }
+function renderCostCards(){
+  const t=data.totals;
+  const items=[
+    {lbl:'Total Est. Cost',val:fmtUSD(t.grand_cost),sub:`${data.days.length} 天累计`,cls:'accent',color:'var(--cost)'},
+    {lbl:'Daily Average',val:fmtUSD(t.average_cost_per_day),sub:`峰值 ${t.cost_peak_day_label}: ${fmtUSD(t.cost_peak_day_total)}`,cls:'accent',color:'var(--cost)'},
+    {lbl:'Cost / Message',val:fmtUSD(t.cost_per_message),sub:`中位 Session ${fmtUSD(t.median_session_cost)}`,cls:'accent',color:'var(--cost)'},
+    {lbl:'Cache Savings',val:fmtUSD(t.cache_savings_usd),sub:`省了 ${fmtPct(t.cache_savings_ratio)}，实付 ${fmtUSD(t.cost_cache_read)} vs 原价 ${fmtUSD(t.cost_cache_read+t.cache_savings_usd)}`,cls:'save',color:'var(--savings)'},
+  ];
+  document.getElementById('cost-cards').innerHTML=items.map(c=>`<article class="p cc ${c.cls}"><div class="title" style="font-size:12px;font-weight:600"><i class="fa-solid ${c.cls==='save'?'fa-leaf':'fa-dollar-sign'}" style="color:${c.color};margin-right:6px"></i>${c.lbl}</div><div class="big" style="color:${c.color}">${c.val}</div><div class="tiny" style="margin-top:6px">${c.sub}</div></article>`).join('');
+}
 
-    function renderHero() {
-      const t = data.totals;
-      document.getElementById('hero-copy').textContent = `统计窗口 ${data.range.start_local} 到 ${data.range.end_local}。目前可确认的 token 总处理量 ${fmtShort(t.grand_total)}，其中缓存相关占 ${fmtPct(t.cache_ratio)}。结论很简单：你不是在偶尔用 Agent，而是在把它们排班上工。`;
-      document.getElementById('hero-chips').innerHTML = [
-        `<span class="chip"><i class="fa-solid fa-fire"></i>${fmtShort(t.grand_total)} total tokens</span>`,
-        `<span class="chip"><i class="fa-solid fa-database"></i>${fmtPct(t.cache_ratio)} cache-heavy</span>`,
-        `<span class="chip"><i class="fa-solid fa-mountain-sun"></i>peak day ${t.peak_day_label}</span>`,
-        `<span class="chip"><i class="fa-solid fa-layer-group"></i>${fmtInt(t.token_capable_source_count)} token-capable sources</span>`
-      ].join('');
-      const cards = [
-        { label: 'Total Tokens', value: fmtShort(t.grand_total), hint: `平均每天 ${fmtShort(t.average_per_day)}。这已经不是“聊一聊”，这是持续性工业作业。` },
-        { label: 'Cache Stack', value: fmtShort(t.cache_read + t.cache_write), hint: `缓存读写合计占比 ${fmtPct(t.cache_ratio)}，说明重复上下文非常重。` },
-        { label: 'Median Session', value: fmtShort(t.median_session_tokens), hint: `中位 session 时长 ${t.median_session_minutes} 分钟，驾驶席有人，而且一直有人。` }
-      ];
-      document.getElementById('summary-side').innerHTML = cards.map(card => `<section class="side-card"><div class="label">${card.label}</div><div class="value">${card.value}</div><div class="hint">${card.hint}</div></section>`).join('');
-    }
+function renderStory(){
+  const s=Object.fromEntries(data.source_cards.map(c=>[c.source,c])),t=data.totals;
+  const items=[
+    {icon:'fa-bolt',text:`主力是 Codex，${fmtShort(s.Codex.total)} token，花费 ${fmtUSD(s.Codex.cost)}，占总花费 ${fmtPct(s.Codex.cost/Math.max(.01,t.grand_cost))}。`},
+    {icon:'fa-feather-pointed',text:`Claude 累计 ${fmtShort(s.Claude.total)} token，花费 ${fmtUSD(s.Claude.cost)}。用量精准，精锐突击队。`},
+    {icon:'fa-dollar-sign',text:`总花费 ${fmtUSD(t.grand_cost)}，日均 ${fmtUSD(t.average_cost_per_day)}。输出 token 花费 ${fmtUSD(t.cost_output+t.cost_reasoning)}，占大头。`},
+    {icon:'fa-database',text:`缓存读写 ${fmtShort(t.cache_read+t.cache_write)}，缓存读花费仅 ${fmtUSD(t.cost_cache_read)}，省了 ${fmtPct(t.cache_savings_ratio)}。`},
+    {icon:'fa-arrow-pointer',text:`Cursor ${fmtInt(s.Cursor.sessions)} session / ${fmtInt(s.Cursor.messages)} 条消息，token 小票没留下。`},
+  ];
+  document.getElementById('story-list').innerHTML=items.map(i=>`<div class="si"><i class="fa-solid ${i.icon}"></i><div>${i.text}</div></div>`).join('');
+}
 
-    function renderStory() {
-      const sourceTotals = Object.fromEntries(data.source_cards.map(card => [card.source, card]));
-      const items = [
-        { icon: 'fa-bolt', text: `主力依然是 Codex，单源 ${fmtShort(sourceTotals.Codex.total)} token，占可统计 token 的 ${fmtPct(sourceTotals.Codex.total / Math.max(1, data.totals.grand_total))}。` },
-        { icon: 'fa-feather-pointed', text: `Claude 这段时间累计 ${fmtShort(sourceTotals.Claude.total)} token，更像“精锐突击队”而不是“全天值班室”。` },
-        { icon: 'fa-database', text: `缓存读写合计 ${fmtShort(data.totals.cache_read + data.totals.cache_write)}，省钱程度已经从“优化”进入“信仰”。` },
-        { icon: 'fa-arrow-pointer', text: `Cursor 本地能稳定拿到 ${fmtInt(sourceTotals.Cursor.sessions)} 个 session 和 ${fmtInt(sourceTotals.Cursor.messages)} 条活动消息，但 token 小票它没留下。` }
-      ];
-      document.getElementById('story-list').innerHTML = items.map(item => `<div class="story-item"><i class="fa-solid ${item.icon}"></i><div>${item.text}</div></div>`).join('');
-    }
+function renderDailyCostChart(){
+  const c=IC('daily-cost-chart'),srcs=[...new Set(data.source_cards.filter(s=>s.token_capable).map(s=>s.source))];
+  c.setOption({...TT(),legend:{top:6,textStyle:{color:TX}},grid:{top:58,left:68,right:68,bottom:44},tooltip:{trigger:'axis',axisPointer:{type:'shadow'},valueFormatter:v=>fmtUSD(v)},
+    xAxis:{type:'category',data:data.days.map(d=>d.label),axisLine:{lineStyle:{color:AX}},axisTick:{show:false},axisLabel:{color:TX}},
+    yAxis:[{type:'value',name:'Daily ($)',nameTextStyle:{color:TX},splitLine:{lineStyle:{color:AX}},axisLabel:{color:TX,formatter:v=>fmtUSD(v)}},{type:'value',name:'Cumulative ($)',nameTextStyle:{color:TX},splitLine:{show:false},axisLabel:{color:TX,formatter:v=>fmtUSD(v)}}],
+    series:[...srcs.map(s=>({name:s,type:'bar',stack:'c',itemStyle:{color:C[s]||'#999',borderRadius:[6,6,0,0]},data:data.days.map(d=>+(d.cost_sources[s]||0).toFixed(4))})),
+      {name:'Cumulative',type:'line',yAxisIndex:1,smooth:true,symbolSize:6,lineStyle:{width:3,color:'rgba(255,255,255,.7)'},itemStyle:{color:'#fff'},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(255,255,255,.08)'},{offset:1,color:'rgba(255,255,255,0)'}]}},data:data.days.map(d=>d.cost_cumulative)}]
+  });
+}
 
-    function renderSourceCards() {
-      document.getElementById('source-cards').innerHTML = data.source_cards.map(card => `
-        <article class="panel source-card">
-          <div class="title"><span><i class="fa-solid ${card.source === 'Codex' ? 'fa-terminal' : card.source === 'Claude' ? 'fa-feather-pointed' : 'fa-arrow-pointer'}"></i> ${card.source}</span><span class="pill">${card.token_capable ? 'token-tracked' : 'activity-only'}</span></div>
-          <div class="big">${card.token_capable ? fmtShort(card.total) : fmtInt(card.messages)}</div>
-          <div class="tiny">${card.token_capable ? 'tracked tokens' : 'tracked transcript messages'}</div>
-          <div class="mini-grid">
-            <div class="mini"><div class="k">Sessions</div><div class="v">${fmtInt(card.sessions)}</div></div>
-            <div class="mini"><div class="k">Messages</div><div class="v">${fmtInt(card.messages)}</div></div>
-            <div class="mini"><div class="k">Top Model</div><div class="v">${card.top_model}</div></div>
-            <div class="mini"><div class="k">Cache Read</div><div class="v">${card.token_capable ? fmtShort(card.cache_read) : '-'}</div></div>
-          </div>
-        </article>`).join('');
-    }
+function renderCostBreakdownChart(){
+  const c=IC('cost-breakdown-chart'),t=data.totals;
+  const items=[{name:'Uncached Input',value:t.cost_input,color:C.uncached},{name:'Cache Read',value:t.cost_cache_read,color:C.cacheRead},{name:'Cache Write',value:t.cost_cache_write,color:C.cacheWrite},{name:'Output',value:t.cost_output,color:C.output},{name:'Reasoning',value:t.cost_reasoning,color:C.reason}].filter(i=>i.value>0);
+  c.setOption({...TT(),tooltip:{formatter:({name,value,percent})=>`${name}<br/>${fmtUSD(value)} (${percent}%)`},legend:{bottom:0,textStyle:{color:TX}},
+    series:[{type:'pie',radius:['40%','74%'],center:['50%','44%'],avoidLabelOverlap:true,itemStyle:{borderRadius:8,borderColor:'rgba(12,14,20,.8)',borderWidth:3},
+      label:{color:TX,formatter:({name,percent})=>`${name}\n${percent}%`},emphasis:{label:{fontWeight:'bold',fontSize:14}},
+      data:items.map(i=>({name:i.name,value:+i.value.toFixed(4),itemStyle:{color:i.color}}))}]
+  });
+}
 
-    function renderRoseChart() {
-      const chart = initChart('rose-chart');
-      chart.setOption({
-        ...themeBase(),
-        legend: { bottom: 0, textStyle: { color: textColor } },
-        series: [{
-          type: 'pie',
-          radius: ['24%', '74%'],
-          center: ['50%', '46%'],
-          roseType: 'radius',
-          itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
-          label: { color: textColor, formatter: ({ name, percent }) => `${name}\n${percent}%` },
-          data: data.source_cards.map(card => ({ name: card.source, value: card.token_capable ? card.total : Math.max(card.messages, 1), itemStyle: { color: colors[card.source] || '#999' } }))
-        }]
-      });
-    }
+function renderModelCostChart(){
+  const c=IC('model-cost-chart'),m=data.model_costs.slice(0,10);
+  const mc=['#ff6b6b','#ff8a50','#ffa94d','#ffd43b','#a9e34b','#51cf66','#74c0fc','#748ffc','#b197fc','#e599f7'];
+  c.setOption({...TT(),grid:{top:24,left:160,right:60,bottom:24},tooltip:{valueFormatter:v=>fmtUSD(v)},
+    xAxis:{type:'value',splitLine:{lineStyle:{color:AX}},axisLabel:{color:TX,formatter:v=>fmtUSD(v)}},
+    yAxis:{type:'category',data:m.map(x=>x.model).reverse(),axisLine:{lineStyle:{color:AX}},axisTick:{show:false},axisLabel:{color:TX,width:140,overflow:'truncate',fontSize:11}},
+    series:[{type:'bar',barMaxWidth:22,data:m.map((x,i)=>({value:+x.cost.toFixed(4),itemStyle:{color:mc[i%mc.length],borderRadius:[0,6,6,0]}})).reverse(),label:{show:true,position:'right',color:TX,formatter:({value})=>fmtUSD(value),fontSize:11}}]
+  });
+}
 
-    function renderDailyChart() {
-      const chart = initChart('daily-chart');
-      chart.setOption({
-        ...themeBase(),
-        legend: { top: 6, textStyle: { color: textColor } },
-        grid: { top: 58, left: 60, right: 60, bottom: 44 },
-        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-        xAxis: { type: 'category', data: data.days.map(d => d.label), axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false }, axisLabel: { color: textColor } },
-        yAxis: [
-          { type: 'value', name: 'Daily Tokens', nameTextStyle: { color: textColor }, splitLine: { lineStyle: { color: axisLine } }, axisLabel: { color: textColor, formatter: (v) => fmtShort(v) } },
-          { type: 'value', name: 'Cumulative', nameTextStyle: { color: textColor }, splitLine: { show: false }, axisLabel: { color: textColor, formatter: (v) => fmtShort(v) } }
-        ],
-        series: [
-          { name: 'Uncached Input', type: 'bar', stack: 'daily', itemStyle: { color: colors.uncached, borderRadius: [8,8,0,0] }, data: data.days.map(d => d.uncached_input) },
-          { name: 'Cache Read', type: 'bar', stack: 'daily', itemStyle: { color: colors.cacheRead, borderRadius: [8,8,0,0] }, data: data.days.map(d => d.cache_read) },
-          { name: 'Cache Write', type: 'bar', stack: 'daily', itemStyle: { color: colors.cacheWrite, borderRadius: [8,8,0,0] }, data: data.days.map(d => d.cache_write) },
-          { name: 'Output + Reason', type: 'bar', stack: 'daily', itemStyle: { color: colors.output, borderRadius: [8,8,0,0] }, data: data.days.map(d => d.output + d.reasoning) },
-          { name: 'Cumulative', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 8, lineStyle: { width: 4, color: '#231f1b' }, itemStyle: { color: '#231f1b' }, areaStyle: { color: 'rgba(35,31,27,.05)' }, data: data.days.map(d => d.cumulative) }
-        ]
-      });
-    }
+function renderCostSankey(){
+  const c=IC('cost-sankey-chart'),ts=data.source_cards.filter(s=>s.token_capable);
+  const bk=[{key:'cost_input',name:'Input Cost',color:C.uncached},{key:'cost_cache_read',name:'Cache Read',color:C.cacheRead},{key:'cost_cache_write',name:'Cache Write',color:C.cacheWrite},{key:'cost_output',name:'Output',color:C.output},{key:'cost_reasoning',name:'Reasoning',color:C.reason}];
+  c.setOption({...TT(),tooltip:{valueFormatter:v=>fmtUSD(v)},series:[{type:'sankey',left:8,right:8,top:24,bottom:12,nodeWidth:18,nodeGap:14,nodeAlign:'justify',
+    lineStyle:{color:'gradient',curveness:.45,opacity:.3},label:{color:'#fff',position:'inside',fontWeight:600,fontSize:11},
+    data:[...ts.map(s=>({name:s.source,itemStyle:{color:C[s.source]||'#999'}})),...bk.map(b=>({name:b.name,itemStyle:{color:b.color}}))],
+    links:ts.flatMap(s=>bk.filter(b=>(s[b.key]||0)>.001).map(b=>({source:s.source,target:b.name,value:+s[b.key].toFixed(4)})))}]});
+}
 
-    function renderSankey() {
-      const chart = initChart('sankey-chart');
-      const tokenSources = data.source_cards.filter(card => card.token_capable);
-      const buckets = [
-        { key: 'uncached_input', name: 'Uncached Input', color: colors.uncached },
-        { key: 'cache_read', name: 'Cache Read', color: colors.cacheRead },
-        { key: 'cache_write', name: 'Cache Write', color: colors.cacheWrite },
-        { key: 'output', name: 'Output', color: colors.output },
-        { key: 'reasoning', name: 'Reasoning', color: colors.reason }
-      ];
-      chart.setOption({
-        ...themeBase(),
-        series: [{
-          type: 'sankey',
-          left: 8, right: 8, top: 24, bottom: 12,
-          nodeWidth: 18, nodeGap: 16,
-          nodeAlign: 'justify',
-          lineStyle: { color: 'gradient', curveness: 0.45, opacity: 0.34 },
-          label: { color: '#fff', position: 'inside', fontWeight: 600 },
-          data: [...tokenSources.map(card => ({ name: card.source, itemStyle: { color: colors[card.source] || '#999' } })), ...buckets.map(b => ({ name: b.name, itemStyle: { color: b.color } }))],
-          links: tokenSources.flatMap(card => buckets.filter(b => (card[b.key] || 0) > 0).map(b => ({ source: card.source, target: b.name, value: card[b.key] })))
-        }]
-      });
-      document.getElementById('source-notes').innerHTML = [
-        ...tokenSources.map(card => `<div class="note" style="border-left-color:${colors[card.source] || '#999'}">${card.source} 主力模型是 ${card.top_model}，总量 ${fmtShort(card.total)}。</div>`),
-        ...data.jokes.map(text => `<div class="note">${text}</div>`)
-      ].join('');
-    }
+function renderDailyCostTypeChart(){
+  const c=IC('daily-cost-type-chart');
+  c.setOption({...TT(),legend:{top:6,textStyle:{color:TX}},grid:{top:58,left:68,right:24,bottom:44},tooltip:{trigger:'axis',axisPointer:{type:'shadow'},valueFormatter:v=>fmtUSD(v)},
+    xAxis:{type:'category',data:data.days.map(d=>d.label),axisLine:{lineStyle:{color:AX}},axisTick:{show:false},axisLabel:{color:TX}},
+    yAxis:{type:'value',name:'Cost ($)',nameTextStyle:{color:TX},splitLine:{lineStyle:{color:AX}},axisLabel:{color:TX,formatter:v=>fmtUSD(v)}},
+    series:[
+      {name:'Input',type:'bar',stack:'c',itemStyle:{color:C.uncached},data:data.days.map(d=>+d.cost_input.toFixed(4))},
+      {name:'Cache Read',type:'bar',stack:'c',itemStyle:{color:C.cacheRead},data:data.days.map(d=>+d.cost_cache_read.toFixed(4))},
+      {name:'Cache Write',type:'bar',stack:'c',itemStyle:{color:C.cacheWrite},data:data.days.map(d=>+d.cost_cache_write.toFixed(4))},
+      {name:'Output',type:'bar',stack:'c',itemStyle:{color:C.output},data:data.days.map(d=>+d.cost_output.toFixed(4))},
+      {name:'Reasoning',type:'bar',stack:'c',itemStyle:{color:C.reason,borderRadius:[6,6,0,0]},data:data.days.map(d=>+d.cost_reasoning.toFixed(4))}]
+  });
+}
 
-    function renderHeatmap() {
-      const chart = initChart('heatmap-chart');
-      const heat = [];
-      data.heatmap.forEach((row, y) => row.values.forEach((value, x) => heat.push([x, y, value])));
-      chart.setOption({
-        ...themeBase(),
-        grid: { top: 44, left: 70, right: 24, bottom: 34 },
-        xAxis: { type: 'category', data: Array.from({ length: 24 }, (_, i) => `${i}`), splitArea: { show: true, areaStyle: { color: ['rgba(255,255,255,.46)', 'rgba(255,255,255,.2)'] } }, axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false } },
-        yAxis: { type: 'category', data: data.heatmap.map(row => row.weekday), splitArea: { show: true, areaStyle: { color: ['rgba(255,255,255,.46)', 'rgba(255,255,255,.2)'] } }, axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false } },
-        visualMap: { min: 0, max: Math.max(...heat.map(item => item[2]), 1), orient: 'horizontal', left: 'center', bottom: 0, calculable: true, inRange: { color: ['#fff8f1', '#f1d4b7', '#d39a78', '#9a5b3f', '#4c6ef5'] }, textStyle: { color: textColor } },
-        series: [{ type: 'heatmap', data: heat, itemStyle: { borderRadius: 8, borderColor: '#f6f1e8', borderWidth: 3 } }]
-      });
-    }
+function renderCostCalendar(){
+  const c=IC('cost-calendar-chart'),dd=data.days.map(d=>[d.date,+d.cost.toFixed(2)]),mx=Math.max(...data.days.map(d=>d.cost),.01);
+  c.setOption({...TT(),tooltip:{formatter:({value})=>`${value[0]}<br/>${fmtUSD(value[1])}`},
+    visualMap:{min:0,max:mx,orient:'horizontal',left:'center',bottom:8,textStyle:{color:TX},inRange:{color:['rgba(255,255,255,.04)','#5c3a1e','#c0392b','#ff6b6b']}},
+    calendar:{top:28,left:24,right:24,cellSize:['auto',22],range:[data.range.start_local.slice(0,10),data.range.end_local.slice(0,10)],yearLabel:{show:false},monthLabel:{color:TX,margin:14},dayLabel:{color:TX,firstDay:1},splitLine:{lineStyle:{color:AX}},itemStyle:{borderWidth:3,borderColor:' var(--bg)',color:'rgba(255,255,255,.03)'}},
+    series:[{type:'heatmap',coordinateSystem:'calendar',data:dd}]});
+}
 
-    function renderCalendar() {
-      const chart = initChart('calendar-chart');
-      const dailyData = data.days.map(day => [day.date, day.total]);
-      chart.setOption({
-        ...themeBase(),
-        tooltip: {
-          formatter: ({ value }) => `${value[0]}<br/>${fmtInt(value[1])} tokens`
-        },
-        visualMap: {
-          min: 0,
-          max: Math.max(...data.days.map(day => day.total), 1),
-          orient: 'horizontal',
-          left: 'center',
-          bottom: 8,
-          textStyle: { color: textColor },
-          inRange: { color: ['#fff8f1', '#f1d4b7', '#d39a78', '#9a5b3f', '#3653b3'] }
-        },
-        calendar: {
-          top: 28,
-          left: 24,
-          right: 24,
-          cellSize: ['auto', 22],
-          range: [data.range.start_local.slice(0, 10), data.range.end_local.slice(0, 10)],
-          yearLabel: { show: false },
-          monthLabel: { color: textColor, margin: 14 },
-          dayLabel: { color: textColor, firstDay: 1 },
-          splitLine: { lineStyle: { color: '#f0e7dc' } },
-          itemStyle: { borderWidth: 3, borderColor: '#f6f1e8', color: 'rgba(255,255,255,.5)' }
-        },
-        series: [{
-          type: 'heatmap',
-          coordinateSystem: 'calendar',
-          data: dailyData
-        }]
-      });
-    }
+function renderRoseChart(){
+  const c=IC('rose-chart');
+  c.setOption({...TT(),legend:{bottom:0,textStyle:{color:TX}},series:[{type:'pie',radius:['24%','74%'],center:['50%','46%'],roseType:'radius',
+    itemStyle:{borderRadius:8,borderColor:'rgba(12,14,20,.8)',borderWidth:3},label:{color:TX,formatter:({name,percent})=>`${name}\n${percent}%`},
+    data:data.source_cards.map(s=>({name:s.source,value:s.token_capable?s.total:Math.max(s.messages,1),itemStyle:{color:C[s.source]||'#999'}}))}]});
+}
 
-    function renderTimeline() {
-      const chart = initChart('timeline-chart');
-      const peakDays = [...data.days]
-        .filter(day => day.total > 0)
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 4)
-        .sort((a, b) => a.date.localeCompare(b.date));
-      chart.setOption({
-        ...themeBase(),
-        legend: { top: 4, textStyle: { color: textColor } },
-        grid: { top: 54, left: 56, right: 24, bottom: 46 },
-        tooltip: { trigger: 'axis' },
-        xAxis: {
-          type: 'category',
-          data: data.days.map(day => day.label),
-          axisLine: { lineStyle: { color: axisLine } },
-          axisTick: { show: false },
-          axisLabel: { color: textColor }
-        },
-        yAxis: [
-          {
-            type: 'value',
-            name: 'Daily',
-            splitLine: { lineStyle: { color: axisLine } },
-            axisLabel: { color: textColor, formatter: (v) => fmtShort(v) },
-            nameTextStyle: { color: textColor }
-          },
-          {
-            type: 'value',
-            name: 'Cumulative',
-            splitLine: { show: false },
-            axisLabel: { color: textColor, formatter: (v) => fmtShort(v) },
-            nameTextStyle: { color: textColor }
-          }
-        ],
-        series: [
-          {
-            name: 'Daily Total',
-            type: 'bar',
-            barMaxWidth: 28,
-            itemStyle: { color: 'rgba(213,164,118,.45)', borderRadius: [8, 8, 0, 0] },
-            data: data.days.map(day => day.total)
-          },
-          {
-            name: 'Cumulative',
-            type: 'line',
-            yAxisIndex: 1,
-            smooth: true,
-            symbolSize: 7,
-            lineStyle: { width: 4, color: '#231f1b' },
-            itemStyle: { color: '#231f1b' },
-            data: data.days.map(day => day.cumulative),
-            markPoint: {
-              symbol: 'pin',
-              symbolSize: 42,
-              label: { color: '#fff', formatter: ({ value }) => fmtShort(value) },
-              itemStyle: { color: colors.Codex },
-              data: peakDays.map(day => ({
-                name: day.label,
-                coord: [day.label, day.cumulative],
-                value: day.total
-              }))
-            }
-          }
-        ]
-      });
-    }
+function renderDailyChart(){
+  const c=IC('daily-chart');
+  c.setOption({...TT(),legend:{top:6,textStyle:{color:TX}},grid:{top:58,left:60,right:60,bottom:44},tooltip:{trigger:'axis',axisPointer:{type:'shadow'}},
+    xAxis:{type:'category',data:data.days.map(d=>d.label),axisLine:{lineStyle:{color:AX}},axisTick:{show:false},axisLabel:{color:TX}},
+    yAxis:[{type:'value',name:'Daily Tokens',nameTextStyle:{color:TX},splitLine:{lineStyle:{color:AX}},axisLabel:{color:TX,formatter:v=>fmtShort(v)}},{type:'value',name:'Cumulative',nameTextStyle:{color:TX},splitLine:{show:false},axisLabel:{color:TX,formatter:v=>fmtShort(v)}}],
+    series:[
+      {name:'Uncached Input',type:'bar',stack:'d',itemStyle:{color:C.uncached,borderRadius:[6,6,0,0]},data:data.days.map(d=>d.uncached_input)},
+      {name:'Cache Read',type:'bar',stack:'d',itemStyle:{color:C.cacheRead,borderRadius:[6,6,0,0]},data:data.days.map(d=>d.cache_read)},
+      {name:'Cache Write',type:'bar',stack:'d',itemStyle:{color:C.cacheWrite,borderRadius:[6,6,0,0]},data:data.days.map(d=>d.cache_write)},
+      {name:'Output+Reason',type:'bar',stack:'d',itemStyle:{color:C.output,borderRadius:[6,6,0,0]},data:data.days.map(d=>d.output+d.reasoning)},
+      {name:'Cumulative',type:'line',yAxisIndex:1,smooth:true,symbolSize:6,lineStyle:{width:3,color:'rgba(255,255,255,.7)'},itemStyle:{color:'#fff'},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'rgba(255,255,255,.06)'},{offset:1,color:'transparent'}]}},data:data.days.map(d=>d.cumulative)}]
+  });
+}
 
-    function renderRadar() {
-      const chart = initChart('radar-chart');
-      const sources = data.source_cards.filter(card => card.token_capable);
-      chart.setOption({
-        ...themeBase(),
-        legend: { bottom: 0, textStyle: { color: textColor } },
-        radar: {
-          radius: '62%',
-          center: ['50%', '46%'],
-          splitNumber: 5,
-          axisName: { color: textColor },
-          splitLine: { lineStyle: { color: axisLine } },
-          splitArea: { areaStyle: { color: ['rgba(255,255,255,.5)', 'rgba(255,255,255,.3)'] } },
-          indicator: [
-            { name: 'Total', max: Math.max(...sources.map(c => c.total), 1) },
-            { name: 'Cache', max: Math.max(...sources.map(c => c.cache_read + c.cache_write), 1) },
-            { name: 'Output', max: Math.max(...sources.map(c => c.output + c.reasoning), 1) },
-            { name: 'Sessions', max: Math.max(...sources.map(c => c.sessions), 1) }
-          ]
-        },
-        series: [{ type: 'radar', symbol: 'circle', symbolSize: 7, areaStyle: { opacity: .12 }, lineStyle: { width: 3 }, data: sources.map(card => ({ name: card.source, value: [card.total, card.cache_read + card.cache_write, card.output + card.reasoning, card.sessions], itemStyle: { color: colors[card.source] }, lineStyle: { color: colors[card.source] }, areaStyle: { color: colors[card.source], opacity: .11 } })) }]
-      });
-    }
+function renderSankey(){
+  const c=IC('sankey-chart'),ts=data.source_cards.filter(s=>s.token_capable);
+  const bk=[{key:'uncached_input',name:'Uncached Input',color:C.uncached},{key:'cache_read',name:'Cache Read',color:C.cacheRead},{key:'cache_write',name:'Cache Write',color:C.cacheWrite},{key:'output',name:'Output',color:C.output},{key:'reasoning',name:'Reasoning',color:C.reason}];
+  c.setOption({...TT(),series:[{type:'sankey',left:8,right:8,top:24,bottom:12,nodeWidth:18,nodeGap:14,nodeAlign:'justify',
+    lineStyle:{color:'gradient',curveness:.45,opacity:.28},label:{color:'#fff',position:'inside',fontWeight:600,fontSize:11},
+    data:[...ts.map(s=>({name:s.source,itemStyle:{color:C[s.source]||'#999'}})),...bk.map(b=>({name:b.name,itemStyle:{color:b.color}}))],
+    links:ts.flatMap(s=>bk.filter(b=>(s[b.key]||0)>0).map(b=>({source:s.source,target:b.name,value:s[b.key]})))}]});
+  document.getElementById('source-notes').innerHTML=[
+    ...ts.map(s=>`<div class="note" style="border-left-color:${C[s.source]||'#999'}">${s.source} 主力 ${s.top_model}，${fmtShort(s.total)} token / ${fmtUSD(s.cost)}</div>`),
+    ...data.jokes.map(t=>`<div class="note">${t}</div>`)].join('');
+}
 
-    function renderBubble() {
-      const chart = initChart('bubble-chart');
-      const rows = data.top_sessions.slice(0, 24);
-      chart.setOption({
-        ...themeBase(),
-        grid: { top: 30, left: 62, right: 24, bottom: 54 },
-        xAxis: { name: 'Minutes', splitLine: { lineStyle: { color: axisLine } }, axisLabel: { color: textColor }, nameTextStyle: { color: textColor } },
-        yAxis: { name: 'Total Tokens', splitLine: { lineStyle: { color: axisLine } }, axisLabel: { color: textColor, formatter: (v) => fmtShort(v) }, nameTextStyle: { color: textColor } },
-        series: ['Codex', 'Claude'].map(source => ({
-          name: source,
-          type: 'scatter',
-          data: rows.filter(row => row.source === source).map(row => ({ value: [row.minutes || 1, row.total, Math.max(8, Math.sqrt(row.cache_read + row.cache_write) / 180)], session: row.session_id, source })),
-          symbolSize: (value) => value[2],
-          itemStyle: { color: colors[source], opacity: .8 }
-        }))
-      });
-    }
+function renderHeatmap(){
+  const c=IC('heatmap-chart'),h=[];
+  data.heatmap.forEach((r,y)=>r.values.forEach((v,x)=>h.push([x,y,v])));
+  c.setOption({...TT(),grid:{top:44,left:70,right:24,bottom:34},
+    xAxis:{type:'category',data:Array.from({length:24},(_,i)=>`${i}`),splitArea:{show:true,areaStyle:{color:['rgba(255,255,255,.02)','rgba(255,255,255,.01)']}},axisLine:{lineStyle:{color:AX}},axisTick:{show:false}},
+    yAxis:{type:'category',data:data.heatmap.map(r=>r.weekday),splitArea:{show:true,areaStyle:{color:['rgba(255,255,255,.02)','rgba(255,255,255,.01)']}},axisLine:{lineStyle:{color:AX}},axisTick:{show:false}},
+    visualMap:{min:0,max:Math.max(...h.map(i=>i[2]),1),orient:'horizontal',left:'center',bottom:0,calculable:true,inRange:{color:['rgba(255,255,255,.03)','#5c3a1e','#ff8a50','#ffd43b']},textStyle:{color:TX}},
+    series:[{type:'heatmap',data:h,itemStyle:{borderRadius:6,borderColor:'var(--bg)',borderWidth:3}}]
+  });
+}
 
-    function renderTempo() {
-      const chart = initChart('tempo-chart');
-      chart.setOption({
-        ...themeBase(),
-        legend: { top: 4, textStyle: { color: textColor } },
-        grid: { top: 52, left: 56, right: 24, bottom: 46 },
-        xAxis: { type: 'category', data: data.hourly.map(row => `${row.hour}`), axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false }, axisLabel: { color: textColor } },
-        yAxis: { type: 'value', splitLine: { lineStyle: { color: axisLine } }, axisLabel: { color: textColor, formatter: (v) => fmtShort(v) } },
-        series: ['Codex', 'Claude', 'Cursor'].map(source => ({ name: source, type: source === 'Cursor' ? 'line' : 'bar', smooth: source === 'Cursor', barMaxWidth: 20, itemStyle: { color: colors[source] || '#999' }, lineStyle: { width: 3, color: colors[source] || '#999' }, data: data.hourly.map(row => row[source] || 0) }))
-      });
-      const hottestHour = [...data.hourly].map(row => ({ hour: row.hour, total: (row.Codex || 0) + (row.Claude || 0) + (row.Cursor || 0) })).sort((a, b) => b.total - a.total)[0];
-      document.getElementById('tempo-notes').innerHTML = [
-        `<div class="note">最热小时大约在 ${hottestHour.hour}:00，说明那会儿不是在写代码，就是在让 agent 代你写更多代码。</div>`,
-        `<div class="note">峰值日 ${data.totals.peak_day_label} 共 ${fmtShort(data.totals.peak_day_total)} token，已经接近一些团队周报的精神污染总量。</div>`
-      ].join('');
-    }
+function renderRadar(){
+  const c=IC('radar-chart'),srcs=data.source_cards.filter(s=>s.token_capable);
+  c.setOption({...TT(),legend:{bottom:0,textStyle:{color:TX}},
+    radar:{radius:'62%',center:['50%','46%'],splitNumber:5,axisName:{color:TX,fontSize:11},splitLine:{lineStyle:{color:AX}},splitArea:{areaStyle:{color:['rgba(255,255,255,.02)','rgba(255,255,255,.01)']}},
+      indicator:[{name:'Total',max:Math.max(...srcs.map(s=>s.total),1)},{name:'Cache',max:Math.max(...srcs.map(s=>s.cache_read+s.cache_write),1)},{name:'Output',max:Math.max(...srcs.map(s=>s.output+s.reasoning),1)},{name:'Sessions',max:Math.max(...srcs.map(s=>s.sessions),1)}]},
+    series:[{type:'radar',symbol:'circle',symbolSize:6,areaStyle:{opacity:.10},lineStyle:{width:2},
+      data:srcs.map(s=>({name:s.source,value:[s.total,s.cache_read+s.cache_write,s.output+s.reasoning,s.sessions],itemStyle:{color:C[s.source]},lineStyle:{color:C[s.source]},areaStyle:{color:C[s.source],opacity:.08}}))}]
+  });
+}
 
-    function renderSessionTable() {
-      document.getElementById('session-table').innerHTML = `
-        <thead><tr><th>Source</th><th>Session</th><th>Total</th><th>Cache Share</th><th>Model</th><th>Window</th></tr></thead>
-        <tbody>${data.top_sessions.map(row => {
-          const share = row.total ? (row.cache_read + row.cache_write) / row.total : 0;
-          return `<tr><td><strong>${row.source}</strong><div class="tiny">${fmtInt(row.messages)} events</div></td><td><strong>${row.session_id.slice(0, 10)}…</strong><div class="tiny">${row.minutes} min</div></td><td>${fmtShort(row.total)}</td><td>${fmtPct(share)}</td><td>${row.top_model}</td><td><div>${row.first_local}</div><div class="tiny">to ${row.last_local}</div></td></tr>`;
-        }).join('')}</tbody>`;
-    }
+function renderCalendar(){
+  const c=IC('calendar-chart'),dd=data.days.map(d=>[d.date,d.total]);
+  c.setOption({...TT(),tooltip:{formatter:({value})=>`${value[0]}<br/>${fmtInt(value[1])} tokens`},
+    visualMap:{min:0,max:Math.max(...data.days.map(d=>d.total),1),orient:'horizontal',left:'center',bottom:8,textStyle:{color:TX},inRange:{color:['rgba(255,255,255,.03)','#3a4a2e','#51cf66','#a9e34b']}},
+    calendar:{top:28,left:24,right:24,cellSize:['auto',22],range:[data.range.start_local.slice(0,10),data.range.end_local.slice(0,10)],yearLabel:{show:false},monthLabel:{color:TX,margin:14},dayLabel:{color:TX,firstDay:1},splitLine:{lineStyle:{color:AX}},itemStyle:{borderWidth:3,borderColor:'var(--bg)',color:'rgba(255,255,255,.03)'}},
+    series:[{type:'heatmap',coordinateSystem:'calendar',data:dd}]});
+}
 
-    renderHero();
-    renderStory();
-    renderSourceCards();
-    renderRoseChart();
-    renderDailyChart();
-    renderSankey();
-    renderHeatmap();
-    renderCalendar();
-    renderTimeline();
-    renderRadar();
-    renderBubble();
-    renderTempo();
-    renderSessionTable();
-    window.addEventListener('resize', () => charts.forEach(chart => chart.resize()));
-  </script>
+function renderTimeline(){
+  const c=IC('timeline-chart'),pk=[...data.days].filter(d=>d.total>0).sort((a,b)=>b.total-a.total).slice(0,4).sort((a,b)=>a.date.localeCompare(b.date));
+  c.setOption({...TT(),legend:{top:4,textStyle:{color:TX}},grid:{top:54,left:56,right:24,bottom:46},tooltip:{trigger:'axis'},
+    xAxis:{type:'category',data:data.days.map(d=>d.label),axisLine:{lineStyle:{color:AX}},axisTick:{show:false},axisLabel:{color:TX}},
+    yAxis:[{type:'value',name:'Daily',splitLine:{lineStyle:{color:AX}},axisLabel:{color:TX,formatter:v=>fmtShort(v)},nameTextStyle:{color:TX}},{type:'value',name:'Cumulative',splitLine:{show:false},axisLabel:{color:TX,formatter:v=>fmtShort(v)},nameTextStyle:{color:TX}}],
+    series:[{name:'Daily Total',type:'bar',barMaxWidth:24,itemStyle:{color:'rgba(255,138,80,.35)',borderRadius:[6,6,0,0]},data:data.days.map(d=>d.total)},
+      {name:'Cumulative',type:'line',yAxisIndex:1,smooth:true,symbolSize:6,lineStyle:{width:3,color:'rgba(255,255,255,.7)'},itemStyle:{color:'#fff'},data:data.days.map(d=>d.cumulative),
+        markPoint:{symbol:'pin',symbolSize:38,label:{color:'#fff',fontSize:10,formatter:({value})=>fmtShort(value)},itemStyle:{color:C.Codex},data:pk.map(d=>({name:d.label,coord:[d.label,d.cumulative],value:d.total}))}}]
+  });
+}
+
+function renderBubble(){
+  const c=IC('bubble-chart'),rows=data.top_sessions.slice(0,24);
+  c.setOption({...TT(),grid:{top:30,left:62,right:24,bottom:54},
+    xAxis:{name:'Minutes',splitLine:{lineStyle:{color:AX}},axisLabel:{color:TX},nameTextStyle:{color:TX}},
+    yAxis:{name:'Total Tokens',splitLine:{lineStyle:{color:AX}},axisLabel:{color:TX,formatter:v=>fmtShort(v)},nameTextStyle:{color:TX}},
+    series:['Codex','Claude'].map(s=>({name:s,type:'scatter',
+      data:rows.filter(r=>r.source===s).map(r=>({value:[r.minutes||1,r.total,Math.max(8,Math.sqrt(r.cache_read+r.cache_write)/180)],session:r.session_id})),
+      symbolSize:v=>v[2],itemStyle:{color:C[s],opacity:.8}}))
+  });
+}
+
+function renderTempo(){
+  const c=IC('tempo-chart');
+  c.setOption({...TT(),legend:{top:4,textStyle:{color:TX}},grid:{top:52,left:56,right:24,bottom:46},
+    xAxis:{type:'category',data:data.hourly.map(r=>`${r.hour}`),axisLine:{lineStyle:{color:AX}},axisTick:{show:false},axisLabel:{color:TX}},
+    yAxis:{type:'value',splitLine:{lineStyle:{color:AX}},axisLabel:{color:TX,formatter:v=>fmtShort(v)}},
+    series:['Codex','Claude','Cursor'].map(s=>({name:s,type:s==='Cursor'?'line':'bar',smooth:s==='Cursor',barMaxWidth:18,itemStyle:{color:C[s]||'#999'},lineStyle:{width:2,color:C[s]||'#999'},data:data.hourly.map(r=>r[s]||0)}))
+  });
+  const hot=[...data.hourly].map(r=>({hour:r.hour,total:(r.Codex||0)+(r.Claude||0)+(r.Cursor||0)})).sort((a,b)=>b.total-a.total)[0];
+  document.getElementById('tempo-notes').innerHTML=[
+    `<div class="note">最热小时 ${hot.hour}:00，要么在写代码，要么在让 agent 写更多代码。</div>`,
+    `<div class="note">峰值日 ${data.totals.peak_day_label} 共 ${fmtShort(data.totals.peak_day_total)} token。</div>`].join('');
+}
+
+function renderSessionTable(){
+  document.getElementById('session-table').innerHTML=`
+    <thead><tr><th>Source</th><th>Session</th><th>Tokens</th><th>Cost</th><th>Cache</th><th>Model</th><th>Window</th></tr></thead>
+    <tbody>${data.top_sessions.map(r=>{
+      const sh=r.total?(r.cache_read+r.cache_write)/r.total:0;
+      return `<tr><td><strong style="color:var(--text)">${r.source}</strong><div class="tiny">${fmtInt(r.messages)} events</div></td><td><strong style="color:var(--text)">${r.session_id.slice(0,10)}…</strong><div class="tiny">${r.minutes} min</div></td><td>${fmtShort(r.total)}</td><td style="color:var(--cost);font-weight:700">${fmtUSD(r.cost)}</td><td>${fmtPct(sh)}</td><td style="font-size:11px">${r.top_model}</td><td><div style="font-size:11px">${r.first_local}</div><div class="tiny">→ ${r.last_local}</div></td></tr>`}).join('')}</tbody>`;
+}
+
+renderHero();renderSourceCards();renderCostCards();renderStory();
+renderDailyCostChart();renderCostBreakdownChart();renderModelCostChart();renderCostSankey();renderDailyCostTypeChart();renderCostCalendar();
+renderRoseChart();renderDailyChart();renderSankey();renderHeatmap();renderRadar();renderCalendar();renderTimeline();renderBubble();renderTempo();renderSessionTable();
+requestAnimationFrame(()=>{charts.forEach(c=>c.resize());setTimeout(()=>charts.forEach(c=>c.resize()),100)});
+window.addEventListener('resize',()=>charts.forEach(c=>c.resize()));
+</script>
 </body>
-</html>
-""".replace("__DATA__", payload)
+</html>"""
+
+
+def build_html(data: dict) -> str:
+    payload = json.dumps(data, ensure_ascii=False)
+    return _build_html_template().replace("__DATA__", payload)
 
 
 def main() -> None:
@@ -1111,10 +1219,12 @@ def main() -> None:
     OUTPUT_PATH.write_text(build_html(dashboard))
     print(f"Wrote dashboard to {OUTPUT_PATH}")
     print(f"Tracked total tokens: {fmt_int(dashboard['totals']['grand_total'])}")
+    print(f"Estimated total cost: {fmt_usd(dashboard['totals']['grand_cost'])}")
     print("Source summary:")
     for card in dashboard["source_cards"]:
         print(
             f"  - {card['source']}: total={fmt_int(card['total'])} "
+            f"cost={fmt_usd(card['cost'])} "
             f"sessions={card['sessions']} messages={card['messages']} token_capable={card['token_capable']}"
         )
 

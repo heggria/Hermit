@@ -1,23 +1,35 @@
-# syntax=docker/dockerfile:1
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+# syntax=docker/dockerfile:1.7
+
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies first (cached layer)
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+COPY pyproject.toml uv.lock README.md ./
+COPY src src
 
-# Copy source
-COPY hermit/ hermit/
-COPY setup.py ./
+RUN uv build --wheel --out-dir /dist
 
-# Install the package itself
-RUN uv pip install --no-deps -e .
+FROM python:3.13-slim-bookworm AS runtime
 
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/home/hermit
 
-# ~/.hermit is mounted as a volume so config/memory/sessions persist
-VOLUME ["/root/.hermit"]
+RUN groupadd --system hermit \
+    && useradd --system --create-home --gid hermit hermit
+
+WORKDIR /app
+
+COPY --from=builder /dist/*.whl /tmp/hermit.whl
+RUN python -m pip install /tmp/hermit.whl \
+    && rm -f /tmp/hermit.whl
+
+USER hermit
+
+VOLUME ["/home/hermit/.hermit"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["python", "-c", "import hermit; from hermit.main import app; print(app.info.name)"]
 
 ENTRYPOINT ["hermit"]
 CMD ["chat"]

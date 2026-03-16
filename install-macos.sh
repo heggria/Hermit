@@ -53,7 +53,7 @@ echo "-> Installing Hermit..."
 # Console scripts resolve Hermit from the tool environment, so local installs
 # still need a real reinstall into site-packages instead of editable mode.
 clean_local_build_artifacts
-uv tool install --python 3.11 --force --reinstall --refresh --no-cache "$REPO_DIR[macos]" -q
+uv tool install --python 3.13 --force --reinstall --refresh --no-cache "$REPO_DIR[macos]" -q
 
 UV_BIN="$(uv tool dir 2>/dev/null || echo "$HOME/.local/bin")"
 export PATH="$UV_BIN:$PATH"

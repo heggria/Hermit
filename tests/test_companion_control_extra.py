@@ -113,14 +113,42 @@ def test_pid_and_process_helpers_cover_edge_cases(tmp_path: Path, monkeypatch) -
     assert control.read_pid(valid) == 321
     assert control.process_exists(None) is False
 
-    monkeypatch.setattr(control.os, "kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()))
+    monkeypatch.setattr(
+        control.os, "kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError())
+    )
     assert control.process_exists(321) is False
 
-    monkeypatch.setattr(control.os, "kill", lambda pid, sig: (_ for _ in ()).throw(PermissionError()))
+    monkeypatch.setattr(
+        control.os, "kill", lambda pid, sig: (_ for _ in ()).throw(PermissionError())
+    )
     assert control.process_exists(321) is True
 
     monkeypatch.setattr(control.os, "kill", lambda pid, sig: None)
     assert control.process_exists(321) is True
+
+
+def test_matching_process_pids_uses_exact_base_dir(tmp_path: Path) -> None:
+    prod_base = (tmp_path / ".hermit").resolve()
+    dev_base = (tmp_path / ".hermit-dev").resolve()
+    process_table = "\n".join(
+        [
+            f"101 UV=1 HERMIT_BASE_DIR={dev_base} PATH=/tmp python -m hermit.main serve --adapter feishu",
+            f"202 UV=1 HERMIT_BASE_DIR={prod_base} PATH=/tmp python -m hermit.main serve --adapter feishu",
+            f"303 UV=1 HERMIT_BASE_DIR={prod_base} PATH=/tmp python -m hermit.companion.menubar --adapter feishu",
+        ]
+    )
+
+    assert control.watch_pid_path("feishu", base_dir=prod_base) == prod_base / "watch-feishu.pid"
+    assert control.matching_process_pids(
+        "-m hermit.main serve --adapter feishu",
+        base_dir=prod_base,
+        process_table=process_table,
+    ) == [202]
+    assert control.matching_process_pids(
+        "-m hermit.companion.menubar --adapter feishu",
+        base_dir=prod_base,
+        process_table=process_table,
+    ) == [303]
 
 
 def test_command_prefix_and_project_reference_fallbacks(tmp_path: Path, monkeypatch) -> None:
@@ -156,7 +184,10 @@ def test_run_command_and_service_status_darwin_paths(tmp_path: Path, monkeypatch
     monkeypatch.setattr(
         control.subprocess,
         "run",
-        lambda args, **kwargs: captured.update({"args": args, **kwargs}) or subprocess.CompletedProcess(args, 0, "", ""),
+        lambda args, **kwargs: (
+            captured.update({"args": args, **kwargs})
+            or subprocess.CompletedProcess(args, 0, "", "")
+        ),
     )
 
     result = control.run_hermit_command(
@@ -194,7 +225,9 @@ def test_start_stop_reload_and_extract_preflight_paths(tmp_path: Path, monkeypat
     monkeypatch.setattr(
         control,
         "service_status",
-        lambda adapter, base_dir=None: control.ServiceStatus(adapter, Path("pid"), 123, True, False, False),
+        lambda adapter, base_dir=None: control.ServiceStatus(
+            adapter, Path("pid"), 123, True, False, False
+        ),
     )
     assert "already running" in control.start_service("feishu", base_dir=base_dir).lower()
 
@@ -205,7 +238,9 @@ def test_start_stop_reload_and_extract_preflight_paths(tmp_path: Path, monkeypat
 
     statuses = iter(
         [
-            control.ServiceStatus("feishu", base_dir / "serve-feishu.pid", None, False, False, False),
+            control.ServiceStatus(
+                "feishu", base_dir / "serve-feishu.pid", None, False, False, False
+            ),
             control.ServiceStatus("feishu", base_dir / "serve-feishu.pid", 456, True, False, False),
         ]
     )
@@ -231,7 +266,9 @@ def test_start_stop_reload_and_extract_preflight_paths(tmp_path: Path, monkeypat
     monkeypatch.setattr(
         control,
         "service_status",
-        lambda adapter, base_dir=None: control.ServiceStatus(adapter, Path("pid"), None, False, False, False),
+        lambda adapter, base_dir=None: control.ServiceStatus(
+            adapter, Path("pid"), None, False, False, False
+        ),
     )
     assert "not running" in control.stop_service("feishu", base_dir=base_dir).lower()
 
@@ -239,7 +276,9 @@ def test_start_stop_reload_and_extract_preflight_paths(tmp_path: Path, monkeypat
     monkeypatch.setattr(
         control,
         "service_status",
-        lambda adapter, base_dir=None: control.ServiceStatus(adapter, Path("pid"), 321, True, False, False),
+        lambda adapter, base_dir=None: control.ServiceStatus(
+            adapter, Path("pid"), 321, True, False, False
+        ),
     )
     monkeypatch.setattr(control.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     assert "sigterm" in control.stop_service("feishu", base_dir=base_dir).lower()
@@ -251,11 +290,16 @@ def test_start_stop_reload_and_extract_preflight_paths(tmp_path: Path, monkeypat
         "run_hermit_command",
         lambda args, base_dir=None, profile=None: reload_calls.append((args, base_dir, profile)),
     )
-    assert "reload signal sent" in control.reload_service("feishu", base_dir=base_dir, profile="ops").lower()
+    assert (
+        "reload signal sent"
+        in control.reload_service("feishu", base_dir=base_dir, profile="ops").lower()
+    )
     assert reload_calls == [(["reload", "--adapter", "feishu"], base_dir, "ops")]
 
 
-def test_switch_profile_and_update_profile_bool_cover_reload_and_idle_paths(tmp_path: Path, monkeypatch) -> None:
+def test_switch_profile_and_update_profile_bool_cover_reload_and_idle_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
     base_dir = tmp_path / ".hermit"
     base_dir.mkdir()
     (base_dir / "config.toml").write_text(
@@ -273,10 +317,16 @@ model = "claude-sonnet"
     monkeypatch.setattr(
         control,
         "service_status",
-        lambda adapter, base_dir=None: control.ServiceStatus(adapter, Path("pid"), 1, False, True, True),
+        lambda adapter, base_dir=None: control.ServiceStatus(
+            adapter, Path("pid"), 1, False, True, True
+        ),
     )
     reloads: list[str] = []
-    monkeypatch.setattr(control, "reload_service", lambda adapter, base_dir=None, profile=None: reloads.append(adapter) or "reloaded")
+    monkeypatch.setattr(
+        control,
+        "reload_service",
+        lambda adapter, base_dir=None, profile=None: reloads.append(adapter) or "reloaded",
+    )
 
     switched = control.switch_profile("feishu", "default", base_dir=base_dir)
     assert "reloaded launchd-managed" in switched
@@ -285,7 +335,9 @@ model = "claude-sonnet"
     monkeypatch.setattr(
         control,
         "service_status",
-        lambda adapter, base_dir=None: control.ServiceStatus(adapter, Path("pid"), None, False, False, False),
+        lambda adapter, base_dir=None: control.ServiceStatus(
+            adapter, Path("pid"), None, False, False, False
+        ),
     )
     switched_idle = control.switch_profile("feishu", "default", base_dir=base_dir)
     assert "config.toml" in switched_idle
@@ -304,7 +356,9 @@ model = "claude-sonnet"
 def test_open_helpers_cover_darwin_and_non_darwin(tmp_path: Path, monkeypatch) -> None:
     popen_calls: list[list[str]] = []
     monkeypatch.setattr(control.sys, "platform", "darwin")
-    monkeypatch.setattr(control.subprocess, "Popen", lambda args, **kwargs: popen_calls.append(args))
+    monkeypatch.setattr(
+        control.subprocess, "Popen", lambda args, **kwargs: popen_calls.append(args)
+    )
 
     missing_target = tmp_path / "missing.txt"
     existing_target = tmp_path / "exists.txt"

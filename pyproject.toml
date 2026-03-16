@@ -1,16 +1,44 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
 
 [project]
 name = "hermit-agent"
 version = "0.2.3"
 description = "Local-first governed agent kernel for durable and inspectable AI work."
-readme = "README.md"
-requires-python = ">=3.11"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.13"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "Beta" },
+]
+keywords = [
+  "agent",
+  "ai",
+  "automation",
+  "cli",
+  "governance",
+  "kernel",
+  "local-first",
+  "mcp",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Environment :: MacOS X",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
 ]
 dependencies = [
   "anthropic>=0.57.1",
@@ -32,19 +60,9 @@ Documentation = "https://heggria.github.io/Hermit/"
 Repository = "https://github.com/heggria/Hermit"
 Issues = "https://github.com/heggria/Hermit/issues"
 Changelog = "https://github.com/heggria/Hermit/releases"
+Discussions = "https://github.com/heggria/Hermit/discussions"
 
 [project.optional-dependencies]
-dev = [
-  "pytest>=8.3.5",
-  "pytest-asyncio>=0.26.0",
-  "pytest-xdist>=3.8.0",
-  "httpx>=0.28.0",
-  "coverage>=7.13.4",
-  "pytest-cov>=7.0.0",
-  "ruff>=0.13.0",
-  "pre-commit>=4.2.0",
-  "watchfiles>=1.1.1",
-]
 macos = [
   "rumps>=0.4.0",
 ]
@@ -54,38 +72,119 @@ hermit = "hermit.main:app"
 hermit-menubar = "hermit.companion.menubar:main"
 hermit-menubar-install-app = "hermit.companion.appbundle:main"
 
+[dependency-groups]
+dev = [
+  "coverage>=7.13.4",
+  "httpx>=0.28.0",
+  "pre-commit>=4.2.0",
+  "pytest>=8.3.5",
+  "pytest-asyncio>=0.26.0",
+  "pytest-cov>=7.0.0",
+  "pytest-timeout>=2.4.0",
+  "pytest-xdist>=3.8.0",
+  "ruff>=0.13.0",
+  "watchfiles>=1.1.1",
+]
+typecheck = [
+  "pyright>=1.1.400",
+]
+docs = [
+  "mkdocs>=1.6.1",
+  "mkdocs-material>=9.6.0",
+]
+security = [
+  "cyclonedx-bom>=7.1.0",
+  "diff-cover>=9.7.1",
+  "pip-audit>=2.9.0",
+]
+release = [
+  "build>=1.3.0",
+  "twine>=6.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hermit"]
+include = [
+  "src/hermit/**/*.json",
+  "src/hermit/**/*.md",
+  "src/hermit/**/plugin.toml",
+  "src/hermit/py.typed",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/.github",
+  "/AGENTS.md",
+  "/Dockerfile",
+  "/LICENSE",
+  "/Makefile",
+  "/README.md",
+  "/README.zh-CN.md",
+  "/docker-compose.yml",
+  "/docs",
+  "/install-macos.sh",
+  "/install.sh",
+  "/pyproject.toml",
+  "/scripts",
+  "/src/hermit",
+  "/tests",
+  "/uv.lock",
+]
+exclude = [
+  "/docs/site",
+]
+
+[tool.uv]
+managed = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+  "--durations=20",
+  "--timeout=120",
+  "-ra",
+]
+markers = [
+  "integration: exercises multi-component flows or external-process interactions",
+  "e2e: validates end-to-end user or operator scenarios",
+  "network: requires live network access or external services",
+  "slow: takes noticeably longer than the default suite",
+]
 
 [tool.coverage.run]
 branch = true
-source = ["hermit"]
+source = ["src/hermit"]
 
 [tool.coverage.report]
-skip_covered = true
+fail_under = 80
 show_missing = true
+skip_covered = true
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 100
+extend-exclude = [
+  "scripts/generate_codex_token_dashboard.py",
+]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
-ignore = ["E501"]
+select = [
+  "ASYNC",
+  "B",
+  "E",
+  "F",
+  "I",
+]
+ignore = [
+  "E501",
+]
 
 [tool.ruff.lint.per-file-ignores]
-"hermit/main.py" = ["E402"]
-"build/lib/hermit/main.py" = ["E402"]
-
-[tool.setuptools.packages.find]
-include = ["hermit*"]
-
-[tool.setuptools.package-data]
-"hermit" = [
-  "builtin/**/plugin.toml",
-  "builtin/**/skills/**/*.md",
-  "builtin/**/rules/**/*.md",
-  "locales/*.json",
-  "locales/**/*.json",
-]
+"src/hermit/main.py" = ["B008", "B904", "E402"]
+"src/hermit/builtin/feishu/adapter.py" = ["B009", "B010"]
+"src/hermit/builtin/feishu/reaction.py" = ["B009"]
+"src/hermit/core/tools.py" = ["B010"]
+"src/hermit/provider/runtime.py" = ["B009"]

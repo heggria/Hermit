@@ -7,7 +7,7 @@ This document describes the actual current repository structure and the responsi
 ```text
 .
 ├── docs/                 文档
-├── hermit/               主 Python 包
+├── src/                  Python 源码根目录
 ├── tests/                测试
 ├── skills/               仓库内附带的辅助 skill
 ├── README.md
@@ -18,10 +18,10 @@ This document describes the actual current repository structure and the responsi
 └── Makefile
 ```
 
-## `hermit/` Package Structure
+## `src/hermit/` Package Structure
 
 ```text
-hermit/
+src/hermit/
 ├── builtin/              内置插件
 ├── companion/            macOS 菜单栏 companion
 ├── core/                 runner / session / tools / sandbox
@@ -36,7 +36,7 @@ hermit/
 └── main.py               CLI 入口
 ```
 
-## `hermit/builtin/`
+## `src/hermit/builtin/`
 
 Directory for builtin plugins. The main ones currently include:
 
@@ -62,7 +62,7 @@ Each plugin usually contains:
 - `skills/`
 - optional `rules/`
 
-## `hermit/core/`
+## `src/hermit/core/`
 
 Current runtime core layer:
 
@@ -74,7 +74,7 @@ Current runtime core layer:
 
 This layer does not hold product features. It only holds the shared execution framework.
 
-## `hermit/plugin/`
+## `src/hermit/plugin/`
 
 Plugin infrastructure:
 
@@ -83,7 +83,7 @@ Plugin infrastructure:
 - `manager.py` aggregates all plugin assets
 - `config.py` resolves plugin variables and templates
 
-## `hermit/provider/`
+## `src/hermit/provider/`
 
 Provider-related code:
 
@@ -94,7 +94,7 @@ Provider-related code:
 - `profiles.py` parses `config.toml`
 - `providers/` contains concrete provider implementations
 
-## `hermit/companion/`
+## `src/hermit/companion/`
 
 Separate macOS companion layer:
 
@@ -136,13 +136,13 @@ uv run pytest -q
 
 Result:
 
-- `332 passed`
+- current suite size is large and CI-sharded; use `make test` for the live count
 
 ## Known Structural Characteristics in the Current Repository
 
 ### `build/` Is a Packaging Artifact, Not Source
 
-The repository currently includes mirrored packaging output under `build/lib/...`. Read and modify the source under `hermit/`, not the build artifacts.
+The repository currently includes mirrored packaging output under `build/lib/...`. Read and modify the source under `src/hermit/`, not the build artifacts.
 
 ### There Are Still a Few Non-Core Files at the Root
 
@@ -154,7 +154,7 @@ These files do not affect runtime behavior, but they are not part of the core pr
 
 ### The Plugin Layer Is the Main Extension Surface
 
-Most Hermit capabilities are now pushed down into `hermit/builtin/` instead of continuing to expand `core/`.
+Most Hermit capabilities are now pushed down into `src/hermit/builtin/` instead of continuing to expand `core/`.
 
 ## What Changed in This Version of the Document
 

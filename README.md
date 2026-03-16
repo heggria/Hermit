@@ -1,13 +1,13 @@
 # Hermit
 
 <p align="center">
-  <img src="./docs/site/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="96" height="96">
+  <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="96" height="96">
 </p>
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
 [![CI](https://github.com/heggria/Hermit/actions/workflows/ci.yml/badge.svg)](https://github.com/heggria/Hermit/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-black)](./LICENSE)
 [![Docs](https://img.shields.io/badge/docs-github%20pages-0F172A)](https://heggria.github.io/Hermit/)
 
@@ -29,7 +29,7 @@ Docs site: [heggria.github.io/Hermit](https://heggria.github.io/Hermit/)
 
 ## Same Model Loop, Different Operator Contract
 
-![Generic agent vs Hermit](./docs/site/assets/png/hermit-vs-generic-agent.png)
+![Generic agent vs Hermit](./docs/assets/png/hermit-vs-generic-agent.png)
 
 Most agent tools optimize for "helpful right now." Hermit optimizes for "still legible after the run."
 
@@ -75,15 +75,15 @@ If you want a recording-ready walkthrough, start with [docs/demo-flows.md](./doc
 
 Real CLI example from this repository's task kernel:
 
-![Hermit task show, proof, and rollback demo](./docs/site/assets/task-proof-rollback-demo.png)
+![Hermit task show, proof, and rollback demo](./docs/assets/task-proof-rollback-demo.png)
 
 The execution path itself is governed, not implied:
 
-![Hermit's governed execution path](./docs/site/assets/png/hermit-governed-path.png)
+![Hermit's governed execution path](./docs/assets/png/hermit-governed-path.png)
 
 ## Why It Feels Different
 
-![What makes Hermit different](./docs/site/assets/png/hermit-differentiators.png)
+![What makes Hermit different](./docs/assets/png/hermit-differentiators.png)
 
 - durable tasks instead of disposable chat turns
 - policy and approvals between the model and side effects
@@ -163,7 +163,7 @@ Want the fastest evaluation path? Use the 5-minute flow above, then continue wit
 
 ### Requirements
 
-- Python `3.11+`
+- Python `3.13+`
 - [`uv`](https://docs.astral.sh/uv/) recommended
 - macOS only: `rumps` for the optional menu bar companion
 
@@ -178,7 +178,7 @@ This installs Hermit, initializes `~/.hermit`, and copies the basic local enviro
 You can also install manually:
 
 ```bash
-uv sync
+uv sync --group dev --group typecheck --group docs --group security --group release
 uv run hermit init
 ```
 
@@ -227,7 +227,7 @@ These commands matter because a task does not end at tool execution; it ends wit
 
 ## Architecture At A Glance
 
-![Hermit architecture overview](./docs/site/assets/png/hermit-architecture-overview.png)
+![Hermit architecture overview](./docs/assets/png/hermit-architecture-overview.png)
 
 The current repo still contains runtime-era layers and operational surfaces. But the architectural center of gravity is shifting toward the task kernel and its governance law.
 

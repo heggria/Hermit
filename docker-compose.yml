@@ -3,6 +3,6 @@ services:
     build: .
     env_file: .env
     volumes:
-      - ${HOME}/.hermit:/root/.hermit
+      - ${HOME}/.hermit:/home/hermit/.hermit
     command: ["serve", "--adapter", "feishu"]
     restart: unless-stopped

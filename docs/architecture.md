@@ -83,7 +83,7 @@ These surfaces are converging on shared task semantics instead of remaining inde
 
 ## Core Runtime Modules
 
-### `hermit/main.py`
+### `src/hermit/main.py`
 
 Responsibilities:
 
@@ -93,7 +93,7 @@ Responsibilities:
 - task inspection and approval commands
 - service lifecycle
 
-### `hermit/core/runner.py`
+### `src/hermit/core/runner.py`
 
 Responsibilities:
 
@@ -102,7 +102,7 @@ Responsibilities:
 - hook dispatch
 - integration between provider runtime and task kernel paths
 
-### `hermit/plugin/manager.py`
+### `src/hermit/plugin/manager.py`
 
 Responsibilities:
 
@@ -112,7 +112,7 @@ Responsibilities:
 - subagent and adapter assembly
 - MCP startup and shutdown
 
-### `hermit/provider/runtime.py`
+### `src/hermit/provider/runtime.py`
 
 Responsibilities:
 
@@ -122,7 +122,7 @@ Responsibilities:
 
 ## Task Kernel Modules
 
-The kernel is implemented under `hermit/kernel/`.
+The kernel is implemented under `src/hermit/kernel/`.
 
 Important modules include:
 
@@ -138,9 +138,9 @@ Important modules include:
 
 Canonical domain packages for the spec hard cut now live alongside the kernel:
 
-- `hermit/identity/`
-- `hermit/capabilities/`
-- `hermit/workspaces/`
+- `src/hermit/identity/`
+- `src/hermit/capabilities/`
+- `src/hermit/workspaces/`
 - `receipts.py`
 - `proofs.py`
 - `rollbacks.py`

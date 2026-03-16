@@ -6,7 +6,7 @@ Hermit is local-first. By default it keeps state under `~/.hermit`, including co
 
 ## Requirements
 
-- Python `3.11+`
+- Python `3.13+`
 - [`uv`](https://docs.astral.sh/uv/) recommended
 - an LLM provider configuration
 
@@ -28,7 +28,7 @@ This initializes the local workspace and installs Hermit for local use.
 Manual path:
 
 ```bash
-uv sync
+uv sync --group dev --group typecheck --group docs --group security --group release
 uv run hermit init
 ```
 

@@ -4,17 +4,17 @@
 
 当前基座已经存在：
 
-- locale 解析与 fallback 在 `hermit/i18n.py`
-- 全局 locale 配置在 `hermit/config.py`
-- catalog 已存在于 `hermit/locales/en-US.json` 和 `hermit/locales/zh-CN.json`
+- locale 解析与 fallback 在 `src/hermit/i18n.py`
+- 全局 locale 配置在 `src/hermit/config.py`
+- catalog 已存在于 `src/hermit/locales/en-US.json` 和 `src/hermit/locales/zh-CN.json`
 - 顶层 CLI help、菜单栏 copy、`plugin.toml` 描述已部分接入 `tr()`
 
 但距离“完整 i18n”还有明显缺口：
 
-- `hermit/main.py` 大量子命令 help、交互提示、运行时输出仍是硬编码
-- `hermit/companion/control.py`、`hermit/companion/appbundle.py` 仍直接返回英文文案
-- `hermit/core/runner.py`、`hermit/context.py`、`hermit/provider/services.py` 仍有大量中文系统文案
-- `hermit/builtin/*` 的工具描述、schema 描述、错误消息、列表输出大量未接入 catalog
+- `src/hermit/main.py` 大量子命令 help、交互提示、运行时输出仍是硬编码
+- `src/hermit/companion/control.py`、`src/hermit/companion/appbundle.py` 仍直接返回英文文案
+- `src/hermit/core/runner.py`、`src/hermit/context.py`、`src/hermit/provider/services.py` 仍有大量中文系统文案
+- `src/hermit/builtin/*` 的工具描述、schema 描述、错误消息、列表输出大量未接入 catalog
 - Feishu adapter / reply / approval copy 存在中英混写
 - 当前 `docs/i18n.md` 仍明确把 system prompt 和 Feishu 业务输出排除在外
 
@@ -58,8 +58,8 @@
 
 当前只有两个大文件：
 
-- `hermit/locales/en-US.json`
-- `hermit/locales/zh-CN.json`
+- `src/hermit/locales/en-US.json`
+- `src/hermit/locales/zh-CN.json`
 
 随着覆盖面扩展，建议升级为：
 
@@ -83,7 +83,7 @@ hermit/locales/
     plugin.json
 ```
 
-`hermit/i18n.py` 负责合并同一 locale 目录下的所有 JSON。这样做的收益是：
+`src/hermit/i18n.py` 负责合并同一 locale 目录下的所有 JSON。这样做的收益是：
 
 - 降低单文件冲突
 - 便于按模块推进
@@ -151,7 +151,7 @@ hermit/locales/
 
 建议改动：
 
-- 扩展 `hermit/i18n.py`，支持目录式 catalog 加载
+- 扩展 `src/hermit/i18n.py`，支持目录式 catalog 加载
 - 新增 `scripts/check_i18n.py`
 - 新增 placeholder parity 校验，保证中英文 `{name}`、`{pid}` 这类变量一致
 - 新增 missing key 校验，禁止 `zh-CN` 或 `en-US` 漏 key
@@ -170,8 +170,8 @@ hermit/locales/
 
 优先文件：
 
-- `hermit/main.py`
-- `hermit/autostart.py`
+- `src/hermit/main.py`
+- `src/hermit/autostart.py`
 
 覆盖内容：
 
@@ -190,9 +190,9 @@ hermit/locales/
 
 优先文件：
 
-- `hermit/companion/menubar.py`
-- `hermit/companion/control.py`
-- `hermit/companion/appbundle.py`
+- `src/hermit/companion/menubar.py`
+- `src/hermit/companion/control.py`
+- `src/hermit/companion/appbundle.py`
 
 覆盖内容：
 
@@ -213,13 +213,13 @@ hermit/locales/
 
 优先文件：
 
-- `hermit/core/runner.py`
-- `hermit/context.py`
-- `hermit/kernel/approval_copy.py`
-- `hermit/provider/services.py`
-- `hermit/builtin/compact/commands.py`
-- `hermit/builtin/planner/commands.py`
-- `hermit/builtin/usage/commands.py`
+- `src/hermit/core/runner.py`
+- `src/hermit/context.py`
+- `src/hermit/kernel/approval_copy.py`
+- `src/hermit/provider/services.py`
+- `src/hermit/builtin/compact/commands.py`
+- `src/hermit/builtin/planner/commands.py`
+- `src/hermit/builtin/usage/commands.py`
 
 覆盖内容：
 
@@ -244,15 +244,15 @@ hermit/locales/
 
 优先文件：
 
-- `hermit/core/tools.py`
-- `hermit/builtin/scheduler/tools.py`
-- `hermit/builtin/webhook/tools.py`
-- `hermit/builtin/web_tools/tools.py`
-- `hermit/builtin/web_tools/search.py`
-- `hermit/builtin/web_tools/fetch.py`
-- `hermit/builtin/grok/tools.py`
-- `hermit/builtin/grok/search.py`
-- 其他 `hermit/builtin/*/tools.py`
+- `src/hermit/core/tools.py`
+- `src/hermit/builtin/scheduler/tools.py`
+- `src/hermit/builtin/webhook/tools.py`
+- `src/hermit/builtin/web_tools/tools.py`
+- `src/hermit/builtin/web_tools/search.py`
+- `src/hermit/builtin/web_tools/fetch.py`
+- `src/hermit/builtin/grok/tools.py`
+- `src/hermit/builtin/grok/search.py`
+- 其他 `src/hermit/builtin/*/tools.py`
 
 建议落法：
 
@@ -273,10 +273,10 @@ hermit/locales/
 
 优先文件：
 
-- `hermit/builtin/feishu/adapter.py`
-- `hermit/builtin/feishu/reply.py`
-- `hermit/builtin/feishu/tools.py`
-- `hermit/kernel/approval_copy.py`
+- `src/hermit/builtin/feishu/adapter.py`
+- `src/hermit/builtin/feishu/reply.py`
+- `src/hermit/builtin/feishu/tools.py`
+- `src/hermit/kernel/approval_copy.py`
 - scheduler / webhook 的 Feishu 推送文案
 
 覆盖内容：
@@ -297,10 +297,10 @@ hermit/locales/
 
 优先文件：
 
-- `hermit/context.py`
-- `hermit/provider/services.py`
-- `hermit/builtin/*/commands.py`
-- `hermit/builtin/*/hooks.py`
+- `src/hermit/context.py`
+- `src/hermit/provider/services.py`
+- `src/hermit/builtin/*/commands.py`
+- `src/hermit/builtin/*/hooks.py`
 - 内建 `SKILL.md` 中会直接注入 prompt 的部分
 
 建议策略：
@@ -382,7 +382,7 @@ CLI 测试：
 如果只选一条最稳的路径，建议按下面顺序推进：
 
 1. 先补 i18n 基建和 CI 守护线
-2. 再补 `hermit/main.py` 与 `companion/*`
+2. 再补 `src/hermit/main.py` 与 `companion/*`
 3. 再补 `core/runner.py`、`approval_copy.py`、`provider/services.py`
 4. 再补所有 builtin tool 的描述、schema、错误消息
 5. 最后补 Feishu 输出和 system prompt 片段

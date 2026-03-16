@@ -197,6 +197,65 @@ def test_reload_and_service_helpers_cover_permission_and_success_paths(
     assert main_mod._read_pid(pid_path) is None
 
 
+def test_serve_refuses_duplicate_live_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hermit.config import get_settings
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+    settings = get_settings()
+    pid_path = main_mod._pid_path(settings, "feishu")
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text("4321", encoding="utf-8")
+
+    monkeypatch.setattr(main_mod.os, "kill", lambda pid, sig: None)
+
+    result = CliRunner().invoke(main_mod.app, ["serve"])
+
+    assert result.exit_code == 1
+    assert "already running" in result.output
+
+
+def test_serve_cleans_stale_pid_before_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hermit.config import get_settings
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("HERMIT_FEISHU_APP_ID", "cli_xxx")
+    monkeypatch.setenv("HERMIT_FEISHU_APP_SECRET", "secret")
+    get_settings.cache_clear()
+    settings = get_settings()
+    pid_path = main_mod._pid_path(settings, "feishu")
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text("4321", encoding="utf-8")
+
+    serve_calls: list[str] = []
+
+    def fake_serve_loop(adapter: str, pid_file: Path) -> None:
+        serve_calls.append(f"{adapter}:{pid_file}")
+
+    def fake_kill(pid: int, sig: int) -> None:
+        if pid == 4321 and sig == 0:
+            raise ProcessLookupError()
+
+    monkeypatch.setattr(main_mod.os, "kill", fake_kill)
+    monkeypatch.setattr(main_mod, "_serve_loop", fake_serve_loop)
+
+    result = CliRunner().invoke(main_mod.app, ["serve"])
+
+    assert result.exit_code == 0
+    assert "stale PID file" in result.output
+    assert serve_calls
+    assert not pid_path.exists()
+
+
 def test_plugin_commands_manage_installed_plugins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

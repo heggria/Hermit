@@ -197,6 +197,98 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
     assert projection["events_processed"] >= len(task_events)
 
 
+def test_kernel_store_tolerates_foreign_object_sentinels_in_optional_task_fields(
+    tmp_path: Path,
+) -> None:
+    store = KernelStore(tmp_path / "state.db")
+    store.ensure_conversation("conv-sentinel", source_channel="scheduler")
+
+    task = store.create_task(
+        conversation_id="conv-sentinel",
+        title="Sentinel Task",
+        goal="Avoid sqlite binding crashes",
+        source_channel="scheduler",
+        parent_task_id=object(),  # type: ignore[arg-type]
+        task_contract_ref=object(),  # type: ignore[arg-type]
+    )
+
+    persisted = store.get_task(task.task_id)
+    assert persisted is not None
+    assert persisted.parent_task_id is None
+    assert persisted.task_contract_ref is None
+
+
+def test_kernel_store_tolerates_foreign_object_sentinels_in_step_attempt_updates(
+    tmp_path: Path,
+) -> None:
+    store = KernelStore(tmp_path / "state.db")
+    store.ensure_conversation("conv-attempt-sentinel", source_channel="scheduler")
+    task = store.create_task(
+        conversation_id="conv-attempt-sentinel",
+        title="Attempt Sentinel",
+        goal="Keep previous refs when invalid sentinels leak through",
+        source_channel="scheduler",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        context={"phase": "draft"},
+        context_pack_ref="artifact_context_pack",
+        working_state_ref="artifact_working_state",
+        environment_ref="artifact_environment",
+    )
+
+    store.update_step_attempt(
+        attempt.step_attempt_id,
+        context=object(),  # type: ignore[arg-type]
+        context_pack_ref=object(),  # type: ignore[arg-type]
+        working_state_ref=object(),  # type: ignore[arg-type]
+        environment_ref=object(),  # type: ignore[arg-type]
+    )
+
+    updated = store.get_step_attempt(attempt.step_attempt_id)
+    assert updated is not None
+    assert updated.context == {"phase": "draft"}
+    assert updated.context_pack_ref == "artifact_context_pack"
+    assert updated.working_state_ref == "artifact_working_state"
+    assert updated.environment_ref == "artifact_environment"
+
+
+def test_kernel_store_tolerates_foreign_object_sentinels_in_ingress_updates(
+    tmp_path: Path,
+) -> None:
+    store = KernelStore(tmp_path / "state.db")
+    store.ensure_conversation("conv-ingress-sentinel", source_channel="scheduler")
+    ingress = store.create_ingress(
+        conversation_id="conv-ingress-sentinel",
+        source_channel="scheduler",
+        raw_text="run the job",
+        normalized_text="run the job",
+    )
+
+    store.update_ingress(
+        ingress.ingress_id,
+        status=object(),  # type: ignore[arg-type]
+        resolution=object(),  # type: ignore[arg-type]
+        chosen_task_id=object(),  # type: ignore[arg-type]
+        parent_task_id=object(),  # type: ignore[arg-type]
+        confidence=object(),  # type: ignore[arg-type]
+        margin=object(),  # type: ignore[arg-type]
+        rationale=object(),  # type: ignore[arg-type]
+    )
+
+    updated = store.get_ingress(ingress.ingress_id)
+    assert updated is not None
+    assert updated.status == "received"
+    assert updated.resolution == "none"
+    assert updated.chosen_task_id is None
+    assert updated.parent_task_id is None
+    assert updated.confidence is None
+    assert updated.margin is None
+    assert updated.rationale == {}
+
+
 def test_kernel_store_backfills_event_hash_chain_when_missing(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     store = KernelStore(db_path)

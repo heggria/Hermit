@@ -33,16 +33,58 @@ case "${ENV_NAME}" in
     ;;
 esac
 
-service_pids() {
-  ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v adapter="${ADAPTER}" '
-    index($0, "HERMIT_BASE_DIR=" base) && index($0, "-m hermit.main serve --adapter " adapter) {print $1}
+WATCH_PID_FILE="${BASE_DIR}/watch-${ADAPTER}.pid"
+
+read_pid_file() {
+  local path="$1"
+  if [[ ! -f "${path}" ]]; then
+    return
+  fi
+  tr -d '[:space:]' < "${path}"
+}
+
+pid_is_live() {
+  local pid="${1:-}"
+  [[ -n "${pid}" ]] || return 1
+  kill -0 "${pid}" 2>/dev/null
+}
+
+format_pid_state() {
+  local path="$1"
+  local pid
+  pid="$(read_pid_file "${path}")"
+  if [[ -z "${pid}" ]]; then
+    printf '\n'
+    return
+  fi
+  if pid_is_live "${pid}"; then
+    printf '%s (live)\n' "${pid}"
+    return
+  fi
+  printf '%s (stale)\n' "${pid}"
+}
+
+matching_pids() {
+  local marker="$1"
+  ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v marker="${marker}" '
+    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, marker) {print $1}
   '
 }
 
+service_pids() {
+  matching_pids "-m hermit.main serve --adapter ${ADAPTER}"
+}
+
 menubar_pids() {
-  ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v adapter="${ADAPTER}" '
-    index($0, "HERMIT_BASE_DIR=" base) && index($0, "-m hermit.companion.menubar --adapter " adapter) {print $1}
-  '
+  matching_pids "-m hermit.companion.menubar --adapter ${ADAPTER}"
+}
+
+watch_pid() {
+  local pid
+  pid="$(read_pid_file "${WATCH_PID_FILE}")"
+  if pid_is_live "${pid}"; then
+    printf '%s\n' "${pid}"
+  fi
 }
 
 kill_pids() {
@@ -59,6 +101,23 @@ kill_pids() {
   done
 }
 
+kill_watch() {
+  local pid
+  pid="$(watch_pid)"
+  if [[ -z "${pid}" ]]; then
+    return
+  fi
+  kill "${pid}" 2>/dev/null || true
+  sleep 1
+  if pid_is_live "${pid}"; then
+    kill -9 "${pid}" 2>/dev/null || true
+  fi
+}
+
+clear_runtime_pid_files() {
+  rm -f "${BASE_DIR}/serve-${ADAPTER}.pid" "${WATCH_PID_FILE}"
+}
+
 ensure_macos_deps() {
   "${UV_BIN}" sync --extra dev --extra macos >/dev/null
 }
@@ -71,35 +130,68 @@ ensure_menu_app() {
 }
 
 start_service() {
+  if [[ -n "$(service_pids)" ]]; then
+    return
+  fi
   mkdir -p "${BASE_DIR}/logs"
   nohup /bin/zsh -lc "cd '${ROOT_DIR}' && scripts/hermit-env.sh ${ENV_NAME} serve --adapter ${ADAPTER}" \
     > "${BASE_DIR}/logs/${ENV_NAME}-restart-service.out" 2>&1 &
 }
 
 start_menubar() {
+  if [[ -n "$(menubar_pids)" ]]; then
+    return
+  fi
   ensure_macos_deps
   ensure_menu_app
   open -na "${APP_PATH}"
 }
 
 print_status() {
+  local service_pid_state
+  local service_discovered
+  local watch_pid_value
+  local watch_pid_state
+  watch_pid_value="$(watch_pid)"
+  service_pid_state="$(format_pid_state "${BASE_DIR}/serve-${ADAPTER}.pid")"
+  if [[ -z "${service_pid_state}" ]]; then
+    service_discovered="$(service_pids | paste -sd ',' -)"
+    if [[ -n "${service_discovered}" ]]; then
+      service_pid_state="missing (discovered live process: ${service_discovered})"
+    fi
+  fi
+  watch_pid_state="$(format_pid_state "${WATCH_PID_FILE}")"
+  if [[ -z "${watch_pid_state}" && -n "${watch_pid_value}" ]]; then
+    watch_pid_state="missing (discovered live process: ${watch_pid_value})"
+  fi
   echo "ENV=${ENV_NAME}"
   echo "BASE_DIR=${BASE_DIR}"
-  echo "PID_FILE=$(cat "${BASE_DIR}/serve-${ADAPTER}.pid" 2>/dev/null || true)"
+  echo "PID_FILE=${service_pid_state}"
+  echo "WATCH_PID_FILE=${watch_pid_state}"
   echo ""
   echo "[service]"
   ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v adapter="${ADAPTER}" '
-    index($0, "HERMIT_BASE_DIR=" base) && index($0, "-m hermit.main serve --adapter " adapter) {print}
+    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, "-m hermit.main serve --adapter " adapter) {print}
   '
   echo ""
   echo "[menubar]"
   ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v adapter="${ADAPTER}" '
-    index($0, "HERMIT_BASE_DIR=" base) && index($0, "-m hermit.companion.menubar --adapter " adapter) {print}
+    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, "-m hermit.companion.menubar --adapter " adapter) {print}
   '
+  echo ""
+  echo "[watch]"
+  if [[ -n "${watch_pid_value}" ]]; then
+    ps -p "${watch_pid_value}" -o pid=,ppid=,etime=,command=
+  fi
 }
 
 case "${ACTION}" in
   up)
+    if [[ -n "$(watch_pid)" ]]; then
+      echo "watch mode is already active for ${ENV_NAME}/${ADAPTER}; leaving it in control."
+      print_status
+      exit 0
+    fi
     start_service
     sleep 3
     start_menubar
@@ -107,8 +199,10 @@ case "${ACTION}" in
     print_status
     ;;
   restart)
+    kill_watch
     kill_pids "$(service_pids)"
     kill_pids "$(menubar_pids)"
+    clear_runtime_pid_files
     start_service
     sleep 3
     start_menubar
@@ -116,8 +210,10 @@ case "${ACTION}" in
     print_status
     ;;
   down)
+    kill_watch
     kill_pids "$(service_pids)"
     kill_pids "$(menubar_pids)"
+    clear_runtime_pid_files
     print_status
     ;;
   status)

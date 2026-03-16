@@ -65,9 +65,9 @@ def validate_tag(version: str, tag: str) -> None:
         return
     normalized = normalize_tag(tag)
     if normalized != version:
-        raise SystemExit(
-            f"Version mismatch: pyproject.toml has {version}, but git tag is {tag}"
-        )
+        raise SystemExit(f"Version mismatch: pyproject.toml has {version}, but git tag is {tag}")
+
+
 def normalized_names(project_name: str) -> set[str]:
     raw = project_name.strip()
     hyphen = re.sub(r"[-_.]+", "-", raw)
@@ -102,8 +102,7 @@ def validate_dist(project_name: str, version: str, dist_dir: Path) -> None:
         )
 
     wheel_candidates = [
-        dist_dir / f"{name}-{version}-py3-none-any.whl"
-        for name in normalized_names(project_name)
+        dist_dir / f"{name}-{version}-py3-none-any.whl" for name in normalized_names(project_name)
     ]
     wheel_path = next((path for path in wheel_candidates if path.exists()), None)
     if wheel_path is None:
@@ -111,11 +110,7 @@ def validate_dist(project_name: str, version: str, dist_dir: Path) -> None:
 
     with zipfile.ZipFile(wheel_path) as zf:
         metadata_name = next(
-            (
-                name
-                for name in zf.namelist()
-                if re.fullmatch(r".+\.dist-info/METADATA", name)
-            ),
+            (name for name in zf.namelist() if re.fullmatch(r".+\.dist-info/METADATA", name)),
             None,
         )
         if metadata_name is None:
@@ -139,7 +134,7 @@ def main() -> int:
     pyproject_path = Path(args.pyproject)
     project_name = read_project_name(pyproject_path)
     version = read_pyproject_version(pyproject_path)
-    runtime_version = read_runtime_version(pyproject_path.parent / "hermit" / "__init__.py")
+    runtime_version = read_runtime_version(pyproject_path.parent / "src" / "hermit" / "__init__.py")
     if runtime_version != version:
         raise SystemExit(
             f"Version mismatch: pyproject.toml has {version}, but hermit.__version__ is {runtime_version}"

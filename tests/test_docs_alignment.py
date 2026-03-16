@@ -45,18 +45,19 @@ def test_public_entry_points_share_macos_brand_icon() -> None:
     readme = _read("README.md")
     readme_zh = _read("README.zh-CN.md")
     wiki_home = _read("docs/wiki-home.md")
-    site_index = _read("docs/site/index.html")
+    docs_index = _read("docs/index.md")
+    mkdocs = _read("mkdocs.yml")
 
-    assert (ROOT / "docs/site/assets/hermit-macos-icon.svg").exists()
-    assert "./docs/site/assets/hermit-macos-icon.svg" in readme
-    assert "./docs/site/assets/hermit-macos-icon.svg" in readme_zh
+    assert (ROOT / "docs/assets/hermit-macos-icon.svg").exists()
+    assert "./docs/assets/hermit-macos-icon.svg" in readme
+    assert "./docs/assets/hermit-macos-icon.svg" in readme_zh
     assert (
-        "raw.githubusercontent.com/heggria/Hermit/main/docs/site/assets/hermit-macos-icon.svg"
+        "raw.githubusercontent.com/heggria/Hermit/main/docs/assets/hermit-macos-icon.svg"
         in wiki_home
     )
-    assert "./assets/hermit-macos-icon.svg" in site_index
-    assert 'rel="icon"' in site_index
-    assert 'rel="mask-icon"' in site_index
+    assert "assets/hermit-macos-icon.svg" in docs_index
+    assert "logo: assets/hermit-macos-icon.svg" in mkdocs
+    assert "favicon: assets/hermit-macos-icon.svg" in mkdocs
 
 
 def test_conformance_matrix_tracks_exit_criteria_and_claim_boundary() -> None:

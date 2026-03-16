@@ -350,7 +350,7 @@ def render_png(slug: str, width: int, height: int, chrome: Path, base_url: str) 
     png_path = PNG_ASSETS / f"{slug}.png"
     with tempfile.TemporaryDirectory(prefix="excalidraw-export-", dir=ROOT) as tempdir:
         html_path = Path(tempdir) / f"{slug}.html"
-        svg_url = f"{base_url}/docs/site/assets/{slug}.svg"
+        svg_url = f"{base_url}/docs/assets/{slug}.svg"
         html_doc = f"""<!doctype html>
 <html>
 <head>
@@ -675,7 +675,7 @@ def architecture_scene(locale: str = "en") -> Scene:
     )
     x_positions = [80, 204, 328, 456, 602, 748]
     widths = [88, 88, 106, 122, 110, 184]
-    for x, label, w in zip(x_positions, labels, widths):
+    for x, label, w in zip(x_positions, labels, widths, strict=True):
         scene.rectangle(x, surfaces_y + 74, w, 30, stroke=PALETTE["line"], fill=PALETTE["accent"])
         wrapped_label = wrap_text(label, 15, w - 20)
         scene.text(x + 20, surfaces_y + 81, wrapped_label, font_size=15, color=PALETTE["muted"])

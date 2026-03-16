@@ -15,23 +15,46 @@ repos:
 
   - repo: local
     hooks:
-      - id: ruff-check
-        name: ruff check
-        entry: uv run ruff check
-        language: system
-        types_or: [python, pyi]
-        stages: [pre-commit]
-
       - id: ruff-format-check
         name: ruff format check
         entry: uv run ruff format --check
         language: system
         types_or: [python, pyi]
+        exclude: scripts/generate_codex_token_dashboard\.py
         stages: [pre-commit]
 
-      - id: lint
-        name: lint
-        entry: make lint
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        types_or: [python, pyi]
+        exclude: scripts/generate_codex_token_dashboard\.py
+        stages: [pre-commit]
+
+      - id: uv-lock-check
+        name: uv lock check
+        entry: uv lock --check
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: docs-sync-check
+        name: docs install sync check
+        entry: uv run python scripts/check_install_docs_sync.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: typecheck
+        name: typecheck
+        entry: make typecheck
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: test-quick
+        name: quick tests
+        entry: make test-quick
         language: system
         pass_filenames: false
         stages: [pre-push]

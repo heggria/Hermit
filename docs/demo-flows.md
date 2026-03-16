@@ -14,7 +14,7 @@ Use this when someone asks, "What does Hermit actually feel like?"
 
 Prerequisites:
 
-- Python `3.11+`
+- Python `3.13+`
 - a configured provider such as `codex` or `claude`
 
 Recommended command flow:

@@ -9,9 +9,9 @@ Related entrypoints:
 
 Source files:
 
-- [`hermit/companion/menubar.py`](../hermit/companion/menubar.py)
-- [`hermit/companion/control.py`](../hermit/companion/control.py)
-- [`hermit/companion/appbundle.py`](../hermit/companion/appbundle.py)
+- [`src/hermit/companion/menubar.py`](https://github.com/heggria/Hermit/blob/main/src/hermit/companion/menubar.py)
+- [`src/hermit/companion/control.py`](https://github.com/heggria/Hermit/blob/main/src/hermit/companion/control.py)
+- [`src/hermit/companion/appbundle.py`](https://github.com/heggria/Hermit/blob/main/src/hermit/companion/appbundle.py)
 
 ## Design Boundary
 
@@ -37,7 +37,7 @@ It is not responsible for:
 Requires macOS and the menu bar dependencies:
 
 ```bash
-pip install -e ".[dev,macos]"
+uv sync --group dev --group typecheck --group docs --group security --group release --extra macos
 ```
 
 If you use the repository’s one-step installer:
@@ -177,7 +177,7 @@ model = "claude-3-7-sonnet-latest"
 - macOS only
 - will not start without `rumps`
 - not a replacement for a real process manager; for long-running hosting, `launchd` is still the better choice
-- it is only a control layer, so business logic should not keep accumulating under `hermit/companion/`
+- it is only a control layer, so business logic should not keep accumulating under `src/hermit/companion/`
 
 ## What This Documentation Update Corrects
 

@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/heggria/Hermit/main/docs/site/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="72" height="72">
+<img src="https://raw.githubusercontent.com/heggria/Hermit/main/docs/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="72" height="72">
 
 # Hermit Wiki
 

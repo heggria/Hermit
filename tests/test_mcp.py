@@ -279,7 +279,7 @@ github_mcp_url = "https://example.github.test/mcp"
         settings.base_dir = base_dir
 
         pm = PluginManager(settings=settings)
-        pm.discover_and_load(Path("hermit/builtin/github").resolve().parent)
+        pm.discover_and_load(Path("src/hermit/builtin/github").resolve().parent)
 
         github_specs = [spec for spec in pm.mcp_specs if spec.name == "github"]
         assert len(github_specs) == 1
@@ -302,7 +302,7 @@ disabled_builtin_plugins = ["github"]
         settings.disabled_builtin_plugins = ["github"]
 
         pm = PluginManager(settings=settings)
-        pm.discover_and_load(Path("hermit/builtin/github").resolve().parent)
+        pm.discover_and_load(Path("src/hermit/builtin/github").resolve().parent)
 
         assert all(manifest.name != "github" for manifest in pm.manifests)
         assert pm.mcp_specs == []

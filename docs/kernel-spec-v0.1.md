@@ -2723,7 +2723,7 @@ Kernel v0.1 centers execution around:
 ## 23. Suggested Module Layout
 
 The target module map is:
- `hermit/control/ hermit/tasks/ hermit/steps/ hermit/execution/ hermit/events/ hermit/artifacts/ hermit/evidence/ hermit/working_state/ hermit/beliefs/ hermit/memory/ hermit/decisions/ hermit/policy/ hermit/approvals/ hermit/capabilities/ hermit/receipts/ hermit/proofs/ hermit/workspaces/ hermit/context/ hermit/supervision/ hermit/projections/ hermit/identity/ `
+ `src/hermit/control/ hermit/tasks/ hermit/steps/ hermit/execution/ hermit/events/ hermit/artifacts/ hermit/evidence/ hermit/working_state/ hermit/beliefs/ hermit/memory/ hermit/decisions/ hermit/policy/ hermit/approvals/ hermit/capabilities/ hermit/receipts/ hermit/proofs/ hermit/workspaces/ hermit/context/ hermit/supervision/ hermit/projections/ hermit/identity/ `
 This layout is conceptual for v0.1. Exact file placement may change, but module boundaries should preserve the same semantics.
 
 ## 24. Suggested Persistent Records
