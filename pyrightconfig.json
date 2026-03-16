@@ -1,0 +1,24 @@
+{
+  "venvPath": ".",
+  "include": [
+    "src/hermit",
+    "scripts/check_i18n.py",
+    "scripts/check_install_docs_sync.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".pkg-venv",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".uv-cache",
+    "build",
+    "dist",
+    "site"
+  ],
+  "extraPaths": [
+    "src"
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": false
+}

@@ -133,7 +133,7 @@ def test_feishu_adapter_receive_loop_treats_normal_close_as_graceful(monkeypatch
         "hermit.builtin.feishu.adapter.log.info", lambda message: info_logs.append(message)
     )
 
-    monkeypatch.setattr(adapter_module, "_LARK_RECEIVE_LOOP_PATCHED", False)
+    monkeypatch.setattr(adapter_module, "_lark_receive_loop_patched", False)
     adapter_module._patch_lark_receive_loop(fake_module)
 
     client = FakeClient()
@@ -214,7 +214,7 @@ def test_feishu_adapter_connect_patch_tracks_receive_task_and_consumes_graceful_
                 SERVICE_ID="service_id",
             )
 
-            monkeypatch.setattr(adapter_module, "_LARK_CONNECT_PATCHED", False)
+            monkeypatch.setattr(adapter_module, "_lark_connect_patched", False)
             monkeypatch.setattr(
                 "hermit.builtin.feishu.adapter.log.info", lambda message: info_logs.append(message)
             )

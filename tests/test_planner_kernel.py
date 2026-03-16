@@ -20,9 +20,12 @@ def _force_planner_locale(monkeypatch):
 def test_plan_command_routes_to_kernel_control_actions() -> None:
     calls: list[tuple[str, str]] = []
     runner = SimpleNamespace(
-        _dispatch_control_action=lambda session_id, *, action, target_id: calls.append((action, target_id)) or SimpleNamespace(
-            text=action,
-            is_command=True,
+        dispatch_control_action=lambda session_id, *, action, target_id: (
+            calls.append((action, target_id))
+            or SimpleNamespace(
+                text=action,
+                is_command=True,
+            )
         )
     )
 

@@ -490,17 +490,17 @@ def test_runner_handle_returns_pending_disambiguation_without_starting_task(monk
     assert controller.started == []
 
 
-def test_runner_dispatch_control_action_can_focus_task() -> None:
+def test_runnerdispatch_control_action_can_focus_task() -> None:
     runner, _agent, _session_manager, _plugin_manager, controller = _make_runner()
 
-    result = runner._dispatch_control_action("chat-1", action="focus_task", target_id="task-2")
+    result = runner.dispatch_control_action("chat-1", action="focus_task", target_id="task-2")
 
     assert result.is_command is True
     assert "task-2" in result.text
     assert controller.focused == [("chat-1", "task-2")]
 
 
-def test_runner_dispatch_control_action_mentions_resolved_pending_ingress() -> None:
+def test_runnerdispatch_control_action_mentions_resolved_pending_ingress() -> None:
     runner, _agent, _session_manager, _plugin_manager, controller = _make_runner()
 
     def _focus_task(_conversation_id: str, _task_id: str):
@@ -509,7 +509,7 @@ def test_runner_dispatch_control_action_mentions_resolved_pending_ingress() -> N
 
     controller.focus_task = _focus_task  # type: ignore[method-assign]
 
-    result = runner._dispatch_control_action("chat-1", action="focus_task", target_id="task-9")
+    result = runner.dispatch_control_action("chat-1", action="focus_task", target_id="task-9")
 
     assert result.is_command is True
     assert "task-9" in result.text

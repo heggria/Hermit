@@ -137,7 +137,7 @@ class TestFeishuDispatchResultHandler:
 
         with (
             patch("hermit.builtin.feishu.hooks.build_lark_client") as mock_client,
-            patch("hermit.builtin.feishu.reply._should_use_card", return_value=False),
+            patch("hermit.builtin.feishu.reply.should_use_card", return_value=False),
             patch(
                 "hermit.builtin.feishu.reply.send_text_message", return_value="om_test"
             ) as mock_send,
@@ -173,7 +173,7 @@ class TestFeishuDispatchResultHandler:
 
         with (
             patch("hermit.builtin.feishu.hooks.build_lark_client") as mock_client,
-            patch("hermit.builtin.feishu.reply._should_use_card", return_value=False),
+            patch("hermit.builtin.feishu.reply.should_use_card", return_value=False),
             patch("hermit.builtin.feishu.reply.send_text_message", side_effect=capture_send),
         ):
             mock_client.return_value = MagicMock()
@@ -195,7 +195,7 @@ class TestFeishuDispatchResultHandler:
 
         with (
             patch("hermit.builtin.feishu.hooks.build_lark_client") as mock_client,
-            patch("hermit.builtin.feishu.reply._should_use_card", return_value=False),
+            patch("hermit.builtin.feishu.reply.should_use_card", return_value=False),
             patch("hermit.builtin.feishu.reply.send_text_message", return_value=None) as mock_send,
         ):
             mock_client.return_value = MagicMock()

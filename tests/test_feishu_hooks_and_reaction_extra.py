@@ -17,7 +17,9 @@ from hermit.builtin.feishu import reaction as feishu_reaction
         (object(), "om_1", ""),
     ],
 )
-def test_add_reaction_returns_false_for_missing_inputs(client, message_id: str, emoji_type: str) -> None:
+def test_add_reaction_returns_false_for_missing_inputs(
+    client, message_id: str, emoji_type: str
+) -> None:
     assert feishu_reaction.add_reaction(client, message_id, emoji_type) is False
 
 
@@ -26,7 +28,9 @@ def test_add_reaction_returns_false_when_create_raises() -> None:
         def create(self, _request):
             raise RuntimeError("boom")
 
-    client = SimpleNamespace(im=SimpleNamespace(v1=SimpleNamespace(message_reaction=FakeReaction())))
+    client = SimpleNamespace(
+        im=SimpleNamespace(v1=SimpleNamespace(message_reaction=FakeReaction()))
+    )
 
     assert feishu_reaction.add_reaction(client, "om_1", "OK") is False
 
@@ -40,7 +44,9 @@ def test_add_reaction_returns_true_when_api_succeeds() -> None:
         def create(self, _request):
             return FakeResp()
 
-    client = SimpleNamespace(im=SimpleNamespace(v1=SimpleNamespace(message_reaction=FakeReaction())))
+    client = SimpleNamespace(
+        im=SimpleNamespace(v1=SimpleNamespace(message_reaction=FakeReaction()))
+    )
 
     assert feishu_reaction.add_reaction(client, "om_1", "OK") is True
 
@@ -146,8 +152,10 @@ def test_dispatch_result_sends_card_when_card_is_preferred(monkeypatch: pytest.M
     sent_cards: list[tuple[str, dict]] = []
 
     monkeypatch.setattr(feishu_hooks, "build_lark_client", lambda settings=None: object())
-    monkeypatch.setattr("hermit.builtin.feishu.reply._should_use_card", lambda text: True)
-    monkeypatch.setattr("hermit.builtin.feishu.reply.build_result_card", lambda text: {"text": text})
+    monkeypatch.setattr("hermit.builtin.feishu.reply.should_use_card", lambda text: True)
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.reply.build_result_card", lambda text: {"text": text}
+    )
     monkeypatch.setattr(
         "hermit.builtin.feishu.reply.send_card",
         lambda _client, chat_id, card: sent_cards.append((chat_id, card)) or "om_card",
@@ -163,11 +171,13 @@ def test_dispatch_result_sends_card_when_card_is_preferred(monkeypatch: pytest.M
     assert sent_cards == [("oc_1", {"text": "# 日报\n\n今天完成了 3 个任务"})]
 
 
-def test_dispatch_result_sends_text_for_failures_when_card_not_needed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dispatch_result_sends_text_for_failures_when_card_not_needed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sent_texts: list[tuple[str, str]] = []
 
     monkeypatch.setattr(feishu_hooks, "build_lark_client", lambda settings=None: object())
-    monkeypatch.setattr("hermit.builtin.feishu.reply._should_use_card", lambda text: False)
+    monkeypatch.setattr("hermit.builtin.feishu.reply.should_use_card", lambda text: False)
     monkeypatch.setattr(
         "hermit.builtin.feishu.reply.send_text_message",
         lambda _client, chat_id, text: sent_texts.append((chat_id, text)) or "om_text",
@@ -185,17 +195,23 @@ def test_dispatch_result_sends_text_for_failures_when_card_not_needed(monkeypatc
     assert sent_texts == [("oc_1", "# 日报 (failed)\n\n**Error:** network timeout\n\n部分任务失败")]
 
 
-def test_dispatch_result_ignores_missing_chat_and_swallows_send_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dispatch_result_ignores_missing_chat_and_swallows_send_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     exception_calls: list[str] = []
 
     monkeypatch.setattr(feishu_hooks, "build_lark_client", lambda settings=None: object())
-    monkeypatch.setattr("hermit.builtin.feishu.reply._should_use_card", lambda text: True)
-    monkeypatch.setattr("hermit.builtin.feishu.reply.build_result_card", lambda text: {"text": text})
+    monkeypatch.setattr("hermit.builtin.feishu.reply.should_use_card", lambda text: True)
+    monkeypatch.setattr(
+        "hermit.builtin.feishu.reply.build_result_card", lambda text: {"text": text}
+    )
     monkeypatch.setattr(
         "hermit.builtin.feishu.reply.send_card",
         lambda _client, chat_id, card: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    monkeypatch.setattr(feishu_hooks._log, "exception", lambda message, chat_id: exception_calls.append(chat_id))
+    monkeypatch.setattr(
+        feishu_hooks._log, "exception", lambda message, chat_id: exception_calls.append(chat_id)
+    )
 
     feishu_hooks._on_dispatch_result(result_text="skip", notify={})
     feishu_hooks._on_dispatch_result(result_text="boom", notify={"feishu_chat_id": "oc_1"})
@@ -203,11 +219,19 @@ def test_dispatch_result_ignores_missing_chat_and_swallows_send_errors(monkeypat
     assert exception_calls == ["oc_1"]
 
 
-def test_build_react_tool_validates_required_fields_and_runtime_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_react_tool_validates_required_fields_and_runtime_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tool = feishu_hooks._build_react_tool()
 
-    assert tool.handler({"emoji_type": "THUMBSUP"}) == {"success": False, "error": "message_id is required"}
-    assert tool.handler({"message_id": "om_1"}) == {"success": False, "error": "emoji_type is required"}
+    assert tool.handler({"emoji_type": "THUMBSUP"}) == {
+        "success": False,
+        "error": "message_id is required",
+    }
+    assert tool.handler({"message_id": "om_1"}) == {
+        "success": False,
+        "error": "emoji_type is required",
+    }
 
     monkeypatch.setattr(
         feishu_hooks,
@@ -232,7 +256,9 @@ def test_build_react_tool_passes_emoji_type_through_verbatim(
         lambda _client, message_id, emoji_type: calls.append((message_id, emoji_type)) or True,
     )
 
-    result = feishu_hooks._build_react_tool().handler({"message_id": "om_1", "emoji_type": "THUMBSUP"})
+    result = feishu_hooks._build_react_tool().handler(
+        {"message_id": "om_1", "emoji_type": "THUMBSUP"}
+    )
 
     assert result == {"success": True, "emoji_type": "THUMBSUP", "message_id": "om_1"}
     assert calls == [("om_1", "THUMBSUP")]
@@ -243,7 +269,9 @@ def test_resolve_emoji_type_returns_trimmed_value_without_alias_mapping() -> Non
     assert feishu_reaction.resolve_emoji_type("THUMBSUP") == "THUMBSUP"
 
 
-def test_resolve_emoji_type_randomly_selects_from_candidate_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_emoji_type_randomly_selects_from_candidate_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seen: list[list[str]] = []
 
     def fake_choice(options: list[str]) -> str:
@@ -293,5 +321,7 @@ def test_feishu_emoji_reaction_skill_includes_varied_choices_and_new_scenarios()
     assert "The user is excited or looking forward to something" in content
     assert "The user says they are stuck, nervous, or unsure" in content
     assert "The user is brainstorming or sharing a fresh idea" in content
-    assert "The user says the answer is wrong, calls the assistant dumb, or sounds annoyed" in content
+    assert (
+        "The user says the answer is wrong, calls the assistant dumb, or sounds annoyed" in content
+    )
     assert "`EMBARRASSED | HAMMER`" in content

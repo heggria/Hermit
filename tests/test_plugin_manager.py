@@ -13,7 +13,9 @@ def test_plugin_manager_loads_declarative_plugin(tmp_path: Path) -> None:
     """A plugin with only skills/ and rules/ directories (no Python entry)."""
     plugin_dir = tmp_path / "plugins" / "code-review"
     (plugin_dir / "skills" / "code-review").mkdir(parents=True)
-    (plugin_dir / "skills" / "code-review" / "SKILL.md").write_text("# Code Review\nReview code.", encoding="utf-8")
+    (plugin_dir / "skills" / "code-review" / "SKILL.md").write_text(
+        "# Code Review\nReview code.", encoding="utf-8"
+    )
     (plugin_dir / "rules").mkdir()
     (plugin_dir / "rules" / "standards.md").write_text("Always write tests.", encoding="utf-8")
     (plugin_dir / "plugin.toml").write_text(
@@ -32,11 +34,13 @@ def test_plugin_manager_loads_declarative_plugin(tmp_path: Path) -> None:
 
 def test_plugin_manager_setup_tools_registers_subagent_delegation(tmp_path: Path) -> None:
     pm = PluginManager()
-    pm._all_subagents.append(SubagentSpec(
-        name="researcher",
-        description="Research things",
-        system_prompt="You are a researcher.",
-    ))
+    pm._all_subagents.append(
+        SubagentSpec(
+            name="researcher",
+            description="Research things",
+            system_prompt="You are a researcher.",
+        )
+    )
 
     registry = ToolRegistry()
     pm.setup_tools(registry)
@@ -49,10 +53,14 @@ def test_plugin_manager_setup_tools_registers_subagent_delegation(tmp_path: Path
 def test_plugin_manager_build_system_prompt_includes_all_parts(tmp_path: Path) -> None:
     pm = PluginManager()
     pm._all_rules_parts.append('<rule path="test.md">\nAlways be nice.\n</rule>')
-    pm._all_skills.append(SkillDefinition(
-        name="search", description="Search the web", path=tmp_path,
-        content="Search instructions here",
-    ))
+    pm._all_skills.append(
+        SkillDefinition(
+            name="search",
+            description="Search the web",
+            path=tmp_path,
+            content="Search instructions here",
+        )
+    )
     pm.hooks.register(HookEvent.SYSTEM_PROMPT, lambda: "<memory>test</memory>")
 
     prompt = pm.build_system_prompt("base prompt here")
@@ -66,29 +74,43 @@ def test_plugin_manager_build_system_prompt_includes_all_parts(tmp_path: Path) -
 
 def test_plugin_manager_build_system_prompt_preloads_skills(tmp_path: Path) -> None:
     pm = PluginManager()
-    pm._all_skills.append(SkillDefinition(
-        name="format-rules", description="Formatting rules", path=tmp_path,
-        content="Use bold for headings.",
-    ))
-    pm._all_skills.append(SkillDefinition(
-        name="other", description="Other skill", path=tmp_path,
-        content="Other instructions.",
-    ))
+    pm._all_skills.append(
+        SkillDefinition(
+            name="format-rules",
+            description="Formatting rules",
+            path=tmp_path,
+            content="Use bold for headings.",
+        )
+    )
+    pm._all_skills.append(
+        SkillDefinition(
+            name="other",
+            description="Other skill",
+            path=tmp_path,
+            content="Other instructions.",
+        )
+    )
 
     prompt = pm.build_system_prompt("base", preloaded_skills=["format-rules"])
 
     assert '<skill_content name="format-rules">' in prompt
     assert "Use bold for headings." in prompt
     assert '<skill name="other">Other skill</skill>' in prompt
-    assert "format-rules" not in prompt.split("</available_skills>")[0].split("</skill_content>")[-1]
+    assert (
+        "format-rules" not in prompt.split("</available_skills>")[0].split("</skill_content>")[-1]
+    )
 
 
 def test_plugin_manager_setup_tools_registers_read_skill(tmp_path: Path) -> None:
     pm = PluginManager()
-    pm._all_skills.append(SkillDefinition(
-        name="my-skill", description="A skill", path=tmp_path,
-        content="Full instructions.",
-    ))
+    pm._all_skills.append(
+        SkillDefinition(
+            name="my-skill",
+            description="A skill",
+            path=tmp_path,
+            content="Full instructions.",
+        )
+    )
 
     registry = ToolRegistry()
     pm.setup_tools(registry)
@@ -100,10 +122,14 @@ def test_plugin_manager_setup_tools_registers_read_skill(tmp_path: Path) -> None
 
 def test_read_skill_handler_returns_content(tmp_path: Path) -> None:
     pm = PluginManager()
-    pm._all_skills.append(SkillDefinition(
-        name="test-skill", description="Test", path=tmp_path,
-        content="Detailed instructions for the agent.",
-    ))
+    pm._all_skills.append(
+        SkillDefinition(
+            name="test-skill",
+            description="Test",
+            path=tmp_path,
+            content="Detailed instructions for the agent.",
+        )
+    )
 
     result = pm._read_skill_handler({"name": "test-skill"})
     assert '<skill_content name="test-skill">' in result
@@ -112,9 +138,14 @@ def test_read_skill_handler_returns_content(tmp_path: Path) -> None:
 
 def test_read_skill_handler_returns_error_for_unknown(tmp_path: Path) -> None:
     pm = PluginManager()
-    pm._all_skills.append(SkillDefinition(
-        name="known", description="Known skill", path=tmp_path, content="X",
-    ))
+    pm._all_skills.append(
+        SkillDefinition(
+            name="known",
+            description="Known skill",
+            path=tmp_path,
+            content="X",
+        )
+    )
 
     result = pm._read_skill_handler({"name": "unknown"})
     assert "not found" in result
@@ -124,7 +155,12 @@ def test_read_skill_handler_returns_error_for_unknown(tmp_path: Path) -> None:
 def test_read_skill_tool_registered_when_skills_exist(tmp_path: Path) -> None:
     pm = PluginManager()
     pm._all_skills.append(
-        SkillDefinition(name="code-review", description="Review code", path=tmp_path, content="Review instructions")
+        SkillDefinition(
+            name="code-review",
+            description="Review code",
+            path=tmp_path,
+            content="Review instructions",
+        )
     )
 
     registry = ToolRegistry()
@@ -142,6 +178,8 @@ def test_read_skill_tool_not_registered_when_no_skills() -> None:
 
     with __import__("pytest").raises(KeyError):
         registry.get("read_skill")
+
+
 def test_read_skill_handler_unknown_name(tmp_path: Path) -> None:
     pm = PluginManager()
     pm._all_skills.append(
@@ -156,10 +194,17 @@ def test_read_skill_handler_unknown_name(tmp_path: Path) -> None:
 def test_build_system_prompt_preloaded_skills_injected(tmp_path: Path) -> None:
     pm = PluginManager()
     pm._all_skills.append(
-        SkillDefinition(name="feishu-fmt", description="Feishu format", path=tmp_path, content="Format rules for Feishu")
+        SkillDefinition(
+            name="feishu-fmt",
+            description="Feishu format",
+            path=tmp_path,
+            content="Format rules for Feishu",
+        )
     )
     pm._all_skills.append(
-        SkillDefinition(name="code-review", description="Review", path=tmp_path, content="Review instructions")
+        SkillDefinition(
+            name="code-review", description="Review", path=tmp_path, content="Review instructions"
+        )
     )
 
     prompt = pm.build_system_prompt("base", preloaded_skills=["feishu-fmt"])
@@ -260,6 +305,7 @@ def test_load_skills_empty_dir(tmp_path: Path) -> None:
 
 def test_sanitize_for_feishu_hr_blank_line() -> None:
     from hermit.builtin.feishu.reply import sanitize_for_feishu
+
     text = "some text\n---\nmore text"
     result = sanitize_for_feishu(text)
     assert "\n\n---" in result
@@ -267,6 +313,7 @@ def test_sanitize_for_feishu_hr_blank_line() -> None:
 
 def test_sanitize_for_feishu_preserves_valid_hr() -> None:
     from hermit.builtin.feishu.reply import sanitize_for_feishu
+
     text = "some text\n\n---\nmore text"
     result = sanitize_for_feishu(text)
     assert result == text
@@ -274,6 +321,7 @@ def test_sanitize_for_feishu_preserves_valid_hr() -> None:
 
 def test_sanitize_for_feishu_truncates_oversized() -> None:
     from hermit.builtin.feishu.reply import sanitize_for_feishu
+
     text = "x" * 30_000
     result = sanitize_for_feishu(text, locale="zh-CN")
     assert len(result.encode("utf-8")) < 28_000
@@ -283,6 +331,7 @@ def test_sanitize_for_feishu_truncates_oversized() -> None:
 def test_sanitize_does_not_transform_headings_or_tables() -> None:
     """Headings and tables are now the agent's responsibility via skill instructions."""
     from hermit.builtin.feishu.reply import sanitize_for_feishu
+
     text = "### Sub heading\n\n| a | b |\n|---|---|\n| 1 | 2 |"
     result = sanitize_for_feishu(text)
     assert "### Sub heading" in result
@@ -291,8 +340,9 @@ def test_sanitize_does_not_transform_headings_or_tables() -> None:
 
 # ---- _should_use_card tests ----
 
+
 def test_should_use_card_plain_text() -> None:
-    from hermit.builtin.feishu.reply import _should_use_card
+    from hermit.builtin.feishu.reply import should_use_card as _should_use_card
 
     assert not _should_use_card("好的，稍后给你结果。")
     assert not _should_use_card("收到，我来处理一下。")
@@ -300,7 +350,7 @@ def test_should_use_card_plain_text() -> None:
 
 
 def test_should_use_card_markdown_signals() -> None:
-    from hermit.builtin.feishu.reply import _should_use_card
+    from hermit.builtin.feishu.reply import should_use_card as _should_use_card
 
     assert _should_use_card("**加粗文字**")
     assert _should_use_card("# 一级标题\n内容")
@@ -314,7 +364,7 @@ def test_should_use_card_markdown_signals() -> None:
 
 
 def test_should_use_card_feishu_extensions() -> None:
-    from hermit.builtin.feishu.reply import _should_use_card
+    from hermit.builtin.feishu.reply import should_use_card as _should_use_card
 
     assert _should_use_card("<font color='red'>文字</font>")
     assert _should_use_card("<at id='all'></at>")

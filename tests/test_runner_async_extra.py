@@ -211,7 +211,7 @@ def _make_runner(base_dir: Path | None = None):
 
 
 def test_runner_uses_controller_auto_parent_sentinel() -> None:
-    assert runner_module._AUTO_PARENT is controller_module._AUTO_PARENT
+    assert runner_module.AUTO_PARENT is controller_module.AUTO_PARENT
 
 
 def test_runner_start_stop_background_services_and_wake(monkeypatch) -> None:
@@ -426,7 +426,7 @@ def test_runner_process_claimed_attempt_emits_dispatch_result_for_kernel_managed
     assert pm.hooks.calls[0][1]["error"] == errored.text
 
 
-def test_runner_dispatch_control_action_covers_kernel_introspection_paths(monkeypatch) -> None:
+def test_runnerdispatch_control_action_covers_kernel_introspection_paths(monkeypatch) -> None:
     runner, _agent, _session_manager, _pm, _controller, _store = _make_runner()
 
     class TaskRecord:
@@ -496,100 +496,96 @@ def test_runner_dispatch_control_action_covers_kernel_introspection_paths(monkey
 
     assert (
         '"task_id": "task-1"'
-        in runner._dispatch_control_action("oc_1", action="task_list", target_id="").text
+        in runner.dispatch_control_action("oc_1", action="task_list", target_id="").text
     )
     assert (
         '"case": true'
-        in runner._dispatch_control_action("oc_1", action="case", target_id="task-1").text
+        in runner.dispatch_control_action("oc_1", action="case", target_id="task-1").text
     )
     assert (
         '"event_type": "task.completed"'
-        in runner._dispatch_control_action("oc_1", action="task_events", target_id="task-1").text
+        in runner.dispatch_control_action("oc_1", action="task_events", target_id="task-1").text
     )
     assert (
         '"receipt_id": "receipt-1"'
-        in runner._dispatch_control_action("oc_1", action="task_receipts", target_id="task-1").text
+        in runner.dispatch_control_action("oc_1", action="task_receipts", target_id="task-1").text
     )
     assert (
         '"proof": true'
-        in runner._dispatch_control_action("oc_1", action="task_proof", target_id="task-1").text
+        in runner.dispatch_control_action("oc_1", action="task_proof", target_id="task-1").text
     )
     assert (
         '"exported": true'
-        in runner._dispatch_control_action(
+        in runner.dispatch_control_action(
             "oc_1", action="task_proof_export", target_id="task-1"
         ).text
     )
     assert (
         '"rollback": "task-1"'
-        in runner._dispatch_control_action("oc_1", action="rollback", target_id="task-1").text
+        in runner.dispatch_control_action("oc_1", action="rollback", target_id="task-1").text
     )
     assert (
         '"rebuilt": true'
-        in runner._dispatch_control_action(
+        in runner.dispatch_control_action(
             "oc_1", action="projection_rebuild", target_id="task-1"
         ).text
     )
     assert (
         '"rebuilt_all": true'
-        in runner._dispatch_control_action(
+        in runner.dispatch_control_action(
             "oc_1", action="projection_rebuild_all", target_id=""
         ).text
     )
     assert (
         '"grant_id": "grant-1"'
-        in runner._dispatch_control_action("oc_1", action="capability_list", target_id="").text
+        in runner.dispatch_control_action("oc_1", action="capability_list", target_id="").text
     )
     assert (
         "Revoked capability grant"
-        in runner._dispatch_control_action(
+        in runner.dispatch_control_action(
             "oc_1", action="capability_revoke", target_id="grant-1"
         ).text
     )
     assert (
         '"id": "job-1"'
-        in runner._dispatch_control_action("oc_1", action="schedule_list", target_id="").text
+        in runner.dispatch_control_action("oc_1", action="schedule_list", target_id="").text
     )
     assert (
         '"success": true'
-        in runner._dispatch_control_action(
-            "oc_1", action="schedule_history", target_id="job-1"
-        ).text
+        in runner.dispatch_control_action("oc_1", action="schedule_history", target_id="job-1").text
     )
     assert (
         "Enabled"
-        in runner._dispatch_control_action("oc_1", action="schedule_enable", target_id="job-1").text
+        in runner.dispatch_control_action("oc_1", action="schedule_enable", target_id="job-1").text
     )
     assert (
         "Disabled"
-        in runner._dispatch_control_action(
-            "oc_1", action="schedule_disable", target_id="job-1"
-        ).text
+        in runner.dispatch_control_action("oc_1", action="schedule_disable", target_id="job-1").text
     )
     assert (
         "Removed"
-        in runner._dispatch_control_action("oc_1", action="schedule_remove", target_id="job-1").text
+        in runner.dispatch_control_action("oc_1", action="schedule_remove", target_id="job-1").text
     )
     assert (
         "not found"
-        in runner._dispatch_control_action(
+        in runner.dispatch_control_action(
             "oc_1", action="capability_revoke", target_id="missing"
         ).text.lower()
     )
     assert (
         "Unsupported control action"
-        in runner._dispatch_control_action("oc_1", action="mystery", target_id="").text
+        in runner.dispatch_control_action("oc_1", action="mystery", target_id="").text
     )
 
     runner.agent.kernel_store = None  # type: ignore[attr-defined]
-    unavailable = runner._dispatch_control_action("oc_1", action="task_list", target_id="")
+    unavailable = runner.dispatch_control_action("oc_1", action="task_list", target_id="")
     assert unavailable.is_command is True
     assert "Task kernel" in unavailable.text and "available" in unavailable.text
 
     runner.reset_session("oc_1")
-    help_result = runner._dispatch_control_action("oc_1", action="show_help", target_id="")
-    history_result = runner._dispatch_control_action("oc_1", action="show_history", target_id="")
-    new_session_result = runner._dispatch_control_action("oc_1", action="new_session", target_id="")
+    help_result = runner.dispatch_control_action("oc_1", action="show_help", target_id="")
+    history_result = runner.dispatch_control_action("oc_1", action="show_history", target_id="")
+    new_session_result = runner.dispatch_control_action("oc_1", action="new_session", target_id="")
 
     assert help_result.is_command is True and "/help" in help_result.text
     assert history_result.is_command is True and "user turns" in history_result.text
@@ -826,7 +822,7 @@ def test_runner_prepare_prompt_context_sanitizes_session_and_command_mapping(mon
     dispatched: list[tuple[str, str]] = []
     monkeypatch.setattr(
         runner,
-        "_dispatch_control_action",
+        "dispatch_control_action",
         lambda session_id, action, target_id, **kwargs: (
             dispatched.append((action, target_id)) or DispatchResult("ok", is_command=True)
         ),

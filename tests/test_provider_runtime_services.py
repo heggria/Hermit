@@ -65,7 +65,9 @@ class FakeProvider:
             raise self._stream_error
         yield from self._stream_events.pop(0)
 
-    def clone(self, *, model: str | None = None, system_prompt: str | None = None) -> "FakeProvider":
+    def clone(
+        self, *, model: str | None = None, system_prompt: str | None = None
+    ) -> "FakeProvider":
         return self
 
 
@@ -75,7 +77,11 @@ def _tool_registry() -> ToolRegistry:
         ToolSpec(
             name="echo",
             description="Echo back input",
-            input_schema={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+            input_schema={
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+            },
             handler=lambda payload: {"echo": payload["value"]},
             readonly=True,
             action_class="read_local",
@@ -93,7 +99,11 @@ def _mutating_tool_registry() -> ToolRegistry:
         ToolSpec(
             name="write_echo",
             description="Mutate state by echoing input",
-            input_schema={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+            input_schema={
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+            },
             handler=lambda payload: {"echo": payload["value"]},
             action_class="write_local",
             risk_hint="high",
@@ -162,14 +172,27 @@ def test_runtime_run_stream_executes_tool_loop_and_returns_text() -> None:
             [
                 ProviderEvent(
                     type="block_end",
-                    block={"type": "tool_use", "id": "call_1", "name": "echo", "input": {"value": "hi"}},
+                    block={
+                        "type": "tool_use",
+                        "id": "call_1",
+                        "name": "echo",
+                        "input": {"value": "hi"},
+                    },
                 ),
-                ProviderEvent(type="message_end", stop_reason="tool_use", usage=UsageMetrics(input_tokens=2, output_tokens=1)),
+                ProviderEvent(
+                    type="message_end",
+                    stop_reason="tool_use",
+                    usage=UsageMetrics(input_tokens=2, output_tokens=1),
+                ),
             ],
             [
                 ProviderEvent(type="text", text="final"),
                 ProviderEvent(type="block_end", block={"type": "text", "text": "final"}),
-                ProviderEvent(type="message_end", stop_reason="end_turn", usage=UsageMetrics(input_tokens=1, output_tokens=1)),
+                ProviderEvent(
+                    type="message_end",
+                    stop_reason="end_turn",
+                    usage=UsageMetrics(input_tokens=1, output_tokens=1),
+                ),
             ],
         ],
     )
@@ -193,18 +216,33 @@ def test_runtime_run_stream_rejects_mutating_tool_without_task_context() -> None
             [
                 ProviderEvent(
                     type="block_end",
-                    block={"type": "tool_use", "id": "call_1", "name": "write_echo", "input": {"value": "hi"}},
+                    block={
+                        "type": "tool_use",
+                        "id": "call_1",
+                        "name": "write_echo",
+                        "input": {"value": "hi"},
+                    },
                 ),
-                ProviderEvent(type="message_end", stop_reason="tool_use", usage=UsageMetrics(input_tokens=2, output_tokens=1)),
+                ProviderEvent(
+                    type="message_end",
+                    stop_reason="tool_use",
+                    usage=UsageMetrics(input_tokens=2, output_tokens=1),
+                ),
             ],
             [
                 ProviderEvent(type="text", text="final"),
                 ProviderEvent(type="block_end", block={"type": "text", "text": "final"}),
-                ProviderEvent(type="message_end", stop_reason="end_turn", usage=UsageMetrics(input_tokens=1, output_tokens=1)),
+                ProviderEvent(
+                    type="message_end",
+                    stop_reason="end_turn",
+                    usage=UsageMetrics(input_tokens=1, output_tokens=1),
+                ),
             ],
         ],
     )
-    runtime = AgentRuntime(provider=provider, registry=_mutating_tool_registry(), model="fake", tool_executor=object())  # type: ignore[arg-type]
+    runtime = AgentRuntime(
+        provider=provider, registry=_mutating_tool_registry(), model="fake", tool_executor=object()
+    )  # type: ignore[arg-type]
 
     result = runtime.run_stream("hello")
 
@@ -249,7 +287,7 @@ def test_build_provider_client_kwargs_for_codex_oauth() -> None:
 def test_structured_extraction_service_parses_fenced_and_fragment_json() -> None:
     provider = FakeProvider(
         responses=[
-            ProviderResponse(content=[{"type": "text", "text": "```json\n{\"ok\": true}\n```"}]),
+            ProviderResponse(content=[{"type": "text", "text": '```json\n{"ok": true}\n```'}]),
             ProviderResponse(content=[{"type": "text", "text": 'prefix {"ok": true'}]),
         ]
     )
@@ -276,7 +314,10 @@ def test_vision_analysis_service_passes_image_blocks() -> None:
     result = service.analyze_image(
         system_prompt="vision",
         text="what is this",
-        image_block={"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}},
+        image_block={
+            "type": "image",
+            "source": {"type": "url", "url": "https://example.com/a.png"},
+        },
     )
 
     assert result == {"summary": "ok"}
@@ -366,7 +407,9 @@ def test_llm_approval_formatter_falls_back_when_provider_init_fails(monkeypatch)
         "approval_demo",
     )
 
-    assert copy.summary == "The agent is about to run a command that changes the current environment."
+    assert (
+        copy.summary == "The agent is about to run a command that changes the current environment."
+    )
 
 
 def test_build_approval_copy_service_can_render_zh_cn(monkeypatch) -> None:
@@ -401,9 +444,13 @@ def test_build_provider_supports_claude_codex_and_oauth(monkeypatch, tmp_path: P
     monkeypatch.setattr(
         services,
         "build_claude_provider",
-        lambda settings, *, model, system_prompt=None: claude_calls.append((settings, model, system_prompt)) or "claude-provider",
+        lambda settings, *, model, system_prompt=None: (
+            claude_calls.append((settings, model, system_prompt)) or "claude-provider"
+        ),
     )
-    monkeypatch.setattr(services, "_resolve_codex_model", lambda settings, requested_model: "gpt-test")
+    monkeypatch.setattr(
+        services, "_resolve_codex_model", lambda settings, requested_model: "gpt-test"
+    )
     monkeypatch.setattr(
         services,
         "CodexProvider",
@@ -435,7 +482,10 @@ def test_build_provider_supports_claude_codex_and_oauth(monkeypatch, tmp_path: P
         parsed_openai_headers={"X-Test": "1"},
     )
 
-    assert build_provider(claude_settings, model="claude-sonnet", system_prompt="sys") == "claude-provider"
+    assert (
+        build_provider(claude_settings, model="claude-sonnet", system_prompt="sys")
+        == "claude-provider"
+    )
     codex_provider = build_provider(codex_settings, model="claude-3", system_prompt="sys")
     oauth_provider = build_provider(oauth_settings, model="claude-3", system_prompt="sys")
 
@@ -499,10 +549,14 @@ def test_build_provider_client_kwargs_cover_supported_providers() -> None:
         "base_url": "https://api.example.com/v1",
         "default_headers": {"X-OpenAI": "1"},
     }
-    assert build_provider_client_kwargs(SimpleNamespace(provider="unknown"), provider="unknown") == {}
+    assert (
+        build_provider_client_kwargs(SimpleNamespace(provider="unknown"), provider="unknown") == {}
+    )
 
 
-def test_build_runtime_wires_runtime_and_filters_cli_only_commands(monkeypatch, tmp_path: Path) -> None:
+def test_build_runtime_wires_runtime_and_filters_cli_only_commands(
+    monkeypatch, tmp_path: Path
+) -> None:
     from hermit.core.runner import AgentRunner
 
     registry = ToolRegistry()
@@ -516,12 +570,21 @@ def test_build_runtime_wires_runtime_and_filters_cli_only_commands(monkeypatch, 
         def __init__(self) -> None:
             self._all_commands = [
                 CommandSpec(name="/plugin", help_text="Plugin command", handler=lambda *_: None),
-                CommandSpec(name="/plugin-cli", help_text="Plugin CLI command", handler=lambda *_: None, cli_only=True),
+                CommandSpec(
+                    name="/plugin-cli",
+                    help_text="Plugin CLI command",
+                    handler=lambda *_: None,
+                    cli_only=True,
+                ),
             ]
             self.setup_registry: ToolRegistry | None = None
             self.started_registry: ToolRegistry | None = None
             self.system_prompt_calls: list[tuple[str, list[str] | None]] = []
             self.configured_runtime = None
+
+        @property
+        def all_commands(self) -> list:
+            return list(self._all_commands)
 
         def setup_tools(self, registry: ToolRegistry) -> None:
             self.setup_registry = registry
@@ -529,7 +592,9 @@ def test_build_runtime_wires_runtime_and_filters_cli_only_commands(monkeypatch, 
         def start_mcp_servers(self, registry: ToolRegistry) -> None:
             self.started_registry = registry
 
-        def build_system_prompt(self, base_prompt: str, preloaded_skills: list[str] | None = None) -> str:
+        def build_system_prompt(
+            self, base_prompt: str, preloaded_skills: list[str] | None = None
+        ) -> str:
             self.system_prompt_calls.append((base_prompt, preloaded_skills))
             return f"system::{base_prompt}"
 
@@ -552,8 +617,14 @@ def test_build_runtime_wires_runtime_and_filters_cli_only_commands(monkeypatch, 
     pm = FakePluginManager()
 
     monkeypatch.setattr(services, "build_base_context", lambda settings, cwd: f"base::{cwd.name}")
-    monkeypatch.setattr(services, "create_builtin_tool_registry", lambda workdir, sandbox, config_root_dir=None: registry)
-    monkeypatch.setattr(services, "build_provider", lambda settings, *, model, system_prompt=None: provider)
+    monkeypatch.setattr(
+        services,
+        "create_builtin_tool_registry",
+        lambda workdir, sandbox, config_root_dir=None: registry,
+    )
+    monkeypatch.setattr(
+        services, "build_provider", lambda settings, *, model, system_prompt=None: provider
+    )
     monkeypatch.setattr(AgentRunner, "_core_commands", core_commands, raising=False)
 
     runtime, returned_pm = services.build_runtime(
@@ -583,7 +654,9 @@ def test_build_runtime_wires_runtime_and_filters_cli_only_commands(monkeypatch, 
     assert preloaded == ["feishu-format"]
 
 
-def test_build_background_runtime_creates_plugin_manager_when_missing(monkeypatch, tmp_path: Path) -> None:
+def test_build_background_runtime_creates_plugin_manager_when_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
     created: list["FakePluginManager"] = []
 
     class FakePluginManager:
@@ -596,6 +669,10 @@ def test_build_background_runtime_creates_plugin_manager_when_missing(monkeypatc
             self.configured_runtime = None
             created.append(self)
 
+        @property
+        def all_commands(self) -> list:
+            return list(self._all_commands)
+
         def discover_and_load(self, *search_dirs: Path) -> None:
             self.discover_calls.append(search_dirs)  # type: ignore[arg-type]
 
@@ -605,7 +682,9 @@ def test_build_background_runtime_creates_plugin_manager_when_missing(monkeypatc
         def start_mcp_servers(self, registry: ToolRegistry) -> None:
             self.start_mcp_called = True
 
-        def build_system_prompt(self, base_prompt: str, preloaded_skills: list[str] | None = None) -> str:
+        def build_system_prompt(
+            self, base_prompt: str, preloaded_skills: list[str] | None = None
+        ) -> str:
             return base_prompt
 
         def configure_subagent_runtime(self, runtime, on_tool_call=None) -> None:
@@ -627,8 +706,16 @@ def test_build_background_runtime_creates_plugin_manager_when_missing(monkeypatc
 
     monkeypatch.setattr(services, "PluginManager", FakePluginManager)
     monkeypatch.setattr(services, "build_base_context", lambda settings, cwd: "base")
-    monkeypatch.setattr(services, "create_builtin_tool_registry", lambda workdir, sandbox, config_root_dir=None: ToolRegistry())
-    monkeypatch.setattr(services, "build_provider", lambda settings, *, model, system_prompt=None: SimpleNamespace(model=model))
+    monkeypatch.setattr(
+        services,
+        "create_builtin_tool_registry",
+        lambda workdir, sandbox, config_root_dir=None: ToolRegistry(),
+    )
+    monkeypatch.setattr(
+        services,
+        "build_provider",
+        lambda settings, *, model, system_prompt=None: SimpleNamespace(model=model),
+    )
 
     runtime, pm = services.build_background_runtime(settings, cwd=tmp_path)
 
@@ -652,14 +739,27 @@ def test_resolve_codex_model_and_json_helpers(monkeypatch, tmp_path: Path) -> No
     (config_dir / "config.toml").write_text("model = \n", encoding="utf-8")
     assert services._resolve_codex_model(SimpleNamespace(), "claude-3") == "gpt-5.4"
 
-    assert services._parse_json_response(ProviderResponse(content=[{"type": "text", "text": ""}])) is None
-    assert services._parse_json_response(ProviderResponse(content=[{"type": "text", "text": "[]"}])) is None
-    assert services._parse_json_response(ProviderResponse(content=[{"type": "text", "text": "not-json"}])) is None
+    assert (
+        services._parse_json_response(ProviderResponse(content=[{"type": "text", "text": ""}]))
+        is None
+    )
+    assert (
+        services._parse_json_response(ProviderResponse(content=[{"type": "text", "text": "[]"}]))
+        is None
+    )
+    assert (
+        services._parse_json_response(
+            ProviderResponse(content=[{"type": "text", "text": "not-json"}])
+        )
+        is None
+    )
 
 
 def test_llm_approval_formatter_requires_complete_fields() -> None:
     formatter = services.LLMApprovalFormatter(
-        FakeProvider(responses=[ProviderResponse(content=[{"type": "text", "text": '{"title":"ok"}'}])]),
+        FakeProvider(
+            responses=[ProviderResponse(content=[{"type": "text", "text": '{"title":"ok"}'}])]
+        ),
         model="fake",
     )
 
@@ -668,7 +768,9 @@ def test_llm_approval_formatter_requires_complete_fields() -> None:
 
 def test_llm_progress_summarizer_requires_summary_field() -> None:
     summarizer = LLMProgressSummarizer(
-        FakeProvider(responses=[ProviderResponse(content=[{"type": "text", "text": '{"detail":"waiting"}'}])]),
+        FakeProvider(
+            responses=[ProviderResponse(content=[{"type": "text", "text": '{"detail":"waiting"}'}])]
+        ),
         model="fake",
     )
 
