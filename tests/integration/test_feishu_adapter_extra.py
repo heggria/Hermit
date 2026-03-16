@@ -1162,7 +1162,7 @@ def test_feishu_adapter_handle_post_run_result_delivers_async_terminal_reply(
     )
 
     assert (
-        adapter._handle_post_run_result(
+        adapter.handle_post_run_result(
             SimpleNamespace(task_id=ctx.task_id),
             session_id="oc_chat:user_1",
             runner=adapter._runner,

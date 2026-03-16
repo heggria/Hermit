@@ -1,4 +1,6 @@
 # ruff: noqa: F403,F405
+import pytest
+
 from tests.fixtures.feishu_dispatcher_support import *
 
 
@@ -148,6 +150,7 @@ def test_feishu_adapter_receive_loop_treats_normal_close_as_graceful(monkeypatch
     assert any("closed cleanly" in message for message in info_logs)
 
 
+@pytest.mark.slow
 def test_feishu_adapter_cancel_ws_receive_task_cancels_pending_task() -> None:
     from hermit.plugins.builtin.adapters.feishu.adapter import FeishuAdapter
 

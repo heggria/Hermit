@@ -2109,7 +2109,10 @@ class FeishuAdapter:
             task_controller.finalize_result(ctx, status="failed")
             return None
 
-        if result.execution_status == "succeeded":
+        if result.execution_status in ("succeeded", "reconciling") and result.result_code in (
+            "succeeded",
+            None,
+        ):
             raw_result: Any = result.raw_result
             if isinstance(raw_result, dict):
                 task_controller.finalize_result(ctx, status="succeeded")

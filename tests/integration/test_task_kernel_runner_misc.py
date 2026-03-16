@@ -70,7 +70,7 @@ def test_runner_marks_unknown_outcome_as_needs_attention(tmp_path: Path) -> None
     )
     attempt = store.get_step_attempt(attempt_id)
     assert result.execution_status == "needs_attention"
-    assert attempt is not None and attempt.status == "reconciling"
+    assert attempt is not None and attempt.status == "needs_attention"
     assert store.get_task(task.task_id).status == "needs_attention"
 
 

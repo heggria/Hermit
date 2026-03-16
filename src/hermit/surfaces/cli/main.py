@@ -154,6 +154,33 @@ def _print_result(result: AgentResult) -> None:
     typer.echo(f"\n{result.text}")
 
 
+class _StreamPrinter:
+    """Adapter that prints streaming tokens to stdout."""
+
+    def __init__(self) -> None:
+        self._in_thinking = False
+
+    def on_token(self, kind: str, text: str) -> None:
+        if kind == "thinking":
+            if not self._in_thinking:
+                sys.stdout.write(f"\n{DIM}── thinking ──{RESET}\n")
+                self._in_thinking = True
+            sys.stdout.write(f"{DIM}{text}{RESET}")
+        else:
+            if self._in_thinking:
+                sys.stdout.write(f"\n{DIM}── /thinking ──{RESET}\n\n")
+                self._in_thinking = False
+            sys.stdout.write(text)
+        sys.stdout.flush()
+
+    def finish(self) -> None:
+        if self._in_thinking:
+            sys.stdout.write(f"\n{DIM}── /thinking ──{RESET}\n")
+            self._in_thinking = False
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
 def _stop_runner_background_services(runner: Any) -> None:
     stopper = getattr(runner, "stop_background_services", None)
     if callable(stopper):

@@ -145,8 +145,8 @@ addopts = [
   "--strict-markers",
   "--import-mode=importlib",
   "--durations=20",
-  "--timeout=60",
-  "-n", "4",
+  "--timeout=30",
+  "-n", "auto",
   "--dist", "worksteal",
   "-ra",
 ]

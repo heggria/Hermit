@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 import time
 
+import pytest
+
 from hermit.infra.system.sandbox import CommandSandbox
 from hermit.runtime.capability.registry.tools import create_builtin_tool_registry
 
@@ -111,15 +113,16 @@ def test_builtin_tools_localize_descriptions_and_messages(tmp_path) -> None:
     assert missing == "未找到文件：memory/session_state.json"
 
 
+@pytest.mark.slow
 def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
     command = (
         f"{sys.executable} -u -c "
         '"import sys,time; '
         "print('Booting server'); sys.stdout.flush(); "
-        "time.sleep(0.18); "
+        "time.sleep(0.10); "
         "print('READY http://127.0.0.1:3000'); sys.stdout.flush(); "
-        'time.sleep(0.08)"'
+        'time.sleep(0.05)"'
     )
 
     result = sandbox.run(
@@ -151,7 +154,7 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     starting = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.3,
+        timeout=0.2,
         predicate=lambda poll: poll.get("progress", {}).get("phase") == "starting",
     )
     assert starting is not None
@@ -162,7 +165,7 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     ready = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.4,
+        timeout=0.25,
         predicate=lambda poll: poll.get("progress", {}).get("ready") is True,
     )
     assert ready is not None
@@ -172,11 +175,12 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     assert ready["result"]["ready"] is True
 
 
+@pytest.mark.slow
 def test_command_sandbox_observation_uses_coarse_running_progress_without_metadata(
     tmp_path,
 ) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(0.16)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.10)"'
 
     result = sandbox.run({"command": command, "display_name": "Background Task"})
 
@@ -186,7 +190,7 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
     observing = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.2,
+        timeout=0.15,
         predicate=lambda poll: (
             poll.get("status") == "observing" and poll.get("progress", {}).get("phase") == "running"
         ),
@@ -197,27 +201,28 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
     completed = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.35,
+        timeout=0.2,
         predicate=lambda poll: poll.get("status") == "completed",
     )
     assert completed is not None
     assert completed["result"]["returncode"] == 0
 
 
+@pytest.mark.slow
 def test_command_sandbox_coarse_observation_only_extends_completion_once(
     tmp_path,
     monkeypatch,
 ) -> None:
     monkeypatch.setattr("hermit.infra.system.sandbox._COARSE_OBSERVATION_GRACE_SECONDS", 1.0)
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(0.13)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.08)"'
 
     result = sandbox.run({"command": command, "display_name": "Short Task"})
 
     assert "_hermit_observation" in result
     ticket = result["_hermit_observation"]
 
-    time.sleep(0.12)
+    time.sleep(0.07)
 
     observing = sandbox.poll(ticket["job_id"])
     assert observing["status"] == "observing"
@@ -233,6 +238,7 @@ def test_command_sandbox_coarse_observation_only_extends_completion_once(
     assert repeated["result"]["returncode"] == 0
 
 
+@pytest.mark.slow
 def test_command_sandbox_followup_poll_quickly_reaches_completion(tmp_path) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
     command = f'{sys.executable} -u -c "import time; time.sleep(0.13)"'

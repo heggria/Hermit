@@ -5,7 +5,6 @@ from types import ModuleType, SimpleNamespace
 
 from typer.testing import CliRunner
 
-import hermit
 import hermit.surfaces.cli.main as main_mod
 
 
@@ -80,8 +79,10 @@ def test_cli_schedule_and_autostart_cover_validation_and_not_found(
     autostart_mod.disable = lambda adapter="feishu": f"disable:{adapter}"
     autostart_mod.status = lambda adapter=None: f"status:{adapter}"
 
+    import hermit.surfaces.cli as surfaces_cli_pkg
+
     monkeypatch.setattr(main_mod, "_get_schedule_store", lambda: store)
-    monkeypatch.setattr(hermit, "autostart", autostart_mod, raising=False)
+    monkeypatch.setattr(surfaces_cli_pkg, "autostart", autostart_mod, raising=False)
     monkeypatch.setitem(__import__("sys").modules, "hermit.surfaces.cli.autostart", autostart_mod)
 
     runner = CliRunner()

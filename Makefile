@@ -1,7 +1,7 @@
-.PHONY: sync sync-macos install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-fast test-unit test-serial test-quick test-cov coverage-diff lint format typecheck docs-build security sbom bump-version release-prep release-tag version-check lock-check build package-check install-check docker-smoke check verify verify-release precommit-install
+.PHONY: sync sync-macos install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-fast test-unit test-serial test-quick test-changed test-integration test-kernel test-cov coverage-diff lint format typecheck docs-build security sbom bump-version release-prep release-tag version-check lock-check build package-check install-check docker-smoke check verify verify-release precommit-install
 
 UV_CACHE_DIR ?= .uv-cache
-PYTEST_PARALLEL_FLAGS ?= -n 4 --dist worksteal
+PYTEST_PARALLEL_FLAGS ?= -n auto --dist worksteal
 SYNC_GROUP_FLAGS ?= --group dev --group typecheck --group docs --group security --group release
 SYNC_MACOS_FLAGS ?= $(SYNC_GROUP_FLAGS) --extra macos
 DIFF_RANGE ?= origin/main...HEAD
@@ -65,10 +65,19 @@ test:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest $(PYTEST_PARALLEL_FLAGS) -q
 
 test-fast:
-	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -m "not slow" -n 4 --dist worksteal -q --no-header
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -m "not slow" $(PYTEST_PARALLEL_FLAGS) -q --no-header
 
 test-unit:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest tests/unit -n0 -q --no-header
+
+test-changed:
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest --lf -n0 -q --no-header
+
+test-integration:
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest tests/integration $(PYTEST_PARALLEL_FLAGS) -q --no-header
+
+test-kernel:
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest tests/integration/test_task_kernel*.py tests/integration/test_kernel*.py $(PYTEST_PARALLEL_FLAGS) -q --no-header
 
 test-serial:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -n0 -q --no-header

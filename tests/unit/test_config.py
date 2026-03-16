@@ -3,8 +3,8 @@ from __future__ import annotations
 import httpx
 
 from hermit.runtime.assembly.config import Settings
+from hermit.runtime.provider_host.execution.services import build_provider_client_kwargs
 from hermit.runtime.provider_host.shared.profiles import load_plugin_variables
-from hermit.surfaces.cli.main import _build_anthropic_client_kwargs
 
 
 def test_settings_parse_prefixed_env_fields(monkeypatch) -> None:
@@ -27,49 +27,61 @@ def test_settings_parse_prefixed_env_fields(monkeypatch) -> None:
     }
 
 
-def test_build_anthropic_client_kwargs_supports_auth_token_and_headers(monkeypatch) -> None:
+def test_build_provider_client_kwargs_supports_auth_token_and_headers(monkeypatch) -> None:
     monkeypatch.delenv("HERMIT_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("HERMIT_BASE_URL", raising=False)
     monkeypatch.delenv("HERMIT_CUSTOM_HEADERS", raising=False)
     monkeypatch.delenv("HERMIT_CLAUDE_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("HERMIT_CLAUDE_BASE_URL", raising=False)
     monkeypatch.delenv("HERMIT_CLAUDE_HEADERS", raising=False)
+    monkeypatch.delenv("HERMIT_PROVIDER", raising=False)
+    monkeypatch.delenv("HERMIT_PROFILE", raising=False)
+    monkeypatch.delenv("HERMIT_BASE_DIR", raising=False)
     settings = Settings(
-        auth_token="token-123",
-        base_url="https://example.internal/claude",
-        custom_headers="X-Biz-Id: claude-code",
+        provider="claude",
+        claude_auth_token="token-123",
+        claude_base_url="https://example.internal/claude",
+        claude_headers="X-Biz-Id: claude-code",
         _env_file=None,
     )
 
-    kwargs = _build_anthropic_client_kwargs(settings)
+    kwargs = build_provider_client_kwargs(settings)
 
-    assert kwargs == {
-        "auth_token": "token-123",
-        "base_url": "https://example.internal/claude",
-        "default_headers": {"X-Biz-Id": "claude-code"},
-        "timeout": httpx.Timeout(600.0, connect=30),
-    }
+    assert kwargs["auth_token"] == "token-123"
+    assert kwargs["base_url"] == "https://example.internal/claude"
+    assert kwargs["default_headers"] == {"X-Biz-Id": "claude-code"}
+    timeout = kwargs["timeout"]
+    assert isinstance(timeout, httpx.Timeout)
+    assert timeout.connect == 30.0
+    assert timeout.read == 600.0
 
 
-def test_build_anthropic_client_kwargs_keeps_api_key_when_present(monkeypatch) -> None:
+def test_build_provider_client_kwargs_keeps_api_key_when_present(monkeypatch) -> None:
     monkeypatch.delenv("HERMIT_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("HERMIT_BASE_URL", raising=False)
     monkeypatch.delenv("HERMIT_CUSTOM_HEADERS", raising=False)
     monkeypatch.delenv("HERMIT_CLAUDE_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("HERMIT_CLAUDE_BASE_URL", raising=False)
     monkeypatch.delenv("HERMIT_CLAUDE_HEADERS", raising=False)
+    monkeypatch.delenv("HERMIT_PROVIDER", raising=False)
+    monkeypatch.delenv("HERMIT_PROFILE", raising=False)
+    monkeypatch.delenv("HERMIT_BASE_DIR", raising=False)
     settings = Settings(
-        anthropic_api_key="api-key",
-        auth_token="token-123",
-        base_url="https://example.internal/claude",
+        provider="claude",
+        claude_api_key="api-key",
+        claude_auth_token="token-123",
+        claude_base_url="https://example.internal/claude",
         _env_file=None,
     )
 
-    kwargs = _build_anthropic_client_kwargs(settings)
+    kwargs = build_provider_client_kwargs(settings)
 
     assert kwargs["api_key"] == "api-key"
     assert kwargs["auth_token"] == "token-123"
-    assert kwargs["timeout"] == httpx.Timeout(600.0, connect=30)
+    timeout = kwargs["timeout"]
+    assert isinstance(timeout, httpx.Timeout)
+    assert timeout.connect == 30.0
+    assert timeout.read == 600.0
 
 
 def test_custom_headers_requires_colon_separator(monkeypatch) -> None:

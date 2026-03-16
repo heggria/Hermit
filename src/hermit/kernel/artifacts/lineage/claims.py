@@ -388,7 +388,21 @@ def _probe_durable_reentry() -> None:
             _close_store(store)
 
 
+_probe_artifact_context_active = False
+
+
 def _probe_artifact_context() -> None:
+    global _probe_artifact_context_active  # noqa: PLW0603
+    if _probe_artifact_context_active:
+        return
+    _probe_artifact_context_active = True
+    try:
+        _probe_artifact_context_inner()
+    finally:
+        _probe_artifact_context_active = False
+
+
+def _probe_artifact_context_inner() -> None:
     from hermit.kernel.context.injection.provider_input import ProviderInputCompiler
 
     store: KernelStore | None = None
