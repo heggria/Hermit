@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +8,7 @@ from hermit.capabilities import CapabilityGrantService
 from hermit.i18n import resolve_locale, tr
 from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.decisions import DecisionService
+from hermit.kernel.git_worktree import GitWorktreeInspector
 from hermit.kernel.models import ReceiptRecord
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.store import KernelStore
@@ -16,9 +16,15 @@ from hermit.workspaces import WorkspaceLeaseService
 
 
 class RollbackService:
-    def __init__(self, store: KernelStore, artifact_store: ArtifactStore | None = None) -> None:
+    def __init__(
+        self,
+        store: KernelStore,
+        artifact_store: ArtifactStore | None = None,
+        git_worktree: GitWorktreeInspector | None = None,
+    ) -> None:
         self.store = store
         self.artifact_store = artifact_store or ArtifactStore(store.db_path.parent / "artifacts")
+        self.git_worktree = git_worktree or GitWorktreeInspector()
         self.decisions = DecisionService(store)
         self.capabilities = CapabilityGrantService(store)
         self.receipts = ReceiptService(store, self.artifact_store)
@@ -214,13 +220,7 @@ class RollbackService:
             head = str(prestate["head"])
             if bool(prestate.get("dirty")):
                 raise RuntimeError(self._t("kernel.rollback.error.dirty_repo"))
-            subprocess.run(
-                ["git", "reset", "--hard", head],
-                cwd=repo_path,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            self._git_worktree().hard_reset(repo_path, head)
             return {"result_summary": self._t("kernel.rollback.result.git_reset", head=head)}
         if receipt.action_type == "memory_write" and strategy == "supersede_or_invalidate":
             targets = self._prestate_payload(receipt)
@@ -256,3 +256,6 @@ class RollbackService:
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
+
+    def _git_worktree(self) -> GitWorktreeInspector:
+        return getattr(self, "git_worktree", GitWorktreeInspector())

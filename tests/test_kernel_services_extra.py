@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import subprocess
 import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,11 +10,14 @@ from typing import Any
 import pytest
 
 from hermit.kernel.approval_copy import ApprovalCopyService
+from hermit.kernel.git_worktree import GitWorktreeSnapshot
 from hermit.kernel.reconcile import ReconcileService
 from hermit.kernel.rollbacks import RollbackService
 
 
-def test_approval_copy_service_covers_formatter_and_template_variants(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_approval_copy_service_covers_formatter_and_template_variants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
     formatted = ApprovalCopyService(
@@ -112,13 +114,15 @@ def test_approval_copy_service_covers_scheduler_update_delete_and_time_helpers(
     assert service._summarize_text("word " * 50, limit=30).endswith("...")
 
 
-def test_approval_copy_service_covers_formatter_timeout_and_sections(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_approval_copy_service_covers_formatter_timeout_and_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
     def slow_formatter(_facts: dict[str, Any]) -> dict[str, str]:
         import time
 
-        time.sleep(0.1)
+        time.sleep(0.02)
         return {"title": "slow", "summary": "slow", "detail": "slow"}
 
     timeout_copy = ApprovalCopyService(
@@ -131,7 +135,11 @@ def test_approval_copy_service_covers_formatter_timeout_and_sections(monkeypatch
         locale="en-US",
     ).resolve_copy({"tool_name": "write_file", "target_paths": ["src/app.py"]}, "approval_s")
     outside = ApprovalCopyService(locale="en-US").resolve_copy(
-        {"tool_name": "write_file", "target_paths": ["/outside/demo.txt"], "outside_workspace": True},
+        {
+            "tool_name": "write_file",
+            "target_paths": ["/outside/demo.txt"],
+            "outside_workspace": True,
+        },
         "approval_o",
     )
     multi = ApprovalCopyService(locale="en-US").resolve_copy(
@@ -213,29 +221,48 @@ def test_reconcile_service_covers_local_command_git_and_remote_paths(
     assert remote_observed.result_code == "reconciled_observed"
     assert remote_missing.result_code == "reconciled_not_applied"
     assert service._path_state(workspace)["kind"] == "directory"
-    assert service._changed_paths(target_paths=[str(target)], witness_files=[{"path": str(target), "exists": True}]) == [str(target)]
+    assert service._changed_paths(
+        target_paths=[str(target)], witness_files=[{"path": str(target), "exists": True}]
+    ) == [str(target)]
 
 
-def test_reconcile_service_covers_git_helpers_and_unknown_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    service = ReconcileService()
+def test_reconcile_service_covers_git_helpers_and_unknown_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir()
     (workspace / ".git").mkdir()
 
-    outputs = iter(["abc123\n", " M demo.txt\n"])
+    class FakeGitWorktree:
+        def snapshot(self, workspace_root: Path) -> GitWorktreeSnapshot:
+            return GitWorktreeSnapshot(
+                repo_path=str(workspace_root.resolve()),
+                present=True,
+                head="abc123",
+                dirty=True,
+            )
 
-    def fake_run(*args, **kwargs):
-        return SimpleNamespace(stdout=next(outputs))
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    service = ReconcileService(git_worktree=FakeGitWorktree())
 
     assert service._git_state(workspace) == {"head": "abc123", "dirty": True}
-    monkeypatch.setattr(ReconcileService, "_git_state", lambda self, root: {"head": "abc123", "dirty": True})
-    assert service._git_changed(workspace_root=str(workspace), witness={"head": "old", "dirty": False}) is True
-    assert service.reconcile(action_type="unknown", tool_input={}, workspace_root=str(workspace)).result_code == "still_unknown"
+    monkeypatch.setattr(
+        ReconcileService, "_git_state", lambda self, root: {"head": "abc123", "dirty": True}
+    )
+    assert (
+        service._git_changed(workspace_root=str(workspace), witness={"head": "old", "dirty": False})
+        is True
+    )
+    assert (
+        service.reconcile(
+            action_type="unknown", tool_input={}, workspace_root=str(workspace)
+        ).result_code
+        == "still_unknown"
+    )
 
 
-def test_rollback_service_covers_apply_rollback_and_error_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rollback_service_covers_apply_rollback_and_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     target = workspace / "demo.txt"
@@ -253,7 +280,9 @@ def test_rollback_service_covers_apply_rollback_and_error_paths(tmp_path: Path, 
         def update_belief(self, belief_id: str, status: str) -> None:
             self.belief_updates.append((belief_id, status))
 
-        def update_receipt_rollback_fields(self, receipt_id: str, rollback_status: str, rollback_ref: str | None = None) -> None:
+        def update_receipt_rollback_fields(
+            self, receipt_id: str, rollback_status: str, rollback_ref: str | None = None
+        ) -> None:
             self.rollback_updates.append({"receipt_id": receipt_id, "status": rollback_status})
 
         def get_artifact(self, artifact_id: str):
@@ -261,7 +290,12 @@ def test_rollback_service_covers_apply_rollback_and_error_paths(tmp_path: Path, 
 
     service = object.__new__(RollbackService)
     service.store = FakeStore()
-    service.artifact_store = SimpleNamespace(read_text=lambda uri: json.dumps({"path": str(target), "existed": True, "content": "before"}))
+    service.artifact_store = SimpleNamespace(
+        read_text=lambda uri: json.dumps(
+            {"path": str(target), "existed": True, "content": "before"}
+        )
+    )
+
     def _translate(key: str, **kwargs: Any) -> str:
         if key == "kernel.rollback.result.file_restore":
             return f"restored {kwargs['target_path']}"
@@ -283,31 +317,67 @@ def test_rollback_service_covers_apply_rollback_and_error_paths(tmp_path: Path, 
 
     service._t = _translate
 
-    receipt = SimpleNamespace(action_type="write_local", rollback_artifact_refs=["artifact-1"], receipt_id="rcpt-1", rollback_status="pending")
-    assert service._apply_rollback(receipt, "file_restore") == {"result_summary": f"restored {target}"}
+    receipt = SimpleNamespace(
+        action_type="write_local",
+        rollback_artifact_refs=["artifact-1"],
+        receipt_id="rcpt-1",
+        rollback_status="pending",
+    )
+    assert service._apply_rollback(receipt, "file_restore") == {
+        "result_summary": f"restored {target}"
+    }
     assert target.read_text(encoding="utf-8") == "before"
 
     target.write_text("new", encoding="utf-8")
-    service.artifact_store = SimpleNamespace(read_text=lambda uri: json.dumps({"path": str(target), "existed": False}))
-    assert service._apply_rollback(receipt, "file_restore") == {"result_summary": f"restored {target}"}
+    service.artifact_store = SimpleNamespace(
+        read_text=lambda uri: json.dumps({"path": str(target), "existed": False})
+    )
+    assert service._apply_rollback(receipt, "file_restore") == {
+        "result_summary": f"restored {target}"
+    }
     assert not target.exists()
 
-    service.artifact_store = SimpleNamespace(read_text=lambda uri: json.dumps({"repo_path": str(workspace), "head": "abc", "dirty": True}))
+    service.artifact_store = SimpleNamespace(
+        read_text=lambda uri: json.dumps(
+            {"repo_path": str(workspace), "head": "abc", "dirty": True}
+        )
+    )
     with pytest.raises(RuntimeError, match="repo dirty"):
-        service._apply_rollback(SimpleNamespace(action_type="vcs_mutation", rollback_artifact_refs=["artifact-1"]), "git_revert_or_reset")
+        service._apply_rollback(
+            SimpleNamespace(action_type="vcs_mutation", rollback_artifact_refs=["artifact-1"]),
+            "git_revert_or_reset",
+        )
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr(subprocess, "run", lambda args, **kwargs: calls.append(args) or SimpleNamespace())
-    service.artifact_store = SimpleNamespace(read_text=lambda uri: json.dumps({"repo_path": str(workspace), "head": "abc", "dirty": False}))
-    assert service._apply_rollback(SimpleNamespace(action_type="vcs_mutation", rollback_artifact_refs=["artifact-1"]), "git_revert_or_reset") == {"result_summary": "reset abc"}
-    assert calls[0][:3] == ["git", "reset", "--hard"]
+    calls: list[dict[str, str]] = []
+    service.git_worktree = SimpleNamespace(
+        hard_reset=lambda workspace_root, head: calls.append(
+            {"repo_path": str(workspace_root.resolve()), "head": head}
+        )
+    )
+    service.artifact_store = SimpleNamespace(
+        read_text=lambda uri: json.dumps(
+            {"repo_path": str(workspace), "head": "abc", "dirty": False}
+        )
+    )
+    assert service._apply_rollback(
+        SimpleNamespace(action_type="vcs_mutation", rollback_artifact_refs=["artifact-1"]),
+        "git_revert_or_reset",
+    ) == {"result_summary": "reset abc"}
+    assert calls == [{"repo_path": str(workspace.resolve()), "head": "abc"}]
 
-    service.artifact_store = SimpleNamespace(read_text=lambda uri: json.dumps({"memory_ids": ["m1"], "belief_ids": ["b1"]}))
-    result = service._apply_rollback(SimpleNamespace(action_type="memory_write", rollback_artifact_refs=["artifact-1"]), "supersede_or_invalidate")
+    service.artifact_store = SimpleNamespace(
+        read_text=lambda uri: json.dumps({"memory_ids": ["m1"], "belief_ids": ["b1"]})
+    )
+    result = service._apply_rollback(
+        SimpleNamespace(action_type="memory_write", rollback_artifact_refs=["artifact-1"]),
+        "supersede_or_invalidate",
+    )
     assert result == {"result_summary": "invalidated 1"}
     assert service.store.memory_updates == [("m1", "invalidated")]
     assert service.store.belief_updates == [("b1", "invalidated")]
-    assert service._mark_unsupported(SimpleNamespace(receipt_id="rcpt-1", rollback_status="pending"), "unsupported") == {
+    assert service._mark_unsupported(
+        SimpleNamespace(receipt_id="rcpt-1", rollback_status="pending"), "unsupported"
+    ) == {
         "status": "unsupported",
         "result_summary": "unsupported",
     }

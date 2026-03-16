@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from hermit.core.budgets import get_runtime_budget
+from hermit.kernel.git_worktree import GitWorktreeInspector
 
 
 @dataclass
@@ -19,6 +19,9 @@ class ReconcileOutcome:
 
 
 class ReconcileService:
+    def __init__(self, git_worktree: GitWorktreeInspector | None = None) -> None:
+        self.git_worktree = git_worktree or GitWorktreeInspector()
+
     def reconcile(
         self,
         *,
@@ -31,7 +34,9 @@ class ReconcileService:
         observed = dict(observables or {})
         witness_payload = dict(witness or {})
         if action_type in {"write_local", "patch_file"}:
-            outcome = self._reconcile_local_write(tool_input=tool_input, workspace_root=workspace_root)
+            outcome = self._reconcile_local_write(
+                tool_input=tool_input, workspace_root=workspace_root
+            )
             if outcome is not None:
                 return outcome
         if action_type in {"execute_command", "vcs_mutation"}:
@@ -140,7 +145,9 @@ class ReconcileService:
             return None
         request = urllib.request.Request(probe_url, method="HEAD")
         try:
-            with urllib.request.urlopen(request, timeout=get_runtime_budget().provider_read_timeout) as response:
+            with urllib.request.urlopen(
+                request, timeout=get_runtime_budget().provider_read_timeout
+            ) as response:
                 status = getattr(response, "status", 200)
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -211,8 +218,6 @@ class ReconcileService:
         if not workspace_root or not isinstance(witness, dict):
             return None
         root = Path(workspace_root).resolve()
-        if not (root / ".git").exists():
-            return None
         current = self._git_state(root)
         if current is None:
             return None
@@ -221,23 +226,4 @@ class ReconcileService:
         return current["head"] != previous_head or current["dirty"] != previous_dirty
 
     def _git_state(self, workspace_root: Path) -> dict[str, Any] | None:
-        try:
-            head = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=workspace_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            ).stdout.strip()
-            dirty = bool(
-                subprocess.run(
-                    ["git", "status", "--short"],
-                    cwd=workspace_root,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                ).stdout.strip()
-            )
-        except OSError:
-            return None
-        return {"head": head, "dirty": dirty}
+        return self.git_worktree.snapshot(workspace_root).to_state()

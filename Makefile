@@ -1,6 +1,7 @@
 .PHONY: install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-cov test-kernel-convergence lint format bump-version release-prep release-tag version-check build package-check install-check check verify precommit-install
 
 UV_CACHE_DIR ?= .uv-cache
+PYTEST_PARALLEL_FLAGS ?= -n auto
 
 install:
 	@bash install.sh
@@ -51,13 +52,13 @@ dev-watch:
 	@bash scripts/hermit-watch.sh dev
 
 test:
-	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -q
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest $(PYTEST_PARALLEL_FLAGS) -q
 
 test-kernel-convergence:
-	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -q tests/test_provider_input_compiler.py tests/test_kernel_store_tasks_support.py tests/test_cli.py tests/test_docs_alignment.py
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest $(PYTEST_PARALLEL_FLAGS) -q tests/test_provider_input_compiler.py tests/test_kernel_store_tasks_support.py tests/test_cli.py tests/test_docs_alignment.py
 
 test-cov:
-	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest --cov=hermit --cov-report=term-missing
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest $(PYTEST_PARALLEL_FLAGS) --cov=hermit --cov-report=term-missing
 
 lint:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run ruff check .

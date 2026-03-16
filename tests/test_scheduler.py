@@ -394,7 +394,7 @@ class TestEngineCatchUp:
         with patch.object(engine, "_execute", side_effect=fake_execute):
             engine.start(catch_up=True)
             try:
-                assert executed.wait(0.5), "missed once job was not caught up during start"
+                assert executed.wait(0.2), "missed once job was not caught up during start"
             finally:
                 engine.stop()
 
@@ -494,18 +494,18 @@ class TestEngineLifecycle:
         monkeypatch.setattr(engine, "_execute", fake_execute)
         engine.start(catch_up=False)
         try:
-            time.sleep(0.2)
+            time.sleep(0.05)
             job = ScheduledJob.create(
                 name="wake-once",
                 prompt="ping",
                 schedule_type="once",
-                once_at=time.time() + 0.25,
+                once_at=time.time() + 0.05,
             )
             added_at = time.time()
             engine.add_job(job)
 
-            assert executed.wait(1.5), "scheduler did not wake up for a newly added once job"
-            assert execution_meta["executed_at"] < added_at + 1.5
+            assert executed.wait(0.5), "scheduler did not wake up for a newly added once job"
+            assert execution_meta["executed_at"] < added_at + 0.5
         finally:
             engine.stop()
 

@@ -19,7 +19,7 @@ def _wait_for_poll(
         poll = sandbox.poll(job_id)
         if predicate(poll):
             return poll
-        time.sleep(0.02)
+        time.sleep(0.005)
     return None
 
 
@@ -117,9 +117,9 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
         f"{sys.executable} -u -c "
         '"import sys,time; '
         "print('Booting server'); sys.stdout.flush(); "
-        "time.sleep(0.25); "
+        "time.sleep(0.18); "
         "print('READY http://127.0.0.1:3000'); sys.stdout.flush(); "
-        'time.sleep(0.4)"'
+        'time.sleep(0.08)"'
     )
 
     result = sandbox.run(
@@ -151,7 +151,7 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     starting = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.4,
+        timeout=0.3,
         predicate=lambda poll: poll.get("progress", {}).get("phase") == "starting",
     )
     assert starting is not None
@@ -162,7 +162,7 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     ready = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.9,
+        timeout=0.4,
         predicate=lambda poll: poll.get("progress", {}).get("ready") is True,
     )
     assert ready is not None
@@ -176,7 +176,7 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
     tmp_path,
 ) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(0.2)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.16)"'
 
     result = sandbox.run({"command": command, "display_name": "Background Task"})
 
@@ -186,7 +186,7 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
     observing = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.25,
+        timeout=0.2,
         predicate=lambda poll: (
             poll.get("status") == "observing" and poll.get("progress", {}).get("phase") == "running"
         ),
@@ -197,7 +197,7 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
     completed = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.5,
+        timeout=0.35,
         predicate=lambda poll: poll.get("status") == "completed",
     )
     assert completed is not None
@@ -210,7 +210,7 @@ def test_command_sandbox_coarse_observation_only_extends_completion_once(
 ) -> None:
     monkeypatch.setattr("hermit.core.sandbox._COARSE_OBSERVATION_GRACE_SECONDS", 1.0)
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(0.11)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.13)"'
 
     result = sandbox.run({"command": command, "display_name": "Short Task"})
 
@@ -233,19 +233,26 @@ def test_command_sandbox_coarse_observation_only_extends_completion_once(
     assert repeated["result"]["returncode"] == 0
 
 
-def test_command_sandbox_second_poll_briefly_waits_for_edge_completion(tmp_path) -> None:
+def test_command_sandbox_followup_poll_quickly_reaches_completion(tmp_path) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(0.11)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.13)"'
 
     result = sandbox.run({"command": command, "display_name": "Edge Task"})
 
     assert "_hermit_observation" in result
     ticket = result["_hermit_observation"]
 
+    time.sleep(0.02)
+
     observing = sandbox.poll(ticket["job_id"])
     assert observing["status"] == "observing"
     assert observing["progress"]["phase"] == "running"
 
-    completed = sandbox.poll(ticket["job_id"])
-    assert completed["status"] == "completed"
+    completed = _wait_for_poll(
+        sandbox,
+        ticket["job_id"],
+        timeout=0.15,
+        predicate=lambda poll: poll.get("status") == "completed",
+    )
+    assert completed is not None
     assert completed["result"]["returncode"] == 0

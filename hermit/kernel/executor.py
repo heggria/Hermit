@@ -3,7 +3,6 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
-import subprocess
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -18,6 +17,7 @@ from hermit.kernel.artifacts import ArtifactStore
 from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.contracts import contract_for
 from hermit.kernel.decisions import DecisionService
+from hermit.kernel.git_worktree import GitWorktreeInspector
 from hermit.kernel.observation import (
     ObservationPollResult,
     ObservationProgress,
@@ -214,6 +214,7 @@ class ToolExecutor:
         capability_service: CapabilityGrantService | None = None,
         workspace_lease_service: WorkspaceLeaseService | None = None,
         reconcile_service: ReconcileService | None = None,
+        git_worktree: GitWorktreeInspector | None = None,
         progress_summarizer: ProgressSummaryFormatter | None = None,
         progress_summary_keepalive_seconds: float = 15.0,
         tool_output_limit: int = 4000,
@@ -230,7 +231,10 @@ class ToolExecutor:
         self.workspace_lease_service = workspace_lease_service or WorkspaceLeaseService(
             store, artifact_store
         )
-        self.reconcile_service = reconcile_service or ReconcileService()
+        self.git_worktree = git_worktree or GitWorktreeInspector()
+        self.reconcile_service = reconcile_service or ReconcileService(
+            git_worktree=self.git_worktree
+        )
         self.progress_summarizer = progress_summarizer
         self.progress_summary_keepalive_seconds = max(
             float(progress_summary_keepalive_seconds or 0.0), 0.0
@@ -1840,31 +1844,7 @@ class ToolExecutor:
         return result
 
     def _git_witness(self, workspace_root: Path) -> dict[str, Any]:
-        git_dir = workspace_root / ".git"
-        if not git_dir.exists():
-            return {"present": False}
-        head = ""
-        dirty = False
-        try:
-            head = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=workspace_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            ).stdout.strip()
-            dirty = bool(
-                subprocess.run(
-                    ["git", "status", "--short"],
-                    cwd=workspace_root,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                ).stdout.strip()
-            )
-        except OSError:
-            return {"present": True, "head": "", "dirty": False, "error": "git unavailable"}
-        return {"present": True, "head": head, "dirty": dirty}
+        return self.git_worktree.snapshot(workspace_root).to_witness()
 
     def _validate_state_witness(
         self,
@@ -2051,34 +2031,19 @@ class ToolExecutor:
                 supported = True
         elif action_type == "vcs_mutation":
             repo = Path(attempt_ctx.workspace_root or ".")
-            try:
-                head = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=repo,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                ).stdout.strip()
-                dirty = bool(
-                    subprocess.run(
-                        ["git", "status", "--porcelain"],
-                        cwd=repo,
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                    ).stdout.strip()
-                )
+            prestate = self.git_worktree.snapshot(repo).to_prestate()
+            if prestate is not None:
                 artifact_refs.append(
                     self._store_inline_json_artifact(
                         task_id=attempt_ctx.task_id,
                         step_id=attempt_ctx.step_id,
                         kind="rollback.prestate",
-                        payload={"repo_path": str(repo), "head": head, "dirty": dirty},
+                        payload=prestate,
                         metadata={"action_type": action_type, "strategy": strategy},
                     )
                 )
-                supported = not dirty
-            except Exception:
+                supported = not bool(prestate.get("dirty"))
+            else:
                 supported = False
         elif action_type == "memory_write":
             strategy = "supersede_or_invalidate"
