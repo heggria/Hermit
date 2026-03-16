@@ -154,7 +154,7 @@ def _print_result(result: AgentResult) -> None:
     typer.echo(f"\n{result.text}")
 
 
-class _StreamPrinter:
+class _StreamPrinter:  # pyright: ignore[reportUnusedClass]
     """Adapter that prints streaming tokens to stdout."""
 
     def __init__(self) -> None:
