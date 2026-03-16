@@ -3,19 +3,10 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 from typing import Any
 
 log = logging.getLogger(__name__)
-
-_EMOJI_ALIASES = {
-    "get": "Get",
-    "ok": "OK",
-    "thinking": "THINKING",
-    "thumbsup": "THUMBSUP",
-    "thumbs_up": "THUMBSUP",
-    "+1": "THUMBSUP",
-    "fire": "Fire",
-}
 
 
 def add_reaction(client: Any, message_id: str, emoji_type: str) -> bool:
@@ -58,7 +49,10 @@ def resolve_emoji_type(value: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
         return ""
-    return _EMOJI_ALIASES.get(normalized.lower(), normalized)
+    candidates = [part.strip() for part in normalized.split("|") if part.strip()]
+    if len(candidates) <= 1:
+        return normalized
+    return random.choice(candidates)
 
 
 def _reaction_enabled(settings: Any = None) -> bool:

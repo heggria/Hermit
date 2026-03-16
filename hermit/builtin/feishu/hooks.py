@@ -152,13 +152,12 @@ def _build_react_tool(settings: Any = None) -> ToolSpec:
     def handler(payload: dict[str, Any]) -> dict[str, Any]:
         message_id = str(payload.get("message_id", "")).strip()
         emoji_type_raw = str(payload.get("emoji_type", "")).strip()
-        emoji_alias = str(payload.get("emoji", "")).strip()
         if not message_id:
             return {"success": False, "error": "message_id is required"}
-        if not emoji_type_raw and not emoji_alias:
-            return {"success": False, "error": "emoji is required"}
+        if not emoji_type_raw:
+            return {"success": False, "error": "emoji_type is required"}
 
-        emoji_type = emoji_type_raw or resolve_emoji_type(emoji_alias)
+        emoji_type = resolve_emoji_type(emoji_type_raw)
         try:
             client = build_lark_client(settings) if settings is not None else build_lark_client()
         except RuntimeError as exc:
@@ -174,7 +173,9 @@ def _build_react_tool(settings: Any = None) -> ToolSpec:
             "Use this to make the bot feel more human — react to the user's message "
             "when there's a clear emotional signal (celebration, agreement, surprise, etc.). "
             "Pass the native Feishu emoji_type from the official docs, for example "
-            "'Get', 'THUMBSUP', 'OK', 'THINKING', or 'Fire'."
+            "'Get', 'THUMBSUP', 'OK', 'THINKING', or 'Fire'. "
+            "You may also pass multiple native emoji_type values separated by ' | '; "
+            "the runtime will randomly choose one."
         ),
         input_schema={
             "type": "object",
@@ -190,14 +191,9 @@ def _build_react_tool(settings: Any = None) -> ToolSpec:
                     "type": "string",
                     "description": (
                         "The native Feishu emoji_type to react with, such as "
-                        "'Get', 'THUMBSUP', 'OK', 'THINKING', or 'Fire'."
-                    ),
-                },
-                "emoji": {
-                    "type": "string",
-                    "description": (
-                        "Deprecated compatibility field. Prefer 'emoji_type' and pass a native "
-                        "Feishu emoji_type value."
+                        "'Get', 'THUMBSUP', 'OK', 'THINKING', or 'Fire'. "
+                        "To let the runtime vary the reaction, pass multiple native "
+                        "emoji_type values separated by ' | '."
                     ),
                 },
             },

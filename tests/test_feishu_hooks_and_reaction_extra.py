@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -205,21 +206,23 @@ def test_dispatch_result_ignores_missing_chat_and_swallows_send_errors(monkeypat
 def test_build_react_tool_validates_required_fields_and_runtime_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     tool = feishu_hooks._build_react_tool()
 
-    assert tool.handler({"emoji": "thumbsup"}) == {"success": False, "error": "message_id is required"}
-    assert tool.handler({"message_id": "om_1"}) == {"success": False, "error": "emoji is required"}
+    assert tool.handler({"emoji_type": "THUMBSUP"}) == {"success": False, "error": "message_id is required"}
+    assert tool.handler({"message_id": "om_1"}) == {"success": False, "error": "emoji_type is required"}
 
     monkeypatch.setattr(
         feishu_hooks,
         "build_lark_client",
         lambda settings=None: (_ for _ in ()).throw(RuntimeError("missing credentials")),
     )
-    assert tool.handler({"message_id": "om_1", "emoji": "thumbsup"}) == {
+    assert tool.handler({"message_id": "om_1", "emoji_type": "THUMBSUP"}) == {
         "success": False,
         "error": "missing credentials",
     }
 
 
-def test_build_react_tool_resolves_alias_and_returns_api_result(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_react_tool_passes_emoji_type_through_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[str, str]] = []
 
     monkeypatch.setattr(feishu_hooks, "build_lark_client", lambda settings=None: object())
@@ -229,7 +232,66 @@ def test_build_react_tool_resolves_alias_and_returns_api_result(monkeypatch: pyt
         lambda _client, message_id, emoji_type: calls.append((message_id, emoji_type)) or True,
     )
 
-    result = feishu_hooks._build_react_tool().handler({"message_id": "om_1", "emoji": "thumbsup"})
+    result = feishu_hooks._build_react_tool().handler({"message_id": "om_1", "emoji_type": "THUMBSUP"})
 
     assert result == {"success": True, "emoji_type": "THUMBSUP", "message_id": "om_1"}
     assert calls == [("om_1", "THUMBSUP")]
+
+
+def test_resolve_emoji_type_returns_trimmed_value_without_alias_mapping() -> None:
+    assert feishu_reaction.resolve_emoji_type("  party  ") == "party"
+    assert feishu_reaction.resolve_emoji_type("THUMBSUP") == "THUMBSUP"
+
+
+def test_resolve_emoji_type_randomly_selects_from_candidate_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def fake_choice(options: list[str]) -> str:
+        seen.append(options)
+        return options[-1]
+
+    monkeypatch.setattr(feishu_reaction.random, "choice", fake_choice)
+
+    assert feishu_reaction.resolve_emoji_type(" PARTY | APPLAUSE | WOW ") == "WOW"
+    assert seen == [["PARTY", "APPLAUSE", "WOW"]]
+
+
+def test_build_react_tool_selects_random_candidate_from_emoji_type_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(feishu_hooks, "build_lark_client", lambda settings=None: object())
+    monkeypatch.setattr(
+        feishu_hooks,
+        "add_reaction",
+        lambda _client, message_id, emoji_type: calls.append((message_id, emoji_type)) or True,
+    )
+    monkeypatch.setattr(feishu_reaction.random, "choice", lambda options: options[1])
+
+    result = feishu_hooks._build_react_tool().handler(
+        {"message_id": "om_1", "emoji_type": "PARTY | APPLAUSE | WOW"}
+    )
+
+    assert result == {"success": True, "emoji_type": "APPLAUSE", "message_id": "om_1"}
+    assert calls == [("om_1", "APPLAUSE")]
+
+
+def test_feishu_emoji_reaction_skill_includes_varied_choices_and_new_scenarios() -> None:
+    skill_path = (
+        Path(__file__).resolve().parents[1]
+        / "hermit"
+        / "builtin"
+        / "feishu"
+        / "skills"
+        / "feishu-emoji-reaction"
+        / "SKILL.md"
+    )
+    content = skill_path.read_text(encoding="utf-8")
+
+    assert "pass the whole candidate list with ` | ` separators" in content
+    assert "The user is excited or looking forward to something" in content
+    assert "The user says they are stuck, nervous, or unsure" in content
+    assert "The user is brainstorming or sharing a fresh idea" in content
+    assert "The user says the answer is wrong, calls the assistant dumb, or sounds annoyed" in content
+    assert "`EMBARRASSED | HAMMER`" in content

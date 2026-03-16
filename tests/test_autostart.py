@@ -11,6 +11,7 @@ from hermit import autostart
 @pytest.fixture(autouse=True)
 def _force_autostart_locale(monkeypatch):
     monkeypatch.setenv("HERMIT_LOCALE", "en-US")
+    monkeypatch.delenv("HERMIT_BASE_DIR", raising=False)
 
 
 def _write_plist(path: Path, label: str, args: list[str]) -> None:
