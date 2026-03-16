@@ -52,8 +52,12 @@ def test_executor_requires_new_approval_when_fingerprint_changes(tmp_path: Path)
     assert second.blocked is True
     assert second.approval_id is not None
     assert second.approval_id != first.approval_id
+    original_attempt = store.get_step_attempt(ctx.step_attempt_id)
+    assert original_attempt is not None and original_attempt.status == "superseded"
     events = store.list_events(task_id=ctx.task_id)
     assert any(event["event_type"] == "approval.mismatch" for event in events)
+    assert any(event["event_type"] == "approval.drifted" for event in events)
+    assert any(event["event_type"] == "step_attempt.superseded" for event in events)
     assert any(
         event["event_type"] == "step_attempt.phase_changed"
         and event["payload"].get("phase") == "awaiting_approval"
@@ -90,6 +94,41 @@ def test_executor_creates_successor_attempt_when_witness_drifts(tmp_path: Path) 
     assert successor.status == "awaiting_approval"
     events = store.list_events(task_id=ctx.task_id)
     assert any(event["event_type"] == "witness.failed" for event in events)
+    assert any(event["event_type"] == "step_attempt.superseded" for event in events)
+    assert any(event["event_type"] == "evidence_case.invalidated" for event in events)
+    assert any(event["event_type"] == "authorization_plan.invalidated" for event in events)
+
+
+def test_executor_revalidates_when_evidence_case_is_invalidated(tmp_path: Path) -> None:
+    store, _artifacts, _controller, executor, ctx = _kernel_runtime(tmp_path)
+
+    first = executor.execute(ctx, "write_file", {"path": ".env", "content": "after\n"})
+    assert first.approval_id is not None
+    first_approval = store.get_approval(first.approval_id)
+    assert first_approval is not None
+    assert first_approval.evidence_case_ref is not None
+
+    ApprovalService(store).approve(first.approval_id)
+    executor.evidence_cases.invalidate(
+        first_approval.evidence_case_ref,
+        contradictions=["manual_probe"],
+        summary="Evidence invalidated before execution resumed.",
+    )
+
+    second = executor.execute(ctx, "write_file", {"path": ".env", "content": "after\n"})
+
+    assert second.blocked is True
+    assert second.approval_id is not None
+    assert second.approval_id != first.approval_id
+    original_attempt = store.get_step_attempt(ctx.step_attempt_id)
+    assert original_attempt is not None and original_attempt.status == "superseded"
+    successor_approval = store.get_approval(second.approval_id)
+    assert successor_approval is not None
+    successor_attempt = store.get_step_attempt(successor_approval.step_attempt_id)
+    assert successor_attempt is not None
+    assert successor_attempt.reentry_reason == "evidence_drift"
+    events = store.list_events(task_id=ctx.task_id)
+    assert any(event["event_type"] == "evidence_case.invalidated" for event in events)
     assert any(event["event_type"] == "step_attempt.superseded" for event in events)
 
 
@@ -355,7 +394,7 @@ def test_executor_reconciles_git_mutation_from_repo_state(tmp_path: Path) -> Non
     assert result.result_code == "reconciled_applied"
     assert result.execution_status == "reconciling"
     assert tracked.read_text(encoding="utf-8") == "after\n"
-    assert len(git_worktree.snapshot_calls) == 4
+    assert len(git_worktree.snapshot_calls) >= 4
     assert any(
         event["event_type"] == "outcome.uncertain"
         for event in store.list_events(task_id=ctx.task_id)

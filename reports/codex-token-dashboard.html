@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Usage Atlas</title>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f1e8;
+      --panel: rgba(255, 250, 244, 0.86);
+      --ink: #261f1a;
+      --muted: #6d645b;
+      --line: rgba(38,31,26,.08);
+      --codex: #e36b3f;
+      --claude: #d5a476;
+      --cursor: #4c6ef5;
+      --cache-read: #2f9e78;
+      --cache-write: #7e57c2;
+      --uncached: #f4b183;
+      --output: #3653b3;
+      --reason: #9153c5;
+      --shadow: 0 22px 56px rgba(38,31,26,.09);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --page: min(1440px, calc(100vw - 28px));
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 0% 0%, rgba(227,107,63,.14), transparent 24%),
+        radial-gradient(circle at 100% 12%, rgba(76,110,245,.12), transparent 24%),
+        radial-gradient(circle at 50% 100%, rgba(47,158,120,.08), transparent 30%),
+        linear-gradient(180deg, #f8f3eb 0%, #f4efe7 35%, #f7f2ea 100%);
+      font-family: ui-rounded, "SF Pro Display", "PingFang SC", sans-serif;
+      min-height: 100vh;
+    }
+    .page { width: var(--page); margin: 18px auto 48px; }
+    .hero, .two-col, .story-strip, .subgrid, .three-col {
+      display: grid;
+      gap: 20px;
+    }
+    .hero { grid-template-columns: 1.3fr .9fr; }
+    .story-strip { grid-template-columns: 1.15fr .85fr; margin-top: 20px; }
+    .two-col { grid-template-columns: 1.18fr .82fr; margin-top: 20px; }
+    .subgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 20px; }
+    .three-col { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 20px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,.55);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+    .hero-main, .section, .side { padding: 24px; }
+    .hero-main { position: relative; overflow: hidden; }
+    .hero-main:after {
+      content: "";
+      position: absolute;
+      width: 260px;
+      height: 260px;
+      right: -60px;
+      bottom: -80px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(213,164,118,.22), transparent 70%);
+    }
+    .eyebrow { display: inline-flex; align-items: center; gap: 10px; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
+    h1 { margin: 14px 0 10px; max-width: 10ch; font-size: clamp(40px, 6vw, 72px); line-height: .94; letter-spacing: -.05em; }
+    .hero-copy { max-width: 60ch; color: #433a33; line-height: 1.7; font-size: 16px; margin-top: 18px; }
+    .chip-row, .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+    .chip, .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.72);
+      border: 1px solid var(--line);
+      color: #4f4741;
+      font-size: 13px;
+    }
+    .side { display: grid; gap: 14px; }
+    .side-card, .source-card, .story-item {
+      background: rgba(255,255,255,.64);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+    }
+    .side-card .label, .mini .k {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-size: 11px;
+    }
+    .side-card .value, .source-card .big { font-size: 30px; font-weight: 800; letter-spacing: -.04em; margin-top: 6px; }
+    .side-card .hint { color: #504943; line-height: 1.55; font-size: 13px; margin-top: 8px; }
+    .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+    .section-head h2 { margin: 0; font-size: 24px; letter-spacing: -.03em; }
+    .section-head span { color: var(--muted); font-size: 13px; }
+    .chart { width: 100%; min-height: 360px; }
+    .chart.tall { min-height: 430px; }
+    .chart.short { min-height: 300px; }
+    .source-card .title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 700; }
+    .pill {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 6px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.75);
+    }
+    .mini-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+    .mini { padding: 12px; border-radius: 14px; background: rgba(255,255,255,.72); border: 1px solid var(--line); }
+    .mini .v { margin-top: 5px; font-size: 18px; font-weight: 700; }
+    .story { display: grid; gap: 12px; }
+    .story-item { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; }
+    .story-item i { color: var(--codex); margin-top: 3px; }
+    .note-list { display: grid; gap: 12px; }
+    .note { border-left: 4px solid var(--claude); padding: 10px 0 10px 14px; color: #4b443e; line-height: 1.6; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); text-transform: uppercase; font-size: 12px; letter-spacing: .08em; }
+    .tiny { color: var(--muted); font-size: 12px; }
+    .footer { margin-top: 16px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    @media (max-width: 1024px) {
+      .hero, .story-strip, .two-col, .subgrid, .three-col { grid-template-columns: 1fr; }
+      .page { width: min(100vw - 16px, 1440px); }
+      .hero-main, .section, .side { padding: 18px; }
+      h1 { max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <article class="panel hero-main">
+        <div class="eyebrow"><i class="fa-solid fa-chart-line"></i><span>Agent Usage Atlas</span></div>
+        <h1>从 3 月 8 日起 你把三个 Agent 栈打成了联赛积分榜</h1>
+        <p class="hero-copy" id="hero-copy"></p>
+        <div class="chip-row" id="hero-chips"></div>
+      </article>
+      <aside class="panel side" id="summary-side"></aside>
+    </section>
+
+    <section class="three-col" id="source-cards"></section>
+
+    <section class="story-strip">
+      <article class="panel section">
+        <div class="section-head"><h2>这周剧情梗概</h2><span>把数字翻译成人话</span></div>
+        <div class="story" id="story-list"></div>
+      </article>
+      <article class="panel section">
+        <div class="section-head"><h2>来源玫瑰图</h2><span>体量 + 气质一起看</span></div>
+        <div class="chart short" id="rose-chart"></div>
+      </article>
+    </section>
+
+    <section class="two-col">
+      <article class="panel section">
+        <div class="section-head"><h2>每日 Token 结构</h2><span>堆叠柱 + 累计线</span></div>
+        <div class="chart tall" id="daily-chart"></div>
+        <div class="legend">
+          <span><i class="dot" style="background:var(--uncached)"></i>Uncached Input</span>
+          <span><i class="dot" style="background:var(--cache-read)"></i>Cache Read</span>
+          <span><i class="dot" style="background:var(--cache-write)"></i>Cache Write</span>
+          <span><i class="dot" style="background:var(--output)"></i>Output + Reason</span>
+        </div>
+      </article>
+      <article class="panel section">
+        <div class="section-head"><h2>Token 流向桑基图</h2><span>从来源流到各类 token 桶</span></div>
+        <div class="chart tall" id="sankey-chart"></div>
+        <div class="note-list" id="source-notes"></div>
+      </article>
+    </section>
+
+    <section class="two-col">
+      <article class="panel section">
+        <div class="section-head"><h2>活跃热区</h2><span>星期 × 小时，越深越忙</span></div>
+        <div class="chart tall" id="heatmap-chart"></div>
+      </article>
+      <article class="panel section">
+        <div class="section-head"><h2>来源能力雷达</h2><span>体量、缓存、输出、活跃度四维比较</span></div>
+        <div class="chart tall" id="radar-chart"></div>
+      </article>
+    </section>
+
+    <section class="subgrid">
+      <article class="panel section">
+        <div class="section-head"><h2>Calendar Heatmap</h2><span>把高峰日钉在日历上</span></div>
+        <div class="chart" id="calendar-chart"></div>
+      </article>
+      <article class="panel section">
+        <div class="section-head"><h2>Timeline</h2><span>峰值、拐点与累计爬坡</span></div>
+        <div class="chart" id="timeline-chart"></div>
+      </article>
+    </section>
+
+    <section class="subgrid">
+      <article class="panel section">
+        <div class="section-head"><h2>Session 气泡图</h2><span>x=时长, y=token, 气泡=缓存</span></div>
+        <div class="chart" id="bubble-chart"></div>
+      </article>
+      <article class="panel section">
+        <div class="section-head"><h2>小时节奏图</h2><span>24 小时内谁最爱开工</span></div>
+        <div class="chart" id="tempo-chart"></div>
+        <div class="note-list" id="tempo-notes"></div>
+      </article>
+    </section>
+
+    <section style="margin-top:20px;">
+      <article class="panel section">
+        <div class="section-head"><h2>Session 龙虎榜</h2><span>只列 token 可统计的 session</span></div>
+        <table id="session-table"></table>
+        <div class="footer">
+          数据源说明：Codex 来自 <code>~/.codex</code> 累计 usage 事件差值；Claude 来自 <code>~/.claude/projects</code> 的响应 usage 去重求和；Cursor 来自 transcript 活动文件，仅统计会话/消息活跃度，未发现稳定 token 字段。<br />
+          图表渲染采用 <code>Apache ECharts</code>，适合热力图、桑基图、雷达、散点与混合图这种多来源分析面板。
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const data = {"range": {"start_local": "2026-03-08T00:00+08:00", "end_local": "2026-03-16T15:55+08:00"}, "totals": {"grand_total": 1299761477, "uncached_input": 98531060, "cache_read": 1193073679, "cache_write": 971617, "output": 5376218, "reasoning": 1808903, "cache_ratio": 0.918664937474524, "session_count": 170, "token_capable_source_count": 2, "average_per_day": 144417942, "median_session_tokens": 1897476, "median_session_minutes": 11.3, "peak_day_label": "2026-03-15", "peak_day_total": 347136900}, "source_cards": [{"source": "Claude", "total": 4926692, "uncached_input": 1277709, "cache_read": 2627471, "cache_write": 971617, "output": 49895, "reasoning": 0, "sessions": 8, "messages": 134, "top_model": "MiniMax-M2.7", "token_capable": true}, {"source": "Codex", "total": 1294834785, "uncached_input": 97253351, "cache_read": 1190446208, "cache_write": 0, "output": 5326323, "reasoning": 1808903, "sessions": 162, "messages": 11162, "top_model": "GPT-5 Codex", "token_capable": true}, {"source": "Cursor", "total": 0, "uncached_input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "reasoning": 0, "sessions": 176, "messages": 3174, "top_model": "Cursor Agent", "token_capable": false}], "days": [{"date": "2026-03-08", "label": "03/08", "total": 0, "uncached_input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "reasoning": 0, "messages": 0, "sources": {}, "cumulative": 0}, {"date": "2026-03-09", "label": "03/09", "total": 10615885, "uncached_input": 1634643, "cache_read": 8949888, "cache_write": 0, "output": 24201, "reasoning": 7153, "messages": 1328, "sources": {"Codex": 10615885, "Cursor": 0}, "cumulative": 10615885}, {"date": "2026-03-10", "label": "03/10", "total": 9275473, "uncached_input": 1198205, "cache_read": 7963520, "cache_write": 0, "output": 93782, "reasoning": 19966, "messages": 1160, "sources": {"Codex": 9275473, "Cursor": 0}, "cumulative": 19891358}, {"date": "2026-03-11", "label": "03/11", "total": 196495836, "uncached_input": 10260962, "cache_read": 185173632, "cache_write": 0, "output": 854363, "reasoning": 206879, "messages": 2287, "sources": {"Codex": 196495836, "Cursor": 0}, "cumulative": 216387194}, {"date": "2026-03-12", "label": "03/12", "total": 223792114, "uncached_input": 20078742, "cache_read": 202289536, "cache_write": 0, "output": 1049516, "reasoning": 374320, "messages": 2420, "sources": {"Codex": 223792114, "Cursor": 0}, "cumulative": 440179308}, {"date": "2026-03-13", "label": "03/13", "total": 289952639, "uncached_input": 24292173, "cache_read": 264114432, "cache_write": 25285, "output": 1124513, "reasoning": 396236, "messages": 2341, "sources": {"Codex": 289927299, "Cursor": 0, "Claude": 25340}, "cumulative": 730131947}, {"date": "2026-03-14", "label": "03/14", "total": 104817066, "uncached_input": 9901680, "cache_read": 94348288, "cache_write": 0, "output": 415336, "reasoning": 151762, "messages": 960, "sources": {"Codex": 104817066, "Cursor": 0}, "cumulative": 834949013}, {"date": "2026-03-15", "label": "03/15", "total": 347136900, "uncached_input": 23332505, "cache_read": 321858944, "cache_write": 0, "output": 1411212, "reasoning": 534239, "messages": 2962, "sources": {"Codex": 347136900}, "cumulative": 1182085913}, {"date": "2026-03-16", "label": "03/16", "total": 117675564, "uncached_input": 7832150, "cache_read": 108375439, "cache_write": 946332, "output": 403295, "reasoning": 118348, "messages": 1012, "sources": {"Codex": 112774212, "Claude": 4901352}, "cumulative": 1299761477}], "top_sessions": [{"source": "Codex", "session_id": "019cefac-55de-77d2-8268-553365f531e1", "total": 55909039, "uncached_input": 3057000, "cache_read": 52617216, "cache_write": 0, "output": 171707, "reasoning": 63116, "messages": 364, "first_local": "2026-03-15T12:07+08:00", "last_local": "2026-03-15T13:45+08:00", "minutes": 98.2, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019cf006-3703-7e83-a1f2-63e6252ce087", "total": 55005914, "uncached_input": 2239531, "cache_read": 52510208, "cache_write": 0, "output": 191452, "reasoning": 64723, "messages": 393, "first_local": "2026-03-15T13:44+08:00", "last_local": "2026-03-15T15:40+08:00", "minutes": 115.4, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019cefc6-c330-7b40-8e2a-437abaf2bc19", "total": 53003298, "uncached_input": 3001746, "cache_read": 49670144, "cache_write": 0, "output": 240405, "reasoning": 91003, "messages": 403, "first_local": "2026-03-15T12:35+08:00", "last_local": "2026-03-15T14:52+08:00", "minutes": 136.5, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019cf54d-9e4d-7782-87b0-4391c134967d", "total": 52072318, "uncached_input": 2645132, "cache_read": 49226496, "cache_write": 0, "output": 151232, "reasoning": 49458, "messages": 309, "first_local": "2026-03-16T14:20+08:00", "last_local": "2026-03-16T15:55+08:00", "minutes": 94.3, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019ce513-2921-7812-8dfc-ce2a4abc7727", "total": 47529314, "uncached_input": 3246908, "cache_read": 44007168, "cache_write": 0, "output": 215871, "reasoning": 59367, "messages": 355, "first_local": "2026-03-13T10:44+08:00", "last_local": "2026-03-13T13:52+08:00", "minutes": 188.2, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019cf4c2-b9a7-79c2-8886-854531508c9b", "total": 47501939, "uncached_input": 2551556, "cache_read": 44802176, "cache_write": 0, "output": 99934, "reasoning": 48273, "messages": 365, "first_local": "2026-03-16T11:49+08:00", "last_local": "2026-03-16T14:26+08:00", "minutes": 157.3, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019ce543-c1ac-78f1-8364-d23e99eba35e", "total": 47088206, "uncached_input": 4274457, "cache_read": 42542720, "cache_write": 0, "output": 190491, "reasoning": 80538, "messages": 333, "first_local": "2026-03-13T11:37+08:00", "last_local": "2026-03-13T14:22+08:00", "minutes": 165.3, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019cf03d-a1d7-74d3-beb9-d0188d89875e", "total": 43216476, "uncached_input": 2726566, "cache_read": 40241280, "cache_write": 0, "output": 166915, "reasoning": 81715, "messages": 308, "first_local": "2026-03-15T14:45+08:00", "last_local": "2026-03-15T16:51+08:00", "minutes": 125.5, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019ce619-cc47-7d00-8617-7636102bc3b6", "total": 41921592, "uncached_input": 2400962, "cache_read": 39324032, "cache_write": 0, "output": 150643, "reasoning": 45955, "messages": 307, "first_local": "2026-03-13T15:29+08:00", "last_local": "2026-03-13T16:58+08:00", "minutes": 88.0, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019cdb04-7472-7a91-a51e-34289b0fc7bd", "total": 39798975, "uncached_input": 1472840, "cache_read": 38145792, "cache_write": 0, "output": 149398, "reasoning": 30945, "messages": 311, "first_local": "2026-03-11T11:51+08:00", "last_local": "2026-03-11T13:30+08:00", "minutes": 98.9, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019ce5db-eb22-76a1-8330-1135795fc5b5", "total": 37380395, "uncached_input": 3268323, "cache_read": 33923584, "cache_write": 0, "output": 134335, "reasoning": 54153, "messages": 285, "first_local": "2026-03-13T14:22+08:00", "last_local": "2026-03-13T16:20+08:00", "minutes": 117.7, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019ce194-76a2-76c3-a7b8-716cea69fd70", "total": 36680913, "uncached_input": 3269529, "cache_read": 33159424, "cache_write": 0, "output": 191150, "reasoning": 60810, "messages": 253, "first_local": "2026-03-12T18:26+08:00", "last_local": "2026-03-12T20:36+08:00", "minutes": 130.4, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019cdc47-1798-7d30-87e6-08472fb45aab", "total": 36324173, "uncached_input": 1299283, "cache_read": 34899712, "cache_write": 0, "output": 98989, "reasoning": 26189, "messages": 304, "first_local": "2026-03-11T17:43+08:00", "last_local": "2026-03-11T19:02+08:00", "minutes": 79.5, "top_model": "GPT-5 Codex"}, {"source": "Codex", "session_id": "019ce119-16df-7983-b271-8a1d98b7b6c4", "total": 30236643, "uncached_input": 2460864, "cache_read": 27624320, "cache_write": 0, "output": 108382, "reasoning": 43077, "messages": 211, "first_local": "2026-03-12T16:11+08:00", "last_local": "2026-03-12T17:46+08:00", "minutes": 94.6, "top_model": "GPT-5 Codex"}], "hourly": [{"hour": 0, "Codex": 13604798}, {"hour": 1, "Codex": 20755296}, {"hour": 2}, {"hour": 3}, {"hour": 4}, {"hour": 5}, {"hour": 6}, {"hour": 7}, {"hour": 8}, {"hour": 9, "Codex": 878862}, {"hour": 10, "Codex": 5938015, "Cursor": 0, "Claude": 237651}, {"hour": 11, "Cursor": 0, "Codex": 66283733, "Claude": 4125178}, {"hour": 12, "Cursor": 0, "Codex": 162830228}, {"hour": 13, "Cursor": 0, "Codex": 149509442, "Claude": 25340}, {"hour": 14, "Cursor": 0, "Codex": 153782470, "Claude": 356537}, {"hour": 15, "Cursor": 0, "Codex": 151526599, "Claude": 181986}, {"hour": 16, "Cursor": 0, "Codex": 156898024}, {"hour": 17, "Cursor": 0, "Codex": 106529969}, {"hour": 18, "Cursor": 0, "Codex": 101373344}, {"hour": 19, "Cursor": 0, "Codex": 48130500}, {"hour": 20, "Cursor": 0, "Codex": 48129241}, {"hour": 21, "Cursor": 0, "Codex": 29193278}, {"hour": 22, "Codex": 43502731, "Cursor": 0}, {"hour": 23, "Codex": 35968255, "Cursor": 0}], "heatmap": [{"weekday": "Mon", "values": [6798723, 0, 0, 0, 0, 0, 0, 0, 0, 0, 928387, 8435378, 20103515, 8225220, 30801317, 42457598, 0, 1805651, 0, 1855254, 6880406, 0, 0, 0]}, {"weekday": "Tue", "values": [0, 0, 0, 0, 0, 0, 0, 0, 0, 117435, 181580, 0, 0, 0, 330327, 0, 0, 0, 0, 0, 0, 5808668, 2837463, 0]}, {"weekday": "Wed", "values": [0, 0, 0, 0, 0, 0, 0, 0, 0, 140579, 1875411, 2110649, 21517819, 34078898, 28776845, 18471122, 13046997, 22523741, 33458277, 16376147, 2863934, 1255417, 0, 0]}, {"weekday": "Thu", "values": [0, 0, 0, 0, 0, 0, 0, 0, 0, 367084, 2261649, 25083185, 39193638, 21579764, 13862684, 14175219, 30689165, 16505279, 20060264, 8786328, 24274450, 4019405, 2934000, 0]}, {"weekday": "Fri", "values": [0, 0, 0, 0, 0, 0, 0, 0, 0, 253764, 928639, 34779699, 33970976, 26310164, 22216965, 39857812, 76851280, 43467995, 11315345, 0, 0, 0, 0, 0]}, {"weekday": "Sat", "values": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 193398, 10222543, 0, 14546128, 19192569, 7192176, 229416, 23413889, 29826947]}, {"weekday": "Sun", "values": [6806075, 20755296, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 48044280, 59340736, 58150869, 36553436, 26088039, 22227303, 21993330, 1920202, 6918275, 17880372, 14317379, 6141308]}], "source_colors": {"Codex": "#E36B3F", "Claude": "#D4A373", "Cursor": "#4C6EF5"}, "jokes": ["缓存占比已经高到像你给模型办了年卡。", "峰值日像在模型背上装了涡轮增压。", "Cursor 的本地 transcript 很勤奋，但它没有把 token 小票乖乖留下。"], "notes": {"cursor_has_tokens": false}};
+    const charts = [];
+    const fmtInt = (n) => n.toLocaleString('en-US');
+    const fmtShort = (n) => {
+      const abs = Math.abs(n);
+      if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+      if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+      if (abs >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(n);
+    };
+    const fmtPct = (v) => (v * 100).toFixed(1) + '%';
+    const colors = { Codex: '#E36B3F', Claude: '#D5A476', Cursor: '#4C6EF5', uncached: '#F4B183', cacheRead: '#2F9E78', cacheWrite: '#7E57C2', output: '#3653B3', reason: '#9153C5' };
+    const textColor = '#564d45';
+    const axisLine = 'rgba(38,31,26,.08)';
+
+    function themeBase() {
+      return {
+        textStyle: { color: textColor, fontFamily: 'ui-rounded, SF Pro Display, PingFang SC, sans-serif' },
+        tooltip: { backgroundColor: 'rgba(36,30,26,.92)', borderWidth: 0, textStyle: { color: '#fff' } },
+        animationDuration: 900
+      };
+    }
+
+    function initChart(id) {
+      const chart = echarts.init(document.getElementById(id), null, { renderer: 'canvas' });
+      charts.push(chart);
+      return chart;
+    }
+
+    function renderHero() {
+      const t = data.totals;
+      document.getElementById('hero-copy').textContent = `统计窗口 ${data.range.start_local} 到 ${data.range.end_local}。目前可确认的 token 总处理量 ${fmtShort(t.grand_total)}，其中缓存相关占 ${fmtPct(t.cache_ratio)}。结论很简单：你不是在偶尔用 Agent，而是在把它们排班上工。`;
+      document.getElementById('hero-chips').innerHTML = [
+        `<span class="chip"><i class="fa-solid fa-fire"></i>${fmtShort(t.grand_total)} total tokens</span>`,
+        `<span class="chip"><i class="fa-solid fa-database"></i>${fmtPct(t.cache_ratio)} cache-heavy</span>`,
+        `<span class="chip"><i class="fa-solid fa-mountain-sun"></i>peak day ${t.peak_day_label}</span>`,
+        `<span class="chip"><i class="fa-solid fa-layer-group"></i>${fmtInt(t.token_capable_source_count)} token-capable sources</span>`
+      ].join('');
+      const cards = [
+        { label: 'Total Tokens', value: fmtShort(t.grand_total), hint: `平均每天 ${fmtShort(t.average_per_day)}。这已经不是“聊一聊”，这是持续性工业作业。` },
+        { label: 'Cache Stack', value: fmtShort(t.cache_read + t.cache_write), hint: `缓存读写合计占比 ${fmtPct(t.cache_ratio)}，说明重复上下文非常重。` },
+        { label: 'Median Session', value: fmtShort(t.median_session_tokens), hint: `中位 session 时长 ${t.median_session_minutes} 分钟，驾驶席有人，而且一直有人。` }
+      ];
+      document.getElementById('summary-side').innerHTML = cards.map(card => `<section class="side-card"><div class="label">${card.label}</div><div class="value">${card.value}</div><div class="hint">${card.hint}</div></section>`).join('');
+    }
+
+    function renderStory() {
+      const sourceTotals = Object.fromEntries(data.source_cards.map(card => [card.source, card]));
+      const items = [
+        { icon: 'fa-bolt', text: `主力依然是 Codex，单源 ${fmtShort(sourceTotals.Codex.total)} token，占可统计 token 的 ${fmtPct(sourceTotals.Codex.total / Math.max(1, data.totals.grand_total))}。` },
+        { icon: 'fa-feather-pointed', text: `Claude 这段时间累计 ${fmtShort(sourceTotals.Claude.total)} token，更像“精锐突击队”而不是“全天值班室”。` },
+        { icon: 'fa-database', text: `缓存读写合计 ${fmtShort(data.totals.cache_read + data.totals.cache_write)}，省钱程度已经从“优化”进入“信仰”。` },
+        { icon: 'fa-arrow-pointer', text: `Cursor 本地能稳定拿到 ${fmtInt(sourceTotals.Cursor.sessions)} 个 session 和 ${fmtInt(sourceTotals.Cursor.messages)} 条活动消息，但 token 小票它没留下。` }
+      ];
+      document.getElementById('story-list').innerHTML = items.map(item => `<div class="story-item"><i class="fa-solid ${item.icon}"></i><div>${item.text}</div></div>`).join('');
+    }
+
+    function renderSourceCards() {
+      document.getElementById('source-cards').innerHTML = data.source_cards.map(card => `
+        <article class="panel source-card">
+          <div class="title"><span><i class="fa-solid ${card.source === 'Codex' ? 'fa-terminal' : card.source === 'Claude' ? 'fa-feather-pointed' : 'fa-arrow-pointer'}"></i> ${card.source}</span><span class="pill">${card.token_capable ? 'token-tracked' : 'activity-only'}</span></div>
+          <div class="big">${card.token_capable ? fmtShort(card.total) : fmtInt(card.messages)}</div>
+          <div class="tiny">${card.token_capable ? 'tracked tokens' : 'tracked transcript messages'}</div>
+          <div class="mini-grid">
+            <div class="mini"><div class="k">Sessions</div><div class="v">${fmtInt(card.sessions)}</div></div>
+            <div class="mini"><div class="k">Messages</div><div class="v">${fmtInt(card.messages)}</div></div>
+            <div class="mini"><div class="k">Top Model</div><div class="v">${card.top_model}</div></div>
+            <div class="mini"><div class="k">Cache Read</div><div class="v">${card.token_capable ? fmtShort(card.cache_read) : '-'}</div></div>
+          </div>
+        </article>`).join('');
+    }
+
+    function renderRoseChart() {
+      const chart = initChart('rose-chart');
+      chart.setOption({
+        ...themeBase(),
+        legend: { bottom: 0, textStyle: { color: textColor } },
+        series: [{
+          type: 'pie',
+          radius: ['24%', '74%'],
+          center: ['50%', '46%'],
+          roseType: 'radius',
+          itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
+          label: { color: textColor, formatter: ({ name, percent }) => `${name}
+${percent}%` },
+          data: data.source_cards.map(card => ({ name: card.source, value: card.token_capable ? card.total : Math.max(card.messages, 1), itemStyle: { color: colors[card.source] || '#999' } }))
+        }]
+      });
+    }
+
+    function renderDailyChart() {
+      const chart = initChart('daily-chart');
+      chart.setOption({
+        ...themeBase(),
+        legend: { top: 6, textStyle: { color: textColor } },
+        grid: { top: 58, left: 60, right: 60, bottom: 44 },
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        xAxis: { type: 'category', data: data.days.map(d => d.label), axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false }, axisLabel: { color: textColor } },
+        yAxis: [
+          { type: 'value', name: 'Daily Tokens', nameTextStyle: { color: textColor }, splitLine: { lineStyle: { color: axisLine } }, axisLabel: { color: textColor, formatter: (v) => fmtShort(v) } },
+          { type: 'value', name: 'Cumulative', nameTextStyle: { color: textColor }, splitLine: { show: false }, axisLabel: { color: textColor, formatter: (v) => fmtShort(v) } }
+        ],
+        series: [
+          { name: 'Uncached Input', type: 'bar', stack: 'daily', itemStyle: { color: colors.uncached, borderRadius: [8,8,0,0] }, data: data.days.map(d => d.uncached_input) },
+          { name: 'Cache Read', type: 'bar', stack: 'daily', itemStyle: { color: colors.cacheRead, borderRadius: [8,8,0,0] }, data: data.days.map(d => d.cache_read) },
+          { name: 'Cache Write', type: 'bar', stack: 'daily', itemStyle: { color: colors.cacheWrite, borderRadius: [8,8,0,0] }, data: data.days.map(d => d.cache_write) },
+          { name: 'Output + Reason', type: 'bar', stack: 'daily', itemStyle: { color: colors.output, borderRadius: [8,8,0,0] }, data: data.days.map(d => d.output + d.reasoning) },
+          { name: 'Cumulative', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 8, lineStyle: { width: 4, color: '#231f1b' }, itemStyle: { color: '#231f1b' }, areaStyle: { color: 'rgba(35,31,27,.05)' }, data: data.days.map(d => d.cumulative) }
+        ]
+      });
+    }
+
+    function renderSankey() {
+      const chart = initChart('sankey-chart');
+      const tokenSources = data.source_cards.filter(card => card.token_capable);
+      const buckets = [
+        { key: 'uncached_input', name: 'Uncached Input', color: colors.uncached },
+        { key: 'cache_read', name: 'Cache Read', color: colors.cacheRead },
+        { key: 'cache_write', name: 'Cache Write', color: colors.cacheWrite },
+        { key: 'output', name: 'Output', color: colors.output },
+        { key: 'reasoning', name: 'Reasoning', color: colors.reason }
+      ];
+      chart.setOption({
+        ...themeBase(),
+        series: [{
+          type: 'sankey',
+          left: 8, right: 8, top: 24, bottom: 12,
+          nodeWidth: 18, nodeGap: 16,
+          nodeAlign: 'justify',
+          lineStyle: { color: 'gradient', curveness: 0.45, opacity: 0.34 },
+          label: { color: '#fff', position: 'inside', fontWeight: 600 },
+          data: [...tokenSources.map(card => ({ name: card.source, itemStyle: { color: colors[card.source] || '#999' } })), ...buckets.map(b => ({ name: b.name, itemStyle: { color: b.color } }))],
+          links: tokenSources.flatMap(card => buckets.filter(b => (card[b.key] || 0) > 0).map(b => ({ source: card.source, target: b.name, value: card[b.key] })))
+        }]
+      });
+      document.getElementById('source-notes').innerHTML = [
+        ...tokenSources.map(card => `<div class="note" style="border-left-color:${colors[card.source] || '#999'}">${card.source} 主力模型是 ${card.top_model}，总量 ${fmtShort(card.total)}。</div>`),
+        ...data.jokes.map(text => `<div class="note">${text}</div>`)
+      ].join('');
+    }
+
+    function renderHeatmap() {
+      const chart = initChart('heatmap-chart');
+      const heat = [];
+      data.heatmap.forEach((row, y) => row.values.forEach((value, x) => heat.push([x, y, value])));
+      chart.setOption({
+        ...themeBase(),
+        grid: { top: 44, left: 70, right: 24, bottom: 34 },
+        xAxis: { type: 'category', data: Array.from({ length: 24 }, (_, i) => `${i}`), splitArea: { show: true, areaStyle: { color: ['rgba(255,255,255,.46)', 'rgba(255,255,255,.2)'] } }, axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false } },
+        yAxis: { type: 'category', data: data.heatmap.map(row => row.weekday), splitArea: { show: true, areaStyle: { color: ['rgba(255,255,255,.46)', 'rgba(255,255,255,.2)'] } }, axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false } },
+        visualMap: { min: 0, max: Math.max(...heat.map(item => item[2]), 1), orient: 'horizontal', left: 'center', bottom: 0, calculable: true, inRange: { color: ['#fff8f1', '#f1d4b7', '#d39a78', '#9a5b3f', '#4c6ef5'] }, textStyle: { color: textColor } },
+        series: [{ type: 'heatmap', data: heat, itemStyle: { borderRadius: 8, borderColor: '#f6f1e8', borderWidth: 3 } }]
+      });
+    }
+
+    function renderCalendar() {
+      const chart = initChart('calendar-chart');
+      const dailyData = data.days.map(day => [day.date, day.total]);
+      chart.setOption({
+        ...themeBase(),
+        tooltip: {
+          formatter: ({ value }) => `${value[0]}<br/>${fmtInt(value[1])} tokens`
+        },
+        visualMap: {
+          min: 0,
+          max: Math.max(...data.days.map(day => day.total), 1),
+          orient: 'horizontal',
+          left: 'center',
+          bottom: 8,
+          textStyle: { color: textColor },
+          inRange: { color: ['#fff8f1', '#f1d4b7', '#d39a78', '#9a5b3f', '#3653b3'] }
+        },
+        calendar: {
+          top: 28,
+          left: 24,
+          right: 24,
+          cellSize: ['auto', 22],
+          range: [data.range.start_local.slice(0, 10), data.range.end_local.slice(0, 10)],
+          yearLabel: { show: false },
+          monthLabel: { color: textColor, margin: 14 },
+          dayLabel: { color: textColor, firstDay: 1 },
+          splitLine: { lineStyle: { color: '#f0e7dc' } },
+          itemStyle: { borderWidth: 3, borderColor: '#f6f1e8', color: 'rgba(255,255,255,.5)' }
+        },
+        series: [{
+          type: 'heatmap',
+          coordinateSystem: 'calendar',
+          data: dailyData
+        }]
+      });
+    }
+
+    function renderTimeline() {
+      const chart = initChart('timeline-chart');
+      const peakDays = [...data.days]
+        .filter(day => day.total > 0)
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 4)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      chart.setOption({
+        ...themeBase(),
+        legend: { top: 4, textStyle: { color: textColor } },
+        grid: { top: 54, left: 56, right: 24, bottom: 46 },
+        tooltip: { trigger: 'axis' },
+        xAxis: {
+          type: 'category',
+          data: data.days.map(day => day.label),
+          axisLine: { lineStyle: { color: axisLine } },
+          axisTick: { show: false },
+          axisLabel: { color: textColor }
+        },
+        yAxis: [
+          {
+            type: 'value',
+            name: 'Daily',
+            splitLine: { lineStyle: { color: axisLine } },
+            axisLabel: { color: textColor, formatter: (v) => fmtShort(v) },
+            nameTextStyle: { color: textColor }
+          },
+          {
+            type: 'value',
+            name: 'Cumulative',
+            splitLine: { show: false },
+            axisLabel: { color: textColor, formatter: (v) => fmtShort(v) },
+            nameTextStyle: { color: textColor }
+          }
+        ],
+        series: [
+          {
+            name: 'Daily Total',
+            type: 'bar',
+            barMaxWidth: 28,
+            itemStyle: { color: 'rgba(213,164,118,.45)', borderRadius: [8, 8, 0, 0] },
+            data: data.days.map(day => day.total)
+          },
+          {
+            name: 'Cumulative',
+            type: 'line',
+            yAxisIndex: 1,
+            smooth: true,
+            symbolSize: 7,
+            lineStyle: { width: 4, color: '#231f1b' },
+            itemStyle: { color: '#231f1b' },
+            data: data.days.map(day => day.cumulative),
+            markPoint: {
+              symbol: 'pin',
+              symbolSize: 42,
+              label: { color: '#fff', formatter: ({ value }) => fmtShort(value) },
+              itemStyle: { color: colors.Codex },
+              data: peakDays.map(day => ({
+                name: day.label,
+                coord: [day.label, day.cumulative],
+                value: day.total
+              }))
+            }
+          }
+        ]
+      });
+    }
+
+    function renderRadar() {
+      const chart = initChart('radar-chart');
+      const sources = data.source_cards.filter(card => card.token_capable);
+      chart.setOption({
+        ...themeBase(),
+        legend: { bottom: 0, textStyle: { color: textColor } },
+        radar: {
+          radius: '62%',
+          center: ['50%', '46%'],
+          splitNumber: 5,
+          axisName: { color: textColor },
+          splitLine: { lineStyle: { color: axisLine } },
+          splitArea: { areaStyle: { color: ['rgba(255,255,255,.5)', 'rgba(255,255,255,.3)'] } },
+          indicator: [
+            { name: 'Total', max: Math.max(...sources.map(c => c.total), 1) },
+            { name: 'Cache', max: Math.max(...sources.map(c => c.cache_read + c.cache_write), 1) },
+            { name: 'Output', max: Math.max(...sources.map(c => c.output + c.reasoning), 1) },
+            { name: 'Sessions', max: Math.max(...sources.map(c => c.sessions), 1) }
+          ]
+        },
+        series: [{ type: 'radar', symbol: 'circle', symbolSize: 7, areaStyle: { opacity: .12 }, lineStyle: { width: 3 }, data: sources.map(card => ({ name: card.source, value: [card.total, card.cache_read + card.cache_write, card.output + card.reasoning, card.sessions], itemStyle: { color: colors[card.source] }, lineStyle: { color: colors[card.source] }, areaStyle: { color: colors[card.source], opacity: .11 } })) }]
+      });
+    }
+
+    function renderBubble() {
+      const chart = initChart('bubble-chart');
+      const rows = data.top_sessions.slice(0, 24);
+      chart.setOption({
+        ...themeBase(),
+        grid: { top: 30, left: 62, right: 24, bottom: 54 },
+        xAxis: { name: 'Minutes', splitLine: { lineStyle: { color: axisLine } }, axisLabel: { color: textColor }, nameTextStyle: { color: textColor } },
+        yAxis: { name: 'Total Tokens', splitLine: { lineStyle: { color: axisLine } }, axisLabel: { color: textColor, formatter: (v) => fmtShort(v) }, nameTextStyle: { color: textColor } },
+        series: ['Codex', 'Claude'].map(source => ({
+          name: source,
+          type: 'scatter',
+          data: rows.filter(row => row.source === source).map(row => ({ value: [row.minutes || 1, row.total, Math.max(8, Math.sqrt(row.cache_read + row.cache_write) / 180)], session: row.session_id, source })),
+          symbolSize: (value) => value[2],
+          itemStyle: { color: colors[source], opacity: .8 }
+        }))
+      });
+    }
+
+    function renderTempo() {
+      const chart = initChart('tempo-chart');
+      chart.setOption({
+        ...themeBase(),
+        legend: { top: 4, textStyle: { color: textColor } },
+        grid: { top: 52, left: 56, right: 24, bottom: 46 },
+        xAxis: { type: 'category', data: data.hourly.map(row => `${row.hour}`), axisLine: { lineStyle: { color: axisLine } }, axisTick: { show: false }, axisLabel: { color: textColor } },
+        yAxis: { type: 'value', splitLine: { lineStyle: { color: axisLine } }, axisLabel: { color: textColor, formatter: (v) => fmtShort(v) } },
+        series: ['Codex', 'Claude', 'Cursor'].map(source => ({ name: source, type: source === 'Cursor' ? 'line' : 'bar', smooth: source === 'Cursor', barMaxWidth: 20, itemStyle: { color: colors[source] || '#999' }, lineStyle: { width: 3, color: colors[source] || '#999' }, data: data.hourly.map(row => row[source] || 0) }))
+      });
+      const hottestHour = [...data.hourly].map(row => ({ hour: row.hour, total: (row.Codex || 0) + (row.Claude || 0) + (row.Cursor || 0) })).sort((a, b) => b.total - a.total)[0];
+      document.getElementById('tempo-notes').innerHTML = [
+        `<div class="note">最热小时大约在 ${hottestHour.hour}:00，说明那会儿不是在写代码，就是在让 agent 代你写更多代码。</div>`,
+        `<div class="note">峰值日 ${data.totals.peak_day_label} 共 ${fmtShort(data.totals.peak_day_total)} token，已经接近一些团队周报的精神污染总量。</div>`
+      ].join('');
+    }
+
+    function renderSessionTable() {
+      document.getElementById('session-table').innerHTML = `
+        <thead><tr><th>Source</th><th>Session</th><th>Total</th><th>Cache Share</th><th>Model</th><th>Window</th></tr></thead>
+        <tbody>${data.top_sessions.map(row => {
+          const share = row.total ? (row.cache_read + row.cache_write) / row.total : 0;
+          return `<tr><td><strong>${row.source}</strong><div class="tiny">${fmtInt(row.messages)} events</div></td><td><strong>${row.session_id.slice(0, 10)}…</strong><div class="tiny">${row.minutes} min</div></td><td>${fmtShort(row.total)}</td><td>${fmtPct(share)}</td><td>${row.top_model}</td><td><div>${row.first_local}</div><div class="tiny">to ${row.last_local}</div></td></tr>`;
+        }).join('')}</tbody>`;
+    }
+
+    renderHero();
+    renderStory();
+    renderSourceCards();
+    renderRoseChart();
+    renderDailyChart();
+    renderSankey();
+    renderHeatmap();
+    renderCalendar();
+    renderTimeline();
+    renderRadar();
+    renderBubble();
+    renderTempo();
+    renderSessionTable();
+    window.addEventListener('resize', () => charts.forEach(chart => chart.resize()));
+  </script>
+</body>
+</html>

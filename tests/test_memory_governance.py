@@ -38,7 +38,25 @@ def test_memory_promotion_supersedes_task_state_across_conversations(tmp_path: P
             confidence=0.8,
             evidence_refs=[],
         )
-        old_memory = memory_service.promote_from_belief(belief=old_belief, conversation_id="chat-a")
+        old_reconciliation = store.create_reconciliation(
+            task_id="task_old",
+            step_id="step_old",
+            step_attempt_id="attempt_old",
+            contract_ref="contract_old",
+            receipt_refs=[],
+            observed_output_refs=[],
+            intended_effect_summary="Promote durable memory.",
+            authorized_effect_summary="Promote durable memory.",
+            observed_effect_summary="Outcome reconciled.",
+            receipted_effect_summary="Outcome reconciled.",
+            result_class="satisfied",
+            recommended_resolution="promote_learning",
+        )
+        old_memory = memory_service.promote_from_belief(
+            belief=old_belief,
+            conversation_id="chat-a",
+            reconciliation_ref=old_reconciliation.reconciliation_id,
+        )
 
         new_belief = belief_service.record(
             task_id="task_new",
@@ -50,7 +68,25 @@ def test_memory_promotion_supersedes_task_state_across_conversations(tmp_path: P
             confidence=0.8,
             evidence_refs=[],
         )
-        new_memory = memory_service.promote_from_belief(belief=new_belief, conversation_id="chat-b")
+        new_reconciliation = store.create_reconciliation(
+            task_id="task_new",
+            step_id="step_new",
+            step_attempt_id="attempt_new",
+            contract_ref="contract_new",
+            receipt_refs=[],
+            observed_output_refs=[],
+            intended_effect_summary="Promote durable memory.",
+            authorized_effect_summary="Promote durable memory.",
+            observed_effect_summary="Outcome reconciled.",
+            receipted_effect_summary="Outcome reconciled.",
+            result_class="satisfied",
+            recommended_resolution="promote_learning",
+        )
+        new_memory = memory_service.promote_from_belief(
+            belief=new_belief,
+            conversation_id="chat-b",
+            reconciliation_ref=new_reconciliation.reconciliation_id,
+        )
 
         refreshed_old = store.get_memory_record(old_memory.memory_id)
         refreshed_new = store.get_memory_record(new_memory.memory_id)
@@ -80,7 +116,25 @@ def test_memory_promotion_keeps_unrelated_task_entries_active(tmp_path: Path) ->
             confidence=0.8,
             evidence_refs=[],
         )
-        schedule_memory = memory_service.promote_from_belief(belief=schedule_belief, conversation_id="chat-a")
+        schedule_reconciliation = store.create_reconciliation(
+            task_id="task_schedule",
+            step_id="step_schedule",
+            step_attempt_id="attempt_schedule",
+            contract_ref="contract_schedule",
+            receipt_refs=[],
+            observed_output_refs=[],
+            intended_effect_summary="Promote durable memory.",
+            authorized_effect_summary="Promote durable memory.",
+            observed_effect_summary="Outcome reconciled.",
+            receipted_effect_summary="Outcome reconciled.",
+            result_class="satisfied",
+            recommended_resolution="promote_learning",
+        )
+        schedule_memory = memory_service.promote_from_belief(
+            belief=schedule_belief,
+            conversation_id="chat-a",
+            reconciliation_ref=schedule_reconciliation.reconciliation_id,
+        )
 
         readme_belief = belief_service.record(
             task_id="task_readme",
@@ -92,7 +146,25 @@ def test_memory_promotion_keeps_unrelated_task_entries_active(tmp_path: Path) ->
             confidence=0.8,
             evidence_refs=[],
         )
-        readme_memory = memory_service.promote_from_belief(belief=readme_belief, conversation_id="chat-b")
+        readme_reconciliation = store.create_reconciliation(
+            task_id="task_readme",
+            step_id="step_readme",
+            step_attempt_id="attempt_readme",
+            contract_ref="contract_readme",
+            receipt_refs=[],
+            observed_output_refs=[],
+            intended_effect_summary="Promote durable memory.",
+            authorized_effect_summary="Promote durable memory.",
+            observed_effect_summary="Outcome reconciled.",
+            receipted_effect_summary="Outcome reconciled.",
+            result_class="satisfied",
+            recommended_resolution="promote_learning",
+        )
+        readme_memory = memory_service.promote_from_belief(
+            belief=readme_belief,
+            conversation_id="chat-b",
+            reconciliation_ref=readme_reconciliation.reconciliation_id,
+        )
 
         refreshed_schedule = store.get_memory_record(schedule_memory.memory_id)
         refreshed_readme = store.get_memory_record(readme_memory.memory_id)
@@ -103,7 +175,9 @@ def test_memory_promotion_keeps_unrelated_task_entries_active(tmp_path: Path) ->
         store.close()
 
 
-def test_reconcile_active_records_supersedes_newer_conflicts_across_conversations(tmp_path: Path) -> None:
+def test_reconcile_active_records_supersedes_newer_conflicts_across_conversations(
+    tmp_path: Path,
+) -> None:
     store = KernelStore(tmp_path / "state.db")
     try:
         memory_service = MemoryRecordService(store)

@@ -327,10 +327,14 @@ def _probe_uncertain_outcome() -> None:
                 ctx, "write_file", {"path": "maybe.txt", "content": "hello\n"}
             )
             assert result.receipt_id is not None
-            assert result.execution_status in {"reconciling", "needs_attention"}
+            assert result.execution_status in {"succeeded", "reconciling", "needs_attention"}
             assert any(
                 event["event_type"] == "outcome.uncertain"
-                for event in store.list_events(task_id=ctx.task_id, limit=50)
+                for event in store.list_events(task_id=ctx.task_id, limit=100)
+            )
+            assert any(
+                event["event_type"] == "reconciliation.closed"
+                for event in store.list_events(task_id=ctx.task_id, limit=100)
             )
         finally:
             _close_store(store)
@@ -368,11 +372,11 @@ def _probe_durable_reentry() -> None:
             assert second.approval_id != first.approval_id
             assert any(
                 event["event_type"] == "witness.failed"
-                for event in store.list_events(task_id=ctx.task_id, limit=50)
+                for event in store.list_events(task_id=ctx.task_id, limit=100)
             )
             assert any(
                 event["event_type"] == "step_attempt.superseded"
-                for event in store.list_events(task_id=ctx.task_id, limit=50)
+                for event in store.list_events(task_id=ctx.task_id, limit=100)
             )
         finally:
             _close_store(store)
@@ -444,11 +448,27 @@ def _probe_memory_evidence() -> None:
                 conversation_id="claim-memory",
                 workspace_root=str(base / "workspace"),
             )
+            reconciliation = store.create_reconciliation(
+                task_id="task-memory",
+                step_id="step-memory",
+                step_attempt_id="attempt-memory",
+                contract_ref="contract-memory",
+                receipt_refs=[],
+                observed_output_refs=[],
+                intended_effect_summary="Promote durable memory.",
+                authorized_effect_summary="Promote durable memory.",
+                observed_effect_summary="Memory evidence reconciled.",
+                receipted_effect_summary="Memory evidence reconciled.",
+                result_class="satisfied",
+                recommended_resolution="promote_learning",
+            )
             memory = MemoryRecordService(store).promote_from_belief(
                 belief=belief,
                 conversation_id="claim-memory",
                 workspace_root=str(base / "workspace"),
+                reconciliation_ref=reconciliation.reconciliation_id,
             )
+            assert memory is not None
             assert memory.evidence_refs == [artifact.artifact_id]
             assert memory.trust_tier == "durable"
             assert memory.source_belief_ref == belief.belief_id

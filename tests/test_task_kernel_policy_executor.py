@@ -61,6 +61,9 @@ def test_tool_executor_executes_previewed_workspace_write_without_approval_and_i
     assert receipt.receipt_id == executed.receipt_id
     assert receipt.approval_ref is None
     assert receipt.action_type == "write_local"
+    assert receipt.contract_ref is not None
+    assert receipt.authorization_plan_ref is not None
+    assert receipt.reconciliation_required is True
     assert receipt.decision_ref == executed.decision_id
     assert receipt.capability_grant_ref == executed.capability_grant_id
     assert receipt.policy_ref == executed.policy_ref
@@ -70,8 +73,19 @@ def test_tool_executor_executes_previewed_workspace_write_without_approval_and_i
     assert receipt.environment_ref is not None
     decision = store.get_decision(executed.decision_id or "")
     grant = store.get_capability_grant(executed.capability_grant_id or "")
+    contracts = store.list_execution_contracts(task_id=ctx.task_id, limit=10)
+    evidence_cases = store.list_evidence_cases(task_id=ctx.task_id, limit=10)
+    authorization_plans = store.list_authorization_plans(task_id=ctx.task_id, limit=10)
+    reconciliations = store.list_reconciliations(task_id=ctx.task_id, limit=10)
+    attempt = store.get_step_attempt(ctx.step_attempt_id)
     assert decision is not None and decision.verdict == "allow"
     assert grant is not None and grant.status == "consumed"
+    assert attempt is not None
+    assert attempt.execution_contract_ref == contracts[0].contract_id
+    assert attempt.evidence_case_ref == evidence_cases[0].evidence_case_id
+    assert attempt.authorization_plan_ref == authorization_plans[0].authorization_plan_id
+    assert attempt.reconciliation_ref == reconciliations[0].reconciliation_id
+    assert reconciliations[0].result_class in {"satisfied", "partial"}
     assert receipt.receipt_bundle_ref is not None
     assert receipt.proof_mode == "hash_chained"
     bundle_artifact = store.get_artifact(receipt.receipt_bundle_ref)

@@ -135,6 +135,18 @@ class ProjectionService:
             "tool_history": current_tool_history,
             "tool_history_event_seq": int(events[-1]["event_seq"]) if events else 0,
             "rollbacks": rollbacks,
+            "contract_loop": {
+                "execution_contract_refs": list(projection.get("execution_contracts", {}).keys()),
+                "evidence_case_refs": list(projection.get("evidence_cases", {}).keys()),
+                "authorization_plan_refs": list(projection.get("authorization_plans", {}).keys()),
+                "reconciliation_refs": list(projection.get("reconciliations", {}).keys()),
+                "latest_execution_contract_ref": proof.get("latest_execution_contract", {})
+                and proof["latest_execution_contract"].get("contract_id"),
+                "latest_reconciliation_ref": proof.get("latest_reconciliation", {})
+                and proof["latest_reconciliation"].get("reconciliation_id"),
+                "latest_reconciliation_result": proof.get("latest_reconciliation", {})
+                and proof["latest_reconciliation"].get("result_class"),
+            },
         }
         return payload
 

@@ -1775,6 +1775,68 @@ def task_show(
                     root_path=lease.root_path,
                 )
             )
+    if hasattr(store, "list_execution_contracts"):
+        contracts = store.list_execution_contracts(task_id=task_id, limit=5)
+        evidence_cases = store.list_evidence_cases(task_id=task_id, limit=5)
+        authorization_plans = store.list_authorization_plans(task_id=task_id, limit=5)
+        reconciliations = store.list_reconciliations(task_id=task_id, limit=5)
+        if contracts or evidence_cases or authorization_plans or reconciliations:
+            typer.echo("\n" + _t("cli.task.show.contract_loop", "Contract loop:"))
+        for contract in contracts[:3]:
+            typer.echo(
+                _t(
+                    "cli.task.show.indented",
+                    "    {value}",
+                    value=(
+                        f"[contract:{contract.contract_id}] {contract.status} "
+                        f"v{contract.contract_version} objective={contract.objective}"
+                    ),
+                )
+            )
+            if contract.expected_effects:
+                typer.echo(
+                    _t(
+                        "cli.task.show.indented",
+                        "    {value}",
+                        value=f"expected_effects={', '.join(contract.expected_effects[:4])}",
+                    )
+                )
+        for evidence_case in evidence_cases[:3]:
+            typer.echo(
+                _t(
+                    "cli.task.show.indented",
+                    "    {value}",
+                    value=(
+                        f"[evidence:{evidence_case.evidence_case_id}] {evidence_case.status} "
+                        f"score={evidence_case.sufficiency_score:.2f} "
+                        f"gaps={', '.join(evidence_case.unresolved_gaps) or '-'}"
+                    ),
+                )
+            )
+        for authorization_plan in authorization_plans[:3]:
+            typer.echo(
+                _t(
+                    "cli.task.show.indented",
+                    "    {value}",
+                    value=(
+                        f"[authority:{authorization_plan.authorization_plan_id}] "
+                        f"{authorization_plan.status} route={authorization_plan.approval_route} "
+                        f"gaps={', '.join(authorization_plan.current_gaps) or '-'}"
+                    ),
+                )
+            )
+        for reconciliation in reconciliations[:3]:
+            typer.echo(
+                _t(
+                    "cli.task.show.indented",
+                    "    {value}",
+                    value=(
+                        f"[reconciliation:{reconciliation.reconciliation_id}] "
+                        f"{reconciliation.result_class} "
+                        f"resolution={reconciliation.recommended_resolution or '-'}"
+                    ),
+                )
+            )
     case = SupervisionService(store).build_task_case(task_id)
     claims = dict(case["operator_answers"].get("claims", {}) or {})
     task_gate = dict(claims.get("task_gate", {}) or {})

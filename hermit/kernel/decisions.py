@@ -19,6 +19,10 @@ class DecisionService:
         evidence_refs: list[str] | None = None,
         policy_ref: str | None = None,
         approval_ref: str | None = None,
+        contract_ref: str | None = None,
+        authorization_plan_ref: str | None = None,
+        evidence_case_ref: str | None = None,
+        reconciliation_ref: str | None = None,
         action_type: str | None = None,
         decided_by: str = "kernel",
     ) -> str:
@@ -32,6 +36,10 @@ class DecisionService:
             evidence_refs=evidence_refs,
             policy_ref=policy_ref,
             approval_ref=approval_ref,
+            contract_ref=contract_ref,
+            authorization_plan_ref=authorization_plan_ref,
+            evidence_case_ref=evidence_case_ref,
+            reconciliation_ref=reconciliation_ref,
             action_type=action_type,
             decided_by=decided_by,
         )

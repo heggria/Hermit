@@ -14,9 +14,12 @@ from hermit.i18n import resolve_locale, tr
 from hermit.kernel.approval_copy import ApprovalCopyService
 from hermit.kernel.approvals import ApprovalService
 from hermit.kernel.artifacts import ArtifactStore
+from hermit.kernel.authorization_plans import AuthorizationPlanService
 from hermit.kernel.context import TaskExecutionContext
 from hermit.kernel.contracts import contract_for
 from hermit.kernel.decisions import DecisionService
+from hermit.kernel.evidence_cases import EvidenceCaseService
+from hermit.kernel.execution_contracts import ExecutionContractService
 from hermit.kernel.git_worktree import GitWorktreeInspector
 from hermit.kernel.observation import (
     ObservationPollResult,
@@ -38,6 +41,7 @@ from hermit.kernel.progress_summary import (
 )
 from hermit.kernel.receipts import ReceiptService
 from hermit.kernel.reconcile import ReconcileService
+from hermit.kernel.reconciliations import ReconciliationService
 from hermit.kernel.store import KernelStore
 from hermit.workspaces import WorkspaceLeaseService, capture_execution_environment
 
@@ -163,6 +167,8 @@ def _needs_witness(action_class: str) -> bool:
 def _execution_status_from_result_code(result_code: str) -> str:
     if result_code in {"approval_required"}:
         return "awaiting_approval"
+    if result_code in {"contract_blocked"}:
+        return "blocked"
     if result_code in {"observation_submitted"}:
         return "observing"
     if result_code in {"denied"}:
@@ -235,6 +241,10 @@ class ToolExecutor:
         self.reconcile_service = reconcile_service or ReconcileService(
             git_worktree=self.git_worktree
         )
+        self.execution_contracts = ExecutionContractService(store, artifact_store)
+        self.evidence_cases = EvidenceCaseService(store, artifact_store)
+        self.authorization_plans = AuthorizationPlanService(store, artifact_store)
+        self.reconciliations = ReconciliationService(store, artifact_store, self.reconcile_service)
         self.progress_summarizer = progress_summarizer
         self.progress_summary_keepalive_seconds = max(
             float(progress_summary_keepalive_seconds or 0.0), 0.0
@@ -271,6 +281,215 @@ class ToolExecutor:
                 "reason": reason,
             },
         )
+
+    def _contract_refs(
+        self, attempt_ctx: TaskExecutionContext
+    ) -> tuple[str | None, str | None, str | None]:
+        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
+        if attempt is None:
+            return None, None, None
+        return (
+            attempt.execution_contract_ref,
+            attempt.evidence_case_ref,
+            attempt.authorization_plan_ref,
+        )
+
+    def _load_contract_bundle(
+        self, attempt_ctx: TaskExecutionContext
+    ) -> tuple[Any | None, Any | None, Any | None]:
+        contract_ref, evidence_case_ref, authorization_plan_ref = self._contract_refs(attempt_ctx)
+        contract = (
+            self.store.get_execution_contract(contract_ref)
+            if contract_ref and hasattr(self.store, "get_execution_contract")
+            else None
+        )
+        evidence_case = (
+            self.store.get_evidence_case(evidence_case_ref)
+            if evidence_case_ref and hasattr(self.store, "get_evidence_case")
+            else None
+        )
+        authorization_plan = (
+            self.store.get_authorization_plan(authorization_plan_ref)
+            if authorization_plan_ref and hasattr(self.store, "get_authorization_plan")
+            else None
+        )
+        return contract, evidence_case, authorization_plan
+
+    def _synthesize_contract_loop(
+        self,
+        *,
+        attempt_ctx: TaskExecutionContext,
+        tool: ToolSpec,
+        action_request: ActionRequest,
+        policy: PolicyDecision,
+        action_request_ref: str | None,
+        policy_result_ref: str | None,
+        preview_artifact: str | None,
+        witness_ref: str | None,
+    ) -> tuple[Any, Any, Any]:
+        self._set_attempt_phase(attempt_ctx, "contracting", reason="contract_synthesis_started")
+        self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="contracting")
+        contract, _contract_artifact_ref = self.execution_contracts.synthesize_default(
+            attempt_ctx=attempt_ctx,
+            tool=tool,
+            action_request=action_request,
+            policy=policy,
+            action_request_ref=action_request_ref,
+            witness_ref=witness_ref,
+        )
+        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
+        evidence_case, _evidence_artifact_ref = self.evidence_cases.compile_for_contract(
+            attempt_ctx=attempt_ctx,
+            contract_ref=contract.contract_id,
+            action_request=action_request,
+            policy=policy,
+            context_pack_ref=attempt.context_pack_ref if attempt is not None else None,
+            action_request_ref=action_request_ref,
+            policy_result_ref=policy_result_ref,
+            witness_ref=witness_ref,
+        )
+        self._set_attempt_phase(
+            attempt_ctx, "preflighting", reason="authorization_preflight_started"
+        )
+        self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="preflighting")
+        authorization_plan, _authorization_artifact_ref = self.authorization_plans.preflight(
+            attempt_ctx=attempt_ctx,
+            contract_ref=contract.contract_id,
+            action_request=action_request,
+            policy=policy,
+            approval_packet_ref=preview_artifact,
+            witness_ref=witness_ref,
+        )
+        next_contract_status = (
+            "approval_pending"
+            if authorization_plan.status == "awaiting_approval"
+            else "admissibility_pending"
+        )
+        if authorization_plan.status == "preflighted" and evidence_case.status == "sufficient":
+            next_contract_status = "authorized"
+        if authorization_plan.status == "blocked":
+            next_contract_status = "abandoned"
+        self.store.update_execution_contract(
+            contract.contract_id,
+            status=next_contract_status,
+            evidence_case_ref=evidence_case.evidence_case_id,
+            authorization_plan_ref=authorization_plan.authorization_plan_id,
+        )
+        return contract, evidence_case, authorization_plan
+
+    @staticmethod
+    def _admissibility_resolution(evidence_case: Any, authorization_plan: Any) -> str | None:
+        if str(evidence_case.status or "") != "sufficient":
+            return "gather_more_evidence"
+        if str(authorization_plan.status or "") == "blocked":
+            return "request_authority"
+        return None
+
+    def _record_reconciliation(
+        self,
+        *,
+        attempt_ctx: TaskExecutionContext,
+        receipt_id: str,
+        action_type: str,
+        tool_input: dict[str, Any],
+        observables: dict[str, Any] | None,
+        witness_ref: str | None,
+        result_code_hint: str,
+        authorized_effect_summary: str,
+        resume_execution: bool = False,
+    ) -> tuple[Any | None, Any | None]:
+        contract_ref, _evidence_case_ref, _authorization_plan_ref = self._contract_refs(attempt_ctx)
+        if contract_ref is None:
+            return None, None
+        self._set_attempt_phase(attempt_ctx, "reconciling", reason="receipt_reconciliation_started")
+        self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="reconciling")
+        reconciliation, outcome, _artifact_ref = self.reconciliations.reconcile_attempt(
+            attempt_ctx=attempt_ctx,
+            contract_ref=contract_ref,
+            receipt_ref=receipt_id,
+            action_type=action_type,
+            tool_input=tool_input,
+            workspace_root=attempt_ctx.workspace_root,
+            observables=observables,
+            witness=self._load_witness_payload(witness_ref),
+            result_code_hint=result_code_hint,
+            authorized_effect_summary=authorized_effect_summary,
+        )
+        contract_status = {
+            "satisfied": "satisfied",
+            "partial": "partially_satisfied",
+            "satisfied_with_downgrade": "partially_satisfied",
+            "violated": "violated",
+            "unauthorized": "violated",
+            "ambiguous": "abandoned",
+        }.get(reconciliation.result_class, "abandoned")
+        self.store.update_execution_contract(
+            contract_ref,
+            status=contract_status,
+            operator_summary=reconciliation.operator_summary,
+        )
+        result_class = str(reconciliation.result_class or "")
+        if resume_execution:
+            self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="running")
+            self._set_attempt_phase(attempt_ctx, "executing", reason="reconciliation_complete")
+            return reconciliation, outcome
+        if result_class == "satisfied":
+            self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="succeeded")
+            self.store.update_step(attempt_ctx.step_id, status="succeeded")
+            self.store.update_task_status(attempt_ctx.task_id, "completed")
+            self._set_attempt_phase(attempt_ctx, "reconciled", reason="reconciliation_satisfied")
+            return reconciliation, outcome
+        if result_class in {"partial", "satisfied_with_downgrade"}:
+            self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="reconciling")
+            self.store.update_step(attempt_ctx.step_id, status="reconciling")
+            self.store.update_task_status(attempt_ctx.task_id, "reconciling")
+            return reconciliation, outcome
+        failure_status = (
+            "needs_attention" if result_class in {"ambiguous", "unauthorized"} else "failed"
+        )
+        self.store.update_step_attempt(attempt_ctx.step_attempt_id, status=failure_status)
+        self.store.update_step(attempt_ctx.step_id, status=failure_status)
+        self.store.update_task_status(
+            attempt_ctx.task_id,
+            "needs_attention" if failure_status == "needs_attention" else "failed",
+        )
+        return reconciliation, outcome
+
+    @staticmethod
+    def _reconciliation_execution_status(reconciliation: Any | None) -> str:
+        result_class = str(getattr(reconciliation, "result_class", "") or "")
+        if result_class == "satisfied":
+            return "succeeded"
+        if result_class in {"partial", "satisfied_with_downgrade"}:
+            return "reconciling"
+        if result_class in {"ambiguous", "unauthorized"}:
+            return "needs_attention"
+        if result_class == "violated":
+            return "failed"
+        return "reconciling"
+
+    @staticmethod
+    def _authorized_effect_summary(
+        *,
+        action_request: ActionRequest,
+        contract: Any | None,
+    ) -> str:
+        if contract is not None and str(getattr(contract, "operator_summary", "") or "").strip():
+            return str(contract.operator_summary)
+        target_paths = [
+            str(path) for path in action_request.derived.get("target_paths", []) if path
+        ]
+        network_hosts = [
+            str(host) for host in action_request.derived.get("network_hosts", []) if host
+        ]
+        command_preview = str(action_request.derived.get("command_preview", "") or "").strip()
+        if target_paths:
+            return f"Expected side effects on {len(target_paths)} path(s)."
+        if network_hosts:
+            return f"Expected network mutation against {', '.join(network_hosts[:3])}."
+        if command_preview:
+            return f"Expected command execution: {command_preview}"
+        return f"Expected {action_request.action_class} side effects."
 
     def execute(
         self,
@@ -314,19 +533,96 @@ class ToolExecutor:
                 approval_packet_ref=preview_artifact,
             )
 
-        matched_approval, witness_ref, witness_drift = self._matching_approval(
+        matched_approval, witness_ref, drift_reason = self._matching_approval(
             approval_record,
             action_request,
             policy,
             preview_artifact,
             attempt_ctx=attempt_ctx,
         )
-        if witness_drift:
-            return self._supersede_attempt_for_witness_drift(
+        if drift_reason is not None:
+            return self._supersede_attempt_for_drift(
                 attempt_ctx=attempt_ctx,
                 tool_name=tool_name,
                 tool_input=tool_input,
+                drift_reason=drift_reason,
             )
+
+        if (
+            governed
+            and witness_ref is None
+            and matched_approval is None
+            and _needs_witness(action_type)
+        ):
+            witness_ref = self._capture_state_witness(action_request, attempt_ctx)
+
+        contract = None
+        evidence_case = None
+        authorization_plan = None
+        if governed:
+            contract, evidence_case, authorization_plan = self._load_contract_bundle(attempt_ctx)
+            if contract is None or evidence_case is None or authorization_plan is None:
+                contract, evidence_case, authorization_plan = self._synthesize_contract_loop(
+                    attempt_ctx=attempt_ctx,
+                    tool=tool,
+                    action_request=action_request,
+                    policy=policy,
+                    action_request_ref=action_ref,
+                    policy_result_ref=policy_ref,
+                    preview_artifact=preview_artifact,
+                    witness_ref=witness_ref,
+                )
+            resolution = self._admissibility_resolution(evidence_case, authorization_plan)
+            if resolution is not None and policy.verdict != "deny":
+                decision_id = self.decision_service.record(
+                    task_id=attempt_ctx.task_id,
+                    step_id=attempt_ctx.step_id,
+                    step_attempt_id=attempt_ctx.step_attempt_id,
+                    decision_type="admission",
+                    verdict=resolution,
+                    reason=f"Contract is not admissible: {resolution}.",
+                    evidence_refs=[
+                        ref
+                        for ref in [
+                            action_ref,
+                            policy_ref,
+                            preview_artifact,
+                            witness_ref,
+                            contract.contract_id,
+                            evidence_case.evidence_case_id,
+                            authorization_plan.authorization_plan_id,
+                        ]
+                        if ref
+                    ],
+                    policy_ref=policy_ref,
+                    contract_ref=contract.contract_id,
+                    authorization_plan_ref=authorization_plan.authorization_plan_id,
+                    evidence_case_ref=evidence_case.evidence_case_id,
+                    action_type=action_type,
+                )
+                self.store.update_step_attempt(
+                    attempt_ctx.step_attempt_id,
+                    status="blocked",
+                    waiting_reason=resolution,
+                    decision_id=decision_id,
+                    state_witness_ref=witness_ref,
+                )
+                self.store.update_step(attempt_ctx.step_id, status="blocked")
+                self.store.update_task_status(attempt_ctx.task_id, "blocked")
+                return ToolExecutionResult(
+                    model_content=f"[Contract Blocked] {resolution}",
+                    raw_result={"resolution": resolution},
+                    blocked=True,
+                    suspended=True,
+                    waiting_kind="awaiting_evidence",
+                    policy_decision=policy,
+                    decision_id=decision_id,
+                    policy_ref=policy_ref,
+                    witness_ref=witness_ref,
+                    result_code="contract_blocked",
+                    execution_status="blocked",
+                    state_applied=True,
+                )
 
         if policy.verdict == "deny":
             self._set_attempt_phase(attempt_ctx, "settling", reason="policy_denied")
@@ -337,8 +633,22 @@ class ToolExecutor:
                 decision_type="policy_gate",
                 verdict="deny",
                 reason=policy.reason or f"{tool_name} denied by policy.",
-                evidence_refs=[ref for ref in [action_ref, policy_ref, preview_artifact] if ref],
+                evidence_refs=[
+                    ref
+                    for ref in [
+                        action_ref,
+                        policy_ref,
+                        preview_artifact,
+                        getattr(contract, "contract_id", None),
+                        getattr(evidence_case, "evidence_case_id", None),
+                        getattr(authorization_plan, "authorization_plan_id", None),
+                    ]
+                    if ref
+                ],
                 policy_ref=policy_ref,
+                contract_ref=getattr(contract, "contract_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
                 action_type=action_type,
             )
             message = f"[Policy Denied] {policy.reason or f'{tool_name} denied by policy.'}"
@@ -383,8 +693,6 @@ class ToolExecutor:
             )
 
         if policy.obligations.require_approval and matched_approval is None:
-            if witness_ref is None and _needs_witness(action_type):
-                witness_ref = self._capture_state_witness(action_request, attempt_ctx)
             self._set_attempt_phase(attempt_ctx, "awaiting_approval", reason="approval_required")
             decision_id = self.decision_service.record(
                 task_id=attempt_ctx.task_id,
@@ -394,9 +702,22 @@ class ToolExecutor:
                 verdict="require_approval",
                 reason=policy.reason or "Approval required before execution.",
                 evidence_refs=[
-                    ref for ref in [action_ref, policy_ref, preview_artifact, witness_ref] if ref
+                    ref
+                    for ref in [
+                        action_ref,
+                        policy_ref,
+                        preview_artifact,
+                        witness_ref,
+                        getattr(contract, "contract_id", None),
+                        getattr(evidence_case, "evidence_case_id", None),
+                        getattr(authorization_plan, "authorization_plan_id", None),
+                    ]
+                    if ref
                 ],
                 policy_ref=policy_ref,
+                contract_ref=getattr(contract, "contract_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
                 action_type=action_type,
             )
             requested_action = self._requested_action_payload(
@@ -406,6 +727,9 @@ class ToolExecutor:
                 decision_ref=decision_id,
                 policy_ref=policy_ref,
                 state_witness_ref=witness_ref,
+                contract_ref=getattr(contract, "contract_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
             )
             requested_action["display_copy"] = self.approval_copy.build_canonical_copy(
                 requested_action
@@ -420,6 +744,11 @@ class ToolExecutor:
                 requested_action_ref=action_ref,
                 approval_packet_ref=preview_artifact,
                 policy_result_ref=policy_ref,
+                requested_contract_ref=getattr(contract, "contract_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
+                drift_expiry=getattr(contract, "expiry_at", None),
+                fallback_contract_refs=getattr(contract, "fallback_contract_refs", []),
                 decision_ref=decision_id,
                 state_witness_ref=witness_ref,
             )
@@ -433,6 +762,9 @@ class ToolExecutor:
                 action_request_ref=action_ref,
                 policy_result_ref=policy_ref,
                 approval_packet_ref=preview_artifact,
+                execution_contract_ref=getattr(contract, "contract_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
             )
             self.store.update_step(attempt_ctx.step_id, status="blocked")
             self.store.update_task_status(attempt_ctx.task_id, "blocked")
@@ -470,6 +802,9 @@ class ToolExecutor:
                 reason="User approval was applied before execution.",
                 policy_ref=policy_ref,
                 approval_ref=matched_approval.approval_id,
+                contract_ref=getattr(contract, "contract_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
                 action_type=action_type,
                 decided_by=str(matched_approval.resolved_by_principal_id or "principal_user"),
             )
@@ -477,6 +812,13 @@ class ToolExecutor:
             self._set_attempt_phase(
                 attempt_ctx, "authorized_pre_exec", reason="execution_authorized"
             )
+            if authorization_plan is not None:
+                self.store.update_authorization_plan(
+                    authorization_plan.authorization_plan_id,
+                    status="authorized",
+                )
+            if contract is not None:
+                self.store.update_execution_contract(contract.contract_id, status="authorized")
             decision_id = self.decision_service.record(
                 task_id=attempt_ctx.task_id,
                 step_id=attempt_ctx.step_id,
@@ -485,10 +827,23 @@ class ToolExecutor:
                 verdict="allow",
                 reason=self._authorization_reason(policy=policy, approval_mode=approval_mode),
                 evidence_refs=[
-                    ref for ref in [action_ref, policy_ref, preview_artifact, witness_ref] if ref
+                    ref
+                    for ref in [
+                        action_ref,
+                        policy_ref,
+                        preview_artifact,
+                        witness_ref,
+                        getattr(contract, "contract_id", None),
+                        getattr(evidence_case, "evidence_case_id", None),
+                        getattr(authorization_plan, "authorization_plan_id", None),
+                    ]
+                    if ref
                 ],
                 policy_ref=policy_ref,
                 approval_ref=matched_approval.approval_id if matched_approval is not None else None,
+                contract_ref=getattr(contract, "contract_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
                 action_type=action_type,
             )
             workspace_lease_id = self._ensure_workspace_lease(
@@ -529,6 +884,9 @@ class ToolExecutor:
                 action_request_ref=action_ref,
                 policy_result_ref=policy_ref,
                 approval_packet_ref=preview_artifact,
+                execution_contract_ref=getattr(contract, "contract_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
                 environment_ref=environment_ref,
                 idempotency_key=action_request.idempotency_key,
                 executor_mode="tool_executor",
@@ -580,6 +938,8 @@ class ToolExecutor:
 
         try:
             self._set_attempt_phase(attempt_ctx, "executing", reason="tool_handler_invoked")
+            if contract is not None:
+                self.store.update_execution_contract(contract.contract_id, status="executing")
             raw_result = tool.handler(tool_input)
         except Exception as exc:
             if governed and capability_grant_id is not None:
@@ -634,6 +994,11 @@ class ToolExecutor:
 
         model_content = _format_model_content(raw_result, self.tool_output_limit)
         receipt_id = None
+        reconciliation = None
+        authorized_effect_summary = self._authorized_effect_summary(
+            action_request=action_request,
+            contract=contract,
+        )
         if governed:
             self._set_attempt_phase(attempt_ctx, "settling", reason="receipt_pending")
             self.store.update_step_attempt(
@@ -647,6 +1012,9 @@ class ToolExecutor:
                 policy_result_ref=policy_ref,
                 approval_packet_ref=preview_artifact,
                 environment_ref=environment_ref,
+                execution_contract_ref=getattr(contract, "contract_id", None),
+                evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
             )
             self.store.update_step(attempt_ctx.step_id, status="receipt_pending")
         if policy.requires_receipt:
@@ -677,7 +1045,24 @@ class ToolExecutor:
                 rollback_supported=rollback_plan["supported"],
                 rollback_strategy=rollback_plan["strategy"],
                 rollback_artifact_refs=rollback_plan["artifact_refs"],
+                contract_ref=getattr(contract, "contract_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
+                observed_effect_summary=authorized_effect_summary,
+                reconciliation_required=governed,
             )
+        execution_status = "succeeded"
+        if governed and receipt_id is not None:
+            reconciliation, _outcome = self._record_reconciliation(
+                attempt_ctx=attempt_ctx,
+                receipt_id=receipt_id,
+                action_type=action_type,
+                tool_input=tool_input,
+                observables=dict(action_request.derived),
+                witness_ref=witness_ref,
+                result_code_hint="succeeded",
+                authorized_effect_summary=authorized_effect_summary,
+            )
+            execution_status = self._reconciliation_execution_status(reconciliation)
         return ToolExecutionResult(
             model_content=model_content,
             raw_result=raw_result,
@@ -691,7 +1076,7 @@ class ToolExecutor:
             policy_ref=policy_ref,
             witness_ref=witness_ref,
             result_code="succeeded",
-            execution_status="succeeded",
+            execution_status=execution_status,
         )
 
     def persist_suspended_state(
@@ -1245,16 +1630,20 @@ class ToolExecutor:
             if terminal_status in {"failed", "timeout", "cancelled"}
             else "succeeded"
         )
+        action_type = tool.action_class or self.policy_engine.infer_action_class(tool)
+        governed = _is_governed_action(tool, policy)
         model_content = (
             model_content_override
             if model_content_override is not None
             else _format_model_content(raw_result, self.tool_output_limit)
         )
         self._set_attempt_phase(attempt_ctx, "settling", reason="observation_finalized")
+        receipt_id = None
         if policy.requires_receipt:
             if capability_grant_ref and result_code == "succeeded":
                 self.capability_service.consume(capability_grant_ref)
-            self._issue_receipt(
+            contract, _evidence_case, authorization_plan = self._load_contract_bundle(attempt_ctx)
+            receipt_id = self._issue_receipt(
                 tool=tool,
                 tool_name=tool_name,
                 tool_input=tool_input,
@@ -1282,7 +1671,28 @@ class ToolExecutor:
                 rollback_supported=bool(rollback_plan.get("supported", False)),
                 rollback_strategy=str(rollback_plan.get("strategy", "") or "") or None,
                 rollback_artifact_refs=list(rollback_plan.get("artifact_refs", []) or []),
+                contract_ref=getattr(contract, "contract_id", None),
+                authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
+                observed_effect_summary=summary,
+                reconciliation_required=governed,
             )
+            if governed and receipt_id is not None:
+                action_request = self.policy_engine.build_action_request(
+                    tool, tool_input, attempt_ctx=attempt_ctx
+                )
+                self._record_reconciliation(
+                    attempt_ctx=attempt_ctx,
+                    receipt_id=receipt_id,
+                    action_type=action_type,
+                    tool_input=tool_input,
+                    observables=dict(action_request.derived),
+                    witness_ref=witness_ref,
+                    result_code_hint=result_code,
+                    authorized_effect_summary=self._authorized_effect_summary(
+                        action_request=action_request,
+                        contract=contract,
+                    ),
+                )
         self._clear_pending_execution(attempt_ctx.step_attempt_id)
         return {
             "raw_result": raw_result,
@@ -1881,8 +2291,26 @@ class ToolExecutor:
         decision_ref: str | None,
         policy_ref: str | None,
         state_witness_ref: str | None,
+        contract_ref: str | None = None,
+        evidence_case_ref: str | None = None,
+        authorization_plan_ref: str | None = None,
     ) -> dict[str, Any]:
         packet = dict(policy.approval_packet or {})
+        contract = (
+            self.store.get_execution_contract(contract_ref)
+            if contract_ref and hasattr(self.store, "get_execution_contract")
+            else None
+        )
+        evidence_case = (
+            self.store.get_evidence_case(evidence_case_ref)
+            if evidence_case_ref and hasattr(self.store, "get_evidence_case")
+            else None
+        )
+        authorization_plan = (
+            self.store.get_authorization_plan(authorization_plan_ref)
+            if authorization_plan_ref and hasattr(self.store, "get_authorization_plan")
+            else None
+        )
         fingerprint_payload = {
             "task_id": action_request.task_id,
             "step_attempt_id": action_request.step_attempt_id,
@@ -1898,6 +2326,39 @@ class ToolExecutor:
             packet["artifact_ids"] = list(
                 dict.fromkeys(list(packet.get("artifact_ids", [])) + [preview_artifact])
             )
+        contract_packet = None
+        if contract is not None:
+            contract_packet = {
+                "contract_ref": contract.contract_id,
+                "objective": contract.objective,
+                "expected_effects": list(contract.expected_effects),
+                "evidence_case_ref": evidence_case_ref,
+                "evidence_sufficiency": {
+                    "status": getattr(evidence_case, "status", None),
+                    "score": getattr(evidence_case, "sufficiency_score", None),
+                    "unresolved_gaps": list(getattr(evidence_case, "unresolved_gaps", []) or []),
+                },
+                "authorization_plan_ref": authorization_plan_ref,
+                "authority_scope": dict(
+                    getattr(authorization_plan, "proposed_grant_shape", {}) or {}
+                ),
+                "approval_route": getattr(authorization_plan, "approval_route", None),
+                "current_gaps": list(getattr(authorization_plan, "current_gaps", []) or []),
+                "drift_expiry": contract.expiry_at,
+                "rollback_expectation": contract.rollback_expectation,
+                "operator_summary": contract.operator_summary,
+            }
+            packet.setdefault(
+                "title",
+                f"Confirm {action_request.action_class.replace('_', ' ').title()} Contract",
+            )
+            packet.setdefault(
+                "summary",
+                contract.operator_summary
+                or policy.reason
+                or f"{action_request.tool_name} requires explicit approval.",
+            )
+            packet["contract_packet"] = contract_packet
         return {
             "tool_name": action_request.tool_name,
             "tool_input": action_request.tool_input,
@@ -1912,6 +2373,10 @@ class ToolExecutor:
             "outside_workspace": bool(action_request.derived.get("outside_workspace")),
             "grant_scope_dir": action_request.derived.get("grant_candidate_prefix"),
             "approval_packet": packet,
+            "contract_packet": contract_packet,
+            "contract_ref": contract_ref,
+            "evidence_case_ref": evidence_case_ref,
+            "authorization_plan_ref": authorization_plan_ref,
             "decision_ref": decision_ref,
             "policy_ref": policy_ref,
             "state_witness_ref": state_witness_ref,
@@ -1926,9 +2391,25 @@ class ToolExecutor:
         preview_artifact: str | None,
         *,
         attempt_ctx: TaskExecutionContext,
-    ) -> tuple[Any, str | None, bool]:
+    ) -> tuple[Any, str | None, str | None]:
         if approval_record is None or approval_record.status != "granted":
-            return None, None, False
+            return None, None, None
+        witness_ref = approval_record.state_witness_ref
+        if approval_record.drift_expiry and float(approval_record.drift_expiry) < time.time():
+            self.store.append_event(
+                event_type="approval.expired",
+                entity_type="approval",
+                entity_id=approval_record.approval_id,
+                task_id=approval_record.task_id,
+                step_id=approval_record.step_id,
+                actor="kernel",
+                payload={
+                    "approval_id": approval_record.approval_id,
+                    "drift_expiry": approval_record.drift_expiry,
+                    "tool_name": action_request.tool_name,
+                },
+            )
+            return None, witness_ref, "approval_drift"
         requested_action = dict(approval_record.requested_action or {})
         fingerprint_payload = {
             "task_id": action_request.task_id,
@@ -1957,12 +2438,40 @@ class ToolExecutor:
                     "policy": policy.to_dict(),
                 },
             )
-            return None, approval_record.state_witness_ref, False
-        witness_ref = approval_record.state_witness_ref
+            self.store.append_event(
+                event_type="approval.drifted",
+                entity_type="approval",
+                entity_id=approval_record.approval_id,
+                task_id=approval_record.task_id,
+                step_id=approval_record.step_id,
+                actor="kernel",
+                payload={
+                    "approval_id": approval_record.approval_id,
+                    "drift_kind": "fingerprint_mismatch",
+                    "approved_fingerprint": approved_fingerprint,
+                    "current_fingerprint": current_fingerprint,
+                },
+            )
+            return None, witness_ref, "approval_drift"
+        if approval_record.evidence_case_ref:
+            evidence_case = self.store.get_evidence_case(approval_record.evidence_case_ref)
+            if evidence_case is None or str(evidence_case.status or "") != "sufficient":
+                return None, witness_ref, "evidence_drift"
+        if approval_record.authorization_plan_ref:
+            authorization_plan = self.store.get_authorization_plan(
+                approval_record.authorization_plan_ref
+            )
+            if authorization_plan is None:
+                return None, witness_ref, "approval_drift"
+            plan_status = str(authorization_plan.status or "")
+            if plan_status in {"invalidated", "blocked", "expired"}:
+                return None, witness_ref, "approval_drift"
+            if plan_status not in {"awaiting_approval", "preflighted", "authorized"}:
+                return None, witness_ref, "approval_drift"
         if witness_ref and _needs_witness(action_request.action_class):
             if not self._validate_state_witness(witness_ref, action_request, attempt_ctx):
-                return None, witness_ref, True
-        return approval_record, witness_ref, False
+                return None, witness_ref, "witness_drift"
+        return approval_record, witness_ref, None
 
     def _authorization_reason(
         self,
@@ -2136,17 +2645,72 @@ class ToolExecutor:
                 constraints["lease_root_path"] = lease.root_path
         return {key: value for key, value in constraints.items() if value not in (None, [], {}, "")}
 
-    def _supersede_attempt_for_witness_drift(
+    def _supersede_attempt_for_drift(
         self,
         *,
         attempt_ctx: TaskExecutionContext,
         tool_name: str,
         tool_input: dict[str, Any],
+        drift_reason: str,
     ) -> ToolExecutionResult:
         current = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
         if current is None:
             raise KeyError(f"Unknown step attempt: {attempt_ctx.step_attempt_id}")
         now = time.time()
+        reason_key = {
+            "witness_drift": "witness_drift_reenter_policy",
+            "approval_drift": "approval_drift_reenter_policy",
+            "evidence_drift": "evidence_drift_reenter_policy",
+        }.get(drift_reason, "contract_drift_reenter_policy")
+        reentry_boundary = {
+            "witness_drift": "policy_recompile",
+            "approval_drift": "approval_revalidation",
+            "evidence_drift": "admission_recompile",
+        }.get(drift_reason, "policy_recompile")
+        evidence_summary = {
+            "witness_drift": "Evidence invalidated because the state witness drifted before execution.",
+            "approval_drift": "Evidence invalidated because the approval context drifted before execution.",
+            "evidence_drift": "Evidence invalidated because the prior evidence case is no longer admissible.",
+        }.get(drift_reason, "Evidence invalidated because the contract loop drifted.")
+        authorization_summary = {
+            "witness_drift": "Authorization plan invalidated because the state witness drifted.",
+            "approval_drift": "Authorization plan invalidated because approval must be revalidated.",
+            "evidence_drift": "Authorization plan invalidated because the supporting evidence drifted.",
+        }.get(drift_reason, "Authorization plan invalidated because the contract loop drifted.")
+        successor_contract_id = self.store._id("contract") if hasattr(self.store, "_id") else None
+        if current.execution_contract_ref and successor_contract_id:
+            self.execution_contracts.supersede(
+                current.execution_contract_ref,
+                superseded_by_contract_id=successor_contract_id,
+                attempt_ctx=attempt_ctx,
+                reason=reason_key,
+            )
+        if current.evidence_case_ref:
+            self.evidence_cases.invalidate(
+                current.evidence_case_ref,
+                contradictions=[drift_reason],
+                summary=evidence_summary,
+            )
+        if current.authorization_plan_ref:
+            self.authorization_plans.invalidate(
+                current.authorization_plan_ref,
+                gaps=[drift_reason],
+                summary=authorization_summary,
+            )
+        if current.approval_id:
+            self.store.append_event(
+                event_type="approval.drifted",
+                entity_type="approval",
+                entity_id=current.approval_id,
+                task_id=current.task_id,
+                step_id=current.step_id,
+                actor="kernel",
+                payload={
+                    "approval_id": current.approval_id,
+                    "drift_kind": drift_reason,
+                    "step_attempt_id": current.step_attempt_id,
+                },
+            )
         self.store.update_step_attempt(
             current.step_attempt_id,
             status="superseded",
@@ -2163,15 +2727,18 @@ class ToolExecutor:
             context={
                 **dict(current.context),
                 "phase": "policy_pending",
-                "reentered_via": "witness_drift",
+                "reentered_via": drift_reason,
                 "recompile_required": True,
                 "reentry_required": True,
-                "reentry_boundary": "policy_recompile",
-                "reentry_reason": "witness_drift",
+                "reentry_boundary": reentry_boundary,
+                "reentry_reason": drift_reason,
                 "reentry_requested_at": now,
                 "supersedes_step_attempt_id": current.step_attempt_id,
             },
             queue_priority=current.queue_priority,
+            contract_version=int(current.contract_version or 0) + 1,
+            reentry_boundary=reentry_boundary,
+            reentry_reason=drift_reason,
         )
         self.store.update_step_attempt(
             current.step_attempt_id,
@@ -2187,7 +2754,7 @@ class ToolExecutor:
             payload={
                 "step_attempt_id": current.step_attempt_id,
                 "superseded_by_step_attempt_id": successor.step_attempt_id,
-                "reason": "witness_drift_reenter_policy",
+                "reason": reason_key,
             },
         )
         successor_ctx = replace(
@@ -2278,6 +2845,23 @@ class ToolExecutor:
             idempotency_key=idempotency_key,
             result_summary=summary,
             output_kind="tool_error",
+            contract_ref=self._contract_refs(attempt_ctx)[0],
+            authorization_plan_ref=self._contract_refs(attempt_ctx)[2],
+            observed_effect_summary=outcome.summary,
+            reconciliation_required=True,
+        )
+        reconciliation, _ = self._record_reconciliation(
+            attempt_ctx=attempt_ctx,
+            receipt_id=receipt_id,
+            action_type=action_type,
+            tool_input=tool_input,
+            observables=dict(action_request.derived),
+            witness_ref=witness_ref,
+            result_code_hint="unknown_outcome",
+            authorized_effect_summary=self._authorized_effect_summary(
+                action_request=action_request,
+                contract=self._load_contract_bundle(attempt_ctx)[0],
+            ),
         )
         return ToolExecutionResult(
             model_content=f"[Execution Requires Attention] {summary}",
@@ -2291,7 +2875,7 @@ class ToolExecutor:
             policy_ref=policy_ref,
             witness_ref=witness_ref,
             result_code=result_code,
-            execution_status=_execution_status_from_result_code(result_code),
+            execution_status=self._reconciliation_execution_status(reconciliation),
             state_applied=True,
         )
 
@@ -2381,7 +2965,24 @@ class ToolExecutor:
                 idempotency_key=idempotency_key,
                 result_summary=str(error),
                 output_kind="dispatch_error",
+                contract_ref=self._contract_refs(attempt_ctx)[0],
+                authorization_plan_ref=self._contract_refs(attempt_ctx)[2],
+                observed_effect_summary=str(error),
+                reconciliation_required=True,
             )
+            self._record_reconciliation(
+                attempt_ctx=attempt_ctx,
+                receipt_id=receipt_id,
+                action_type=tool.action_class or self.policy_engine.infer_action_class(tool),
+                tool_input=tool_input,
+                observables={},
+                witness_ref=witness_ref,
+                result_code_hint="dispatch_denied",
+                authorized_effect_summary=str(error),
+            )
+            self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="failed")
+            self.store.update_step(attempt_ctx.step_id, status="failed")
+            self.store.update_task_status(attempt_ctx.task_id, "failed")
 
         return ToolExecutionResult(
             model_content=f"[Capability Denied] {error}",
@@ -2424,7 +3025,16 @@ class ToolExecutor:
         rollback_supported: bool = False,
         rollback_strategy: str | None = None,
         rollback_artifact_refs: list[str] | None = None,
+        contract_ref: str | None = None,
+        authorization_plan_ref: str | None = None,
+        observed_effect_summary: str | None = None,
+        reconciliation_required: bool = False,
     ) -> str:
+        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
+        effective_contract_ref = contract_ref or getattr(attempt, "execution_contract_ref", None)
+        effective_authorization_plan_ref = authorization_plan_ref or getattr(
+            attempt, "authorization_plan_ref", None
+        )
         input_uri, input_hash = self.artifact_store.store_json(
             {"tool": tool_name, "input": tool_input}
         )
@@ -2495,10 +3105,14 @@ class ToolExecutor:
             policy_ref=policy_ref,
             action_request_ref=action_request_ref,
             policy_result_ref=policy_result_ref or policy_ref,
+            contract_ref=effective_contract_ref,
+            authorization_plan_ref=effective_authorization_plan_ref,
             witness_ref=witness_ref,
             idempotency_key=idempotency_key,
             verifiability="baseline_verifiable" if policy.requires_receipt else "hash_linked_only",
             rollback_supported=rollback_supported,
             rollback_strategy=rollback_strategy,
             rollback_artifact_refs=rollback_artifact_refs,
+            observed_effect_summary=observed_effect_summary,
+            reconciliation_required=reconciliation_required,
         )

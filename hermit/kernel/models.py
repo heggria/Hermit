@@ -70,10 +70,18 @@ class StepAttemptRecord:
     action_request_ref: str | None = None
     policy_result_ref: str | None = None
     approval_packet_ref: str | None = None
+    execution_contract_ref: str | None = None
+    evidence_case_ref: str | None = None
+    authorization_plan_ref: str | None = None
+    reconciliation_ref: str | None = None
     pending_execution_ref: str | None = None
     idempotency_key: str | None = None
     executor_mode: str | None = None
     policy_version: str | None = None
+    contract_version: int = 0
+    reentry_boundary: str | None = None
+    reentry_reason: str | None = None
+    selected_contract_template_ref: str | None = None
     resume_from_ref: str | None = None
     superseded_by_step_attempt_id: str | None = None
     started_at: float | None = None
@@ -101,6 +109,11 @@ class ApprovalRecord:
     requested_action_ref: str | None = None
     approval_packet_ref: str | None = None
     policy_result_ref: str | None = None
+    requested_contract_ref: str | None = None
+    authorization_plan_ref: str | None = None
+    evidence_case_ref: str | None = None
+    drift_expiry: float | None = None
+    fallback_contract_refs: list[str] = field(default_factory=list)
     decision_ref: str | None = None
     state_witness_ref: str | None = None
     requested_at: float | None = None
@@ -134,6 +147,10 @@ class DecisionRecord:
     evidence_refs: list[str] = field(default_factory=list)
     policy_ref: str | None = None
     approval_ref: str | None = None
+    contract_ref: str | None = None
+    authorization_plan_ref: str | None = None
+    evidence_case_ref: str | None = None
+    reconciliation_ref: str | None = None
     action_type: str | None = None
     risk_level: str | None = None
     reversible: bool | None = None
@@ -191,6 +208,8 @@ class ReceiptRecord:
     policy_ref: str | None = None
     action_request_ref: str | None = None
     policy_result_ref: str | None = None
+    contract_ref: str | None = None
+    authorization_plan_ref: str | None = None
     witness_ref: str | None = None
     idempotency_key: str | None = None
     receipt_bundle_ref: str | None = None
@@ -203,6 +222,8 @@ class ReceiptRecord:
     rollback_status: str = "not_requested"
     rollback_ref: str | None = None
     rollback_artifact_refs: list[str] = field(default_factory=list)
+    observed_effect_summary: str | None = None
+    reconciliation_required: bool = False
     created_at: float | None = None
 
     def __post_init__(self) -> None:
@@ -233,8 +254,14 @@ class BeliefRecord:
     confidence: float = 0.5
     trust_tier: str = "observed"
     evidence_refs: list[str] = field(default_factory=list)
+    evidence_case_ref: str | None = None
     supersedes: list[str] = field(default_factory=list)
     contradicts: list[str] = field(default_factory=list)
+    epistemic_origin: str = "observed"
+    freshness_class: str | None = None
+    last_validated_at: float | None = None
+    validation_basis: str | None = None
+    supersession_reason: str | None = None
     memory_ref: str | None = None
     invalidated_at: float | None = None
     created_at: float | None = None
@@ -261,6 +288,11 @@ class MemoryRecord:
     confidence: float = 0.5
     trust_tier: str = "durable"
     evidence_refs: list[str] = field(default_factory=list)
+    memory_kind: str = "durable_fact"
+    validation_basis: str | None = None
+    last_validated_at: float | None = None
+    supersession_reason: str | None = None
+    learned_from_reconciliation_ref: str | None = None
     supersedes: list[str] = field(default_factory=list)
     supersedes_memory_ids: list[str] = field(default_factory=list)
     superseded_by_memory_id: str | None = None
@@ -290,6 +322,113 @@ class RollbackRecord:
     artifact_refs: list[str] = field(default_factory=list)
     created_at: float | None = None
     executed_at: float | None = None
+
+
+@dataclass
+class ExecutionContractRecord:
+    contract_id: str
+    task_id: str
+    step_id: str
+    step_attempt_id: str
+    objective: str
+    proposed_action_refs: list[str] = field(default_factory=list)
+    expected_effects: list[str] = field(default_factory=list)
+    success_criteria: dict[str, Any] = field(default_factory=dict)
+    evidence_case_ref: str | None = None
+    authorization_plan_ref: str | None = None
+    reversibility_class: str = "reversible"
+    required_receipt_classes: list[str] = field(default_factory=list)
+    drift_budget: dict[str, Any] = field(default_factory=dict)
+    expiry_at: float | None = None
+    status: str = "draft"
+    fallback_contract_refs: list[str] = field(default_factory=list)
+    operator_summary: str | None = None
+    risk_budget: dict[str, Any] = field(default_factory=dict)
+    expected_artifact_shape: dict[str, Any] = field(default_factory=dict)
+    contract_version: int = 1
+    action_contract_refs: list[str] = field(default_factory=list)
+    state_witness_ref: str | None = None
+    rollback_expectation: str | None = None
+    selected_template_ref: str | None = None
+    superseded_by_contract_id: str | None = None
+    created_at: float | None = None
+    updated_at: float | None = None
+
+
+@dataclass
+class EvidenceCaseRecord:
+    evidence_case_id: str
+    task_id: str
+    subject_kind: str
+    subject_ref: str
+    support_refs: list[str] = field(default_factory=list)
+    contradiction_refs: list[str] = field(default_factory=list)
+    freshness_window: dict[str, Any] = field(default_factory=dict)
+    sufficiency_score: float = 0.0
+    drift_sensitivity: str = "medium"
+    unresolved_gaps: list[str] = field(default_factory=list)
+    status: str = "insufficient"
+    witness_refs: list[str] = field(default_factory=list)
+    invalidates_refs: list[str] = field(default_factory=list)
+    last_checked_at: float | None = None
+    confidence_interval: dict[str, Any] = field(default_factory=dict)
+    freshness_basis: str | None = None
+    operator_summary: str | None = None
+    created_at: float | None = None
+    updated_at: float | None = None
+
+
+@dataclass
+class AuthorizationPlanRecord:
+    authorization_plan_id: str
+    task_id: str
+    step_id: str
+    step_attempt_id: str
+    contract_ref: str
+    policy_profile_ref: str
+    requested_action_classes: list[str] = field(default_factory=list)
+    required_decision_refs: list[str] = field(default_factory=list)
+    approval_route: str = "none"
+    witness_requirements: list[str] = field(default_factory=list)
+    proposed_grant_shape: dict[str, Any] = field(default_factory=dict)
+    downgrade_options: list[str] = field(default_factory=list)
+    current_gaps: list[str] = field(default_factory=list)
+    status: str = "draft"
+    estimated_authority_cost: float | None = None
+    expiry_constraints: dict[str, Any] = field(default_factory=dict)
+    revalidation_rules: dict[str, Any] = field(default_factory=dict)
+    operator_packet_ref: str | None = None
+    required_workspace_mode: str | None = None
+    required_secret_policy: str | None = None
+    proposed_lease_shape: dict[str, Any] = field(default_factory=dict)
+    created_at: float | None = None
+    updated_at: float | None = None
+
+
+@dataclass
+class ReconciliationRecord:
+    reconciliation_id: str
+    task_id: str
+    step_id: str
+    step_attempt_id: str
+    contract_ref: str
+    receipt_refs: list[str] = field(default_factory=list)
+    observed_output_refs: list[str] = field(default_factory=list)
+    intended_effect_summary: str = ""
+    authorized_effect_summary: str = ""
+    observed_effect_summary: str = ""
+    receipted_effect_summary: str = ""
+    result_class: str = "ambiguous"
+    confidence_delta: float = 0.0
+    recommended_resolution: str = ""
+    rollback_recommendation_ref: str | None = None
+    invalidated_belief_refs: list[str] = field(default_factory=list)
+    superseded_memory_refs: list[str] = field(default_factory=list)
+    promoted_template_ref: str | None = None
+    promoted_memory_refs: list[str] = field(default_factory=list)
+    operator_summary: str | None = None
+    final_state_witness_ref: str | None = None
+    created_at: float | None = None
 
 
 @dataclass

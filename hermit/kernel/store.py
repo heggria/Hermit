@@ -15,9 +15,10 @@ from hermit.kernel.store_records import KernelStoreRecordMixin
 from hermit.kernel.store_scheduler import KernelSchedulerStoreMixin
 from hermit.kernel.store_support import _canonical_json, _canonical_json_from_raw, _sha256_hex
 from hermit.kernel.store_tasks import KernelTaskStoreMixin
+from hermit.kernel.store_v2 import KernelV2StoreMixin
 
-_SCHEMA_VERSION = "6"
-_MIGRATABLE_SCHEMA_VERSIONS = {"5", _SCHEMA_VERSION}
+_SCHEMA_VERSION = "7"
+_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", _SCHEMA_VERSION}
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "conversation_projection_cache",
@@ -39,6 +40,10 @@ _KNOWN_KERNEL_TABLES = {
     "projection_cache",
     "schedule_specs",
     "schedule_history",
+    "execution_contracts",
+    "evidence_cases",
+    "authorization_plans",
+    "reconciliations",
 }
 
 
@@ -52,6 +57,7 @@ class KernelStore(
     KernelProjectionStoreMixin,
     KernelSchedulerStoreMixin,
     KernelStoreRecordMixin,
+    KernelV2StoreMixin,
 ):
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -221,10 +227,18 @@ class KernelStore(
                     action_request_ref TEXT,
                     policy_result_ref TEXT,
                     approval_packet_ref TEXT,
+                    execution_contract_ref TEXT,
+                    evidence_case_ref TEXT,
+                    authorization_plan_ref TEXT,
+                    reconciliation_ref TEXT,
                     pending_execution_ref TEXT,
                     idempotency_key TEXT,
                     executor_mode TEXT,
                     policy_version TEXT,
+                    contract_version INTEGER NOT NULL DEFAULT 0,
+                    reentry_boundary TEXT,
+                    reentry_reason TEXT,
+                    selected_contract_template_ref TEXT,
                     resume_from_ref TEXT,
                     superseded_by_step_attempt_id TEXT,
                     started_at REAL,
@@ -278,6 +292,10 @@ class KernelStore(
                     evidence_refs_json TEXT NOT NULL,
                     policy_ref TEXT,
                     approval_ref TEXT,
+                    contract_ref TEXT,
+                    authorization_plan_ref TEXT,
+                    evidence_case_ref TEXT,
+                    reconciliation_ref TEXT,
                     action_type TEXT,
                     risk_level TEXT,
                     reversible INTEGER,
@@ -333,6 +351,11 @@ class KernelStore(
                     requested_action_ref TEXT,
                     approval_packet_ref TEXT,
                     policy_result_ref TEXT,
+                    requested_contract_ref TEXT,
+                    authorization_plan_ref TEXT,
+                    evidence_case_ref TEXT,
+                    drift_expiry REAL,
+                    fallback_contract_refs_json TEXT NOT NULL DEFAULT '[]',
                     decision_ref TEXT,
                     state_witness_ref TEXT,
                     requested_at REAL NOT NULL,
@@ -361,6 +384,8 @@ class KernelStore(
                     policy_ref TEXT,
                     action_request_ref TEXT,
                     policy_result_ref TEXT,
+                    contract_ref TEXT,
+                    authorization_plan_ref TEXT,
                     witness_ref TEXT,
                     idempotency_key TEXT,
                     receipt_bundle_ref TEXT,
@@ -368,6 +393,107 @@ class KernelStore(
                     verifiability TEXT,
                     signature TEXT,
                     signer_ref TEXT,
+                    observed_effect_summary TEXT,
+                    reconciliation_required INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS execution_contracts (
+                    contract_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    step_attempt_id TEXT NOT NULL,
+                    objective TEXT NOT NULL,
+                    proposed_action_refs_json TEXT NOT NULL,
+                    expected_effects_json TEXT NOT NULL,
+                    success_criteria_json TEXT NOT NULL,
+                    evidence_case_ref TEXT,
+                    authorization_plan_ref TEXT,
+                    reversibility_class TEXT NOT NULL,
+                    required_receipt_classes_json TEXT NOT NULL,
+                    drift_budget_json TEXT NOT NULL,
+                    expiry_at REAL,
+                    status TEXT NOT NULL,
+                    fallback_contract_refs_json TEXT NOT NULL,
+                    operator_summary TEXT,
+                    risk_budget_json TEXT NOT NULL,
+                    expected_artifact_shape_json TEXT NOT NULL,
+                    contract_version INTEGER NOT NULL DEFAULT 1,
+                    action_contract_refs_json TEXT NOT NULL,
+                    state_witness_ref TEXT,
+                    rollback_expectation TEXT,
+                    selected_template_ref TEXT,
+                    superseded_by_contract_id TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS evidence_cases (
+                    evidence_case_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    subject_kind TEXT NOT NULL,
+                    subject_ref TEXT NOT NULL,
+                    support_refs_json TEXT NOT NULL,
+                    contradiction_refs_json TEXT NOT NULL,
+                    freshness_window_json TEXT NOT NULL,
+                    sufficiency_score REAL NOT NULL,
+                    drift_sensitivity TEXT NOT NULL,
+                    unresolved_gaps_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    witness_refs_json TEXT NOT NULL,
+                    invalidates_refs_json TEXT NOT NULL,
+                    last_checked_at REAL,
+                    confidence_interval_json TEXT NOT NULL,
+                    freshness_basis TEXT,
+                    operator_summary TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS authorization_plans (
+                    authorization_plan_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    step_attempt_id TEXT NOT NULL,
+                    contract_ref TEXT NOT NULL,
+                    policy_profile_ref TEXT NOT NULL,
+                    requested_action_classes_json TEXT NOT NULL,
+                    required_decision_refs_json TEXT NOT NULL,
+                    approval_route TEXT NOT NULL,
+                    witness_requirements_json TEXT NOT NULL,
+                    proposed_grant_shape_json TEXT NOT NULL,
+                    downgrade_options_json TEXT NOT NULL,
+                    current_gaps_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    estimated_authority_cost REAL,
+                    expiry_constraints_json TEXT NOT NULL,
+                    revalidation_rules_json TEXT NOT NULL,
+                    operator_packet_ref TEXT,
+                    required_workspace_mode TEXT,
+                    required_secret_policy TEXT,
+                    proposed_lease_shape_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS reconciliations (
+                    reconciliation_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    step_attempt_id TEXT NOT NULL,
+                    contract_ref TEXT NOT NULL,
+                    receipt_refs_json TEXT NOT NULL,
+                    observed_output_refs_json TEXT NOT NULL,
+                    intended_effect_summary TEXT NOT NULL,
+                    authorized_effect_summary TEXT NOT NULL,
+                    observed_effect_summary TEXT NOT NULL,
+                    receipted_effect_summary TEXT NOT NULL,
+                    result_class TEXT NOT NULL,
+                    confidence_delta REAL NOT NULL,
+                    recommended_resolution TEXT NOT NULL,
+                    rollback_recommendation_ref TEXT,
+                    invalidated_belief_refs_json TEXT NOT NULL,
+                    superseded_memory_refs_json TEXT NOT NULL,
+                    promoted_template_ref TEXT,
+                    promoted_memory_refs_json TEXT NOT NULL,
+                    operator_summary TEXT,
+                    final_state_witness_ref TEXT,
                     created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS beliefs (
@@ -382,8 +508,14 @@ class KernelStore(
                     confidence REAL NOT NULL,
                     trust_tier TEXT NOT NULL,
                     evidence_refs_json TEXT NOT NULL,
+                    evidence_case_ref TEXT,
                     supersedes_json TEXT NOT NULL,
                     contradicts_json TEXT NOT NULL,
+                    epistemic_origin TEXT NOT NULL DEFAULT 'observed',
+                    freshness_class TEXT,
+                    last_validated_at REAL,
+                    validation_basis TEXT,
+                    supersession_reason TEXT,
                     memory_ref TEXT,
                     invalidated_at REAL,
                     created_at REAL NOT NULL,
@@ -399,6 +531,11 @@ class KernelStore(
                     confidence REAL NOT NULL,
                     trust_tier TEXT NOT NULL,
                     evidence_refs_json TEXT NOT NULL,
+                    memory_kind TEXT NOT NULL DEFAULT 'durable_fact',
+                    validation_basis TEXT,
+                    last_validated_at REAL,
+                    supersession_reason TEXT,
+                    learned_from_reconciliation_ref TEXT,
                     supersedes_json TEXT NOT NULL,
                     source_belief_ref TEXT,
                     invalidated_at REAL,
@@ -472,6 +609,10 @@ class KernelStore(
                 CREATE INDEX IF NOT EXISTS idx_beliefs_scope ON beliefs(scope_kind, scope_ref, status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_records_status ON memory_records(status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_rollbacks_receipt ON rollbacks(receipt_ref, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_execution_contracts_attempt ON execution_contracts(step_attempt_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_evidence_cases_subject ON evidence_cases(subject_kind, subject_ref, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_authorization_plans_attempt ON authorization_plans(step_attempt_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_reconciliations_attempt ON reconciliations(step_attempt_id, created_at DESC);
                 """
             )
             self._ensure_column("receipts", "receipt_bundle_ref", "TEXT")
@@ -524,6 +665,14 @@ class KernelStore(
             self._ensure_column("step_attempts", "working_state_ref", "TEXT")
             self._ensure_column("step_attempts", "environment_ref", "TEXT")
             self._ensure_column("step_attempts", "action_request_ref", "TEXT")
+            self._ensure_column("step_attempts", "execution_contract_ref", "TEXT")
+            self._ensure_column("step_attempts", "evidence_case_ref", "TEXT")
+            self._ensure_column("step_attempts", "authorization_plan_ref", "TEXT")
+            self._ensure_column("step_attempts", "reconciliation_ref", "TEXT")
+            self._ensure_column("step_attempts", "contract_version", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column("step_attempts", "reentry_boundary", "TEXT")
+            self._ensure_column("step_attempts", "reentry_reason", "TEXT")
+            self._ensure_column("step_attempts", "selected_contract_template_ref", "TEXT")
             self._ensure_column("schedule_history", "delivery_status", "TEXT")
             self._ensure_column("schedule_history", "delivery_channel", "TEXT")
             self._ensure_column("schedule_history", "delivery_mode", "TEXT")
@@ -546,15 +695,43 @@ class KernelStore(
             self._ensure_column("decisions", "rationale", "TEXT")
             self._ensure_column("decisions", "risk_level", "TEXT")
             self._ensure_column("decisions", "reversible", "INTEGER")
+            self._ensure_column("decisions", "contract_ref", "TEXT")
+            self._ensure_column("decisions", "authorization_plan_ref", "TEXT")
+            self._ensure_column("decisions", "evidence_case_ref", "TEXT")
+            self._ensure_column("decisions", "reconciliation_ref", "TEXT")
             self._ensure_column("approvals", "requested_action_ref", "TEXT")
             self._ensure_column("approvals", "approval_packet_ref", "TEXT")
             self._ensure_column("approvals", "policy_result_ref", "TEXT")
+            self._ensure_column("approvals", "requested_contract_ref", "TEXT")
+            self._ensure_column("approvals", "authorization_plan_ref", "TEXT")
+            self._ensure_column("approvals", "evidence_case_ref", "TEXT")
+            self._ensure_column("approvals", "drift_expiry", "REAL")
+            self._ensure_column(
+                "approvals", "fallback_contract_refs_json", "TEXT NOT NULL DEFAULT '[]'"
+            )
             self._ensure_column("approvals", "expires_at", "REAL")
             self._ensure_column("receipts", "receipt_class", "TEXT")
             self._ensure_column("receipts", "action_request_ref", "TEXT")
             self._ensure_column("receipts", "policy_result_ref", "TEXT")
+            self._ensure_column("receipts", "contract_ref", "TEXT")
+            self._ensure_column("receipts", "authorization_plan_ref", "TEXT")
+            self._ensure_column("receipts", "observed_effect_summary", "TEXT")
+            self._ensure_column("receipts", "reconciliation_required", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column("receipts", "verifiability", "TEXT")
             self._ensure_column("receipts", "signer_ref", "TEXT")
+            self._ensure_column("beliefs", "evidence_case_ref", "TEXT")
+            self._ensure_column("beliefs", "epistemic_origin", "TEXT NOT NULL DEFAULT 'observed'")
+            self._ensure_column("beliefs", "freshness_class", "TEXT")
+            self._ensure_column("beliefs", "last_validated_at", "REAL")
+            self._ensure_column("beliefs", "validation_basis", "TEXT")
+            self._ensure_column("beliefs", "supersession_reason", "TEXT")
+            self._ensure_column(
+                "memory_records", "memory_kind", "TEXT NOT NULL DEFAULT 'durable_fact'"
+            )
+            self._ensure_column("memory_records", "validation_basis", "TEXT")
+            self._ensure_column("memory_records", "last_validated_at", "REAL")
+            self._ensure_column("memory_records", "supersession_reason", "TEXT")
+            self._ensure_column("memory_records", "learned_from_reconciliation_ref", "TEXT")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue ON step_attempts(status, queue_priority DESC, started_at ASC)"
             )

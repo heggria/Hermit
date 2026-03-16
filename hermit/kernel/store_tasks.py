@@ -372,6 +372,7 @@ class KernelTaskStoreMixin:
         *,
         status: str | None = None,
         output_ref: str | None = None,
+        contract_ref: str | None | object = _UNSET,
         finished_at: float | None = None,
     ) -> None:
         now = time.time()
@@ -381,6 +382,7 @@ class KernelTaskStoreMixin:
         values = {
             "status": status or step.status,
             "output_ref": output_ref if output_ref is not None else step.output_ref,
+            "contract_ref": step.contract_ref if contract_ref is _UNSET else contract_ref,
             "finished_at": finished_at if finished_at is not None else step.finished_at,
             "updated_at": now,
         }
@@ -388,12 +390,13 @@ class KernelTaskStoreMixin:
             self._conn.execute(
                 """
                 UPDATE steps
-                SET status = ?, output_ref = ?, finished_at = ?, updated_at = ?
+                SET status = ?, output_ref = ?, contract_ref = ?, finished_at = ?, updated_at = ?
                 WHERE step_id = ?
                 """,
                 (
                     values["status"],
                     values["output_ref"],
+                    values["contract_ref"],
                     values["finished_at"],
                     values["updated_at"],
                     step_id,
@@ -416,7 +419,7 @@ class KernelTaskStoreMixin:
                     "kind": step.kind,
                     "attempt": step.attempt,
                     "title": step.title,
-                    "contract_ref": step.contract_ref,
+                    "contract_ref": values["contract_ref"],
                     "depends_on": list(step.depends_on),
                     "max_attempts": step.max_attempts,
                     **values,
@@ -438,10 +441,18 @@ class KernelTaskStoreMixin:
         action_request_ref: str | None = None,
         policy_result_ref: str | None = None,
         approval_packet_ref: str | None = None,
+        execution_contract_ref: str | None = None,
+        evidence_case_ref: str | None = None,
+        authorization_plan_ref: str | None = None,
+        reconciliation_ref: str | None = None,
         pending_execution_ref: str | None = None,
         idempotency_key: str | None = None,
         executor_mode: str | None = None,
         policy_version: str | None = None,
+        contract_version: int = 0,
+        reentry_boundary: str | None = None,
+        reentry_reason: str | None = None,
+        selected_contract_template_ref: str | None = None,
         resume_from_ref: str | None = None,
     ) -> StepAttemptRecord:
         now = time.time()
@@ -452,9 +463,12 @@ class KernelTaskStoreMixin:
                 INSERT INTO step_attempts (
                     step_attempt_id, task_id, step_id, attempt, status, context_json,
                     queue_priority, context_pack_ref, working_state_ref, environment_ref,
-                    action_request_ref, policy_result_ref, approval_packet_ref, pending_execution_ref, idempotency_key,
-                    executor_mode, policy_version, resume_from_ref, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    action_request_ref, policy_result_ref, approval_packet_ref,
+                    execution_contract_ref, evidence_case_ref, authorization_plan_ref, reconciliation_ref,
+                    pending_execution_ref, idempotency_key,
+                    executor_mode, policy_version, contract_version, reentry_boundary, reentry_reason,
+                    selected_contract_template_ref, resume_from_ref, started_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_attempt_id,
@@ -470,10 +484,18 @@ class KernelTaskStoreMixin:
                     action_request_ref,
                     policy_result_ref,
                     approval_packet_ref,
+                    execution_contract_ref,
+                    evidence_case_ref,
+                    authorization_plan_ref,
+                    reconciliation_ref,
                     pending_execution_ref,
                     idempotency_key,
                     executor_mode,
                     policy_version,
+                    int(contract_version),
+                    reentry_boundary,
+                    reentry_reason,
+                    selected_contract_template_ref,
                     resume_from_ref,
                     now,
                 ),
@@ -505,10 +527,18 @@ class KernelTaskStoreMixin:
                     "action_request_ref": action_request_ref,
                     "policy_result_ref": policy_result_ref,
                     "approval_packet_ref": approval_packet_ref,
+                    "execution_contract_ref": execution_contract_ref,
+                    "evidence_case_ref": evidence_case_ref,
+                    "authorization_plan_ref": authorization_plan_ref,
+                    "reconciliation_ref": reconciliation_ref,
                     "pending_execution_ref": pending_execution_ref,
                     "idempotency_key": idempotency_key,
                     "executor_mode": executor_mode,
                     "policy_version": policy_version,
+                    "contract_version": int(contract_version),
+                    "reentry_boundary": reentry_boundary,
+                    "reentry_reason": reentry_reason,
+                    "selected_contract_template_ref": selected_contract_template_ref,
                     "resume_from_ref": resume_from_ref,
                     "superseded_by_step_attempt_id": None,
                     "started_at": now,
@@ -627,10 +657,18 @@ class KernelTaskStoreMixin:
         action_request_ref: str | None | object = _UNSET,
         policy_result_ref: str | None | object = _UNSET,
         approval_packet_ref: str | None | object = _UNSET,
+        execution_contract_ref: str | None | object = _UNSET,
+        evidence_case_ref: str | None | object = _UNSET,
+        authorization_plan_ref: str | None | object = _UNSET,
+        reconciliation_ref: str | None | object = _UNSET,
         pending_execution_ref: str | None | object = _UNSET,
         idempotency_key: str | None | object = _UNSET,
         executor_mode: str | None | object = _UNSET,
         policy_version: str | None | object = _UNSET,
+        contract_version: int | object = _UNSET,
+        reentry_boundary: str | None | object = _UNSET,
+        reentry_reason: str | None | object = _UNSET,
+        selected_contract_template_ref: str | None | object = _UNSET,
         resume_from_ref: str | None | object = _UNSET,
         superseded_by_step_attempt_id: str | None | object = _UNSET,
         finished_at: float | None | object = _UNSET,
@@ -679,6 +717,22 @@ class KernelTaskStoreMixin:
                 if approval_packet_ref is _UNSET
                 else approval_packet_ref
             ),
+            "execution_contract_ref": (
+                attempt.execution_contract_ref
+                if execution_contract_ref is _UNSET
+                else execution_contract_ref
+            ),
+            "evidence_case_ref": (
+                attempt.evidence_case_ref if evidence_case_ref is _UNSET else evidence_case_ref
+            ),
+            "authorization_plan_ref": (
+                attempt.authorization_plan_ref
+                if authorization_plan_ref is _UNSET
+                else authorization_plan_ref
+            ),
+            "reconciliation_ref": (
+                attempt.reconciliation_ref if reconciliation_ref is _UNSET else reconciliation_ref
+            ),
             "pending_execution_ref": (
                 attempt.pending_execution_ref
                 if pending_execution_ref is _UNSET
@@ -690,6 +744,20 @@ class KernelTaskStoreMixin:
             "executor_mode": (attempt.executor_mode if executor_mode is _UNSET else executor_mode),
             "policy_version": (
                 attempt.policy_version if policy_version is _UNSET else policy_version
+            ),
+            "contract_version": (
+                attempt.contract_version if contract_version is _UNSET else int(contract_version)
+            ),
+            "reentry_boundary": (
+                attempt.reentry_boundary if reentry_boundary is _UNSET else reentry_boundary
+            ),
+            "reentry_reason": (
+                attempt.reentry_reason if reentry_reason is _UNSET else reentry_reason
+            ),
+            "selected_contract_template_ref": (
+                attempt.selected_contract_template_ref
+                if selected_contract_template_ref is _UNSET
+                else selected_contract_template_ref
             ),
             "resume_from_ref": (
                 attempt.resume_from_ref if resume_from_ref is _UNSET else resume_from_ref
@@ -705,7 +773,7 @@ class KernelTaskStoreMixin:
             self._conn.execute(
                 """
                 UPDATE step_attempts
-                SET status = ?, context_json = ?, queue_priority = ?, waiting_reason = ?, approval_id = ?, decision_id = ?, capability_grant_id = ?, workspace_lease_id = ?, state_witness_ref = ?, context_pack_ref = ?, working_state_ref = ?, environment_ref = ?, action_request_ref = ?, policy_result_ref = ?, approval_packet_ref = ?, pending_execution_ref = ?, idempotency_key = ?, executor_mode = ?, policy_version = ?, resume_from_ref = ?, superseded_by_step_attempt_id = ?, finished_at = ?
+                SET status = ?, context_json = ?, queue_priority = ?, waiting_reason = ?, approval_id = ?, decision_id = ?, capability_grant_id = ?, workspace_lease_id = ?, state_witness_ref = ?, context_pack_ref = ?, working_state_ref = ?, environment_ref = ?, action_request_ref = ?, policy_result_ref = ?, approval_packet_ref = ?, execution_contract_ref = ?, evidence_case_ref = ?, authorization_plan_ref = ?, reconciliation_ref = ?, pending_execution_ref = ?, idempotency_key = ?, executor_mode = ?, policy_version = ?, contract_version = ?, reentry_boundary = ?, reentry_reason = ?, selected_contract_template_ref = ?, resume_from_ref = ?, superseded_by_step_attempt_id = ?, finished_at = ?
                 WHERE step_attempt_id = ?
                 """,
                 (
@@ -726,10 +794,18 @@ class KernelTaskStoreMixin:
                     payload["action_request_ref"],
                     payload["policy_result_ref"],
                     payload["approval_packet_ref"],
+                    payload["execution_contract_ref"],
+                    payload["evidence_case_ref"],
+                    payload["authorization_plan_ref"],
+                    payload["reconciliation_ref"],
                     payload["pending_execution_ref"],
                     payload["idempotency_key"],
                     payload["executor_mode"],
                     payload["policy_version"],
+                    payload["contract_version"],
+                    payload["reentry_boundary"],
+                    payload["reentry_reason"],
+                    payload["selected_contract_template_ref"],
                     payload["resume_from_ref"],
                     payload["superseded_by_step_attempt_id"],
                     payload["finished_at"],

@@ -106,12 +106,36 @@ class ProofService:
         decisions = self.store.list_decisions(task_id=task_id, limit=20)
         grants = self.store.list_capability_grants(task_id=task_id, limit=20)
         leases = self.store.list_workspace_leases(task_id=task_id, limit=20)
+        contracts = (
+            self.store.list_execution_contracts(task_id=task_id, limit=20)
+            if hasattr(self.store, "list_execution_contracts")
+            else []
+        )
+        evidence_cases = (
+            self.store.list_evidence_cases(task_id=task_id, limit=20)
+            if hasattr(self.store, "list_evidence_cases")
+            else []
+        )
+        authorization_plans = (
+            self.store.list_authorization_plans(task_id=task_id, limit=20)
+            if hasattr(self.store, "list_authorization_plans")
+            else []
+        )
+        reconciliations = (
+            self.store.list_reconciliations(task_id=task_id, limit=20)
+            if hasattr(self.store, "list_reconciliations")
+            else []
+        )
         verification = self.verify_task_chain(task_id)
         projection = self.store.build_task_projection(task_id)
         latest_receipt = receipts[0] if receipts else None
         latest_decision = decisions[0] if decisions else None
         latest_grant = grants[0] if grants else None
         latest_lease = leases[0] if leases else None
+        latest_contract = contracts[0] if contracts else None
+        latest_evidence_case = evidence_cases[0] if evidence_cases else None
+        latest_authorization_plan = authorization_plans[0] if authorization_plans else None
+        latest_reconciliation = reconciliations[0] if reconciliations else None
         missing_receipt_bundles = [
             receipt.receipt_id
             for receipt in receipts
@@ -133,6 +157,18 @@ class ProofService:
             "latest_capability_grant": latest_grant.__dict__ if latest_grant is not None else None,
             "latest_workspace_lease": latest_lease.__dict__ if latest_lease is not None else None,
             "latest_receipt": latest_receipt.__dict__ if latest_receipt is not None else None,
+            "latest_execution_contract": latest_contract.__dict__
+            if latest_contract is not None
+            else None,
+            "latest_evidence_case": latest_evidence_case.__dict__
+            if latest_evidence_case is not None
+            else None,
+            "latest_authorization_plan": latest_authorization_plan.__dict__
+            if latest_authorization_plan is not None
+            else None,
+            "latest_reconciliation": latest_reconciliation.__dict__
+            if latest_reconciliation is not None
+            else None,
             "projection": {
                 "events_processed": projection["events_processed"],
                 "last_event_seq": projection["last_event_seq"],
@@ -143,6 +179,10 @@ class ProofService:
                 "capability_grant_count": len(projection["capability_grants"]),
                 "workspace_lease_count": len(projection["workspace_leases"]),
                 "receipt_count": len(projection["receipts"]),
+                "execution_contract_count": len(projection["execution_contracts"]),
+                "evidence_case_count": len(projection["evidence_cases"]),
+                "authorization_plan_count": len(projection["authorization_plans"]),
+                "reconciliation_count": len(projection["reconciliations"]),
             },
         }
 
@@ -205,6 +245,26 @@ class ProofService:
         context_manifests = [
             self._load_artifact_payload(ref_id) for ref_id in context_manifest_refs
         ]
+        contracts = (
+            self.store.list_execution_contracts(task_id=task_id, limit=500)
+            if hasattr(self.store, "list_execution_contracts")
+            else []
+        )
+        evidence_cases = (
+            self.store.list_evidence_cases(task_id=task_id, limit=500)
+            if hasattr(self.store, "list_evidence_cases")
+            else []
+        )
+        authorization_plans = (
+            self.store.list_authorization_plans(task_id=task_id, limit=500)
+            if hasattr(self.store, "list_authorization_plans")
+            else []
+        )
+        reconciliations = (
+            self.store.list_reconciliations(task_id=task_id, limit=500)
+            if hasattr(self.store, "list_reconciliations")
+            else []
+        )
         verification = self.verify_task_chain(task_id)
         proof_payload = {
             "task_id": task_id,
@@ -238,6 +298,16 @@ class ProofService:
             "workspace_leases": [
                 lease.__dict__ for lease in self._workspace_leases_for_receipts(receipts)
             ],
+            "execution_contract_refs": [record.contract_id for record in contracts],
+            "evidence_case_refs": [record.evidence_case_id for record in evidence_cases],
+            "authorization_plan_refs": [
+                record.authorization_plan_id for record in authorization_plans
+            ],
+            "reconciliation_refs": [record.reconciliation_id for record in reconciliations],
+            "execution_contracts": [record.__dict__ for record in contracts],
+            "evidence_cases": [record.__dict__ for record in evidence_cases],
+            "authorization_plans": [record.__dict__ for record in authorization_plans],
+            "reconciliations": [record.__dict__ for record in reconciliations],
             "artifact_hash_index": self._artifact_hash_index(
                 task_id, receipts, receipt_bundle_refs, context_manifest_refs
             ),

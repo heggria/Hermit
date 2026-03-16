@@ -28,6 +28,10 @@ class BeliefService:
         trust_tier: str = "observed",
         supersedes: list[str] | None = None,
         contradicts: list[str] | None = None,
+        evidence_case_ref: str | None = None,
+        epistemic_origin: str = "observation",
+        freshness_class: str | None = None,
+        validation_basis: str | None = None,
     ) -> BeliefRecord:
         return self.store.create_belief(
             task_id=task_id,
@@ -41,6 +45,11 @@ class BeliefService:
             evidence_refs=evidence_refs,
             supersedes=supersedes,
             contradicts=contradicts,
+            evidence_case_ref=evidence_case_ref,
+            epistemic_origin=epistemic_origin,
+            freshness_class=freshness_class,
+            validation_basis=validation_basis,
+            last_validated_at=time.time() if validation_basis else None,
         )
 
     def supersede(self, belief_id: str, superseded_contents: list[str]) -> None:
@@ -65,7 +74,18 @@ class MemoryRecordService:
         belief: BeliefRecord,
         conversation_id: str | None,
         workspace_root: str = "",
-    ) -> MemoryRecord:
+        reconciliation_ref: str | None = None,
+    ) -> MemoryRecord | None:
+        resolved_reconciliation_ref = reconciliation_ref or self._eligible_reconciliation_ref(
+            belief.task_id
+        )
+        if resolved_reconciliation_ref is None:
+            self.store.update_belief(
+                belief.belief_id,
+                promotion_candidate=False,
+                validation_basis="promotion_blocked:reconciliation_missing",
+            )
+            return None
         classification = self.governance.classify_belief(belief, workspace_root=workspace_root)
         existing = self.store.list_memory_records(status="active", limit=500)
         duplicate_record, superseded_records = self.governance.find_superseded_records(
@@ -75,6 +95,13 @@ class MemoryRecordService:
             entry_from_record=self._entry_from_memory,
         )
         if duplicate_record is not None:
+            self.store.update_belief(
+                belief.belief_id,
+                memory_ref=duplicate_record.memory_id,
+                promotion_candidate=False,
+                validation_basis=f"reconciliation:{resolved_reconciliation_ref}",
+                last_validated_at=time.time(),
+            )
             return duplicate_record
         supersedes = [record.claim_text for record in superseded_records]
         memory = self.store.create_memory_record(
@@ -98,11 +125,19 @@ class MemoryRecordService:
             supersedes_memory_ids=[record.memory_id for record in superseded_records],
             source_belief_ref=belief.belief_id,
             expires_at=classification.expires_at,
+            memory_kind="contract_template"
+            if classification.category == "contract_template"
+            else "durable_fact",
+            validation_basis=f"reconciliation:{resolved_reconciliation_ref}",
+            last_validated_at=time.time(),
+            learned_from_reconciliation_ref=resolved_reconciliation_ref,
         )
         self.store.update_belief(
             belief.belief_id,
             memory_ref=memory.memory_id,
             promotion_candidate=False,
+            validation_basis=f"reconciliation:{resolved_reconciliation_ref}",
+            last_validated_at=time.time(),
         )
         for record in superseded_records:
             self.store.update_memory_record(
@@ -112,6 +147,7 @@ class MemoryRecordService:
                 superseded_by_memory_id=memory.memory_id,
                 invalidation_reason="superseded",
                 invalidated_at=time.time(),
+                supersession_reason=f"reconciliation:{resolved_reconciliation_ref}",
             )
         return memory
 
@@ -203,3 +239,11 @@ class MemoryRecordService:
             scope_ref=record.scope_ref,
             retention_class=record.retention_class,
         )
+
+    def _eligible_reconciliation_ref(self, task_id: str) -> str | None:
+        if not hasattr(self.store, "list_reconciliations"):
+            return None
+        for reconciliation in self.store.list_reconciliations(task_id=task_id, limit=50):
+            if str(reconciliation.result_class or "") == "satisfied":
+                return reconciliation.reconciliation_id
+        return None

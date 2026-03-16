@@ -645,6 +645,7 @@ def _promote_memories_via_kernel(
             controller.finalize_result(ctx, status="failed")
             return False
 
+        belief_records = []
         promoted_beliefs = []
         promoted_memories = []
         for entry in new_entries:
@@ -658,28 +659,10 @@ def _promote_memories_via_kernel(
                 confidence=entry.confidence,
                 evidence_refs=[transcript_ref, extraction_ref, action_ref],
                 supersedes=list(entry.supersedes),
+                validation_basis="memory_hook_extraction",
             )
-            memory = memory_service.promote_from_belief(
-                belief=belief,
-                conversation_id=ctx.conversation_id,
-                workspace_root=str(Path(settings.memory_file).parent),
-            )
+            belief_records.append(belief)
             promoted_beliefs.append(belief.belief_id)
-            promoted_memories.append(memory.memory_id)
-        memory_service.export_mirror(Path(settings.memory_file))
-
-        rollback_ref = _store_memory_artifact(
-            store,
-            artifact_store,
-            task_id=ctx.task_id,
-            step_id=ctx.step_id,
-            kind="rollback.memory_targets",
-            payload={"belief_ids": promoted_beliefs, "memory_ids": promoted_memories},
-            metadata={"mode": mode, "entry_count": len(promoted_memories)},
-            event_type="memory.rollback_captured",
-            entity_id=ctx.step_attempt_id,
-            task_context=ctx,
-        )
 
         output_ref = _store_memory_artifact(
             store,
@@ -710,7 +693,7 @@ def _promote_memories_via_kernel(
             entity_id=ctx.step_attempt_id,
             task_context=ctx,
         )
-        receipt_service.issue(
+        receipt_id = receipt_service.issue(
             task_id=ctx.task_id,
             step_id=ctx.step_id,
             step_attempt_id=ctx.step_attempt_id,
@@ -727,6 +710,70 @@ def _promote_memories_via_kernel(
             workspace_lease_ref=workspace_lease.lease_id,
             policy_ref=policy_ref,
             idempotency_key=request_id,
+            rollback_supported=False,
+            rollback_strategy="supersede_or_invalidate",
+            observed_effect_summary=f"Prepared {len(new_entries)} durable memory candidate(s).",
+            reconciliation_required=True,
+        )
+        reconciliation = store.create_reconciliation(
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            step_attempt_id=ctx.step_attempt_id,
+            contract_ref=f"memory_write:{ctx.step_attempt_id}",
+            receipt_refs=[receipt_id],
+            observed_output_refs=[output_ref],
+            intended_effect_summary=f"Promote {len(new_entries)} durable memory candidate(s).",
+            authorized_effect_summary=f"Promote {len(new_entries)} durable memory candidate(s).",
+            observed_effect_summary=f"Prepared {len(new_entries)} durable memory candidate(s).",
+            receipted_effect_summary=f"Promoted {len(new_entries)} durable memory entries via {mode}.",
+            result_class="satisfied",
+            confidence_delta=0.2,
+            recommended_resolution="promote_learning",
+            operator_summary=f"satisfied: durable memory promotion via {mode}",
+        )
+        store.update_step_attempt(
+            ctx.step_attempt_id,
+            reconciliation_ref=reconciliation.reconciliation_id,
+        )
+        store.append_event(
+            event_type="reconciliation.closed",
+            entity_type="step_attempt",
+            entity_id=ctx.step_attempt_id,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            actor="kernel",
+            payload={
+                "reconciliation_ref": reconciliation.reconciliation_id,
+                "receipt_ref": receipt_id,
+                "result_class": reconciliation.result_class,
+            },
+        )
+        for belief in belief_records:
+            memory = memory_service.promote_from_belief(
+                belief=belief,
+                conversation_id=ctx.conversation_id,
+                workspace_root=str(Path(settings.memory_file).parent),
+                reconciliation_ref=reconciliation.reconciliation_id,
+            )
+            if memory is not None:
+                promoted_memories.append(memory.memory_id)
+        if promoted_memories:
+            memory_service.export_mirror(Path(settings.memory_file))
+
+        rollback_ref = _store_memory_artifact(
+            store,
+            artifact_store,
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            kind="rollback.memory_targets",
+            payload={"belief_ids": promoted_beliefs, "memory_ids": promoted_memories},
+            metadata={"mode": mode, "entry_count": len(promoted_memories)},
+            event_type="memory.rollback_captured",
+            entity_id=ctx.step_attempt_id,
+            task_context=ctx,
+        )
+        store.update_receipt_rollback_fields(
+            receipt_id,
             rollback_supported=True,
             rollback_strategy="supersede_or_invalidate",
             rollback_artifact_refs=[rollback_ref],

@@ -45,7 +45,9 @@ class ApprovalCopyService:
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=resolve_locale(self._locale), default=default, **kwargs)
 
-    def build_canonical_copy(self, requested_action: dict[str, Any], approval_id: str | None = None) -> dict[str, Any]:
+    def build_canonical_copy(
+        self, requested_action: dict[str, Any], approval_id: str | None = None
+    ) -> dict[str, Any]:
         copy = self.describe(requested_action, approval_id=approval_id)
         payload: dict[str, Any] = {
             "title": copy.title,
@@ -62,7 +64,9 @@ class ApprovalCopyService:
             ]
         return payload
 
-    def describe(self, requested_action: dict[str, Any], approval_id: str | None = None) -> ApprovalCopy:
+    def describe(
+        self, requested_action: dict[str, Any], approval_id: str | None = None
+    ) -> ApprovalCopy:
         facts = self._facts(requested_action, approval_id=approval_id)
         display_copy = dict(requested_action.get("display_copy", {}) or {})
         if display_copy:
@@ -74,7 +78,9 @@ class ApprovalCopyService:
             return self._ensure_sections(formatted, facts)
         return self._template_copy(facts)
 
-    def resolve_copy(self, requested_action: dict[str, Any], approval_id: str | None = None) -> ApprovalCopy:
+    def resolve_copy(
+        self, requested_action: dict[str, Any], approval_id: str | None = None
+    ) -> ApprovalCopy:
         return self.describe(requested_action, approval_id=approval_id)
 
     def blocked_message(self, requested_action: dict[str, Any], approval_id: str) -> str:
@@ -157,13 +163,18 @@ class ApprovalCopyService:
             sections=sections,
         )
 
-    def _facts(self, requested_action: dict[str, Any], *, approval_id: str | None) -> dict[str, Any]:
+    def _facts(
+        self, requested_action: dict[str, Any], *, approval_id: str | None
+    ) -> dict[str, Any]:
         packet = dict(requested_action.get("approval_packet", {}) or {})
+        contract_packet = dict(requested_action.get("contract_packet", {}) or {})
         target_paths = [str(path) for path in requested_action.get("target_paths", [])]
         network_hosts = [str(host) for host in requested_action.get("network_hosts", [])]
         command_preview = str(requested_action.get("command_preview", "") or "").strip()
         tool_name = str(requested_action.get("tool_name", "") or "").strip()
-        risk_level = str(requested_action.get("risk_level", "") or packet.get("risk_level", "") or "high")
+        risk_level = str(
+            requested_action.get("risk_level", "") or packet.get("risk_level", "") or "high"
+        )
         tool_input = requested_action.get("tool_input")
         return {
             "approval_id": approval_id or "",
@@ -177,8 +188,16 @@ class ApprovalCopyService:
             "target_paths": target_paths,
             "network_hosts": network_hosts,
             "command_preview": command_preview,
-            "resource_scopes": [str(scope) for scope in requested_action.get("resource_scopes", [])],
+            "resource_scopes": [
+                str(scope) for scope in requested_action.get("resource_scopes", [])
+            ],
             "outside_workspace": bool(requested_action.get("outside_workspace")),
+            "contract_packet": contract_packet,
+            "contract_ref": str(requested_action.get("contract_ref", "") or "").strip(),
+            "evidence_case_ref": str(requested_action.get("evidence_case_ref", "") or "").strip(),
+            "authorization_plan_ref": str(
+                requested_action.get("authorization_plan_ref", "") or ""
+            ).strip(),
         }
 
     def _template_copy(self, facts: dict[str, Any]) -> ApprovalCopy:
@@ -217,13 +236,17 @@ class ApprovalCopyService:
                 if any(token in path for token in (".env", "/.ssh/", "/.gnupg/", "/Library/")):
                     return ApprovalCopy(
                         title=self._t("kernel.approval.template.sensitive_file.title"),
-                        summary=self._t("kernel.approval.template.sensitive_file.summary", path=path),
+                        summary=self._t(
+                            "kernel.approval.template.sensitive_file.summary", path=path
+                        ),
                         detail=self._t("kernel.approval.template.sensitive_file.detail"),
                     )
                 if facts.get("outside_workspace"):
                     return ApprovalCopy(
                         title=self._t("kernel.approval.template.outside_workspace.title"),
-                        summary=self._t("kernel.approval.template.outside_workspace.summary", path=path),
+                        summary=self._t(
+                            "kernel.approval.template.outside_workspace.summary", path=path
+                        ),
                         detail=self._t("kernel.approval.template.outside_workspace.detail"),
                     )
                 return ApprovalCopy(
@@ -241,7 +264,9 @@ class ApprovalCopyService:
             if len(hosts) == 1:
                 summary = self._t("kernel.approval.template.network.summary.single", host=hosts[0])
             else:
-                summary = self._t("kernel.approval.template.network.summary.multiple", count=len(hosts))
+                summary = self._t(
+                    "kernel.approval.template.network.summary.multiple", count=len(hosts)
+                )
             return ApprovalCopy(
                 title=self._t("kernel.approval.template.network.title"),
                 summary=summary,
@@ -249,13 +274,16 @@ class ApprovalCopyService:
             )
 
         if packet_title:
-            summary = facts["packet_summary"] or self._t("kernel.approval.template.packet.summary_default")
+            summary = facts["packet_summary"] or self._t(
+                "kernel.approval.template.packet.summary_default"
+            )
             detail = self._t("kernel.approval.template.packet.detail", risk=risk)
             return ApprovalCopy(title=packet_title, summary=summary, detail=detail)
 
         summary = self._t(
             "kernel.approval.template.fallback.summary",
-            tool_name=facts["tool_name"] or self._t("kernel.approval.template.fallback.unknown_tool"),
+            tool_name=facts["tool_name"]
+            or self._t("kernel.approval.template.fallback.unknown_tool"),
         )
         detail = self._t("kernel.approval.template.fallback.detail", risk=risk)
         return ApprovalCopy(
@@ -266,25 +294,98 @@ class ApprovalCopyService:
 
     def _sections_for_facts(self, facts: dict[str, Any]) -> tuple[ApprovalSection, ...]:
         tool_name = str(facts.get("tool_name", "") or "").strip()
+        contract_sections = self._contract_sections(facts)
         if tool_name.startswith("schedule_"):
-            return self._scheduler_sections(facts)
-        return ()
+            return tuple(list(contract_sections) + list(self._scheduler_sections(facts)))
+        return contract_sections
+
+    def _contract_sections(self, facts: dict[str, Any]) -> tuple[ApprovalSection, ...]:
+        contract_packet = dict(facts.get("contract_packet", {}) or {})
+        if not contract_packet:
+            return ()
+        sections: list[ApprovalSection] = []
+
+        objective = str(contract_packet.get("objective", "") or "").strip()
+        expected_effects = [
+            str(effect).strip()
+            for effect in contract_packet.get("expected_effects", [])
+            if str(effect).strip()
+        ]
+        contract_items: list[str] = []
+        if objective:
+            contract_items.append(f"Objective: {objective}")
+        if expected_effects:
+            contract_items.append(f"Expected effects: {', '.join(expected_effects[:4])}")
+        rollback_expectation = str(contract_packet.get("rollback_expectation", "") or "").strip()
+        if rollback_expectation:
+            contract_items.append(f"Rollback expectation: {rollback_expectation}")
+        if contract_items:
+            sections.append(ApprovalSection(title="Contract", items=tuple(contract_items)))
+
+        evidence = dict(contract_packet.get("evidence_sufficiency", {}) or {})
+        evidence_items: list[str] = []
+        status = str(evidence.get("status", "") or "").strip()
+        score = evidence.get("score")
+        if status:
+            evidence_items.append(f"Sufficiency: {status}")
+        if score is not None:
+            evidence_items.append(
+                f"Score: {score:.2f}" if isinstance(score, (int, float)) else f"Score: {score}"
+            )
+        gaps = [
+            str(item).strip() for item in evidence.get("unresolved_gaps", []) if str(item).strip()
+        ]
+        if gaps:
+            evidence_items.append(f"Open gaps: {', '.join(gaps[:4])}")
+        if evidence_items:
+            sections.append(ApprovalSection(title="Evidence", items=tuple(evidence_items)))
+
+        authority_items: list[str] = []
+        approval_route = str(contract_packet.get("approval_route", "") or "").strip()
+        authority_scope = dict(contract_packet.get("authority_scope", {}) or {})
+        if approval_route:
+            authority_items.append(f"Approval route: {approval_route}")
+        resource_scope = authority_scope.get("resource_scope")
+        if isinstance(resource_scope, list) and resource_scope:
+            authority_items.append(
+                f"Authority scope: {', '.join(str(scope).strip() for scope in resource_scope[:4] if str(scope).strip())}"
+            )
+        current_gaps = [
+            str(item).strip()
+            for item in contract_packet.get("current_gaps", [])
+            if str(item).strip()
+        ]
+        if current_gaps:
+            authority_items.append(f"Revalidation gaps: {', '.join(current_gaps[:4])}")
+        drift_expiry = contract_packet.get("drift_expiry")
+        if drift_expiry:
+            authority_items.append(f"Drift expiry: {drift_expiry}")
+        if authority_items:
+            sections.append(ApprovalSection(title="Authority", items=tuple(authority_items)))
+
+        return tuple(sections)
 
     def _scheduler_copy(self, facts: dict[str, Any]) -> ApprovalCopy | None:
         tool_name = str(facts.get("tool_name", "") or "").strip()
         if tool_name == "schedule_create":
             tool_input = self._scheduler_input(facts)
-            name = str(tool_input.get("name", "")).strip() or self._t("kernel.approval.scheduler.item.name_unknown")
+            name = str(tool_input.get("name", "")).strip() or self._t(
+                "kernel.approval.scheduler.item.name_unknown"
+            )
             timing = self._describe_scheduler_timing(tool_input)
             return ApprovalCopy(
                 title=self._t("kernel.approval.scheduler.create.title"),
-                summary=self._t("kernel.approval.scheduler.create.summary", name=name, timing=timing),
+                summary=self._t(
+                    "kernel.approval.scheduler.create.summary", name=name, timing=timing
+                ),
                 detail=self._t("kernel.approval.scheduler.create.detail"),
                 sections=self._scheduler_sections(facts),
             )
         if tool_name == "schedule_update":
             tool_input = self._scheduler_input(facts)
-            job_id = str(tool_input.get("job_id", "")).strip() or self._t("kernel.approval.scheduler.item.job_unknown")
+            job_id = str(tool_input.get("job_id", "")).strip() or self._t(
+                "kernel.approval.scheduler.item.job_unknown"
+            )
             return ApprovalCopy(
                 title=self._t("kernel.approval.scheduler.update.title"),
                 summary=self._t("kernel.approval.scheduler.update.summary", job_id=job_id),
@@ -293,7 +394,9 @@ class ApprovalCopyService:
             )
         if tool_name == "schedule_delete":
             tool_input = self._scheduler_input(facts)
-            job_id = str(tool_input.get("job_id", "")).strip() or self._t("kernel.approval.scheduler.item.job_unknown")
+            job_id = str(tool_input.get("job_id", "")).strip() or self._t(
+                "kernel.approval.scheduler.item.job_unknown"
+            )
             return ApprovalCopy(
                 title=self._t("kernel.approval.scheduler.delete.title"),
                 summary=self._t("kernel.approval.scheduler.delete.summary", job_id=job_id),
@@ -333,7 +436,9 @@ class ApprovalCopyService:
                 detail_items.append(self._t("kernel.approval.scheduler.item.name_new", name=name))
             prompt = self._summarize_text(str(tool_input.get("prompt", "")).strip(), limit=120)
             if prompt:
-                detail_items.append(self._t("kernel.approval.scheduler.item.prompt_new", prompt=prompt))
+                detail_items.append(
+                    self._t("kernel.approval.scheduler.item.prompt_new", prompt=prompt)
+                )
             if "enabled" in tool_input:
                 detail_items.append(
                     self._t(

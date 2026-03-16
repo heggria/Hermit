@@ -528,15 +528,31 @@ def test_memory_services_support_duplicate_promotion_and_mirror_render(tmp_path:
             confidence=0.8,
             evidence_refs=[],
         )
+        reconciliation = store.create_reconciliation(
+            task_id="task-1",
+            step_id="step-1",
+            step_attempt_id="attempt-1",
+            contract_ref="contract-memory-1",
+            receipt_refs=[],
+            observed_output_refs=[],
+            intended_effect_summary="Promote durable memory.",
+            authorized_effect_summary="Promote durable memory.",
+            observed_effect_summary="Belief remained stable after reconciliation.",
+            receipted_effect_summary="Belief remained stable after reconciliation.",
+            result_class="satisfied",
+            recommended_resolution="promote_learning",
+        )
         promoted = memories.promote_from_belief(
             belief=belief,
             conversation_id="chat-1",
             workspace_root=str(tmp_path),
+            reconciliation_ref=reconciliation.reconciliation_id,
         )
         duplicate = memories.promote_from_belief(
             belief=belief,
             conversation_id="chat-1",
             workspace_root=str(tmp_path),
+            reconciliation_ref=reconciliation.reconciliation_id,
         )
         beliefs.supersede(belief.belief_id, ["旧约定"])
         beliefs.contradict(belief.belief_id, ["belief-2"])
@@ -592,5 +608,35 @@ def test_memory_record_service_reconcile_marks_duplicates(tmp_path: Path) -> Non
         assert refreshed_first is not None and refreshed_first.status == "active"
         assert refreshed_second is not None and refreshed_second.status == "invalidated"
         assert refreshed_second.superseded_by_memory_id == refreshed_first.memory_id
+    finally:
+        store.close()
+
+
+def test_memory_promotion_requires_satisfied_reconciliation(tmp_path: Path) -> None:
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        belief = BeliefService(store).record(
+            task_id="task-guarded",
+            conversation_id="chat-guarded",
+            scope_kind="conversation",
+            scope_ref="chat-guarded",
+            category="项目约定",
+            content="默认工作目录固定到 /repo",
+            confidence=0.8,
+            evidence_refs=[],
+        )
+        promoted = MemoryRecordService(store).promote_from_belief(
+            belief=belief,
+            conversation_id="chat-guarded",
+            workspace_root=str(tmp_path),
+        )
+
+        refreshed_belief = store.get_belief(belief.belief_id)
+
+        assert promoted is None
+        assert store.list_memory_records(limit=10) == []
+        assert refreshed_belief is not None
+        assert refreshed_belief.promotion_candidate is False
+        assert refreshed_belief.validation_basis == "promotion_blocked:reconciliation_missing"
     finally:
         store.close()

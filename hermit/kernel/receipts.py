@@ -34,6 +34,8 @@ class ReceiptService:
         policy_ref: str | None = None,
         action_request_ref: str | None = None,
         policy_result_ref: str | None = None,
+        contract_ref: str | None = None,
+        authorization_plan_ref: str | None = None,
         witness_ref: str | None = None,
         idempotency_key: str | None = None,
         verifiability: str | None = None,
@@ -43,6 +45,8 @@ class ReceiptService:
         rollback_status: str = "not_requested",
         rollback_ref: str | None = None,
         rollback_artifact_refs: list[str] | None = None,
+        observed_effect_summary: str | None = None,
+        reconciliation_required: bool = False,
     ) -> str:
         receipt = self.store.create_receipt(
             task_id=task_id,
@@ -63,6 +67,8 @@ class ReceiptService:
             policy_ref=policy_ref,
             action_request_ref=action_request_ref,
             policy_result_ref=policy_result_ref,
+            contract_ref=contract_ref,
+            authorization_plan_ref=authorization_plan_ref,
             witness_ref=witness_ref,
             idempotency_key=idempotency_key,
             verifiability=verifiability,
@@ -72,6 +78,8 @@ class ReceiptService:
             rollback_status=rollback_status,
             rollback_ref=rollback_ref,
             rollback_artifact_refs=rollback_artifact_refs,
+            observed_effect_summary=observed_effect_summary,
+            reconciliation_required=reconciliation_required,
         )
         self.proofs.ensure_receipt_bundle(receipt.receipt_id)
         return receipt.receipt_id

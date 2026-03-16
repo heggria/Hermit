@@ -48,7 +48,9 @@ def build_task_topic(
     current_phase = str(seed.get("current_phase", "") or "")
     current_progress_percent = seed.get("current_progress_percent")
     try:
-        current_progress_percent = int(current_progress_percent) if current_progress_percent is not None else None
+        current_progress_percent = (
+            int(current_progress_percent) if current_progress_percent is not None else None
+        )
     except (TypeError, ValueError):
         current_progress_percent = None
     status = str(seed.get("status", "") or "running")
@@ -59,7 +61,10 @@ def build_task_topic(
         item: dict[str, Any] | None = None
 
         if event_type == "task.created":
-            body = _clean_topic_text(payload.get("title", "") or payload.get("goal", "")) or "Task started."
+            body = (
+                _clean_topic_text(payload.get("title", "") or payload.get("goal", ""))
+                or "Task started."
+            )
             item = {"kind": "task.started", "text": body}
             current_hint = body
             current_phase = "started"
@@ -129,9 +134,56 @@ def build_task_topic(
             body = _clean_topic_text(payload.get("raw_text", "") or payload.get("prompt", ""))
             if body:
                 item = {"kind": "user.note.appended", "text": body}
+        elif event_type == "execution_contract.selected":
+            body = (
+                _clean_topic_text(payload.get("objective", "") or "")
+                or "Execution contract selected."
+            )
+            item = {"kind": "execution_contract.selected", "text": body, "phase": "contracting"}
+            current_hint = body
+            current_phase = "contracting"
+        elif event_type == "execution_contract.superseded":
+            body = "Execution contract superseded."
+            item = {"kind": "execution_contract.superseded", "text": body, "phase": "contracting"}
+            current_hint = body
+            current_phase = "contracting"
+        elif event_type == "evidence_case.recorded":
+            body = (
+                _clean_topic_text(payload.get("operator_summary", "") or "") or "Evidence compiled."
+            )
+            item = {"kind": "evidence_case.recorded", "text": body, "phase": "preflighting"}
+            current_hint = body
+            current_phase = "preflighting"
+        elif event_type == "evidence_case.invalidated":
+            body = _clean_topic_text(payload.get("summary", "") or "") or "Evidence invalidated."
+            item = {"kind": "evidence_case.invalidated", "text": body, "phase": "preflighting"}
+            current_hint = body
+            current_phase = "preflighting"
+        elif event_type == "authorization_plan.recorded":
+            body = (
+                _clean_topic_text(payload.get("approval_route", "") or "")
+                or "Authorization plan prepared."
+            )
+            item = {"kind": "authorization_plan.recorded", "text": body, "phase": "preflighting"}
+            current_hint = body
+            current_phase = "preflighting"
+        elif event_type == "authorization_plan.invalidated":
+            body = (
+                _clean_topic_text(payload.get("summary", "") or "")
+                or "Authorization plan invalidated."
+            )
+            item = {"kind": "authorization_plan.invalidated", "text": body, "phase": "preflighting"}
+            current_hint = body
+            current_phase = "preflighting"
         elif event_type == "approval.requested":
             body = "Approval requested."
             item = {"kind": "approval.requested", "text": body, "phase": "awaiting_approval"}
+            current_hint = body
+            current_phase = "awaiting_approval"
+            current_progress_percent = None
+        elif event_type in {"approval.drifted", "approval.expired"}:
+            body = "Approval drifted and must be revalidated."
+            item = {"kind": "approval.drifted", "text": body, "phase": "awaiting_approval"}
             current_hint = body
             current_phase = "awaiting_approval"
             current_progress_percent = None
@@ -141,6 +193,12 @@ def build_task_topic(
             current_hint = body
             current_phase = "approval_resolved"
             current_progress_percent = None
+        elif event_type == "reconciliation.closed":
+            result_class = _clean_topic_text(payload.get("result_class", "") or "")
+            body = f"Reconciliation closed: {result_class or 'completed'}."
+            item = {"kind": "reconciliation.closed", "text": body, "phase": "reconciling"}
+            current_hint = body
+            current_phase = "reconciling"
         elif event_type in {"task.completed", "task.failed", "task.cancelled"}:
             terminal = event_type.split(".", 1)[1]
             preview = _clean_topic_text(payload.get("result_preview", "") or "")

@@ -177,6 +177,10 @@ class KernelLedgerStoreMixin:
         evidence_refs: list[str] | None = None,
         policy_ref: str | None = None,
         approval_ref: str | None = None,
+        contract_ref: str | None = None,
+        authorization_plan_ref: str | None = None,
+        evidence_case_ref: str | None = None,
+        reconciliation_ref: str | None = None,
         action_type: str | None = None,
         summary: str | None = None,
         rationale: str | None = None,
@@ -201,6 +205,10 @@ class KernelLedgerStoreMixin:
             "evidence_refs": list(evidence_refs or []),
             "policy_ref": policy_ref,
             "approval_ref": approval_ref,
+            "contract_ref": contract_ref,
+            "authorization_plan_ref": authorization_plan_ref,
+            "evidence_case_ref": evidence_case_ref,
+            "reconciliation_ref": reconciliation_ref,
             "action_type": action_type,
             "risk_level": risk_level,
             "reversible": reversible,
@@ -212,9 +220,10 @@ class KernelLedgerStoreMixin:
                 """
                 INSERT INTO decisions (
                     decision_id, task_id, step_id, step_attempt_id, decision_type, verdict, reason,
-                    summary, rationale, evidence_refs_json, policy_ref, approval_ref, action_type,
+                    summary, rationale, evidence_refs_json, policy_ref, approval_ref, contract_ref,
+                    authorization_plan_ref, evidence_case_ref, reconciliation_ref, action_type,
                     risk_level, reversible, decided_by_principal_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     decision_id,
@@ -229,6 +238,10 @@ class KernelLedgerStoreMixin:
                     json.dumps(list(evidence_refs or []), ensure_ascii=False),
                     policy_ref,
                     approval_ref,
+                    contract_ref,
+                    authorization_plan_ref,
+                    evidence_case_ref,
+                    reconciliation_ref,
                     action_type,
                     risk_level,
                     None if reversible is None else int(bool(reversible)),
@@ -593,8 +606,14 @@ class KernelLedgerStoreMixin:
         confidence: float = 0.5,
         trust_tier: str = "observed",
         evidence_refs: list[str] | None = None,
+        evidence_case_ref: str | None = None,
         supersedes: list[str] | None = None,
         contradicts: list[str] | None = None,
+        epistemic_origin: str = "observed",
+        freshness_class: str | None = None,
+        last_validated_at: float | None = None,
+        validation_basis: str | None = None,
+        supersession_reason: str | None = None,
         memory_ref: str | None = None,
         invalidated_at: float | None = None,
     ) -> BeliefRecord:
@@ -607,9 +626,10 @@ class KernelLedgerStoreMixin:
                 INSERT INTO beliefs (
                     belief_id, task_id, conversation_id, scope_kind, scope_ref, category, content, claim_text,
                     structured_assertion_json, promotion_candidate, status, confidence, trust_tier,
-                    evidence_refs_json, supersedes_json, contradicts_json, memory_ref, invalidated_at,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    evidence_refs_json, evidence_case_ref, supersedes_json, contradicts_json,
+                    epistemic_origin, freshness_class, last_validated_at, validation_basis,
+                    supersession_reason, memory_ref, invalidated_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     belief_id,
@@ -626,8 +646,14 @@ class KernelLedgerStoreMixin:
                     confidence,
                     trust_tier,
                     json.dumps(list(evidence_refs or []), ensure_ascii=False),
+                    evidence_case_ref,
                     json.dumps(list(supersedes or []), ensure_ascii=False),
                     json.dumps(list(contradicts or []), ensure_ascii=False),
+                    epistemic_origin,
+                    freshness_class,
+                    last_validated_at,
+                    validation_basis,
+                    supersession_reason,
                     memory_ref,
                     invalidated_at,
                     created_at,
@@ -653,8 +679,14 @@ class KernelLedgerStoreMixin:
                     "confidence": confidence,
                     "trust_tier": trust_tier,
                     "evidence_refs": list(evidence_refs or []),
+                    "evidence_case_ref": evidence_case_ref,
                     "supersedes": list(supersedes or []),
                     "contradicts": list(contradicts or []),
+                    "epistemic_origin": epistemic_origin,
+                    "freshness_class": freshness_class,
+                    "last_validated_at": last_validated_at,
+                    "validation_basis": validation_basis,
+                    "supersession_reason": supersession_reason,
                     "memory_ref": memory_ref,
                     "invalidated_at": invalidated_at,
                     "created_at": created_at,
@@ -707,10 +739,14 @@ class KernelLedgerStoreMixin:
         *,
         status: str | object = _UNSET,
         memory_ref: str | None | object = _UNSET,
+        evidence_case_ref: str | None | object = _UNSET,
         contradicts: list[str] | object = _UNSET,
         supersedes: list[str] | object = _UNSET,
         invalidated_at: float | None | object = _UNSET,
         promotion_candidate: bool | object = _UNSET,
+        last_validated_at: float | None | object = _UNSET,
+        validation_basis: str | None | object = _UNSET,
+        supersession_reason: str | None | object = _UNSET,
     ) -> None:
         belief = self.get_belief(belief_id)
         if belief is None:
@@ -718,6 +754,9 @@ class KernelLedgerStoreMixin:
         updated_at = time.time()
         next_status = belief.status if status is _UNSET else str(status)
         next_memory_ref = belief.memory_ref if memory_ref is _UNSET else memory_ref
+        next_evidence_case_ref = (
+            belief.evidence_case_ref if evidence_case_ref is _UNSET else evidence_case_ref
+        )
         next_contradicts = belief.contradicts if contradicts is _UNSET else list(contradicts)
         next_supersedes = belief.supersedes if supersedes is _UNSET else list(supersedes)
         next_invalidated_at = belief.invalidated_at if invalidated_at is _UNSET else invalidated_at
@@ -726,21 +765,35 @@ class KernelLedgerStoreMixin:
             if promotion_candidate is _UNSET
             else bool(promotion_candidate)
         )
+        next_last_validated_at = (
+            belief.last_validated_at if last_validated_at is _UNSET else last_validated_at
+        )
+        next_validation_basis = (
+            belief.validation_basis if validation_basis is _UNSET else validation_basis
+        )
+        next_supersession_reason = (
+            belief.supersession_reason if supersession_reason is _UNSET else supersession_reason
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE beliefs
-                SET status = ?, memory_ref = ?, contradicts_json = ?, supersedes_json = ?,
-                    invalidated_at = ?, promotion_candidate = ?, updated_at = ?
+                SET status = ?, memory_ref = ?, evidence_case_ref = ?, contradicts_json = ?, supersedes_json = ?,
+                    invalidated_at = ?, promotion_candidate = ?, last_validated_at = ?, validation_basis = ?,
+                    supersession_reason = ?, updated_at = ?
                 WHERE belief_id = ?
                 """,
                 (
                     next_status,
                     next_memory_ref,
+                    next_evidence_case_ref,
                     json.dumps(list(next_contradicts), ensure_ascii=False),
                     json.dumps(list(next_supersedes), ensure_ascii=False),
                     next_invalidated_at,
                     int(next_promotion_candidate),
+                    next_last_validated_at,
+                    next_validation_basis,
+                    next_supersession_reason,
                     updated_at,
                     belief_id,
                 ),
@@ -755,10 +808,14 @@ class KernelLedgerStoreMixin:
                 payload={
                     "status": next_status,
                     "memory_ref": next_memory_ref,
+                    "evidence_case_ref": next_evidence_case_ref,
                     "contradicts": list(next_contradicts),
                     "supersedes": list(next_supersedes),
                     "invalidated_at": next_invalidated_at,
                     "promotion_candidate": next_promotion_candidate,
+                    "last_validated_at": next_last_validated_at,
+                    "validation_basis": next_validation_basis,
+                    "supersession_reason": next_supersession_reason,
                     "updated_at": updated_at,
                 },
             )
@@ -780,6 +837,11 @@ class KernelLedgerStoreMixin:
         confidence: float = 0.5,
         trust_tier: str = "durable",
         evidence_refs: list[str] | None = None,
+        memory_kind: str = "durable_fact",
+        validation_basis: str | None = None,
+        last_validated_at: float | None = None,
+        supersession_reason: str | None = None,
+        learned_from_reconciliation_ref: str | None = None,
         supersedes: list[str] | None = None,
         supersedes_memory_ids: list[str] | None = None,
         superseded_by_memory_id: str | None = None,
@@ -826,10 +888,12 @@ class KernelLedgerStoreMixin:
                 INSERT INTO memory_records (
                     memory_id, task_id, conversation_id, category, content, claim_text,
                     structured_assertion_json, scope_kind, scope_ref, promotion_reason, retention_class,
-                    status, confidence, trust_tier, evidence_refs_json, supersedes_json,
-                    supersedes_memory_ids_json, superseded_by_memory_id, source_belief_ref,
-                    invalidation_reason, invalidated_at, expires_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, confidence, trust_tier, evidence_refs_json, memory_kind,
+                    validation_basis, last_validated_at, supersession_reason,
+                    learned_from_reconciliation_ref, supersedes_json, supersedes_memory_ids_json,
+                    superseded_by_memory_id, source_belief_ref, invalidation_reason,
+                    invalidated_at, expires_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     memory_id,
@@ -847,6 +911,11 @@ class KernelLedgerStoreMixin:
                     confidence,
                     trust_tier,
                     json.dumps(list(evidence_refs or []), ensure_ascii=False),
+                    memory_kind,
+                    validation_basis,
+                    last_validated_at,
+                    supersession_reason,
+                    learned_from_reconciliation_ref,
                     json.dumps(list(supersedes or []), ensure_ascii=False),
                     json.dumps(list(supersedes_memory_ids or []), ensure_ascii=False),
                     superseded_by_memory_id,
@@ -878,6 +947,11 @@ class KernelLedgerStoreMixin:
                     "confidence": confidence,
                     "trust_tier": trust_tier,
                     "evidence_refs": list(evidence_refs or []),
+                    "memory_kind": memory_kind,
+                    "validation_basis": validation_basis,
+                    "last_validated_at": last_validated_at,
+                    "supersession_reason": supersession_reason,
+                    "learned_from_reconciliation_ref": learned_from_reconciliation_ref,
                     "supersedes": list(supersedes or []),
                     "supersedes_memory_ids": list(supersedes_memory_ids or []),
                     "superseded_by_memory_id": superseded_by_memory_id,
@@ -944,6 +1018,10 @@ class KernelLedgerStoreMixin:
         invalidation_reason: str | None | object = _UNSET,
         invalidated_at: float | None | object = _UNSET,
         expires_at: float | None | object = _UNSET,
+        validation_basis: str | None | object = _UNSET,
+        last_validated_at: float | None | object = _UNSET,
+        supersession_reason: str | None | object = _UNSET,
+        learned_from_reconciliation_ref: str | None | object = _UNSET,
     ) -> None:
         record = self.get_memory_record(memory_id)
         if record is None:
@@ -969,13 +1047,28 @@ class KernelLedgerStoreMixin:
             next_invalidation_reason = "superseded"
         next_invalidated_at = record.invalidated_at if invalidated_at is _UNSET else invalidated_at
         next_expires_at = record.expires_at if expires_at is _UNSET else expires_at
+        next_validation_basis = (
+            record.validation_basis if validation_basis is _UNSET else validation_basis
+        )
+        next_last_validated_at = (
+            record.last_validated_at if last_validated_at is _UNSET else last_validated_at
+        )
+        next_supersession_reason = (
+            record.supersession_reason if supersession_reason is _UNSET else supersession_reason
+        )
+        next_reconciliation_ref = (
+            record.learned_from_reconciliation_ref
+            if learned_from_reconciliation_ref is _UNSET
+            else learned_from_reconciliation_ref
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 UPDATE memory_records
                 SET status = ?, supersedes_json = ?, supersedes_memory_ids_json = ?,
                     superseded_by_memory_id = ?, invalidation_reason = ?, invalidated_at = ?,
-                    expires_at = ?, updated_at = ?
+                    expires_at = ?, validation_basis = ?, last_validated_at = ?, supersession_reason = ?,
+                    learned_from_reconciliation_ref = ?, updated_at = ?
                 WHERE memory_id = ?
                 """,
                 (
@@ -986,6 +1079,10 @@ class KernelLedgerStoreMixin:
                     next_invalidation_reason,
                     next_invalidated_at,
                     next_expires_at,
+                    next_validation_basis,
+                    next_last_validated_at,
+                    next_supersession_reason,
+                    next_reconciliation_ref,
                     updated_at,
                     memory_id,
                 ),
@@ -1005,6 +1102,10 @@ class KernelLedgerStoreMixin:
                     "invalidation_reason": next_invalidation_reason,
                     "invalidated_at": next_invalidated_at,
                     "expires_at": next_expires_at,
+                    "validation_basis": next_validation_basis,
+                    "last_validated_at": next_last_validated_at,
+                    "supersession_reason": next_supersession_reason,
+                    "learned_from_reconciliation_ref": next_reconciliation_ref,
                     "updated_at": updated_at,
                 },
             )
@@ -1133,6 +1234,11 @@ class KernelLedgerStoreMixin:
         requested_action_ref: str | None = None,
         approval_packet_ref: str | None = None,
         policy_result_ref: str | None = None,
+        requested_contract_ref: str | None = None,
+        authorization_plan_ref: str | None = None,
+        evidence_case_ref: str | None = None,
+        drift_expiry: float | None = None,
+        fallback_contract_refs: list[str] | None = None,
         decision_ref: str | None = None,
         state_witness_ref: str | None = None,
         expires_at: float | None = None,
@@ -1146,9 +1252,11 @@ class KernelLedgerStoreMixin:
                 INSERT INTO approvals (
                     approval_id, task_id, step_id, step_attempt_id, status,
                     approval_type, requested_action_json, request_packet_ref, requested_action_ref,
-                    approval_packet_ref, policy_result_ref, decision_ref, state_witness_ref,
+                    approval_packet_ref, policy_result_ref, requested_contract_ref,
+                    authorization_plan_ref, evidence_case_ref, drift_expiry,
+                    fallback_contract_refs_json, decision_ref, state_witness_ref,
                     requested_at, expires_at, resolution_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval_id,
@@ -1162,6 +1270,11 @@ class KernelLedgerStoreMixin:
                     requested_action_ref,
                     approval_packet_ref,
                     policy_result_ref,
+                    requested_contract_ref,
+                    authorization_plan_ref,
+                    evidence_case_ref,
+                    drift_expiry,
+                    json.dumps(list(fallback_contract_refs or []), ensure_ascii=False),
                     decision_ref,
                     state_witness_ref,
                     requested_at,
@@ -1185,6 +1298,11 @@ class KernelLedgerStoreMixin:
                     "request_packet_ref": request_packet_ref,
                     "approval_packet_ref": approval_packet_ref,
                     "policy_result_ref": policy_result_ref,
+                    "requested_contract_ref": requested_contract_ref,
+                    "authorization_plan_ref": authorization_plan_ref,
+                    "evidence_case_ref": evidence_case_ref,
+                    "drift_expiry": drift_expiry,
+                    "fallback_contract_refs": list(fallback_contract_refs or []),
                     "state_witness_ref": state_witness_ref,
                     "requested_at": requested_at,
                     "expires_at": expires_at,
@@ -1339,6 +1457,8 @@ class KernelLedgerStoreMixin:
         policy_ref: str | None = None,
         action_request_ref: str | None = None,
         policy_result_ref: str | None = None,
+        contract_ref: str | None = None,
+        authorization_plan_ref: str | None = None,
         witness_ref: str | None = None,
         idempotency_key: str | None = None,
         receipt_bundle_ref: str | None = None,
@@ -1351,6 +1471,8 @@ class KernelLedgerStoreMixin:
         rollback_status: str = "not_requested",
         rollback_ref: str | None = None,
         rollback_artifact_refs: list[str] | None = None,
+        observed_effect_summary: str | None = None,
+        reconciliation_required: bool = False,
     ) -> ReceiptRecord:
         receipt_id = self._id("receipt")
         created_at = time.time()
@@ -1364,10 +1486,11 @@ class KernelLedgerStoreMixin:
                     input_refs_json, environment_ref, policy_result_json,
                     approval_ref, output_refs_json, result_summary, result_code,
                     decision_ref, capability_grant_ref, workspace_lease_ref, policy_ref, action_request_ref,
-                    policy_result_ref, witness_ref, idempotency_key, receipt_bundle_ref, proof_mode,
-                    verifiability, signature, signer_ref, rollback_supported, rollback_strategy,
-                    rollback_status, rollback_ref, rollback_artifact_refs_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    policy_result_ref, contract_ref, authorization_plan_ref, witness_ref, idempotency_key,
+                    receipt_bundle_ref, proof_mode, verifiability, signature, signer_ref,
+                    rollback_supported, rollback_strategy, rollback_status, rollback_ref,
+                    rollback_artifact_refs_json, observed_effect_summary, reconciliation_required, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     receipt_id,
@@ -1389,6 +1512,8 @@ class KernelLedgerStoreMixin:
                     policy_ref,
                     action_request_ref,
                     policy_result_ref,
+                    contract_ref,
+                    authorization_plan_ref,
                     witness_ref,
                     idempotency_key,
                     receipt_bundle_ref,
@@ -1401,6 +1526,8 @@ class KernelLedgerStoreMixin:
                     rollback_status,
                     rollback_ref,
                     json.dumps(list(rollback_artifact_refs or []), ensure_ascii=False),
+                    observed_effect_summary,
+                    int(reconciliation_required),
                     created_at,
                 ),
             )
@@ -1431,6 +1558,8 @@ class KernelLedgerStoreMixin:
                     "policy_ref": policy_ref,
                     "action_request_ref": action_request_ref,
                     "policy_result_ref": policy_result_ref,
+                    "contract_ref": contract_ref,
+                    "authorization_plan_ref": authorization_plan_ref,
                     "witness_ref": witness_ref,
                     "idempotency_key": idempotency_key,
                     "receipt_bundle_ref": receipt_bundle_ref,
@@ -1443,6 +1572,8 @@ class KernelLedgerStoreMixin:
                     "rollback_status": rollback_status,
                     "rollback_ref": rollback_ref,
                     "rollback_artifact_refs": list(rollback_artifact_refs or []),
+                    "observed_effect_summary": observed_effect_summary,
+                    "reconciliation_required": bool(reconciliation_required),
                 },
             )
         return ReceiptRecord(
@@ -1465,6 +1596,8 @@ class KernelLedgerStoreMixin:
             policy_ref=policy_ref,
             action_request_ref=action_request_ref,
             policy_result_ref=policy_result_ref,
+            contract_ref=contract_ref,
+            authorization_plan_ref=authorization_plan_ref,
             witness_ref=witness_ref,
             idempotency_key=idempotency_key,
             receipt_bundle_ref=receipt_bundle_ref,
@@ -1477,6 +1610,8 @@ class KernelLedgerStoreMixin:
             rollback_status=rollback_status,
             rollback_ref=rollback_ref,
             rollback_artifact_refs=list(rollback_artifact_refs or []),
+            observed_effect_summary=observed_effect_summary,
+            reconciliation_required=bool(reconciliation_required),
             created_at=created_at,
         )
 

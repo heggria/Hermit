@@ -752,6 +752,7 @@ def test_task_claim_status_command_reports_repo_and_task_gates(tmp_path, monkeyp
     assert repo_result.exit_code == 0
     repo_payload = json.loads(repo_result.output)
     assert repo_payload["profiles"]["verifiable"]["claimable"] is True
+    assert repo_payload["profiles"]["core"]["label"] == "Hermit Kernel v0.2 Core"
 
     assert task_result.exit_code == 0
     task_payload = json.loads(task_result.output)
@@ -761,6 +762,88 @@ def test_task_claim_status_command_reports_repo_and_task_gates(tmp_path, monkeyp
     refreshed_receipt = store.get_receipt(receipt.receipt_id)
     assert refreshed_receipt is not None
     assert refreshed_receipt.proof_mode == "signed_with_inclusion_proof"
+
+
+def test_task_show_reports_contract_loop_summary(tmp_path, monkeypatch) -> None:
+    from hermit.config import get_settings
+    from hermit.kernel.store import KernelStore
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+
+    store = KernelStore(base_dir / "kernel" / "state.db")
+    store.ensure_conversation("cli-show-contracts", source_channel="chat")
+    task = store.create_task(
+        conversation_id="cli-show-contracts",
+        title="CLI Contract Loop Task",
+        goal="Inspect contract loop",
+        source_channel="chat",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    contract = store.create_execution_contract(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        objective="write_file: write_local",
+        expected_effects=["path:workspace/demo.txt"],
+        status="authorized",
+        contract_version=2,
+    )
+    evidence_case = store.create_evidence_case(
+        task_id=task.task_id,
+        subject_kind="contract",
+        subject_ref=contract.contract_id,
+        support_refs=["artifact_context"],
+        sufficiency_score=0.8,
+        unresolved_gaps=[],
+        status="sufficient",
+    )
+    authorization_plan = store.create_authorization_plan(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        contract_ref=contract.contract_id,
+        policy_profile_ref="default",
+        approval_route="operator",
+        current_gaps=[],
+        status="authorized",
+    )
+    reconciliation = store.create_reconciliation(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_attempt_id=attempt.step_attempt_id,
+        contract_ref=contract.contract_id,
+        receipt_refs=[],
+        observed_output_refs=[],
+        intended_effect_summary="write file",
+        authorized_effect_summary="write file",
+        observed_effect_summary="file written",
+        receipted_effect_summary="receipt captured",
+        result_class="satisfied",
+        recommended_resolution="none",
+    )
+    store.update_step_attempt(
+        attempt.step_attempt_id,
+        execution_contract_ref=contract.contract_id,
+        evidence_case_ref=evidence_case.evidence_case_id,
+        authorization_plan_ref=authorization_plan.authorization_plan_id,
+        reconciliation_ref=reconciliation.reconciliation_id,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["task", "show", task.task_id])
+
+    assert result.exit_code == 0
+    assert "Contract loop:" in result.output
+    assert f"[contract:{contract.contract_id}] authorized v2" in result.output
+    assert f"[evidence:{evidence_case.evidence_case_id}] sufficient" in result.output
+    assert (
+        f"[authority:{authorization_plan.authorization_plan_id}] authorized route=operator"
+        in result.output
+    )
+    assert f"[reconciliation:{reconciliation.reconciliation_id}] satisfied" in result.output
 
 
 def test_task_claim_status_reports_conditional_strong_proofs_without_signing(
