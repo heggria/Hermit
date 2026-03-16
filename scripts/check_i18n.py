@@ -11,7 +11,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermit.i18n import DEFAULT_LOCALE, catalog_locales, load_catalog  # noqa: E402
+from hermit.infra.system.i18n import DEFAULT_LOCALE, catalog_locales, load_catalog  # noqa: E402
 
 
 def _fields(template: str) -> set[str]:

@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from hermit import __version__
-from hermit.companion.appbundle import app_name, install_app_bundle
+from hermit.apps.companion.appbundle import app_name, install_app_bundle
 
 
 def _safe_name(value: str) -> str:

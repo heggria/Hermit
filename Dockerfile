@@ -29,7 +29,7 @@ USER hermit
 
 VOLUME ["/home/hermit/.hermit"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["python", "-c", "import hermit; from hermit.main import app; print(app.info.name)"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["python", "-c", "import hermit; from hermit.surfaces.cli.main import app; print(app.info.name)"]
 
 ENTRYPOINT ["hermit"]
 CMD ["chat"]

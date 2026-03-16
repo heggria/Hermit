@@ -72,11 +72,11 @@ matching_pids() {
 }
 
 service_pids() {
-  matching_pids "-m hermit.main serve --adapter ${ADAPTER}"
+  matching_pids "-m hermit.surfaces.cli.main serve --adapter ${ADAPTER}"
 }
 
 menubar_pids() {
-  matching_pids "-m hermit.companion.menubar --adapter ${ADAPTER}"
+  matching_pids "-m hermit.apps.companion.menubar --adapter ${ADAPTER}"
 }
 
 watch_pid() {
@@ -171,12 +171,12 @@ print_status() {
   echo ""
   echo "[service]"
   ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v adapter="${ADAPTER}" '
-    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, "-m hermit.main serve --adapter " adapter) {print}
+    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, "-m hermit.surfaces.cli.main serve --adapter " adapter) {print}
   '
   echo ""
   echo "[menubar]"
   ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v adapter="${ADAPTER}" '
-    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, "-m hermit.companion.menubar --adapter " adapter) {print}
+    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, "-m hermit.apps.companion.menubar --adapter " adapter) {print}
   '
   echo ""
   echo "[watch]"

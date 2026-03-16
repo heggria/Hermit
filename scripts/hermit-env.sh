@@ -58,4 +58,4 @@ esac
 
 export PYTHONUNBUFFERED=1
 
-exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 python -m hermit.main "$@"
+exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 python -m hermit.surfaces.cli.main "$@"

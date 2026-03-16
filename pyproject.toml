@@ -68,9 +68,9 @@ macos = [
 ]
 
 [project.scripts]
-hermit = "hermit.main:app"
-hermit-menubar = "hermit.companion.menubar:main"
-hermit-menubar-install-app = "hermit.companion.appbundle:main"
+hermit = "hermit.surfaces.cli.main:app"
+hermit-menubar = "hermit.apps.companion.menubar:main"
+hermit-menubar-install-app = "hermit.apps.companion.appbundle:main"
 
 [dependency-groups]
 dev = [
@@ -138,13 +138,16 @@ exclude = [
 managed = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit", "tests/integration", "tests/scenario", "tests/e2e"]
 asyncio_mode = "auto"
 addopts = [
   "--strict-config",
   "--strict-markers",
+  "--import-mode=importlib",
   "--durations=20",
-  "--timeout=120",
+  "--timeout=60",
+  "-n", "4",
+  "--dist", "worksteal",
   "-ra",
 ]
 markers = [
@@ -183,8 +186,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/hermit/main.py" = ["B008", "B904", "E402"]
-"src/hermit/builtin/feishu/adapter.py" = ["B009", "B010"]
-"src/hermit/builtin/feishu/reaction.py" = ["B009"]
-"src/hermit/core/tools.py" = ["B010"]
-"src/hermit/provider/runtime.py" = ["B009"]
+"src/hermit/surfaces/cli/main.py" = ["B008", "B904", "E402"]
+"src/hermit/plugins/builtin/adapters/feishu/adapter.py" = ["B009", "B010"]
+"src/hermit/plugins/builtin/adapters/feishu/reaction.py" = ["B009"]
+"src/hermit/runtime/capability/registry/tools.py" = ["B010"]
+"src/hermit/runtime/provider_host/execution/runtime.py" = ["B009"]

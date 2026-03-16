@@ -12,16 +12,16 @@ from pathlib import Path
 
 from watchfiles import Change, watch
 
-from hermit.companion.control import (
+from hermit.apps.companion.control import (
     matching_process_pids,
     process_exists,
     read_pid,
     watch_pid_path,
 )
-from hermit.companion.control import (
+from hermit.apps.companion.control import (
     pid_path as serve_pid_path,
 )
-from hermit.executables import resolve_uv_bin
+from hermit.infra.system.executables import resolve_uv_bin
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_WATCH_PATHS = ["hermit", "scripts", "pyproject.toml"]
@@ -201,7 +201,7 @@ def _take_over_existing_service(env_name: str, adapter: str) -> None:
 
 def _menubar_running(env_name: str, adapter: str) -> bool:
     matches = matching_process_pids(
-        f"-m hermit.companion.menubar --adapter {adapter}",
+        f"-m hermit.apps.companion.menubar --adapter {adapter}",
         base_dir=_base_dir(env_name),
     )
     return bool(matches)
