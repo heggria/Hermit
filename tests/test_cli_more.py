@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,14 +14,18 @@ from hermit.kernel.store import KernelStore
 from hermit.provider.runtime import AgentResult
 
 
-def test_setup_supports_proxy_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_setup_supports_proxy_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from hermit.config import get_settings
 
     monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
     get_settings.cache_clear()
 
     confirm_answers = iter([True, False])
-    prompt_answers = iter(["token-1", "https://proxy.local", "X-Biz-Id: demo", "claude-proxy-model"])
+    prompt_answers = iter(
+        ["token-1", "https://proxy.local", "X-Biz-Id: demo", "claude-proxy-model"]
+    )
 
     monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
     monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
@@ -35,7 +40,9 @@ def test_setup_supports_proxy_configuration(tmp_path: Path, monkeypatch: pytest.
     assert "HERMIT_MODEL=claude-proxy-model" in env_text
 
 
-def test_run_and_chat_commands_delegate_to_runner_and_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_and_chat_commands_delegate_to_runner_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     events: list[tuple[str, str]] = []
     settings = SimpleNamespace(
         log_level="INFO",
@@ -54,9 +61,13 @@ def test_run_and_chat_commands_delegate_to_runner_and_cleanup(monkeypatch: pytes
         def dispatch(self, session_id: str, user_input: str, on_tool_call=None):
             events.append(("dispatch", f"{session_id}:{user_input}"))
             if user_input == "cmd":
-                return SimpleNamespace(is_command=True, text="command output", should_exit=False, agent_result=None)
+                return SimpleNamespace(
+                    is_command=True, text="command output", should_exit=False, agent_result=None
+                )
             if user_input == "quit":
-                return SimpleNamespace(is_command=True, text="bye", should_exit=True, agent_result=None)
+                return SimpleNamespace(
+                    is_command=True, text="bye", should_exit=True, agent_result=None
+                )
             return SimpleNamespace(
                 is_command=False,
                 text="",
@@ -75,11 +86,19 @@ def test_run_and_chat_commands_delegate_to_runner_and_cleanup(monkeypatch: pytes
     printed: list[str] = []
 
     monkeypatch.setattr(main_mod, "get_settings", lambda: settings)
-    monkeypatch.setattr(main_mod, "_ensure_workspace", lambda settings: events.append(("workspace", "ok")))
-    monkeypatch.setattr(main_mod, "configure_logging", lambda level: events.append(("logging", level)))
+    monkeypatch.setattr(
+        main_mod, "_ensure_workspace", lambda settings: events.append(("workspace", "ok"))
+    )
+    monkeypatch.setattr(
+        main_mod, "configure_logging", lambda level: events.append(("logging", level))
+    )
     monkeypatch.setattr(main_mod, "_require_auth", lambda settings: events.append(("auth", "ok")))
     monkeypatch.setattr(main_mod, "_build_runner", lambda settings: (runner, pm))
-    monkeypatch.setattr(main_mod, "_stop_runner_background_services", lambda runner: events.append(("stop_bg", "runner")))
+    monkeypatch.setattr(
+        main_mod,
+        "_stop_runner_background_services",
+        lambda runner: events.append(("stop_bg", "runner")),
+    )
     monkeypatch.setattr(main_mod, "_print_result", lambda result: printed.append(result.text))
     monkeypatch.setattr(main_mod.typer, "echo", lambda text="": echoes.append(text))
     monkeypatch.setattr(main_mod, "_caffeinate", lambda settings: contextlib.nullcontext())
@@ -98,7 +117,9 @@ def test_run_and_chat_commands_delegate_to_runner_and_cleanup(monkeypatch: pytes
     assert "bye" in echoes
 
 
-def test_startup_prompt_and_sessions_use_runtime_helpers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_startup_prompt_and_sessions_use_runtime_helpers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     settings = SimpleNamespace(
         base_dir=tmp_path / ".hermit",
         plugins_dir=tmp_path / "plugins",
@@ -156,7 +177,9 @@ def test_reload_and_service_helpers_cover_permission_and_success_paths(
     pid_path.write_text("4321", encoding="utf-8")
 
     runner = CliRunner()
-    monkeypatch.setattr(main_mod.os, "kill", lambda pid, sig: (_ for _ in ()).throw(PermissionError()))
+    monkeypatch.setattr(
+        main_mod.os, "kill", lambda pid, sig: (_ for _ in ()).throw(PermissionError())
+    )
     denied = runner.invoke(main_mod.app, ["reload"])
     assert denied.exit_code == 1
     assert "Permission denied" in denied.output
@@ -174,7 +197,9 @@ def test_reload_and_service_helpers_cover_permission_and_success_paths(
     assert main_mod._read_pid(pid_path) is None
 
 
-def test_plugin_commands_manage_installed_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plugin_commands_manage_installed_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     settings = SimpleNamespace(
         base_dir=tmp_path / ".hermit",
         plugins_dir=tmp_path / ".hermit" / "plugins",
@@ -184,8 +209,12 @@ def test_plugin_commands_manage_installed_plugins(tmp_path: Path, monkeypatch: p
     class FakePM:
         def __init__(self, settings=None) -> None:
             self.manifests = [
-                SimpleNamespace(name="builtin-demo", version="1.0.0", description="builtin", builtin=True),
-                SimpleNamespace(name="installed-demo", version="2.0.0", description="custom", builtin=False),
+                SimpleNamespace(
+                    name="builtin-demo", version="1.0.0", description="builtin", builtin=True
+                ),
+                SimpleNamespace(
+                    name="installed-demo", version="2.0.0", description="custom", builtin=False
+                ),
             ]
 
         def discover_and_load(self, builtin_dir: Path, plugins_dir: Path) -> None:
@@ -209,7 +238,9 @@ def test_plugin_commands_manage_installed_plugins(tmp_path: Path, monkeypatch: p
 
     runner = CliRunner()
     listed = runner.invoke(main_mod.app, ["plugin", "list"])
-    installed = runner.invoke(main_mod.app, ["plugin", "install", "https://example.com/new-plugin.git"])
+    installed = runner.invoke(
+        main_mod.app, ["plugin", "install", "https://example.com/new-plugin.git"]
+    )
     info = runner.invoke(main_mod.app, ["plugin", "info", "demo"])
     removed = runner.invoke(main_mod.app, ["plugin", "remove", "demo"])
 
@@ -235,9 +266,15 @@ def test_schedule_commands_cover_listing_mutation_and_history(
     get_settings.cache_clear()
     store = KernelStore(base_dir / "kernel" / "state.db")
 
-    cron_job = ScheduledJob.create(name="cron-job", prompt="run", schedule_type="cron", cron_expr="0 9 * * 1-5")
-    once_job = ScheduledJob.create(name="once-job", prompt="once", schedule_type="once", once_at=1773516000.0)
-    interval_job = ScheduledJob.create(name="interval-job", prompt="interval", schedule_type="interval", interval_seconds=300)
+    cron_job = ScheduledJob.create(
+        name="cron-job", prompt="run", schedule_type="cron", cron_expr="0 9 * * 1-5"
+    )
+    once_job = ScheduledJob.create(
+        name="once-job", prompt="once", schedule_type="once", once_at=1773516000.0
+    )
+    interval_job = ScheduledJob.create(
+        name="interval-job", prompt="interval", schedule_type="interval", interval_seconds=300
+    )
     interval_job.enabled = False
     store.create_schedule(cron_job)
     store.create_schedule(once_job)
@@ -257,9 +294,10 @@ def test_schedule_commands_cover_listing_mutation_and_history(
     runner = CliRunner()
     listed = runner.invoke(main_mod.app, ["schedule", "list"])
     history = runner.invoke(main_mod.app, ["schedule", "history", "--job-id", cron_job.id])
+    future_once = (dt.datetime.now() + dt.timedelta(days=1)).replace(microsecond=0).isoformat()
     added = runner.invoke(
         main_mod.app,
-        ["schedule", "add", "--name", "new-once", "--prompt", "do work", "--once", "2026-03-15T14:00:00"],
+        ["schedule", "add", "--name", "new-once", "--prompt", "do work", "--once", future_once],
     )
     enabled = runner.invoke(main_mod.app, ["schedule", "enable", interval_job.id])
     disabled = runner.invoke(main_mod.app, ["schedule", "disable", cron_job.id])
