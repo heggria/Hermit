@@ -1,32 +1,37 @@
 from __future__ import annotations
 
+import importlib.util
 import json
-import subprocess
-import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "sync_docs_to_wiki.py"
 
 
-def run_sync(manifest_path: Path, wiki_dir: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            "--manifest",
-            str(manifest_path),
-            "--wiki-dir",
-            str(wiki_dir),
-            "--repo-url",
-            "https://github.com/example/Hermit",
-            "--default-branch",
-            "main",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-    )
+def _load_sync_docs_module():
+    spec = importlib.util.spec_from_file_location("sync_docs_to_wiki", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+sync_docs_to_wiki = _load_sync_docs_module()
+
+
+def run_sync(manifest_path: Path, wiki_dir: Path) -> SimpleNamespace:
+    try:
+        sync_docs_to_wiki.sync_docs_to_wiki(
+            manifest_path=manifest_path,
+            wiki_dir=wiki_dir,
+            repo_url="https://github.com/example/Hermit",
+            default_branch="main",
+        )
+    except sync_docs_to_wiki.SyncError as exc:
+        return SimpleNamespace(returncode=1, stderr=str(exc), stdout="")
+    return SimpleNamespace(returncode=0, stderr="", stdout="")
 
 
 def write_manifest(manifest_path: Path, payload: dict[str, str]) -> None:
