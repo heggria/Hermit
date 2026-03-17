@@ -378,6 +378,7 @@ jobs:
         with:
           tool: 'pytest'
           output-file-path: benchmark-result.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
           auto-push: true
@@ -391,6 +392,7 @@ jobs:
         with:
           tool: 'pytest'
           output-file-path: benchmark-result.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
           auto-push: false
