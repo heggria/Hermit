@@ -151,5 +151,10 @@
   "tools.grok.citation_label": "Source {index}",
   "tools.image_memory.reference_keywords": "image|photo|picture|screenshot",
   "tools.computer_use.error.no_key_send": "Sending keystrokes is not allowed",
-  "tools.computer_use.error.no_control": "Control is not allowed"
+  "tools.computer_use.error.no_control": "Control is not allowed",
+  "tools.core.iteration_summary.description": "Output a structured JSON summary of an iteration result, including task_id, status, changed_files, and acceptance_results. Intended for use in hermit-iterate Phase 4 (PR close loop) to produce a machine-readable summary embeddable in a PR body.",
+  "tools.core.iteration_summary.task_id": "The task identifier for this iteration.",
+  "tools.core.iteration_summary.status": "Final status of the iteration, e.g. 'success', 'failure', 'partial'.",
+  "tools.core.iteration_summary.changed_files": "List of file paths that were created or modified during this iteration.",
+  "tools.core.iteration_summary.acceptance_results": "List of acceptance criterion check results, each as an object with 'criterion' and 'passed' fields."
 }

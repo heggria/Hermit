@@ -279,7 +279,13 @@ def build_runner(
 
 
 @app.command()
-def run(prompt: str) -> None:
+def run(
+    prompt: str,
+    policy: str = typer.Option(
+        "default",
+        help=t("cli.run.policy", "Policy profile: default, readonly, autonomous."),
+    ),
+) -> None:
     """Run a one-shot CLI agent session."""
     settings = get_settings()
     ensure_workspace(settings)
@@ -287,9 +293,14 @@ def run(prompt: str) -> None:
     require_auth(settings)
 
     runner, pm = build_runner(settings)
+    run_opts: dict[str, object] = {}
+    if policy != "default":
+        run_opts["policy_profile"] = policy
     with caffeinate(settings):
         try:
-            result = runner.handle("cli-oneshot", prompt, on_tool_call=on_tool_call)
+            result = runner.handle(
+                "cli-oneshot", prompt, on_tool_call=on_tool_call, run_opts=run_opts
+            )
             runner.close_session("cli-oneshot")
             print_result(result)
         finally:

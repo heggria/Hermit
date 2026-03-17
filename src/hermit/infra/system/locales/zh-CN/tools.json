@@ -151,5 +151,10 @@
   "tools.grok.citation_label": "来源 {index}",
   "tools.image_memory.reference_keywords": "图片|图里|这张图|那张图|截图|照片|二维码|海报|image|photo|picture|screenshot",
   "tools.computer_use.error.no_key_send": "不允许发送按键",
-  "tools.computer_use.error.no_control": "不允许控制"
+  "tools.computer_use.error.no_control": "不允许控制",
+  "tools.core.iteration_summary.description": "输出迭代结果的结构化 JSON 摘要，包含 task_id、status、changed_files 和 acceptance_results 字段。供 hermit-iterate 工作流第 4 阶段（PR 闭环）使用，生成可嵌入 PR body 的机器可读摘要。",
+  "tools.core.iteration_summary.task_id": "本次迭代的任务标识符。",
+  "tools.core.iteration_summary.status": "迭代的最终状态，例如 'success'、'failure'、'partial'。",
+  "tools.core.iteration_summary.changed_files": "本次迭代中创建或修改的文件路径列表。",
+  "tools.core.iteration_summary.acceptance_results": "验收标准检查结果列表，每条结果是包含 'criterion' 和 'passed' 字段的对象。"
 }
