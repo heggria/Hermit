@@ -1,9 +1,0 @@
-[plugin]
-name = "computer_use"
-version = "0.1.0"
-description_key = "plugin.computer_use.description"
-description = "macOS Computer Use — screenshot, mouse, keyboard control"
-builtin = true
-
-[entry]
-tools = "tools:register"

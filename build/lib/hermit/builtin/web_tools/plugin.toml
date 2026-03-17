@@ -1,9 +1,0 @@
-[plugin]
-name = "web-tools"
-version = "0.3.0"
-description_key = "plugin.web_tools.description"
-description = "Web search and page fetching — DuckDuckGo Lite search + URL content extraction (zero external dependencies)"
-builtin = true
-
-[entry]
-tools = "tools:register"

@@ -1,9 +1,0 @@
-[plugin]
-name = "compact"
-version = "0.1.0"
-description_key = "plugin.compact.description"
-description = "压缩当前会话上下文（LLM 摘要）"
-builtin = true
-
-[entry]
-commands = "commands:register"

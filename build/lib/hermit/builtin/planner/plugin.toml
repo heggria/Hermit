@@ -1,9 +1,0 @@
-[plugin]
-name = "planner"
-version = "0.1.0"
-description_key = "plugin.planner.description"
-description = "规划模式：生成结构化计划文件后确认执行"
-builtin = true
-
-[entry]
-commands = "commands:register"

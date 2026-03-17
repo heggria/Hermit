@@ -1,9 +1,0 @@
-[plugin]
-name = "memory"
-version = "0.1.0"
-description_key = "plugin.memory.description"
-description = "Cross-session memory with score decay, dedup, and LLM merge"
-builtin = true
-
-[entry]
-hooks = "hooks:register"

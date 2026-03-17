@@ -98,7 +98,6 @@ make env-watch ENV=dev
 
 Notes:
 
-- `scripts/hermit-dev.sh` is now only a compatibility alias for `dev`; internally it forwards to `scripts/hermit-envctl.sh`
 - when debugging or restarting a local environment, use the controller scripts first instead of manually composing `HERMIT_BASE_DIR + serve + menubar`
 - the controller scripts handle the matching `service`, `menubar`, menu app, and basic status checks together
 - to enter the CLI, inspect config, or check auth, prefer `scripts/hermit-env.sh <env> ...`
@@ -116,34 +115,39 @@ scripts/hermit-env.sh dev serve --adapter feishu
 
 ```text
 src/hermit/
-├── builtin/
-│   ├── compact/
-│   ├── feishu/
-│   ├── github/
-│   ├── grok/
-│   ├── image_memory/
-│   ├── mcp_loader/
-│   ├── memory/
-│   ├── orchestrator/
-│   ├── planner/
-│   ├── scheduler/
-│   ├── usage/
-│   ├── web_tools/
-│   └── webhook/
-├── core/
-├── plugin/
-├── storage/
-├── autostart.py
-├── config.py
-├── context.py
-├── logging.py
-└── main.py
+├── apps/                          # macOS companion (menubar, app bundle)
+│   └── companion/
+├── infra/                         # Infrastructure primitives
+│   ├── locking/                   #   FileGuard
+│   ├── storage/                   #   JsonStore, atomic_write
+│   └── system/                    #   sandbox, i18n, executables
+│       └── locales/               #   en-US / zh-CN locale files
+├── kernel/                        # Governed execution kernel
+│   ├── artifacts/                 #   lineage, claims, evidence
+│   ├── authority/                 #   grants, identity, workspaces
+│   ├── context/                   #   compiler, injection, memory governance
+│   ├── execution/                 #   controller, executor, recovery, suspension
+│   ├── ledger/                    #   events, journal (SQLite), projections
+│   ├── policy/                    #   approvals, decisions, permits, evaluators, guards
+│   ├── task/                      #   models, projections, services, state
+│   └── verification/              #   receipts, proofs, rollbacks
+├── plugins/                       # Plugin system
+│   └── builtin/                   #   Built-in plugins (see Builtin Plugins below)
+│       ├── adapters/feishu/
+│       ├── bundles/{compact,planner,usage}/
+│       ├── hooks/{image_memory,memory,scheduler,webhook}/
+│       ├── mcp/{github,mcp_loader}/
+│       ├── subagents/orchestrator/
+│       └── tools/{computer_use,grok,web_tools}/
+├── runtime/                       # Runtime / provider layer
+│   ├── assembly/                  #   config, context assembly
+│   ├── capability/                #   contracts, loader, registry, MCP resolver
+│   ├── control/                   #   dispatch, lifecycle, runner
+│   ├── observation/               #   logging setup
+│   └── provider_host/             #   LLM providers (Claude, Codex), execution runtime
+└── surfaces/                      # User-facing entry points
+    └── cli/                       #   Typer CLI dispatcher (main.py)
 ```
-
-Additional notes:
-
-- `src/hermit/plugins/` is a legacy compatibility layer; the current primary implementation is `src/hermit/plugin/`
-- `src/hermit/core/orchestrator.py` still exists, but current subagent functionality comes from the builtin `orchestrator` plugin
 
 ## CLI Fact Sheet
 
@@ -157,6 +161,11 @@ Top-level commands:
 - `hermit serve --adapter <adapter>`
 - `hermit reload --adapter <adapter>`
 - `hermit sessions`
+- `hermit config ...`
+- `hermit profiles ...`
+- `hermit auth ...`
+- `hermit task ...`
+- `hermit memory ...`
 - `hermit plugin ...`
 - `hermit autostart ...`
 - `hermit schedule ...`
@@ -231,7 +240,7 @@ mcp = "mcp:register"
 
 Discovery paths:
 
-1. `src/hermit/builtin/`
+1. `src/hermit/plugins/builtin/`
 2. `~/.hermit/plugins/`
 
 ## Hook Events
@@ -267,11 +276,11 @@ In `/plan` mode, only read-only tools remain available and side-effecting tools 
 
 Prefer using:
 
-- [`JsonStore.read()`](src/hermit/storage/store.py)
-- [`JsonStore.write()`](src/hermit/storage/store.py)
-- [`JsonStore.update()`](src/hermit/storage/store.py)
-- [`atomic_write()`](src/hermit/storage/atomic.py)
-- [`FileGuard.acquire()`](src/hermit/storage/lock.py)
+- [`JsonStore.read()`](src/hermit/infra/storage/store.py)
+- [`JsonStore.write()`](src/hermit/infra/storage/store.py)
+- [`JsonStore.update()`](src/hermit/infra/storage/store.py)
+- [`atomic_write()`](src/hermit/infra/storage/atomic.py)
+- [`FileGuard.acquire()`](src/hermit/infra/locking/lock.py)
 
 Notes:
 
@@ -280,9 +289,9 @@ Notes:
 
 ## Runtime and Debugging Guidance
 
-- Start with [`src/hermit/main.py`](src/hermit/main.py) to confirm the CLI entrypoint
-- Then read [`src/hermit/core/runner.py`](src/hermit/core/runner.py) to understand the execution path
-- Then read [`src/hermit/plugin/manager.py`](src/hermit/plugin/manager.py) to understand capability assembly
+- Start with [`src/hermit/surfaces/cli/main.py`](src/hermit/surfaces/cli/main.py) to confirm the CLI entrypoint
+- Then read [`src/hermit/runtime/control/runner/runner.py`](src/hermit/runtime/control/runner/runner.py) to understand the execution path
+- Then read [`src/hermit/runtime/capability/registry/manager.py`](src/hermit/runtime/capability/registry/manager.py) to understand capability assembly
 - For scheduler / webhook / feishu work, check first whether `DISPATCH_RESULT` is the event you actually need
 
 ## Service Change Completion Rules
@@ -308,49 +317,63 @@ Models propose actions, the kernel authorizes, then the executor runs. No direct
 
 ### Key Layers
 
-**CLI & Entry Points** (`src/hermit/main.py`):
-- CLI dispatcher using Typer: `hermit chat`, `hermit run`, `hermit serve --adapter <name>`, `hermit task ...`, `hermit config`
+**CLI & Surfaces** (`src/hermit/surfaces/cli/`):
+- `main.py` — CLI dispatcher using Typer: `hermit chat`, `hermit run`, `hermit serve`, `hermit task`, `hermit memory`, `hermit config`, etc.
+- `autostart.py` — Autostart management
 
-**Core Runtime** (`src/hermit/core/`):
-- `runner.py` — AgentRunner: unified orchestration for CLI and adapters (Feishu, scheduler, webhook). Manages session + agent + plugin hooks + background services (ObservationService, KernelDispatchService)
-- `session.py` — SessionManager for conversation state
-- `tools.py` — ToolRegistry and tool execution
-- `sandbox.py` — Execution isolation
+**Runtime** (`src/hermit/runtime/`):
+- `control/runner/runner.py` — AgentRunner: unified orchestration for CLI and adapters. Manages session + agent + plugin hooks + background services
+- `control/lifecycle/session.py` — SessionManager for conversation state
+- `control/lifecycle/budgets.py` — Token budget management
+- `capability/registry/manager.py` — PluginManager: plugin discovery, tool registration, hook dispatch, MCP integration
+- `capability/registry/tools.py` — ToolRegistry and tool execution
+- `capability/contracts/base.py` — PluginManifest, HookEvent, SubagentSpec, AdapterSpec
+- `capability/loader/loader.py` — Plugin discovery and loading
+- `capability/resolver/mcp_client.py` — MCP client resolver
+- `assembly/config.py` / `context.py` — Config and context assembly
+- `provider_host/` — LLM provider implementations (Claude, Codex), AgentRuntime, services
 
 **Task Kernel** (`src/hermit/kernel/`):
-- `models.py` — First-class records: TaskRecord, StepRecord, StepAttemptRecord, ApprovalRecord, DecisionRecord
-- `controller.py` — TaskController: task lifecycle, ingress routing, decision management
-- `store.py` — KernelStore: SQLite-backed persistent ledger
-- `executor.py` — ToolExecutor: governed tool execution with policy evaluation
-- `approvals.py` — Approval workflow and policy enforcement
-- `receipts.py` / `proofs.py` — Receipt issuance, proof generation and verification
-- `rollbacks.py` — Rollback execution for supported receipts
-- `context_compiler.py` — Artifact-native context assembly
-- `memory_governance.py` — Evidence-bound memory governance
-- `dispatch.py` — KernelDispatchService for async governed execution
+- `task/` — TaskRecord models, TaskController, ingress routing, projections, state
+- `ledger/journal/store.py` — KernelStore: SQLite-backed persistent ledger
+- `execution/executor/executor.py` — ToolExecutor: governed tool execution with policy evaluation
+- `execution/coordination/dispatch.py` — KernelDispatchService for async governed execution
+- `policy/approvals/` — Approval workflow and policy enforcement
+- `policy/permits/` — Authorization plans
+- `verification/receipts/` / `proofs/` — Receipt issuance, proof generation and verification
+- `verification/rollbacks/` — Rollback execution for supported receipts
+- `context/compiler/` — Artifact-native context assembly
+- `context/memory/governance.py` — Evidence-bound memory governance
+- `artifacts/` — Artifact lineage, claims, evidence
+- `authority/` — Identity, workspaces, capability grants
 
-**Provider Layer** (`src/hermit/provider/`):
-- `runtime.py` — AgentRuntime: provider-facing tool loop and streaming
-- `services.py` — Provider client factory
-- `providers/` — Claude and Codex provider implementations
-
-**Plugin System** (`src/hermit/plugin/`):
-- `manager.py` — Plugin discovery, tool registration, hook dispatch, MCP integration
-- `base.py` — PluginManifest, HookEvent, SubagentSpec, AdapterSpec
+**Plugin System** (`src/hermit/plugins/`):
 - Each plugin has a `plugin.toml` manifest defining entry points, tools, hooks, variables, and skills
+- Discovery paths: `src/hermit/plugins/builtin/` and `~/.hermit/plugins/`
 
-**Builtin Plugins** (`src/hermit/builtin/`):
-- `feishu/` — Feishu messaging adapter
-- `webhook/` — HTTP webhook receiver with signature verification
-- `scheduler/` — Scheduled task execution
-- `memory/` — Memory system with evidence governance
-- `github/` — GitHub integration
-- `web_tools/` — Web search/scraping
-- `computer_use/` — Computer use capabilities
+**Builtin Plugins** (`src/hermit/plugins/builtin/`):
+- `adapters/feishu/` — Feishu messaging adapter
+- `hooks/webhook/` — HTTP webhook receiver with signature verification
+- `hooks/scheduler/` — Scheduled task execution
+- `hooks/memory/` — Memory system with evidence governance
+- `hooks/image_memory/` — Image memory hooks
+- `mcp/github/` — GitHub MCP integration
+- `mcp/mcp_loader/` — MCP server loader
+- `tools/web_tools/` — Web search/scraping
+- `tools/grok/` — Grok search
+- `tools/computer_use/` — Computer use capabilities
+- `bundles/compact/` — Compact command
+- `bundles/planner/` — Plan command
+- `bundles/usage/` — Usage command
+- `subagents/orchestrator/` — Subagent orchestration
 
-**Storage** (`src/hermit/storage/`):
-- SQLite-backed with atomic writes and file-based locking
-- Event-backed state with append-only event logs
+**Infrastructure** (`src/hermit/infra/`):
+- `storage/` — JsonStore, atomic_write for file-based JSON persistence
+- `locking/` — FileGuard for file-based locking
+- `system/` — Sandbox, i18n, executables
+
+**Apps** (`src/hermit/apps/`):
+- `companion/` — macOS menubar companion, app bundle, control
 
 ### Key Design Principles
 
@@ -363,7 +386,7 @@ Models propose actions, the kernel authorizes, then the executor runs. No direct
 
 ### i18n
 
-Locale support via `src/hermit/i18n.py`: English (en-US) and Simplified Chinese (zh-CN). Locale files in `src/hermit/locales/`.
+Locale support via `src/hermit/infra/system/i18n.py`: English (en-US) and Simplified Chinese (zh-CN). Locale files in `src/hermit/infra/system/locales/`.
 
 ## Contributing Direction
 

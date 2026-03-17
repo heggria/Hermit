@@ -1,9 +1,0 @@
-[plugin]
-name = "mcp-loader"
-version = "0.1.0"
-description_key = "plugin.mcp_loader.description"
-description = "Load MCP server configurations from .mcp.json files"
-builtin = true
-
-[entry]
-mcp = "mcp:register"

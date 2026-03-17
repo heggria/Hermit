@@ -1,9 +1,0 @@
-[plugin]
-name = "grok"
-version = "0.1.0"
-description_key = "plugin.grok.description"
-description = "xAI Grok real-time web search — uses Grok's built-in live search for up-to-date news and events. Requires XAI_API_KEY."
-builtin = true
-
-[entry]
-tools = "tools:register"

@@ -10,35 +10,34 @@ from hermit.infra.storage.atomic import atomic_write
 from hermit.plugins.builtin.bundles.usage import commands as usage_commands
 from hermit.plugins.builtin.hooks.scheduler import hooks as scheduler_hooks
 from hermit.plugins.builtin.hooks.webhook import hooks as webhook_hooks
-from hermit.plugins.builtin.subagents.orchestrator import state as builtin_orchestrator_state
+from hermit.plugins.builtin.subagents.orchestrator import state as orchestrator_state
 from hermit.runtime.capability.contracts.base import HookEvent, PluginContext
 from hermit.runtime.capability.contracts.hooks import HooksEngine
-from hermit.runtime.control.dispatch import orchestrator as core_orchestrator
 from hermit.runtime.provider_host.shared import messages
 
 
 @pytest.mark.asyncio
-async def test_orchestrators_route_work_to_expected_worker() -> None:
+async def test_orchestrator_routes_work_to_expected_worker() -> None:
     async def researcher(payload: dict[str, object]) -> dict[str, object]:
         return {**payload, "route": "direct", "research": "notes"}
 
     async def coder(payload: dict[str, object]) -> dict[str, object]:
         return {**payload, "route": "direct", "code": "patch"}
 
-    core_state = core_orchestrator.SharedState(
+    research_state = orchestrator_state.SharedState(
         messages=[{"role": "user", "content": "hi"}], route="research"
     )
-    builtin_state = builtin_orchestrator_state.SharedState(route="code")
+    code_state = orchestrator_state.SharedState(route="code")
 
-    core_result = await core_orchestrator.SimpleOrchestrator(researcher, coder).run(core_state)
-    builtin_result = await builtin_orchestrator_state.SimpleOrchestrator(researcher, coder).run(
-        builtin_state
+    research_result = await orchestrator_state.SimpleOrchestrator(researcher, coder).run(
+        research_state
     )
+    code_result = await orchestrator_state.SimpleOrchestrator(researcher, coder).run(code_state)
 
-    assert core_result.research == "notes"
-    assert core_result.route == "direct"
-    assert builtin_result.code == "patch"
-    assert builtin_result.to_dict()["route"] == "direct"
+    assert research_result.research == "notes"
+    assert research_result.route == "direct"
+    assert code_result.code == "patch"
+    assert code_result.to_dict()["route"] == "direct"
 
 
 def test_usage_command_registers_and_formats_session_totals() -> None:
