@@ -55,23 +55,19 @@ hermit_cmd run --policy autonomous "${PROMPT}"
 # Step 3: Find the iteration task (skip memory promotion tasks)
 # ---------------------------------------------------------------------------
 echo "==> Finding task ID..."
-TASK_ID="$(hermit_cmd task list --limit 10 2>/dev/null \
+TASK_LINE="$(hermit_cmd task list --limit 10 2>/dev/null \
   | grep -v "Promote durable memory" \
-  | head -1 \
-  | sed 's/\[//;s/\].*//')"
+  | head -1)"
+TASK_ID="$(echo "${TASK_LINE}" | sed 's/\[//;s/\].*//')"
 
 if [[ -z "${TASK_ID}" ]]; then
   echo "ERROR: Could not find iteration task ID" >&2
   exit 1
 fi
-echo "    Task: ${TASK_ID}"
 
-# ---------------------------------------------------------------------------
-# Step 4: Check task status
-# ---------------------------------------------------------------------------
-TASK_STATUS="$(hermit_cmd task show "${TASK_ID}" 2>/dev/null \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")"
-echo "    Status: ${TASK_STATUS}"
+# Extract status directly from the task list line (format: [task_id] status channel ...)
+TASK_STATUS="$(echo "${TASK_LINE}" | sed 's/\[[^]]*\] *//;s/ .*//')"
+echo "    Task: ${TASK_ID} (${TASK_STATUS})"
 
 if [[ "${TASK_STATUS}" != "completed" ]]; then
   echo "ERROR: Task did not complete (status=${TASK_STATUS}). Skipping PR." >&2
@@ -87,7 +83,7 @@ PROOF_FILE="${PROOF_DIR}/${SPEC_ID}.json"
 echo "==> Exporting proof to ${PROOF_FILE}"
 hermit_cmd task proof-export "${TASK_ID}" --output "${PROOF_FILE}"
 
-# Extract proof summary
+# Extract proof summary (tolerate failures)
 PROOF_SUMMARY="$(hermit_cmd task proof "${TASK_ID}" 2>/dev/null \
   | python3 -c "
 import json, sys
@@ -105,19 +101,19 @@ print(f\"Decisions: {proj.get('decision_count', 0)}\")
 print(f\"Grants: {proj.get('capability_grant_count', 0)}\")
 print(f\"Chain valid: {chain.get('valid', False)}\")
 print(f\"Head hash: {chain.get('head_hash', 'none')[:16]}...\")
-")"
+" 2>/dev/null)" || PROOF_SUMMARY="(proof summary extraction failed)"
 echo "${PROOF_SUMMARY}"
 
-# Extract receipt details for PR body
+# Extract receipt details for PR body (tolerate failures)
 RECEIPT_TABLE="$(hermit_cmd task receipts --task-id "${TASK_ID}" 2>/dev/null \
   | python3 -c "
 import json, sys
 receipts = json.load(sys.stdin)
 for r in receipts:
-    rb = '✅' if r['rollback_supported'] else '—'
+    rb = 'yes' if r['rollback_supported'] else 'no'
     status = r.get('rollback_status', 'n/a')
     print(f\"| \`{r['receipt_id'][:20]}\` | {r['action_type']} | {r['result_code']} | {rb} | {status} |\")
-" 2>/dev/null || echo "| (unable to extract receipts) | | | | |")"
+" 2>/dev/null)" || RECEIPT_TABLE="| (unable to extract receipts) | | | | |"
 
 # ---------------------------------------------------------------------------
 # Step 6: Commit and push
