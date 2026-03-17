@@ -35,8 +35,6 @@ mkdocs.yml
 # OS & editor
 .DS_Store
 .env
-*.md
-!src/**/*.md
 
 # Scripts & config not needed in image
 scripts/
@@ -47,5 +45,8 @@ Dockerfile
 .dockerignore
 AGENTS.md
 CLAUDE.md
+CHANGELOG.md
+CONTRIBUTING.md
+README.zh-CN.md
 .agents/
 .claude/
