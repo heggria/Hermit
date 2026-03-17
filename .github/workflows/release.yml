@@ -277,7 +277,7 @@ jobs:
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
           SHA256="${{ steps.sha.outputs.sha256 }}"
-          TAP_REPO="heggria/homebrew-hermit"
+          TAP_REPO="heggria/homebrew-tap"
 
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
           mkdir -p tap/Formula
