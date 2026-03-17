@@ -41,6 +41,12 @@ macOS:
 curl -fsSL https://raw.githubusercontent.com/heggria/Hermit/main/install-macos.sh | bash
 ```
 
+Or via Homebrew:
+
+```bash
+brew tap heggria/hermit && brew install hermit-agent
+```
+
 That installs Hermit, initializes `~/.hermit`, installs the optional menu bar companion, and preserves any provider credentials already present in your shell.
 
 It also tries to sync compatible local settings when Hermit does not already have them:
