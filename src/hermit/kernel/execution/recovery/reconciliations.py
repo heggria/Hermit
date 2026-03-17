@@ -6,6 +6,7 @@ from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.recovery.reconcile import ReconcileOutcome, ReconcileService
 from hermit.kernel.ledger.journal.store import KernelStore
+from hermit.kernel.task.models.records import ReconciliationRecord
 
 
 class ReconciliationService:
@@ -32,7 +33,18 @@ class ReconciliationService:
         witness: dict[str, Any] | None,
         result_code_hint: str,
         authorized_effect_summary: str,
-    ):
+    ) -> tuple[ReconciliationRecord, ReconcileOutcome, str | list[str]]:
+        existing = self._find_existing_reconciliation(attempt_ctx.step_attempt_id, receipt_ref)
+        if existing is not None:
+            return (
+                existing,
+                ReconcileOutcome(
+                    result_code=str(getattr(existing, "result_class", "") or ""),
+                    summary=str(getattr(existing, "observed_effect_summary", "") or ""),
+                    observed_refs=list(getattr(existing, "observed_output_refs", []) or []),
+                ),
+                [],
+            )
         outcome = self.reconcile_service.reconcile(
             action_type=action_type,
             tool_input=tool_input,
@@ -128,6 +140,15 @@ class ReconciliationService:
             return "partial"
         if result_code_hint in {"unknown_outcome"}:
             return "ambiguous"
+        if result_code_hint in {
+            "drifted",
+            "witness_drift",
+            "contract_expiry",
+            "policy_version_drift",
+        }:
+            return "drifted"
+        if result_code_hint in {"rolled_back", "rollback_succeeded"}:
+            return "rolled_back"
         if outcome.result_code in {"reconciled_applied", "reconciled_observed"}:
             return "satisfied"
         if outcome.result_code == "reconciled_not_applied":
@@ -144,7 +165,24 @@ class ReconciliationService:
             return "gather_more_evidence"
         if result_class == "unauthorized":
             return "request_authority"
+        if result_class == "drifted":
+            return "reenter_policy"
+        if result_class == "rolled_back":
+            return "confirm_rollback"
         return "park_and_escalate"
+
+    def _find_existing_reconciliation(
+        self, step_attempt_id: str, receipt_ref: str
+    ) -> ReconciliationRecord | None:
+        if not hasattr(self.store, "list_reconciliations"):
+            return None
+        for reconciliation in self.store.list_reconciliations(
+            step_attempt_id=step_attempt_id, limit=10
+        ):
+            receipt_refs = list(getattr(reconciliation, "receipt_refs", []) or [])
+            if receipt_ref in receipt_refs:
+                return reconciliation
+        return None
 
     @staticmethod
     def _confidence_delta(outcome: ReconcileOutcome) -> float:

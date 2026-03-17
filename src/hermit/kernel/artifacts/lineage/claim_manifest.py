@@ -59,6 +59,21 @@ CLAIM_ROWS: list[dict[str, Any]] = [
         "profiles": [],
         "conditional": True,
     },
+    {
+        "id": "reconciliation_coverage",
+        "label": "All consequential action types produce durable reconciliation records",
+        "profiles": ["governed", "verifiable"],
+    },
+    {
+        "id": "proof_chain_complete",
+        "label": "Proof export reconstructs full contract/evidence/authority/receipt/reconciliation chains",
+        "profiles": ["verifiable"],
+    },
+    {
+        "id": "retry_stale_guard",
+        "label": "Contract-sensitive retries invalidate stale contract, approval, evidence, and witness state",
+        "profiles": ["governed", "verifiable"],
+    },
 ]
 
 PROFILE_LABELS = {

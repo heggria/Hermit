@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 import typer
 
+import hermit.surfaces.cli._helpers as helpers_mod
+import hermit.surfaces.cli._preflight as preflight_mod
 import hermit.surfaces.cli.main as main_mod
 from hermit.runtime.capability.contracts.base import McpServerSpec, McpToolGovernance
 from hermit.runtime.capability.resolver.mcp_client import (
@@ -31,20 +33,20 @@ def test_main_env_helpers_and_output_helpers(
     monkeypatch.setenv("FOO", "from-shell")
     monkeypatch.delenv("BAR", raising=False)
 
-    assert main_mod._hermit_env_path() == env_path
+    assert main_mod.hermit_env_path() == env_path
 
     main_mod._load_hermit_env()
 
     assert main_mod.os.environ["FOO"] == "from-shell"
     assert main_mod.os.environ["BAR"] == "quoted"
-    assert main_mod._tool_result_preview("a\nb", limit=3) == "a b"
-    assert main_mod._tool_result_preview("abcdef", limit=3) == "abc..."
+    assert helpers_mod._tool_result_preview("a\nb", limit=3) == "a b"
+    assert helpers_mod._tool_result_preview("abcdef", limit=3) == "abc..."
 
     echoed: list[str] = []
-    monkeypatch.setattr(main_mod.typer, "echo", lambda text="": echoed.append(text))
-    main_mod._on_tool_call("echo", {"value": "hi"}, {"ok": True})
-    main_mod._print_result(
-        main_mod.AgentResult(text="done", turns=1, tool_calls=0, thinking="plan")
+    monkeypatch.setattr(helpers_mod.typer, "echo", lambda text="": echoed.append(text))
+    helpers_mod.on_tool_call("echo", {"value": "hi"}, {"ok": True})
+    helpers_mod.print_result(
+        helpers_mod.AgentResult(text="done", turns=1, tool_calls=0, thinking="plan")
     )
     assert any("echo(value='hi')" in line for line in echoed)
     assert any("thinking" in line for line in echoed)
@@ -53,8 +55,8 @@ def test_main_env_helpers_and_output_helpers(
 
 def test_stream_printer_handles_thinking_and_text(monkeypatch: pytest.MonkeyPatch) -> None:
     stream = io.StringIO()
-    monkeypatch.setattr(main_mod.sys, "stdout", stream)
-    printer = main_mod._StreamPrinter()
+    monkeypatch.setattr(helpers_mod.sys, "stdout", stream)
+    printer = helpers_mod._StreamPrinter()
 
     printer.on_token("thinking", "plan")
     printer.on_token("text", "done")
@@ -118,13 +120,15 @@ def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
     settings.base_dir.mkdir(parents=True)
     settings.config_file.write_text("", encoding="utf-8")
 
-    snapshot = main_mod._resolved_config_snapshot(settings)
+    snapshot = helpers_mod.resolved_config_snapshot(settings)
     assert snapshot["auth"]["provider"] == "codex-oauth"
     assert snapshot["webhook"]["port"] == 8080
     assert "reaction_enabled" not in snapshot["feishu"]
 
     created: list[Path] = []
-    monkeypatch.setattr(main_mod, "ensure_default_context_file", lambda path: created.append(path))
+    monkeypatch.setattr(
+        helpers_mod, "ensure_default_context_file", lambda path: created.append(path)
+    )
 
     class FakeMemoryEngine:
         def __init__(self, path: Path) -> None:
@@ -137,16 +141,16 @@ def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
     import hermit.plugins.builtin.hooks.memory.engine as memory_engine_mod
 
     monkeypatch.setattr(memory_engine_mod, "MemoryEngine", FakeMemoryEngine)
-    main_mod._ensure_workspace(settings)
+    helpers_mod.ensure_workspace(settings)
     assert created == [settings.context_file]
     assert settings.memory_file.exists()
 
     with pytest.raises(typer.BadParameter, match="requires HERMIT_OPENAI_API_KEY"):
-        main_mod._require_auth(
+        helpers_mod.require_auth(
             SimpleNamespace(has_auth=False, provider="codex", codex_auth_file_exists=False)
         )
     with pytest.raises(typer.BadParameter, match="does not expose an OpenAI API key"):
-        main_mod._require_auth(
+        helpers_mod.require_auth(
             SimpleNamespace(
                 has_auth=False,
                 provider="codex",
@@ -155,12 +159,12 @@ def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
             )
         )
     with pytest.raises(typer.BadParameter, match="requires a local Codex login"):
-        main_mod._require_auth(SimpleNamespace(has_auth=False, provider="codex-oauth"))
+        helpers_mod.require_auth(SimpleNamespace(has_auth=False, provider="codex-oauth"))
     with pytest.raises(typer.BadParameter, match="Missing authentication"):
-        main_mod._require_auth(SimpleNamespace(has_auth=False, provider="claude"))
+        helpers_mod.require_auth(SimpleNamespace(has_auth=False, provider="claude"))
 
-    monkeypatch.setattr(main_mod.sys, "platform", "linux")
-    with main_mod._caffeinate(SimpleNamespace(prevent_sleep=True)):
+    monkeypatch.setattr(helpers_mod.sys, "platform", "linux")
+    with helpers_mod.caffeinate(SimpleNamespace(prevent_sleep=True)):
         pass
 
     calls: list[str] = []
@@ -172,14 +176,14 @@ def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
         def wait(self) -> None:
             calls.append("wait")
 
-    monkeypatch.setattr(main_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(helpers_mod.sys, "platform", "darwin")
     monkeypatch.setattr(
-        main_mod.shutil,
+        helpers_mod.shutil,
         "which",
         lambda name: "/usr/bin/caffeinate" if name == "caffeinate" else None,
     )
-    monkeypatch.setattr(main_mod.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
-    with main_mod._caffeinate(SimpleNamespace(prevent_sleep=True)):
+    monkeypatch.setattr(helpers_mod.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    with helpers_mod.caffeinate(SimpleNamespace(prevent_sleep=True)):
         calls.append("body")
     assert calls == ["body", "terminate", "wait"]
 
@@ -195,14 +199,14 @@ def test_main_preflight_helpers_cover_codex_and_oauth_paths(
         "HERMIT_PROVIDER=codex\nHERMIT_MODEL=gpt-5.4\n", encoding="utf-8"
     )
 
-    env_keys = main_mod._read_env_file_keys()
+    env_keys = preflight_mod._read_env_file_keys()
     assert env_keys == {"HERMIT_PROVIDER", "HERMIT_MODEL"}
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
-    assert main_mod._resolve_env_key("MISSING", "OPENAI_API_KEY") == "OPENAI_API_KEY"
-    assert main_mod._describe_env_source("HERMIT_PROVIDER", env_keys) == "~/.hermit/.env"
-    assert main_mod._describe_env_source("OPENAI_API_KEY", env_keys) == "shell env"
+    assert preflight_mod._resolve_env_key("MISSING", "OPENAI_API_KEY") == "OPENAI_API_KEY"
+    assert preflight_mod._describe_env_source("HERMIT_PROVIDER", env_keys) == "~/.hermit/.env"
+    assert preflight_mod._describe_env_source("OPENAI_API_KEY", env_keys) == "shell env"
     assert (
-        main_mod._format_preflight_item(main_mod._PreflightItem("鉴权", False, "缺失"))
+        preflight_mod._format_preflight_item(preflight_mod._PreflightItem("鉴权", False, "缺失"))
         == "  [MISSING] 鉴权: 缺失"
     )
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -225,7 +229,7 @@ def test_main_preflight_helpers_cover_codex_and_oauth_paths(
         codex_access_token=None,
         codex_refresh_token=None,
     )
-    items, errors = main_mod._build_serve_preflight("cli", codex_settings)
+    items, errors = preflight_mod._build_serve_preflight("cli", codex_settings)
     details = {item.label: item.detail for item in items}
     assert details["Provider"] == "codex (~/.hermit/.env)"
     assert "无可用 OpenAI API Key" in details["Codex 鉴权"]
@@ -249,13 +253,13 @@ def test_main_preflight_helpers_cover_codex_and_oauth_paths(
         claude_base_url=None,
         resolved_openai_api_key=None,
     )
-    _, oauth_errors = main_mod._build_serve_preflight("cli", oauth_settings)
+    _, oauth_errors = preflight_mod._build_serve_preflight("cli", oauth_settings)
     assert "access_token / refresh_token" in oauth_errors[0]
 
     echoed: list[str] = []
-    monkeypatch.setattr(main_mod.typer, "echo", lambda text="": echoed.append(text))
+    monkeypatch.setattr(preflight_mod.typer, "echo", lambda text="": echoed.append(text))
     with pytest.raises(typer.Exit):
-        main_mod._run_serve_preflight("cli", codex_settings)
+        preflight_mod.run_serve_preflight("cli", codex_settings)
     assert echoed[0] == "Hermit 启动前环境自检"
 
 

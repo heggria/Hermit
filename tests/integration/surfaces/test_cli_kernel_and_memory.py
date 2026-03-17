@@ -840,7 +840,7 @@ def test_memory_export_command_writes_export_only_mirror(tmp_path, monkeypatch) 
 
 
 def test_task_approve_and_deny_commands_delegate_to_runner(tmp_path, monkeypatch) -> None:
-    import hermit.surfaces.cli.main as main_mod
+    import hermit.surfaces.cli._commands_core as core_mod
     from hermit.kernel.ledger.journal.store import KernelStore
     from hermit.runtime.assembly.config import get_settings
 
@@ -880,7 +880,7 @@ def test_task_approve_and_deny_commands_delegate_to_runner(tmp_path, monkeypatch
         def stop_mcp_servers(self) -> None:
             return None
 
-    monkeypatch.setattr(main_mod, "_build_runner", lambda settings: (FakeRunner(), FakePM()))
+    monkeypatch.setattr(core_mod, "build_runner", lambda settings: (FakeRunner(), FakePM()))
 
     runner = CliRunner()
     approve_result = runner.invoke(app, ["task", "approve", approval.approval_id])

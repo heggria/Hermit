@@ -10,6 +10,10 @@
 [![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-black)](./LICENSE)
 [![Docs](https://img.shields.io/badge/docs-github%20pages-0F172A)](https://heggria.github.io/Hermit/)
+[![PyPI](https://img.shields.io/pypi/v/hermit-agent)](https://pypi.org/project/hermit-agent/)
+[![Downloads](https://img.shields.io/pypi/dm/hermit-agent)](https://pypi.org/project/hermit-agent/)
+[![Discord](https://img.shields.io/discord/1483353136834936924?logo=discord&logoColor=white&label=Discord)](https://discord.gg/Sf958sbx)
+[![Discussions](https://img.shields.io/github/discussions/heggria/Hermit)](https://github.com/heggria/Hermit/discussions)
 
 > **Hermit 把 agent 工作变成一条可治理、可检查、可本地掌控的执行路径。**
 >
@@ -74,7 +78,9 @@ hermit task rollback <receipt_id>
 
 Hermit 关心的不只是“模型把事情做了”，而是“事情做完之后，你还能看见什么、确认什么、恢复什么”。
 
-如果你想录屏或做展示，先看 [docs/demo-flows.md](./docs/demo-flows.md)。
+如果你想录屏或做展示，先看 [docs/demo-flows.md](./docs/demo-flows.md)。可运行的示例脚本在 [examples/](./examples/) 目录。
+
+![Hermit demo: 执行、检查、证明](./docs/assets/demo.gif)
 
 下面这张图使用仓库内真实生成的 CLI 输出：
 
@@ -215,15 +221,25 @@ hermit task rollback <receipt_id>
 
 推荐从这里开始：
 
+- [快速上手（中文）](./docs/getting-started.zh-CN.md)
+- [为什么选择 Hermit（中文）](./docs/why-hermit.zh-CN.md)
 - [docs/getting-started.md](./docs/getting-started.md)
 - [docs/demo-flows.md](./docs/demo-flows.md)
 - [docs/why-hermit.md](./docs/why-hermit.md)
+- [docs/design-philosophy.md](./docs/design-philosophy.md)
+- [docs/comparisons.md](./docs/comparisons.md)
 - [docs/architecture.md](./docs/architecture.md)
 - [docs/governance.md](./docs/governance.md)
 - [docs/receipts-and-proofs.md](./docs/receipts-and-proofs.md)
 - [docs/roadmap.md](./docs/roadmap.md)
 
 目前更深的 `docs/` 文档仍以英文为主；这个中文 README 负责提供一个完整的中文入口页。
+
+## 社区
+
+- [Discord](https://discord.gg/Sf958sbx) — 实时聊天和支持
+- [GitHub Discussions](https://github.com/heggria/Hermit/discussions) — 提问、交流想法
+- [Issues](https://github.com/heggria/Hermit/issues) — Bug 反馈和功能建议
 
 ## 许可证
 

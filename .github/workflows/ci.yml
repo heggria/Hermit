@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -241,6 +242,24 @@ jobs:
           name: hermit-sbom
           path: dist/hermit.sbom.json
 
+  codeql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@603b797f8b14b413fe025cd935a91c16c4782713
+        with:
+          languages: python
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@603b797f8b14b413fe025cd935a91c16c4782713
+        with:
+          category: "/language:python"
+
   package:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -285,6 +304,15 @@ jobs:
       - name: Build and smoke-test Docker image
         run: make docker-smoke
 
+      - name: Scan Docker image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'hermit:local'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
   macos-dmg:
     runs-on: macos-latest
     timeout-minutes: 25
@@ -324,6 +352,7 @@ jobs:
       - coverage
       - docs
       - security
+      - codeql
       - package
       - docker
     runs-on: ubuntu-latest

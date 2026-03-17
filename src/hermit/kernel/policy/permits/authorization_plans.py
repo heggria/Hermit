@@ -112,18 +112,25 @@ class AuthorizationPlanService:
         )
         return authorization_plan, artifact_ref
 
-    def invalidate(self, authorization_plan_id: str, *, gaps: list[str], summary: str) -> None:
+    def invalidate(
+        self,
+        authorization_plan_id: str,
+        *,
+        gaps: list[str],
+        summary: str,
+        status: str = "invalidated",
+    ) -> None:
         record = self.store.get_authorization_plan(authorization_plan_id)
         if record is None:
             return
         self.store.update_authorization_plan(
             authorization_plan_id,
-            status="invalidated",
+            status=status,
             current_gaps=gaps,
             operator_packet_ref=summary,
         )
         self.store.append_event(
-            event_type="authorization_plan.invalidated",
+            event_type=f"authorization_plan.{status}",
             entity_type="authorization_plan",
             entity_id=authorization_plan_id,
             task_id=record.task_id,

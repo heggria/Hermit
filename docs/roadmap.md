@@ -79,6 +79,23 @@ Focus:
 - deepen observation and resolution semantics
 - strengthen artifact-native context and carry-forward behavior
 
+## v0.2 Core Exit Criteria Status
+
+10 of 12 v0.2 Core exit criteria are now `implemented`:
+
+1. Consequential execution synthesizes an `ExecutionContractRecord` before dispatch
+2. Contract admission records an `EvidenceCaseRecord` and `AuthorizationPlanRecord`
+3. Receipt issuance carries contract / authorization linkage and requires reconciliation
+4. Reconciliation writes a durable `ReconciliationRecord` and closes the contract loop
+5. Witness drift supersedes prior attempts instead of silently reusing stale approval state
+6. Durable memory promotion is reconciliation-gated
+7. Projection / proof surfaces expose contract-loop entities
+8. Idempotent reconciliation prevents duplicate reconciliation records for the same receipt
+9. Contract expiry and policy version drift trigger durable re-entry before execution
+10. Violated reconciliation invalidates memories learned from the same reconciliation ref
+
+Remaining exit criteria are tracked in the conformance matrices.
+
 ## Contribution Priorities
 
 The highest-leverage contributions right now are:

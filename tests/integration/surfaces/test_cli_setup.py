@@ -7,8 +7,9 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-import hermit.surfaces.cli.main as main_mod
-from hermit.surfaces.cli.main import _build_serve_preflight, app
+import hermit.surfaces.cli._commands_core as core_mod
+from hermit.surfaces.cli._preflight import _build_serve_preflight
+from hermit.surfaces.cli.main import app
 
 
 def test_init_creates_workspace(tmp_path, monkeypatch) -> None:
@@ -25,7 +26,6 @@ def test_init_creates_workspace(tmp_path, monkeypatch) -> None:
 
 
 def test_setup_writes_env_file(tmp_path, monkeypatch) -> None:
-    import hermit.surfaces.cli.main as main_mod
     from hermit.runtime.assembly.config import get_settings
 
     monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
@@ -33,8 +33,8 @@ def test_setup_writes_env_file(tmp_path, monkeypatch) -> None:
 
     confirm_answers = iter([False, False])
 
-    monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
-    monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: "sk-ant-test")
+    monkeypatch.setattr(core_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
+    monkeypatch.setattr(core_mod.typer, "prompt", lambda *args, **kwargs: "sk-ant-test")
 
     runner = CliRunner()
     result = runner.invoke(app, ["setup"])
@@ -46,7 +46,6 @@ def test_setup_writes_env_file(tmp_path, monkeypatch) -> None:
 
 
 def test_setup_shows_adapter_flag_in_next_steps(tmp_path, monkeypatch) -> None:
-    import hermit.surfaces.cli.main as main_mod
     from hermit.runtime.assembly.config import get_settings
 
     monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
@@ -55,8 +54,8 @@ def test_setup_shows_adapter_flag_in_next_steps(tmp_path, monkeypatch) -> None:
     confirm_answers = iter([False, True])
     prompt_answers = iter(["sk-ant-test", "cli_xxx", "secret"])
 
-    monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
-    monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
+    monkeypatch.setattr(core_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
+    monkeypatch.setattr(core_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
 
     runner = CliRunner()
     result = runner.invoke(app, ["setup"])
@@ -66,7 +65,6 @@ def test_setup_shows_adapter_flag_in_next_steps(tmp_path, monkeypatch) -> None:
 
 
 def test_setup_next_steps_stay_localized_but_commands_remain_literal(tmp_path, monkeypatch) -> None:
-    import hermit.surfaces.cli.main as main_mod
     from hermit.runtime.assembly.config import get_settings
 
     monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
@@ -76,8 +74,8 @@ def test_setup_next_steps_stay_localized_but_commands_remain_literal(tmp_path, m
     confirm_answers = iter([False, True])
     prompt_answers = iter(["sk-ant-test", "cli_xxx", "secret"])
 
-    monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
-    monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
+    monkeypatch.setattr(core_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
+    monkeypatch.setattr(core_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
 
     runner = CliRunner()
     result = runner.invoke(app, ["setup"])
@@ -113,7 +111,7 @@ def test_serve_preflight_reports_missing_feishu_env(tmp_path, monkeypatch) -> No
 
 
 def test_serve_preflight_shows_resolved_env_sources(tmp_path, monkeypatch) -> None:
-    import hermit.surfaces.cli.main as main_mod
+    import hermit.surfaces.cli._serve as serve_mod
     from hermit.runtime.assembly.config import get_settings
 
     monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
@@ -127,7 +125,7 @@ def test_serve_preflight_shows_resolved_env_sources(tmp_path, monkeypatch) -> No
     def fake_serve_loop(adapter: str, pid_file) -> None:
         serve_calls.append((adapter, str(pid_file)))
 
-    monkeypatch.setattr(main_mod, "_serve_loop", fake_serve_loop)
+    monkeypatch.setattr(serve_mod, "_serve_loop", fake_serve_loop)
 
     runner = CliRunner()
     result = runner.invoke(app, ["serve"])
@@ -140,15 +138,15 @@ def test_serve_preflight_shows_resolved_env_sources(tmp_path, monkeypatch) -> No
 
 
 def test_write_serve_status_persists_latest_status_and_history(tmp_path, monkeypatch) -> None:
-    import hermit.surfaces.cli.main as main_mod
     from hermit.runtime.assembly.config import get_settings
+    from hermit.surfaces.cli._preflight import write_serve_status
 
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
     get_settings.cache_clear()
 
     settings = get_settings()
-    main_mod._write_serve_status(
+    write_serve_status(
         settings,
         "feishu",
         phase="stopped",
@@ -174,7 +172,7 @@ def test_write_serve_status_persists_latest_status_and_history(tmp_path, monkeyp
 
 
 def test_serve_records_crash_status_when_serve_loop_raises(tmp_path, monkeypatch) -> None:
-    import hermit.surfaces.cli.main as main_mod
+    import hermit.surfaces.cli._serve as serve_mod
     from hermit.runtime.assembly.config import get_settings
 
     base_dir = tmp_path / ".hermit"
@@ -187,7 +185,7 @@ def test_serve_records_crash_status_when_serve_loop_raises(tmp_path, monkeypatch
     def fake_serve_loop(adapter: str, pid_file) -> None:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(main_mod, "_serve_loop", fake_serve_loop)
+    monkeypatch.setattr(serve_mod, "_serve_loop", fake_serve_loop)
 
     runner = CliRunner()
     result = runner.invoke(app, ["serve"])
@@ -259,10 +257,10 @@ def test_setup_supports_proxy_configuration(
         ["token-1", "https://proxy.local", "X-Biz-Id: demo", "claude-proxy-model"]
     )
 
-    monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
-    monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
+    monkeypatch.setattr(core_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
+    monkeypatch.setattr(core_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
 
-    result = CliRunner().invoke(main_mod.app, ["setup"])
+    result = CliRunner().invoke(core_mod.app, ["setup"])
 
     env_text = (tmp_path / ".hermit" / ".env").read_text(encoding="utf-8")
     assert result.exit_code == 0

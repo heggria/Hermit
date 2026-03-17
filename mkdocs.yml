@@ -9,6 +9,14 @@ strict: true
 exclude_docs: |
   oss-docs-redesign-proposal.md
   wiki-home.md
+  ecosystem-submissions.md
+  getting-started.zh-CN.md
+  why-hermit.zh-CN.md
+
+plugins:
+  - search
+  - social:
+      enabled: !ENV [CI, false]
 
 theme:
   name: material
@@ -28,6 +36,15 @@ theme:
     - search.suggest
     - search.highlight
 
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/heggria/Hermit
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/Sf958sbx
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/hermit-agent/
+
 extra_css:
   - stylesheets/landing.css
 
@@ -46,6 +63,8 @@ nav:
   - Getting Started: getting-started.md
   - Demo Flows: demo-flows.md
   - Why Hermit: why-hermit.md
+  - Design Philosophy: design-philosophy.md
+  - Comparisons: comparisons.md
   - Architecture: architecture.md
   - Governance: governance.md
   - Task Lifecycle: task-lifecycle.md

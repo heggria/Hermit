@@ -36,8 +36,12 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development :: Build Tools",
   "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Systems Administration",
+  "Natural Language :: English",
+  "Natural Language :: Chinese (Simplified)",
   "Typing :: Typed",
 ]
 dependencies = [
@@ -76,6 +80,7 @@ hermit-menubar-install-app = "hermit.apps.companion.appbundle:main"
 dev = [
   "coverage>=7.13.4",
   "httpx>=0.28.0",
+  "hypothesis>=6.0",
   "pre-commit>=4.2.0",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.0.0",
@@ -89,8 +94,10 @@ typecheck = [
   "pyright>=1.1.400",
 ]
 docs = [
+  "cairosvg>=2.7.0",
   "mkdocs>=1.6.1",
   "mkdocs-material>=9.6.0",
+  "pillow>=11.1.0",
 ]
 security = [
   "cyclonedx-bom>=7.1.0",
@@ -155,6 +162,7 @@ markers = [
   "e2e: validates end-to-end user or operator scenarios",
   "network: requires live network access or external services",
   "slow: takes noticeably longer than the default suite",
+  "trustloop_bench: TrustLoop-Bench v0.2 exit criterion #12 tests",
 ]
 
 [tool.coverage.run]

@@ -22,6 +22,9 @@ That means:
 | Task ledger and core records | shipped | task, step, step attempt, approval, decision, principal, capability grant, workspace lease, artifact, receipt, belief, memory, rollback, conversation, ingress |
 | Governed execution | shipped | policy, approval, and scoped authority are already real in the codebase |
 | Proof summaries and proof export | shipped | usable today through the task CLI |
+| Reconciliation | shipped | durable reconciliation records for all governed action types; idempotent protection against duplicate reconciliation |
+| Proof chain completeness | shipped | proof export reconstructs full contract/evidence/authority/receipt/reconciliation chains |
+| Contract-sensitive retries | shipped | contract expiry and policy version drift trigger durable re-entry; violated reconciliation invalidates related memories |
 | Rollback | shipped with scoped coverage | supported for governed receipt classes; not every historical action type has a rollback strategy |
 | Artifact-native context | shipped | context compiler and context packs are the default runtime path |
 | Evidence-bound memory | shipped | kernel-backed memory governance is the default truth path; markdown mirror is export-only |

@@ -76,14 +76,18 @@ class MemoryRecordService:
         workspace_root: str = "",
         reconciliation_ref: str | None = None,
     ) -> MemoryRecord | None:
-        resolved_reconciliation_ref = reconciliation_ref or self._eligible_reconciliation_ref(
-            belief.task_id
-        )
+        blocking_reason: str = ""
+        if reconciliation_ref:
+            resolved_reconciliation_ref = reconciliation_ref
+        else:
+            resolved_reconciliation_ref, blocking_reason = self._eligible_reconciliation_ref(
+                belief.task_id
+            )
         if resolved_reconciliation_ref is None:
             self.store.update_belief(
                 belief.belief_id,
                 promotion_candidate=False,
-                validation_basis="promotion_blocked:reconciliation_missing",
+                validation_basis=f"promotion_blocked:{blocking_reason}",
             )
             return None
         classification = self.governance.classify_belief(belief, workspace_root=workspace_root)
@@ -153,6 +157,22 @@ class MemoryRecordService:
 
     def invalidate(self, memory_id: str) -> None:
         self.store.update_memory_record(memory_id, status="invalidated", invalidated_at=time.time())
+
+    def invalidate_by_reconciliation(self, reconciliation_ref: str, result_class: str) -> list[str]:
+        if result_class != "violated":
+            return []
+        invalidated_ids: list[str] = []
+        for record in self.store.list_memory_records(status="active", limit=5000):
+            learned_ref = str(getattr(record, "learned_from_reconciliation_ref", "") or "").strip()
+            if learned_ref == reconciliation_ref:
+                self.store.update_memory_record(
+                    record.memory_id,
+                    status="invalidated",
+                    invalidation_reason=f"reconciliation_violated:{reconciliation_ref}",
+                    invalidated_at=time.time(),
+                )
+                invalidated_ids.append(record.memory_id)
+        return invalidated_ids
 
     def reconcile_active_records(self) -> dict[str, int]:
         active_records = sorted(
@@ -240,10 +260,14 @@ class MemoryRecordService:
             retention_class=record.retention_class,
         )
 
-    def _eligible_reconciliation_ref(self, task_id: str) -> str | None:
+    def _eligible_reconciliation_ref(self, task_id: str) -> tuple[str | None, str]:
         if not hasattr(self.store, "list_reconciliations"):
-            return None
+            return None, "reconciliation_missing"
+        found_any = False
         for reconciliation in self.store.list_reconciliations(task_id=task_id, limit=50):
+            found_any = True
             if str(reconciliation.result_class or "") == "satisfied":
-                return reconciliation.reconciliation_id
-        return None
+                return reconciliation.reconciliation_id, ""
+        if found_any:
+            return None, "reconciliation_not_satisfied"
+        return None, "reconciliation_missing"
