@@ -215,14 +215,14 @@ def test_command_sandbox_coarse_observation_only_extends_completion_once(
 ) -> None:
     monkeypatch.setattr("hermit.infra.system.sandbox._COARSE_OBSERVATION_GRACE_SECONDS", 1.0)
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(0.08)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.15)"'
 
     result = sandbox.run({"command": command, "display_name": "Short Task"})
 
     assert "_hermit_observation" in result
     ticket = result["_hermit_observation"]
 
-    time.sleep(0.07)
+    time.sleep(0.12)
 
     observing = sandbox.poll(ticket["job_id"])
     assert observing["status"] == "observing"

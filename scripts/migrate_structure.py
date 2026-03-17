@@ -421,6 +421,7 @@ def collect_all_target_dirs() -> set[Path]:
 # Import rewriting
 # ---------------------------------------------------------------------------
 
+
 def rewrite_imports_in_file(filepath: Path) -> int:
     """Rewrite imports in a single file. Returns number of replacements made."""
     try:
@@ -445,16 +446,12 @@ def rewrite_imports_in_file(filepath: Path) -> int:
         content = pattern_from.sub(f"from {new_mod}", content)
 
         # Pattern 2: import hermit.old.path
-        pattern_import = re.compile(
-            r"(?<![.\w])import\s+" + re.escape(old_mod) + r"(?=\s|$|,)"
-        )
+        pattern_import = re.compile(r"(?<![.\w])import\s+" + re.escape(old_mod) + r"(?=\s|$|,)")
         content = pattern_import.sub(f"import {new_mod}", content)
 
         # Pattern 3: String references in dicts/tuples (like kernel __init__.py _EXPORTS)
         # Match "hermit.old.path" in quotes
-        pattern_str = re.compile(
-            r'(["\'])' + re.escape(old_mod) + r"(\1)"
-        )
+        pattern_str = re.compile(r'(["\'])' + re.escape(old_mod) + r"(\1)")
         content = pattern_str.sub(rf"\g<1>{new_mod}\g<2>", content)
 
         # Pattern 4: f-string or format string references like hermit.builtin.X
@@ -523,7 +520,7 @@ def fix_plugin_loader() -> None:
     content = content.replace(old_invoke, new_invoke)
 
     # Fix discover_plugins to recurse into subcategory directories
-    old_discover = '''def discover_plugins(*search_dirs: Path) -> List[PluginManifest]:
+    old_discover = """def discover_plugins(*search_dirs: Path) -> List[PluginManifest]:
     manifests: List[PluginManifest] = []
     for search_dir in search_dirs:
         if not search_dir.exists():
@@ -534,9 +531,9 @@ def fix_plugin_loader() -> None:
             manifest = parse_manifest(child)
             if manifest is not None:
                 manifests.append(manifest)
-    return manifests'''
+    return manifests"""
 
-    new_discover = '''def discover_plugins(*search_dirs: Path) -> List[PluginManifest]:
+    new_discover = """def discover_plugins(*search_dirs: Path) -> List[PluginManifest]:
     manifests: List[PluginManifest] = []
     for search_dir in search_dirs:
         if not search_dir.exists():
@@ -555,7 +552,7 @@ def fix_plugin_loader() -> None:
                     sub_manifest = parse_manifest(grandchild)
                     if sub_manifest is not None:
                         manifests.append(sub_manifest)
-    return manifests'''
+    return manifests"""
 
     content = content.replace(old_discover, new_discover)
 
@@ -597,7 +594,7 @@ def fix_kernel_init() -> None:
         print("  WARN: kernel/__init__.py not found")
         return
 
-    new_content = '''from __future__ import annotations
+    new_content = """from __future__ import annotations
 
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
@@ -681,7 +678,7 @@ def __getattr__(name: str) -> Any:
     value = getattr(module, attr_name)
     globals()[name] = value
     return value
-'''
+"""
     init_path.write_text(new_content, encoding="utf-8")
     print("  Rewrote kernel/__init__.py with new module paths")
 
@@ -693,7 +690,7 @@ def fix_kernel_policy_init() -> None:
         print("  WARN: kernel/policy/__init__.py not found")
         return
 
-    new_content = '''from hermit.kernel.policy.evaluators.engine import PolicyEngine
+    new_content = """from hermit.kernel.policy.evaluators.engine import PolicyEngine
 from hermit.kernel.policy.guards.fingerprint import build_action_fingerprint
 from hermit.kernel.policy.models.models import (
     ActionRequest,
@@ -712,7 +709,7 @@ __all__ = [
     "PolicyReason",
     "build_action_fingerprint",
 ]
-'''
+"""
     init_path.write_text(new_content, encoding="utf-8")
     print("  Rewrote kernel/policy/__init__.py with new module paths")
 
@@ -731,40 +728,77 @@ def phase1_move_files() -> None:
         ensure_init(d)
 
     # Also create top-level package __init__.py files
-    for pkg in ["surfaces", "surfaces/cli", "runtime", "runtime/assembly",
-                "runtime/observation", "runtime/observation/logging",
-                "runtime/control", "runtime/control/runner",
-                "runtime/control/lifecycle", "runtime/control/dispatch",
-                "runtime/capability", "runtime/capability/contracts",
-                "runtime/capability/loader", "runtime/capability/registry",
-                "runtime/capability/resolver",
-                "runtime/provider_host", "runtime/provider_host/execution",
-                "runtime/provider_host/shared", "runtime/provider_host/llm",
-                "infra", "infra/system", "infra/storage", "infra/locking",
-                "kernel/authority", "kernel/authority/identity",
-                "kernel/authority/grants", "kernel/authority/workspaces",
-                "kernel/task", "kernel/task/models", "kernel/task/services",
-                "kernel/task/state", "kernel/task/projections",
-                "kernel/context", "kernel/context/models",
-                "kernel/context/compiler", "kernel/context/memory",
-                "kernel/context/injection",
-                "kernel/policy/approvals", "kernel/policy/permits",
-                "kernel/policy/evaluators", "kernel/policy/models",
-                "kernel/policy/guards",
-                "kernel/execution", "kernel/execution/executor",
-                "kernel/execution/coordination", "kernel/execution/controller",
-                "kernel/execution/recovery", "kernel/execution/suspension",
-                "kernel/artifacts", "kernel/artifacts/models",
-                "kernel/artifacts/lineage",
-                "kernel/verification", "kernel/verification/receipts",
-                "kernel/verification/proofs", "kernel/verification/rollbacks",
-                "kernel/ledger", "kernel/ledger/journal",
-                "kernel/ledger/events", "kernel/ledger/projections",
-                "apps", "apps/companion",
-                "plugins", "plugins/builtin",
-                "plugins/builtin/adapters", "plugins/builtin/hooks",
-                "plugins/builtin/subagents", "plugins/builtin/mcp",
-                "plugins/builtin/tools", "plugins/builtin/bundles"]:
+    for pkg in [
+        "surfaces",
+        "surfaces/cli",
+        "runtime",
+        "runtime/assembly",
+        "runtime/observation",
+        "runtime/observation/logging",
+        "runtime/control",
+        "runtime/control/runner",
+        "runtime/control/lifecycle",
+        "runtime/control/dispatch",
+        "runtime/capability",
+        "runtime/capability/contracts",
+        "runtime/capability/loader",
+        "runtime/capability/registry",
+        "runtime/capability/resolver",
+        "runtime/provider_host",
+        "runtime/provider_host/execution",
+        "runtime/provider_host/shared",
+        "runtime/provider_host/llm",
+        "infra",
+        "infra/system",
+        "infra/storage",
+        "infra/locking",
+        "kernel/authority",
+        "kernel/authority/identity",
+        "kernel/authority/grants",
+        "kernel/authority/workspaces",
+        "kernel/task",
+        "kernel/task/models",
+        "kernel/task/services",
+        "kernel/task/state",
+        "kernel/task/projections",
+        "kernel/context",
+        "kernel/context/models",
+        "kernel/context/compiler",
+        "kernel/context/memory",
+        "kernel/context/injection",
+        "kernel/policy/approvals",
+        "kernel/policy/permits",
+        "kernel/policy/evaluators",
+        "kernel/policy/models",
+        "kernel/policy/guards",
+        "kernel/execution",
+        "kernel/execution/executor",
+        "kernel/execution/coordination",
+        "kernel/execution/controller",
+        "kernel/execution/recovery",
+        "kernel/execution/suspension",
+        "kernel/artifacts",
+        "kernel/artifacts/models",
+        "kernel/artifacts/lineage",
+        "kernel/verification",
+        "kernel/verification/receipts",
+        "kernel/verification/proofs",
+        "kernel/verification/rollbacks",
+        "kernel/ledger",
+        "kernel/ledger/journal",
+        "kernel/ledger/events",
+        "kernel/ledger/projections",
+        "apps",
+        "apps/companion",
+        "plugins",
+        "plugins/builtin",
+        "plugins/builtin/adapters",
+        "plugins/builtin/hooks",
+        "plugins/builtin/subagents",
+        "plugins/builtin/mcp",
+        "plugins/builtin/tools",
+        "plugins/builtin/bundles",
+    ]:
         d = SRC / pkg
         d.mkdir(parents=True, exist_ok=True)
         ensure_init(d)
@@ -872,9 +906,17 @@ def phase4_cleanup() -> None:
     print("\n=== Phase 4: Cleaning up old directories ===")
 
     old_dirs = [
-        "core", "plugin", "provider", "provider/providers",
-        "storage", "builtin", "companion",
-        "identity", "capabilities", "workspaces", "locales",
+        "core",
+        "plugin",
+        "provider",
+        "provider/providers",
+        "storage",
+        "builtin",
+        "companion",
+        "identity",
+        "capabilities",
+        "workspaces",
+        "locales",
     ]
     for d in old_dirs:
         full_path = SRC / d
@@ -891,6 +933,7 @@ def phase4_cleanup() -> None:
             pycache = full_path / "__pycache__"
             if pycache.exists():
                 import shutil
+
                 shutil.rmtree(pycache)
 
             # Try to remove the directory if it's empty
@@ -907,6 +950,7 @@ def phase4_cleanup() -> None:
     builtin_dir = SRC / "builtin"
     if builtin_dir.exists():
         import shutil
+
         # Remove all __pycache__ first
         for cache_dir in builtin_dir.rglob("__pycache__"):
             shutil.rmtree(cache_dir)
@@ -927,7 +971,7 @@ def phase4_cleanup() -> None:
             builtin_dir.rmdir()
             print("  Removed builtin/")
         except OSError:
-            print(f"  WARN: builtin/ not fully removed")
+            print("  WARN: builtin/ not fully removed")
 
 
 def main() -> None:

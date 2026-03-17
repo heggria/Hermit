@@ -21,9 +21,9 @@ RUN groupadd --system hermit \
 
 WORKDIR /app
 
-COPY --from=builder /dist/*.whl /tmp/hermit.whl
-RUN python -m pip install /tmp/hermit.whl \
-    && rm -f /tmp/hermit.whl
+COPY --from=builder /dist/*.whl /tmp/dist/
+RUN python -m pip install /tmp/dist/*.whl \
+    && rm -rf /tmp/dist
 
 USER hermit
 
