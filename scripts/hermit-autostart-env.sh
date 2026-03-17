@@ -30,4 +30,4 @@ esac
 
 shift
 
-exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 python -m hermit.main autostart "$@"
+exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 python -m hermit.surfaces.cli.main autostart "$@"

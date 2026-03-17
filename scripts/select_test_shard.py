@@ -98,7 +98,9 @@ def main() -> int:
         raise SystemExit(f"invalid shard {args.shard}/{args.shard_total}")
 
     files = [
-        _estimate_weight(path) for path in sorted(args.tests_dir.glob("test*.py")) if path.is_file()
+        _estimate_weight(path)
+        for path in sorted(args.tests_dir.rglob("test*.py"))
+        if path.is_file()
     ]
     if not files:
         raise SystemExit(f"no pytest files found under {args.tests_dir}")

@@ -4,22 +4,22 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from hermit.kernel.approval_copy import ApprovalCopyService
-    from hermit.kernel.approvals import ApprovalService
-    from hermit.kernel.artifacts import ArtifactStore
-    from hermit.kernel.context import CompiledProviderInput, TaskExecutionContext
-    from hermit.kernel.controller import TaskController
-    from hermit.kernel.conversation_projection import ConversationProjectionService
-    from hermit.kernel.executor import ToolExecutionResult, ToolExecutor
-    from hermit.kernel.knowledge import BeliefService, MemoryRecordService
-    from hermit.kernel.planning import PlanningService
+    from hermit.kernel.artifacts.models.artifacts import ArtifactStore
+    from hermit.kernel.context.memory.knowledge import BeliefService, MemoryRecordService
+    from hermit.kernel.context.models.context import CompiledProviderInput, TaskExecutionContext
+    from hermit.kernel.execution.controller.supervision import SupervisionService
+    from hermit.kernel.execution.executor.executor import ToolExecutionResult, ToolExecutor
+    from hermit.kernel.ledger.journal.store import KernelStore
     from hermit.kernel.policy import PolicyDecision, PolicyEngine
-    from hermit.kernel.projections import ProjectionService
-    from hermit.kernel.proofs import ProofService
-    from hermit.kernel.receipts import ReceiptService
-    from hermit.kernel.rollbacks import RollbackService
-    from hermit.kernel.store import KernelStore
-    from hermit.kernel.supervision import SupervisionService
+    from hermit.kernel.policy.approvals.approval_copy import ApprovalCopyService
+    from hermit.kernel.policy.approvals.approvals import ApprovalService
+    from hermit.kernel.task.projections.conversation import ConversationProjectionService
+    from hermit.kernel.task.projections.projections import ProjectionService
+    from hermit.kernel.task.services.controller import TaskController
+    from hermit.kernel.task.services.planning import PlanningService
+    from hermit.kernel.verification.proofs.proofs import ProofService
+    from hermit.kernel.verification.receipts.receipts import ReceiptService
+    from hermit.kernel.verification.rollbacks.rollbacks import RollbackService
 
 __all__ = [
     "ApprovalService",
@@ -45,29 +45,32 @@ __all__ = [
 ]
 
 _EXPORTS = {
-    "ApprovalCopyService": ("hermit.kernel.approval_copy", "ApprovalCopyService"),
-    "ApprovalService": ("hermit.kernel.approvals", "ApprovalService"),
-    "ArtifactStore": ("hermit.kernel.artifacts", "ArtifactStore"),
-    "CompiledProviderInput": ("hermit.kernel.context", "CompiledProviderInput"),
-    "TaskExecutionContext": ("hermit.kernel.context", "TaskExecutionContext"),
+    "ApprovalCopyService": ("hermit.kernel.policy.approvals.approval_copy", "ApprovalCopyService"),
+    "ApprovalService": ("hermit.kernel.policy.approvals.approvals", "ApprovalService"),
+    "ArtifactStore": ("hermit.kernel.artifacts.models.artifacts", "ArtifactStore"),
+    "CompiledProviderInput": ("hermit.kernel.context.models.context", "CompiledProviderInput"),
+    "TaskExecutionContext": ("hermit.kernel.context.models.context", "TaskExecutionContext"),
     "ConversationProjectionService": (
-        "hermit.kernel.conversation_projection",
+        "hermit.kernel.task.projections.conversation",
         "ConversationProjectionService",
     ),
-    "TaskController": ("hermit.kernel.controller", "TaskController"),
-    "ToolExecutionResult": ("hermit.kernel.executor", "ToolExecutionResult"),
-    "ToolExecutor": ("hermit.kernel.executor", "ToolExecutor"),
+    "TaskController": ("hermit.kernel.task.services.controller", "TaskController"),
+    "ToolExecutionResult": ("hermit.kernel.execution.executor.executor", "ToolExecutionResult"),
+    "ToolExecutor": ("hermit.kernel.execution.executor.executor", "ToolExecutor"),
     "PolicyDecision": ("hermit.kernel.policy", "PolicyDecision"),
     "PolicyEngine": ("hermit.kernel.policy", "PolicyEngine"),
-    "ProofService": ("hermit.kernel.proofs", "ProofService"),
-    "ProjectionService": ("hermit.kernel.projections", "ProjectionService"),
-    "RollbackService": ("hermit.kernel.rollbacks", "RollbackService"),
-    "ReceiptService": ("hermit.kernel.receipts", "ReceiptService"),
-    "KernelStore": ("hermit.kernel.store", "KernelStore"),
-    "SupervisionService": ("hermit.kernel.supervision", "SupervisionService"),
-    "BeliefService": ("hermit.kernel.knowledge", "BeliefService"),
-    "MemoryRecordService": ("hermit.kernel.knowledge", "MemoryRecordService"),
-    "PlanningService": ("hermit.kernel.planning", "PlanningService"),
+    "ProofService": ("hermit.kernel.verification.proofs.proofs", "ProofService"),
+    "ProjectionService": ("hermit.kernel.task.projections.projections", "ProjectionService"),
+    "RollbackService": ("hermit.kernel.verification.rollbacks.rollbacks", "RollbackService"),
+    "ReceiptService": ("hermit.kernel.verification.receipts.receipts", "ReceiptService"),
+    "KernelStore": ("hermit.kernel.ledger.journal.store", "KernelStore"),
+    "SupervisionService": (
+        "hermit.kernel.execution.controller.supervision",
+        "SupervisionService",
+    ),
+    "BeliefService": ("hermit.kernel.context.memory.knowledge", "BeliefService"),
+    "MemoryRecordService": ("hermit.kernel.context.memory.knowledge", "MemoryRecordService"),
+    "PlanningService": ("hermit.kernel.task.services.planning", "PlanningService"),
 }
 
 

@@ -25,7 +25,9 @@ def read_project_meta(pyproject_path: Path) -> tuple[str, str]:
 
 
 def previous_tag(current_tag: str) -> str:
-    tags = [line.strip() for line in try_git("tag", "--sort=-creatordate").splitlines() if line.strip()]
+    tags = [
+        line.strip() for line in try_git("tag", "--sort=-creatordate").splitlines() if line.strip()
+    ]
     filtered = [tag for tag in tags if tag != current_tag]
     return filtered[0] if filtered else ""
 

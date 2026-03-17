@@ -21,15 +21,15 @@ RUN groupadd --system hermit \
 
 WORKDIR /app
 
-COPY --from=builder /dist/*.whl /tmp/hermit.whl
-RUN python -m pip install /tmp/hermit.whl \
-    && rm -f /tmp/hermit.whl
+COPY --from=builder /dist/*.whl /tmp/dist/
+RUN python -m pip install /tmp/dist/*.whl \
+    && rm -rf /tmp/dist
 
 USER hermit
 
 VOLUME ["/home/hermit/.hermit"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["python", "-c", "import hermit; from hermit.main import app; print(app.info.name)"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["python", "-c", "import hermit; from hermit.surfaces.cli.main import app; print(app.info.name)"]
 
 ENTRYPOINT ["hermit"]
 CMD ["chat"]

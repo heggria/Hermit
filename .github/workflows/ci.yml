@@ -177,9 +177,13 @@ jobs:
       - name: Run coverage suite
         run: make test-cov
 
+      - name: Fetch base branch for diff-cover
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }}
+
       - name: Enforce changed-lines coverage
         if: github.event_name == 'pull_request'
-        run: make coverage-diff DIFF_RANGE=origin/${{ github.base_ref }}...HEAD
+        run: make coverage-diff DIFF_RANGE=origin/${{ github.base_ref }}
 
       - name: Upload coverage report
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
@@ -232,7 +236,7 @@ jobs:
 
       - name: Run dependency review
         if: github.event_name == 'pull_request'
-        uses: github/codeql-action/dependency-review-action@dd677812177e0c29f9c970a6c58d8607ae1bfefd
+        uses: actions/dependency-review-action@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@b75dde52aef63a238519e7aecbbe79a4a52e4315
