@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773752872854,
+  "lastUpdate": 1773753157250,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -219,6 +219,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00021862885750037394",
             "extra": "mean: 314.9068015095911 usec\nrounds: 3577"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bce5b42cc9a1310ab2f7b3f9d4f06d98ddfc5195",
+          "message": "chore: bump actions/upload-artifact from 4.6.2 to 7.0.0 (#14)\n\nBumps [actions/upload-artifact](https://github.com/actions/upload-artifact) from 4.6.2 to 7.0.0.\n- [Release notes](https://github.com/actions/upload-artifact/releases)\n- [Commits](https://github.com/actions/upload-artifact/compare/ea165f8d65b6e75b540449e92b4886f43607fa02...bbbca2ddaa5d8feaa63e36b76fdaad77386f024f)\n\n---\nupdated-dependencies:\n- dependency-name: actions/upload-artifact\n  dependency-version: 7.0.0\n  dependency-type: direct:production\n  update-type: version-update:semver-major\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: Heggria <bshengtao@gmail.com>",
+          "timestamp": "2026-03-17T21:11:49+08:00",
+          "tree_id": "727eaebe17d979b2e2de9ef03fde058609f42d88",
+          "url": "https://github.com/heggria/Hermit/commit/bce5b42cc9a1310ab2f7b3f9d4f06d98ddfc5195"
+        },
+        "date": 1773753156617,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.2983820999802886,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005324083914949726",
+            "extra": "mean: 435.0886652000014 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 178.54878497083521,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000038731263305945175",
+            "extra": "mean: 5.600710193370083 msec\nrounds: 181"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2430.4133435209646,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005421094255308225",
+            "extra": "mean: 411.4526455616351 usec\nrounds: 3143"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 4024.3273735106573,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011076691931726522",
+            "extra": "mean: 248.48873046022626 usec\nrounds: 4107"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 5401.633090659101,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007748934038442985",
+            "extra": "mean: 185.12919763640983 usec\nrounds: 6431"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 29305.992856756573,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000037636785510588627",
+            "extra": "mean: 34.122713565373964 usec\nrounds: 30740"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 3288.1362797507204,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001664239483984334",
+            "extra": "mean: 304.12364784217885 usec\nrounds: 3754"
           }
         ]
       }
