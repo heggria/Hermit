@@ -75,13 +75,13 @@ jobs:
           cp dist/*.whl dist/*.tar.gz pypi-dist/
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: hermit-release-python-dist
           path: dist/*
 
       - name: Upload PyPI distributions
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: hermit-release-pypi-dist
           path: pypi-dist/*
@@ -134,7 +134,7 @@ jobs:
         run: make mac-dmg
 
       - name: Upload macOS DMG bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: hermit-release-macos-dmg
           path: dist/*.dmg
