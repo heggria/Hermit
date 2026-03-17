@@ -179,7 +179,7 @@ jobs:
           path: dist
 
       - name: Attest Python release bundle
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
           subject-path: "dist/*"
 
@@ -200,7 +200,7 @@ jobs:
           path: macos-dmg
 
       - name: Attest macOS DMG bundle
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
           subject-path: "macos-dmg/*"
 
