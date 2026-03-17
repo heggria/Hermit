@@ -403,7 +403,7 @@ class AgentRunner:
             policy_profile=(
                 "readonly"
                 if run_opts.get("readonly_only", False)
-                else run_opts.get("policy_profile", "default")
+                else str(run_opts.get("policy_profile", "default"))
             ),
             workspace_root=str(getattr(self.agent, "workspace_root", "") or ""),
             parent_task_id=parent_task_id,
@@ -818,7 +818,7 @@ class AgentRunner:
             policy_profile=(
                 "readonly"
                 if run_opts.get("readonly_only", False)
-                else run_opts.get("policy_profile", "default")
+                else str(run_opts.get("policy_profile", "default"))
             ),
             workspace_root=str(getattr(self.agent, "workspace_root", "") or ""),
             parent_task_id=parent_task_id,
