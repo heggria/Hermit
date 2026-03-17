@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,35 +10,180 @@ import pytest
 from typer.testing import CliRunner
 
 import hermit.surfaces.cli.main as main_mod
+from hermit.infra.system.i18n import tr
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.plugins.builtin.hooks.scheduler.models import JobExecutionRecord, ScheduledJob
 from hermit.runtime.provider_host.execution.runtime import AgentResult
+from hermit.surfaces.cli.main import _notify_reload, app
 
 
-def test_setup_supports_proxy_configuration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_profiles_list_reads_config_toml(tmp_path, monkeypatch) -> None:
     from hermit.runtime.assembly.config import get_settings
 
-    monkeypatch.setenv("HERMIT_BASE_DIR", str(tmp_path / ".hermit"))
+    base_dir = tmp_path / ".hermit"
+    base_dir.mkdir(parents=True)
+    (base_dir / "config.toml").write_text(
+        """
+default_profile = "codex-local"
+
+[profiles.codex-local]
+provider = "codex-oauth"
+model = "gpt-5.4"
+
+[profiles.claude-work]
+provider = "claude"
+model = "claude-3-7-sonnet-latest"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
     get_settings.cache_clear()
 
-    confirm_answers = iter([True, False])
-    prompt_answers = iter(
-        ["token-1", "https://proxy.local", "X-Biz-Id: demo", "claude-proxy-model"]
+    runner = CliRunner()
+    result = runner.invoke(app, ["profiles", "list"])
+
+    assert result.exit_code == 0
+    assert "codex-local（默认） 提供方=codex-oauth 模型=gpt-5.4" in result.output
+    assert "claude-work 提供方=claude 模型=claude-3-7-sonnet-latest" in result.output
+
+
+def test_profiles_list_reports_missing_config_toml(tmp_path, monkeypatch) -> None:
+    from hermit.runtime.assembly.config import get_settings
+
+    base_dir = tmp_path / ".hermit"
+    base_dir.mkdir(parents=True)
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["profiles", "list"])
+
+    assert result.exit_code == 0
+    assert (
+        tr(
+            "cli.profiles_list.no_config",
+            locale="zh-CN",
+            path=base_dir / "config.toml",
+        )
+        in result.output
     )
 
-    monkeypatch.setattr(main_mod.typer, "confirm", lambda *args, **kwargs: next(confirm_answers))
-    monkeypatch.setattr(main_mod.typer, "prompt", lambda *args, **kwargs: next(prompt_answers))
 
-    result = CliRunner().invoke(main_mod.app, ["setup"])
+def test_config_show_includes_profile_and_auth_summary(tmp_path, monkeypatch) -> None:
+    from hermit.runtime.assembly.config import get_settings
 
-    env_text = (tmp_path / ".hermit" / ".env").read_text(encoding="utf-8")
+    base_dir = tmp_path / ".hermit"
+    base_dir.mkdir(parents=True)
+    (base_dir / "config.toml").write_text(
+        """
+default_profile = "shared"
+
+[profiles.shared]
+provider = "claude"
+model = "claude-3-7-sonnet-latest"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.delenv("HERMIT_PROVIDER", raising=False)
+    monkeypatch.delenv("HERMIT_PROFILE", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    get_settings.cache_clear()
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["config", "show"])
+
     assert result.exit_code == 0
-    assert "HERMIT_AUTH_TOKEN=token-1" in env_text
-    assert "HERMIT_BASE_URL=https://proxy.local" in env_text
-    assert "HERMIT_CUSTOM_HEADERS=X-Biz-Id: demo" in env_text
-    assert "HERMIT_MODEL=claude-proxy-model" in env_text
+    payload = json.loads(result.output)
+    assert payload["selected_profile"] == "shared"
+    assert payload["provider"] == "claude"
+    assert payload["auth"]["ok"] is True
+
+
+def test_auth_status_reports_codex_oauth_from_local_auth(tmp_path, monkeypatch) -> None:
+    from hermit.runtime.assembly.config import get_settings
+
+    base_dir = tmp_path / ".hermit"
+    codex_home = tmp_path / ".codex"
+    base_dir.mkdir(parents=True)
+    codex_home.mkdir(parents=True)
+    (base_dir / "config.toml").write_text(
+        """
+default_profile = "local"
+
+[profiles.local]
+provider = "codex-oauth"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (codex_home / "auth.json").write_text(
+        '{"auth_mode":"chatgpt","tokens":{"access_token":"a","refresh_token":"b"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    get_settings.cache_clear()
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["auth", "status"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["provider"] == "codex-oauth"
+    assert payload["ok"] is True
+    assert payload["source"] == "~/.codex/auth.json"
+
+
+def test_notify_reload_uses_settings_scheduler_chat_id(monkeypatch, tmp_path) -> None:
+    import hermit.surfaces.cli.main as main_mod
+
+    fired: list[dict[str, object]] = []
+
+    class FakeHooks:
+        def fire(self, event, **kwargs):
+            fired.append(kwargs)
+
+    class FakePluginManager:
+        def __init__(self, settings=None):
+            self.hooks = FakeHooks()
+
+        def discover_and_load(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(main_mod, "PluginManager", FakePluginManager)
+    settings = SimpleNamespace(
+        scheduler_feishu_chat_id="oc_cfg_chat",
+        plugins_dir=tmp_path / "plugins",
+    )
+
+    _notify_reload(settings, "feishu")
+
+    assert fired and fired[0]["notify"] == {"feishu_chat_id": "oc_cfg_chat"}
+
+
+def test_reload_removes_stale_pid_file(tmp_path, monkeypatch) -> None:
+    import hermit.surfaces.cli.main as main_mod
+    from hermit.runtime.assembly.config import get_settings
+
+    base_dir = tmp_path / ".hermit"
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    get_settings.cache_clear()
+    pid_path = base_dir / "serve-feishu.pid"
+    pid_path.parent.mkdir(parents=True)
+    pid_path.write_text("12345", encoding="utf-8")
+    monkeypatch.setattr(
+        main_mod.os, "kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError())
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["reload"])
+
+    assert result.exit_code == 1
+    assert "PID 文件已过期" in result.output
+    assert not pid_path.exists()
 
 
 def test_run_and_chat_commands_delegate_to_runner_and_cleanup(
@@ -170,6 +316,7 @@ def test_reload_and_service_helpers_cover_permission_and_success_paths(
 
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
     get_settings.cache_clear()
     settings = get_settings()
     pid_path = main_mod._pid_path(settings, "feishu")
@@ -205,6 +352,7 @@ def test_serve_refuses_duplicate_live_process(
 
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
     get_settings.cache_clear()
     settings = get_settings()
     pid_path = main_mod._pid_path(settings, "feishu")
@@ -227,6 +375,7 @@ def test_serve_cleans_stale_pid_before_start(
 
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setenv("HERMIT_FEISHU_APP_ID", "cli_xxx")
     monkeypatch.setenv("HERMIT_FEISHU_APP_SECRET", "secret")
@@ -259,6 +408,7 @@ def test_serve_cleans_stale_pid_before_start(
 def test_plugin_commands_manage_installed_plugins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
     settings = SimpleNamespace(
         base_dir=tmp_path / ".hermit",
         plugins_dir=tmp_path / ".hermit" / "plugins",
@@ -322,6 +472,7 @@ def test_schedule_commands_cover_listing_mutation_and_history(
 
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
+    monkeypatch.setenv("HERMIT_LOCALE", "en-US")
     get_settings.cache_clear()
     store = KernelStore(base_dir / "kernel" / "state.db")
 

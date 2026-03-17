@@ -24,7 +24,7 @@ from hermit.apps.companion.control import (
 from hermit.infra.system.executables import resolve_uv_bin
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_WATCH_PATHS = ["hermit", "scripts", "pyproject.toml"]
+DEFAULT_WATCH_PATHS = ["src/hermit", "scripts", "pyproject.toml"]
 IGNORED_PARTS = {
     ".git",
     ".pytest_cache",
@@ -210,7 +210,7 @@ def _run(cmd: list[str]) -> None:
 
 
 def _ensure_macos_deps() -> None:
-    _run([resolve_uv_bin(), "sync", "--extra", "dev", "--extra", "macos"])
+    _run([resolve_uv_bin(), "sync", "--group", "dev", "--extra", "macos"])
 
 
 def _ensure_menubar(env_name: str, adapter: str) -> None:

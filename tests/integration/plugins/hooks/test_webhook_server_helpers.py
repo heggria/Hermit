@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -9,88 +8,7 @@ from fastapi import HTTPException
 from hermit.plugins.builtin.hooks.webhook.models import WebhookConfig, WebhookRoute
 from hermit.plugins.builtin.hooks.webhook.server import WebhookServer
 from hermit.plugins.builtin.tools.web_tools import search
-from hermit.runtime.capability.contracts.hooks import HooksEngine, _safe_call
-
-
-def test_hooks_engine_safe_call_and_fire_first(monkeypatch) -> None:
-    engine = HooksEngine()
-    calls: list[str] = []
-
-    def first_handler(source: str) -> None:
-        calls.append(f"first:{source}")
-
-    def second_handler(**kwargs):
-        calls.append(f"second:{kwargs['source']}")
-        return "handled"
-
-    engine.register("dispatch", second_handler, priority=10)
-    engine.register("dispatch", first_handler, priority=0)
-
-    assert engine.has_handlers("dispatch") is True
-    assert engine.has_handlers("missing") is False
-    assert engine.fire("dispatch", source="webhook/test") == [None, "handled"]
-    assert engine.fire_first("dispatch", source="webhook/test") == "handled"
-    assert engine.fire_first("missing", source="webhook/test") is None
-    assert calls == [
-        "first:webhook/test",
-        "second:webhook/test",
-        "first:webhook/test",
-        "second:webhook/test",
-    ]
-
-    monkeypatch.setattr(
-        "hermit.runtime.capability.contracts.hooks.inspect.signature",
-        lambda handler: (_ for _ in ()).throw(ValueError()),
-    )
-    assert _safe_call(lambda **kwargs: kwargs["value"], {"value": 3}) == 3
-
-
-def test_search_helpers_cover_parser_extract_and_instant_answer(monkeypatch) -> None:
-    assert (
-        search._extract_real_url("/l/?kh=-1&uddg=https%3A%2F%2Fexample.com")
-        == "https://example.com"
-    )
-    assert search._extract_real_url("https://plain.example") == "https://plain.example"
-    assert search._extract_real_url("/relative") == "/relative"
-
-    parser = search._DDGLiteParser()
-    parser.feed(
-        """
-<a class="result-link" href="/l/?uddg=https%3A%2F%2Fexample.com">Example Title</a>
-<td class="result-snippet">Snippet text</td>
-""".strip()
-    )
-    assert parser.results == [
-        {
-            "href": "/l/?uddg=https%3A%2F%2Fexample.com",
-            "title": "Example Title",
-            "snippet": "Snippet text",
-        }
-    ]
-
-    class _FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps(
-                {
-                    "AbstractText": "A concise summary.",
-                    "AbstractSource": "Example Source",
-                    "AbstractURL": "https://example.com/source",
-                    "Answer": "42",
-                    "Definition": "The answer.",
-                }
-            ).encode("utf-8")
-
-    monkeypatch.setattr(search.urllib.request, "urlopen", lambda req, timeout=0: _FakeResponse())
-    instant = search._ddg_instant_answer("life meaning")
-    assert "Example Source" in instant
-    assert "42" in instant
-    assert "The answer." in instant
+from hermit.runtime.capability.contracts.hooks import HooksEngine
 
 
 @pytest.mark.asyncio

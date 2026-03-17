@@ -119,7 +119,7 @@ clear_runtime_pid_files() {
 }
 
 ensure_macos_deps() {
-  "${UV_BIN}" sync --extra dev --extra macos >/dev/null
+  "${UV_BIN}" sync --group dev --extra macos >/dev/null
 }
 
 ensure_menu_app() {

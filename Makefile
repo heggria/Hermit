@@ -83,7 +83,7 @@ test-serial:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -n0 -q --no-header
 
 test-quick:
-	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -n0 -q tests/unit/runtime/test_provider_input_compiler.py tests/unit/kernel/test_kernel_store_tasks_support.py tests/integration/surfaces/test_cli.py tests/unit/test_docs_alignment.py
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -n0 -q tests/unit/runtime/test_provider_input_compiler.py tests/unit/kernel/test_kernel_store_tasks_support.py tests/integration/surfaces/test_cli_setup.py tests/unit/test_docs_alignment.py
 
 test-cov:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest $(PYTEST_PARALLEL_FLAGS) --cov=hermit --cov-report=term-missing --cov-report=xml
