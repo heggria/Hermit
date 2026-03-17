@@ -76,6 +76,22 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
         )
         return outcomes
 
+    if request.action_class == "delegate_execution":
+        outcomes.append(
+            RuleOutcome(
+                verdict="allow_with_receipt",
+                reasons=[
+                    PolicyReason(
+                        "delegate_execution",
+                        "Governed subagent delegation requires a decision and receipt.",
+                    )
+                ],
+                obligations=PolicyObligations(require_receipt=True),
+                risk_level=request.risk_hint or "medium",
+            )
+        )
+        return outcomes
+
     if request.action_class == "approval_resolution":
         outcomes.append(
             RuleOutcome(
