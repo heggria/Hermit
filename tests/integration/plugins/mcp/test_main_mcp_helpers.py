@@ -203,11 +203,16 @@ def test_main_preflight_helpers_cover_codex_and_oauth_paths(
     assert env_keys == {"HERMIT_PROVIDER", "HERMIT_MODEL"}
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
     assert preflight_mod._resolve_env_key("MISSING", "OPENAI_API_KEY") == "OPENAI_API_KEY"
-    assert preflight_mod._describe_env_source("HERMIT_PROVIDER", env_keys) == "~/.hermit/.env"
-    assert preflight_mod._describe_env_source("OPENAI_API_KEY", env_keys) == "shell env"
+    assert preflight_mod._describe_env_source("HERMIT_PROVIDER", env_keys) == preflight_mod.t(
+        "cli.preflight.source.env_file", "~/.hermit/.env"
+    )
+    assert preflight_mod._describe_env_source("OPENAI_API_KEY", env_keys) == preflight_mod.t(
+        "cli.preflight.source.shell", "shell env"
+    )
+    missing_prefix = preflight_mod.t("cli.preflight.prefix.missing", "[MISSING]")
     assert (
         preflight_mod._format_preflight_item(preflight_mod._PreflightItem("鉴权", False, "缺失"))
-        == "  [MISSING] 鉴权: 缺失"
+        == f"  {missing_prefix} 鉴权: 缺失"
     )
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
@@ -231,8 +236,10 @@ def test_main_preflight_helpers_cover_codex_and_oauth_paths(
     )
     items, errors = preflight_mod._build_serve_preflight("cli", codex_settings)
     details = {item.label: item.detail for item in items}
-    assert details["Provider"] == "codex (~/.hermit/.env)"
-    assert "无可用 OpenAI API Key" in details["Codex 鉴权"]
+    provider_label = preflight_mod.t("cli.preflight.item.provider.label", "Provider")
+    assert details[provider_label] == "codex (~/.hermit/.env)"
+    codex_label = preflight_mod.t("cli.preflight.item.codex_auth.label", "Codex auth")
+    assert codex_label in details
     assert errors
 
     oauth_settings = SimpleNamespace(
@@ -260,7 +267,7 @@ def test_main_preflight_helpers_cover_codex_and_oauth_paths(
     monkeypatch.setattr(preflight_mod.typer, "echo", lambda text="": echoed.append(text))
     with pytest.raises(typer.Exit):
         preflight_mod.run_serve_preflight("cli", codex_settings)
-    assert echoed[0] == "Hermit 启动前环境自检"
+    assert echoed[0] == preflight_mod.t("cli.preflight.title", "Hermit pre-start environment check")
 
 
 def test_mcp_client_helpers_and_call_paths(monkeypatch: pytest.MonkeyPatch) -> None:

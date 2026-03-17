@@ -1,8 +1,39 @@
+---
+description: "Get started with Hermit in minutes. Install via Homebrew, pip, or one-command script. Set up your first governed agent task on macOS."
+---
+
 # Getting Started
 
 This guide gets you from clone to first task, first approval, and first proof export.
 
 Hermit is local-first. By default it keeps state under `~/.hermit`, including configuration, tasks, artifacts, receipts, and memory.
+
+## 2-Minute Experience
+
+Try governed execution in under two minutes:
+
+```bash
+# 1. Install (3 seconds)
+curl -fsSL https://raw.githubusercontent.com/heggria/Hermit/main/install-macos.sh | bash
+
+# 2. Run a task (30 seconds)
+hermit run "List the files in the current directory and summarize what you see"
+
+# 3. Inspect the task record (30 seconds)
+hermit task list
+hermit task show <task_id>
+
+# 4. View proof and receipts (30 seconds)
+hermit task proof <task_id>
+hermit task receipts --task-id <task_id>
+
+# 5. Roll back if needed (30 seconds)
+hermit task rollback <receipt_id>
+```
+
+You just experienced governed execution: every action was authorized by the kernel, produced a receipt, and left an inspectable proof trail. Continue below for full setup details.
+
+---
 
 ## Requirements
 

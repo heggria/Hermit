@@ -1,3 +1,7 @@
+---
+description: "How Hermit compares to generic agent frameworks: task-first vs session-first, governed execution vs ambient authority, receipts vs logs."
+---
+
 # Framework Comparison
 
 This document offers an honest comparison between Hermit and other agent frameworks. Hermit is currently in **alpha** and is architecturally different from most frameworks in this space. The goal here is not to claim superiority, but to help you understand where Hermit's design choices lead to genuine advantages and where other frameworks are the better pick.

@@ -1,3 +1,7 @@
+---
+description: "How Hermit governs agent execution: policy evaluation, approval workflows, scoped capability grants, workspace leases, and decision recording."
+---
+
 # Governance
 
 Hermit treats governance as an execution primitive, not as a UI decoration.

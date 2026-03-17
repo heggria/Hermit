@@ -55,7 +55,7 @@ def test_public_entry_points_share_macos_brand_icon() -> None:
         "raw.githubusercontent.com/heggria/Hermit/main/docs/assets/hermit-macos-icon.svg"
         in wiki_home
     )
-    assert "hermit-icon-white.svg" in docs_home_template
+    assert "hermit-landing" in docs_home_template
     assert "logo: assets/hermit-macos-icon.svg" in mkdocs
     assert "favicon: assets/hermit-macos-icon.svg" in mkdocs
 

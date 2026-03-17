@@ -1,7 +1,11 @@
 # Hermit
 
 <p align="center">
-  <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit macOS 菜单栏图标" width="96" height="96">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/hermit-icon-white.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./docs/assets/hermit-macos-icon.svg">
+    <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit macOS 菜单栏图标" width="96" height="96">
+  </picture>
 </p>
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)

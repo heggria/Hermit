@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+
+  {# --- Compute SEO variables with safe fallbacks --- #}
+  {% if page and page.meta %}
+    {% set page_desc = page.meta.get("description", config.site_description) %}
+  {% else %}
+    {% set page_desc = config.site_description %}
+  {% endif %}
+
+  {% if page and page.title %}
+    {% set page_title = page.title ~ " | " ~ config.site_name %}
+  {% else %}
+    {% set page_title = config.site_name %}
+  {% endif %}
+
+  {% if page and page.canonical_url %}
+    {% set page_url = page.canonical_url %}
+  {% else %}
+    {% set page_url = config.site_url %}
+  {% endif %}
+
+  {% set og_image = config.site_url ~ "assets/social-preview.png" %}
+
+  {# --- RSS Feed Autodiscovery --- #}
+  <link rel="alternate" type="application/rss+xml" title="Hermit Blog" href="{{ config.site_url }}feed_rss_created.xml">
+
+  {# --- Primary Meta --- #}
+  <meta name="description" content="{{ page_desc }}">
+  <meta name="author" content="Beta">
+  <meta name="keywords" content="agent, ai, kernel, governance, local-first, receipts, proofs, rollback, approvals, mcp, cli, python, automation, task-management">
+
+  {# --- Open Graph --- #}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:title" content="{{ page_title }}">
+  <meta property="og:description" content="{{ page_desc }}">
+  <meta property="og:url" content="{{ page_url }}">
+  <meta property="og:image" content="{{ og_image }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="en_US">
+
+  {# --- Twitter Card --- #}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ page_title }}">
+  <meta name="twitter:description" content="{{ page_desc }}">
+  <meta name="twitter:image" content="{{ og_image }}">
+
+  {# --- JSON-LD: SoftwareApplication + WebSite (homepage only) --- #}
+  {% if page and page.is_homepage %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Hermit",
+    "alternateName": "hermit-agent",
+    "description": "{{ config.site_description }}",
+    "url": "{{ config.site_url }}",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS",
+    "programmingLanguage": "Python",
+    "license": "https://opensource.org/licenses/MIT",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "codeRepository": "{{ config.repo_url }}",
+    "softwareVersion": "0.2.5",
+    "author": {
+      "@type": "Person",
+      "name": "Beta",
+      "url": "https://github.com/heggria"
+    },
+    "downloadUrl": "https://pypi.org/project/hermit-agent/",
+    "installUrl": "https://pypi.org/project/hermit-agent/",
+    "featureList": [
+      "Task-first governed agent kernel",
+      "Local-first execution with SQLite ledger",
+      "Policy evaluation and approval workflows",
+      "Receipts, proofs, and proof bundles",
+      "Rollback recovery for supported actions",
+      "Evidence-bound memory governance",
+      "MCP compatible plugin system",
+      "CLI, Feishu, scheduler, and webhook surfaces"
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Hermit Documentation",
+    "url": "{{ config.site_url }}",
+    "description": "{{ config.site_description }}",
+    "inLanguage": ["en-US", "zh-CN"]
+  }
+  </script>
+  {% endif %}
+
+  {# --- JSON-LD: TechArticle (for pages with schema_type: article) --- #}
+  {% if page and page.meta and page.meta.get("schema_type") == "article" %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "{{ page.title }}",
+    "description": "{{ page_desc }}",
+    "url": "{{ page_url }}",
+    "author": {
+      "@type": "Person",
+      "name": "Beta",
+      "url": "https://github.com/heggria"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Hermit",
+      "url": "{{ config.site_url }}"
+    },
+    "inLanguage": "en-US",
+    "isPartOf": {
+      "@type": "WebSite",
+      "name": "Hermit Documentation",
+      "url": "{{ config.site_url }}"
+    }
+  }
+  </script>
+  {% endif %}
+
+{% endblock %}

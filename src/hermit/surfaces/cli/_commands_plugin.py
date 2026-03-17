@@ -28,8 +28,21 @@ def plugin_list() -> None:
         return
 
     for m in pm.manifests:
-        tag = "builtin" if m.builtin else "installed"
-        typer.echo(f"  [{tag}] {m.name} v{m.version} — {m.description}")
+        tag = (
+            t("cli.plugin.list.tag.builtin", "builtin")
+            if m.builtin
+            else t("cli.plugin.list.tag.installed", "installed")
+        )
+        typer.echo(
+            t(
+                "cli.plugin.list.item",
+                "  [{tag}] {name} v{version} — {description}",
+                tag=tag,
+                name=m.name,
+                version=m.version,
+                description=m.description,
+            )
+        )
 
 
 @plugin_app.command("install")
@@ -107,16 +120,26 @@ def plugin_info(name: str) -> None:
         candidate = search_dir / name
         manifest = parse_manifest(candidate) if candidate.is_dir() else None
         if manifest is not None:
-            typer.echo(f"Name:        {manifest.name}")
-            typer.echo(f"Version:     {manifest.version}")
-            typer.echo(f"Description: {manifest.description}")
-            typer.echo(f"Author:      {manifest.author or '(none)'}")
-            typer.echo(f"Builtin:     {manifest.builtin}")
-            typer.echo(f"Location:    {candidate}")
+            typer.echo(t("cli.plugin.info.name", "Name:        {value}", value=manifest.name))
+            typer.echo(t("cli.plugin.info.version", "Version:     {value}", value=manifest.version))
+            typer.echo(
+                t("cli.plugin.info.description", "Description: {value}", value=manifest.description)
+            )
+            typer.echo(
+                t(
+                    "cli.plugin.info.author",
+                    "Author:      {value}",
+                    value=manifest.author or t("cli.plugin.info.author_none", "(none)"),
+                )
+            )
+            typer.echo(t("cli.plugin.info.builtin", "Builtin:     {value}", value=manifest.builtin))
+            typer.echo(t("cli.plugin.info.location", "Location:    {value}", value=candidate))
             if manifest.entry:
-                typer.echo(f"Entry:       {manifest.entry}")
+                typer.echo(t("cli.plugin.info.entry", "Entry:       {value}", value=manifest.entry))
             if manifest.dependencies:
-                typer.echo(f"Deps:        {manifest.dependencies}")
+                typer.echo(
+                    t("cli.plugin.info.deps", "Deps:        {value}", value=manifest.dependencies)
+                )
             return
 
     typer.echo(t("cli.plugin.common.not_found", "Plugin not found: {name}", name=name))

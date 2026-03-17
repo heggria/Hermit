@@ -17,6 +17,19 @@ plugins:
   - search
   - social:
       enabled: !ENV [CI, false]
+  - blog:
+      blog_dir: blog
+      post_date_format: yyyy-MM-dd
+      blog_toc: true
+  - tags
+  - rss:
+      match_path: blog/posts/.*
+      date_from_meta:
+        as_creation: date
+      categories:
+        - categories
+        - tags
+      image: https://heggria.github.io/Hermit/assets/social-preview.png
 
 theme:
   name: material
@@ -44,6 +57,8 @@ extra:
       link: https://discord.gg/XCYqF3SN
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/hermit-agent/
+    - icon: fontawesome/solid/rss
+      link: /Hermit/feed_rss_created.xml
 
 extra_css:
   - stylesheets/landing.css
@@ -63,8 +78,8 @@ nav:
   - Getting Started: getting-started.md
   - Demo Flows: demo-flows.md
   - Why Hermit: why-hermit.md
-  - Design Philosophy: design-philosophy.md
   - Comparisons: comparisons.md
+  - Design Philosophy: design-philosophy.md
   - Architecture: architecture.md
   - Governance: governance.md
   - Task Lifecycle: task-lifecycle.md
@@ -77,3 +92,5 @@ nav:
   - FAQ: faq.md
   - Roadmap: roadmap.md
   - Status And Compatibility: status-and-compatibility.md
+  - Blog: blog/index.md
+  - Tags: tags.md

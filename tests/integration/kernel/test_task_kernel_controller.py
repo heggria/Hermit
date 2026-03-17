@@ -14,7 +14,6 @@ def test_enqueue_task_creates_ready_queue_records_and_claims_fifo(tmp_path: Path
         ingress_metadata={"dispatch_mode": "async", "entry_prompt": "first prompt"},
         source_ref="schedule:job-1",
     )
-    time.sleep(0.01)
     ctx2 = controller.enqueue_task(
         conversation_id="oc_2",
         goal="second",
@@ -23,6 +22,17 @@ def test_enqueue_task_creates_ready_queue_records_and_claims_fifo(tmp_path: Path
         ingress_metadata={"dispatch_mode": "async", "entry_prompt": "second prompt"},
         source_ref="schedule:job-2",
     )
+    # Explicitly set started_at to guarantee FIFO ordering without relying on wall-clock time.
+    # claim_next_ready_step_attempt orders by started_at ASC, so ctx1 must have an earlier value.
+    with store._conn:
+        store._conn.execute(
+            "UPDATE step_attempts SET started_at = 1000.0 WHERE step_attempt_id = ?",
+            (ctx1.step_attempt_id,),
+        )
+        store._conn.execute(
+            "UPDATE step_attempts SET started_at = 2000.0 WHERE step_attempt_id = ?",
+            (ctx2.step_attempt_id,),
+        )
 
     task1 = store.get_task(ctx1.task_id)
     step1 = store.get_step(ctx1.step_id)

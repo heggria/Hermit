@@ -1,3 +1,7 @@
+---
+description: "Hermit CLI reference: run, chat, serve, task, memory, config, plugin, schedule commands and their options."
+---
+
 # CLI And Operations
 
 This document covers the CLI commands that currently exist, the long-running service path, and the operator-facing commands that matter most in day-to-day use.

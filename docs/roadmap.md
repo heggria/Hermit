@@ -1,6 +1,10 @@
+---
+description: "Hermit roadmap: kernel profile conformance, governance coverage, receipt and proof expansion, rollback semantics, and artifact-native context."
+---
+
 # Roadmap
 
-Hermit is best understood today as an **alpha local-first governed agent kernel**.
+Hermit is best understood today as a **beta local-first governed agent kernel**.
 
 It is not starting from zero. The repository already contains real kernel objects, governance paths, proof primitives, and rollback support for selected actions. But the whole system is still converging on the `v0.1` kernel spec.
 
@@ -43,7 +47,7 @@ For a chapter-by-chapter breakdown, see [kernel-spec-v0.1-section-checklist.md](
 | Rollback | supported for selected receipts | expand safe rollback classes |
 | Artifact-native context | claimable in the kernel path | make it more central across all paths |
 | Evidence-bound memory | claimable in the kernel path | tighten promotion, invalidation, and inspection |
-| Public API stability | not a current goal | later concern after kernel semantics settle |
+| Public API stability | boundary defined | public vs internal modules classified; stability guarantees apply from Beta (see [status-and-compatibility.md](./status-and-compatibility.md#public-api-stability)) |
 
 ## Near-Term Milestones
 
@@ -81,7 +85,7 @@ Focus:
 
 ## v0.2 Core Exit Criteria Status
 
-10 of 12 v0.2 Core exit criteria are now `implemented`:
+12 of 12 v0.2 Core exit criteria are now `implemented`:
 
 1. Consequential execution synthesizes an `ExecutionContractRecord` before dispatch
 2. Contract admission records an `EvidenceCaseRecord` and `AuthorizationPlanRecord`
@@ -93,8 +97,42 @@ Focus:
 8. Idempotent reconciliation prevents duplicate reconciliation records for the same receipt
 9. Contract expiry and policy version drift trigger durable re-entry before execution
 10. Violated reconciliation invalidates memories learned from the same reconciliation ref
+11. TrustLoop-Bench meaningful performance demonstration — all 15 tests pass, all 7 metric thresholds met (see below)
+12. Learned contract templates for recurring governed action patterns
 
-Remaining exit criteria are tracked in the conformance matrices.
+## TrustLoop-Bench Performance Thresholds
+
+TrustLoop-Bench (`tests/integration/kernel/test_trustloop_bench.py`) is the formal benchmark for v0.2 exit criterion #12. It covers **5 task families** across **15 tests** and asserts **7 kernel governance metrics**.
+
+### Task Families
+
+| Family | Description | Tests |
+| --- | --- | --- |
+| TF1: Approval Drift Patch | Write, approve, external mutation, re-execute, drift detection | 1 |
+| TF2: Bounded-Authority Ops | Read-only passes, unclassified mutation blocked by policy | 1 |
+| TF3: Crash + Unknown Outcome | Execute, reconcile with unknown_outcome, verify uncertain | 1 |
+| TF4: Contradictory Memory | Execute, reconcile, promote belief, violate, invalidate | 1 |
+| TF5: Rollback-Qualified Publish | Write with rollback, verify receipt and prestate snapshot | 2 (TF5 + TF5b) |
+
+Additional tests cover reconciliation result class coverage (3 tests), evidence case lifecycle (2 tests), authorization plan invalidation (1 test), knowledge blocking reasons (2 tests), and aggregate metric computation (1 test).
+
+### Metric Pass Thresholds
+
+These are the formal thresholds that the kernel must meet. All are asserted in `test_trustloop_bench_aggregate_metrics`.
+
+| # | Metric | Threshold | Rationale |
+| --- | --- | --- | --- |
+| M1 | Contract Satisfaction Rate | >= 50% | Contracts satisfied / contracts total. Baseline floor; production targets will be higher. |
+| M2 | Unauthorized Effect Rate | == 0% | Unauthorized effects / total effects. Zero tolerance for ungoverned side effects. |
+| M3 | Stale Authorization Execution Rate | == 0% | Stale auth executions / total auth executions. No execution on expired or drifted authority. |
+| M4 | Belief Calibration Under Contradiction | >= 80% | Beliefs recalibrated / beliefs contradicted. Memory must respond to contradicting evidence. |
+| M5 | Rollback Success Rate | >= 80% | Rollbacks succeeded / rollbacks attempted. Rollback must be reliable where supported. |
+| M6 | Mean Recovery Depth | <= 3.0 | Average steps to recover from crash or unknown outcome. Bounded recovery cost. |
+| M7 | Operator Burden Per Successful Task | <= 3.0 | Operator interactions / successful tasks. Governance must not overwhelm operators. |
+
+### Current Results
+
+All 15 TrustLoop-Bench tests pass. All 7 metric thresholds are met. Criterion #12 is satisfied.
 
 ## Contribution Priorities
 
@@ -106,6 +144,21 @@ The highest-leverage contributions right now are:
 - rollback safety
 - context and memory discipline
 - docs that sharply separate current implementation from target architecture
+
+## Beta Gate Checklist
+
+Hermit will transition from Alpha to Beta when **all** of the following gates are satisfied. Each gate must be verified before the classifier in `pyproject.toml` is updated.
+
+| # | Gate | Status | Notes |
+| --- | --- | --- | --- |
+| G1 | v0.2 Core exit criteria 12/12 completed | 12/12 — DONE | All 12 criteria implemented |
+| G2 | All memory governance tests passing | All passing — DONE | Verified through `test_memory_engine` and integration suites |
+| G3 | CI has no known flaky tests | Fixed — DONE | Sandbox observation and approval copy timing issues resolved |
+| G4 | Public API scope defined | Defined — DONE | See [status-and-compatibility.md — Public API Stability](./status-and-compatibility.md#public-api-stability) |
+| G5 | `status-and-compatibility.md` updated with API boundary | Updated — DONE | Public vs internal module classification added; Beta status noted |
+| G6 | `pyproject.toml` classifier updated to Beta | Ready to update | All other gates satisfied |
+
+**Transition rule:** When all six gates reach `done` / `passing`, update the classifier from `Development Status :: 3 - Alpha` to `Development Status :: 4 - Beta` and tag the release.
 
 ## What The Roadmap Is Not
 

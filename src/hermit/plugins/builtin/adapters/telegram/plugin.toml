@@ -1,0 +1,19 @@
+[plugin]
+name = "telegram"
+version = "0.1.0"
+description_key = "plugin.telegram.description"
+description = "Telegram messaging adapter via python-telegram-bot polling"
+author = "Hermit"
+builtin = true
+
+[entry]
+adapter = "adapter:register"
+hooks = "hooks:register"
+
+[variables.telegram_bot_token]
+setting = "telegram_bot_token"
+env = ["HERMIT_TELEGRAM_BOT_TOKEN"]
+required = true
+secret = true
+description_key = "plugin.telegram.variable.bot_token"
+description = "Telegram bot token from @BotFather"

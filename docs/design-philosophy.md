@@ -1,3 +1,8 @@
+---
+description: "The design philosophy behind Hermit: why a kernel instead of a framework, why task-first, why receipts, why local-first, and the honest costs."
+schema_type: article
+---
+
 # Design Philosophy
 
 This document explores the reasoning behind Hermit's design decisions. It is not a feature list or an architecture diagram. It is an attempt to explain why Hermit is shaped the way it is, what problems it is reacting to, and what it deliberately gives up.

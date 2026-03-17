@@ -1,7 +1,11 @@
 # Hermit
 
 <p align="center">
-  <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="96" height="96">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/hermit-icon-white.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./docs/assets/hermit-macos-icon.svg">
+    <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="96" height="96">
+  </picture>
 </p>
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
@@ -84,6 +88,8 @@ The point of Hermit is not only that the model can do work. The point is that th
 If you want a recording-ready walkthrough, start with [docs/demo-flows.md](./docs/demo-flows.md). For runnable scripts, see the [examples/](./examples/) directory.
 
 ![Hermit demo: run, inspect, prove](./docs/assets/demo.gif)
+
+Terminal recording: [watch on asciinema](https://asciinema.org/a/g1Uryq817Y9viPaM) | [interactive player on the docs site](https://heggria.github.io/Hermit/)
 
 Real CLI example from this repository's task kernel:
 

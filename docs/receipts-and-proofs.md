@@ -1,3 +1,7 @@
+---
+description: "Receipts, proof bundles, and rollback in Hermit. Structured verification of agent actions with inputs, outputs, policy results, and rollback support."
+---
+
 # Receipts And Proofs
 
 Hermit draws a hard line between "a tool ran" and "an important action is durably complete."

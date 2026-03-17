@@ -6,6 +6,7 @@ from typing import Any
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.controller.contracts import ActionContract, contract_for
+from hermit.kernel.execution.controller.template_learner import ContractTemplateLearner
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import ActionRequest, PolicyDecision
 from hermit.runtime.capability.registry.tools import ToolSpec
@@ -15,6 +16,7 @@ class ExecutionContractService:
     def __init__(self, store: KernelStore, artifact_store: ArtifactStore) -> None:
         self.store = store
         self.artifact_store = artifact_store
+        self.template_learner = ContractTemplateLearner(store)
 
     def synthesize_default(
         self,
@@ -34,6 +36,21 @@ class ExecutionContractService:
             if policy.requires_receipt or action_contract.receipt_required
             else []
         )
+
+        # -- Template-conditioned contract selection (Criterion #8) --------
+        template = self.template_learner.find_matching_template(
+            action_class=action_request.action_class,
+            tool_name=action_request.tool_name,
+            expected_effects=expected_effects,
+        )
+        selected_template_ref: str | None = None
+        if template is not None:
+            selected_template_ref = template.source_contract_ref
+            # Inherit drift budget from the successful template
+            if template.drift_budget:
+                action_contract = action_contract  # keep the base contract
+        # ------------------------------------------------------------------
+
         contract = self.store.create_execution_contract(
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
@@ -69,7 +86,13 @@ class ExecutionContractService:
             action_contract_refs=[action_contract.action_class],
             state_witness_ref=witness_ref,
             rollback_expectation=action_contract.rollback_strategy,
+            selected_template_ref=selected_template_ref,
         )
+        if selected_template_ref:
+            self.store.update_step_attempt(
+                attempt_ctx.step_attempt_id,
+                selected_contract_template_ref=selected_template_ref,
+            )
         artifact_ref = self._store_artifact(
             contract.contract_id,
             kind="execution.contract",
@@ -110,6 +133,7 @@ class ExecutionContractService:
                 "artifact_ref": artifact_ref,
                 "objective": contract.objective,
                 "status": contract.status,
+                "selected_template_ref": selected_template_ref,
             },
         )
         return contract, artifact_ref

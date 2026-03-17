@@ -298,7 +298,7 @@ def run(prompt: str) -> None:
 
 
 @app.command()
-def chat(session_id: str = "cli", debug: bool = False) -> None:
+def chat(session_id: str = "cli", debug: bool = False, tui: bool = False) -> None:
     """Interactive multi-turn chat session."""
     settings = get_settings()
     ensure_workspace(settings)
@@ -306,6 +306,19 @@ def chat(session_id: str = "cli", debug: bool = False) -> None:
     require_auth(settings)
 
     runner, pm = build_runner(settings)
+
+    if tui:
+        from hermit.surfaces.cli.tui.app import HermitApp
+
+        with caffeinate(settings):
+            try:
+                tui_app = HermitApp(runner=runner, pm=pm, session_id=session_id, settings=settings)
+                tui_app.run()
+            finally:
+                stop_runner_background_services(runner)
+                pm.stop_mcp_servers()
+        return
+
     typer.echo(
         t(
             "cli.chat.banner",

@@ -319,32 +319,59 @@ class ApprovalCopyService:
         ]
         contract_items: list[str] = []
         if objective:
-            contract_items.append(f"Objective: {objective}")
+            contract_items.append(
+                self._t("kernel.approval.section.contract.objective", value=objective)
+            )
         if expected_effects:
-            contract_items.append(f"Expected effects: {', '.join(expected_effects[:4])}")
+            contract_items.append(
+                self._t(
+                    "kernel.approval.section.contract.expected_effects",
+                    value=", ".join(expected_effects[:4]),
+                )
+            )
         rollback_expectation = str(contract_packet.get("rollback_expectation", "") or "").strip()
         if rollback_expectation:
-            contract_items.append(f"Rollback expectation: {rollback_expectation}")
+            contract_items.append(
+                self._t(
+                    "kernel.approval.section.contract.rollback_expectation",
+                    value=rollback_expectation,
+                )
+            )
         if contract_items:
-            sections.append(ApprovalSection(title="Contract", items=tuple(contract_items)))
+            sections.append(
+                ApprovalSection(
+                    title=self._t("kernel.approval.section.contract.title"),
+                    items=tuple(contract_items),
+                )
+            )
 
         evidence = dict(contract_packet.get("evidence_sufficiency", {}) or {})
         evidence_items: list[str] = []
         status = str(evidence.get("status", "") or "").strip()
         score = evidence.get("score")
         if status:
-            evidence_items.append(f"Sufficiency: {status}")
-        if score is not None:
             evidence_items.append(
-                f"Score: {score:.2f}" if isinstance(score, (int, float)) else f"Score: {score}"
+                self._t("kernel.approval.section.evidence.sufficiency", value=status)
+            )
+        if score is not None:
+            score_str = f"{score:.2f}" if isinstance(score, (int, float)) else str(score)
+            evidence_items.append(
+                self._t("kernel.approval.section.evidence.score", value=score_str)
             )
         gaps = [
             str(item).strip() for item in evidence.get("unresolved_gaps", []) if str(item).strip()
         ]
         if gaps:
-            evidence_items.append(f"Open gaps: {', '.join(gaps[:4])}")
+            evidence_items.append(
+                self._t("kernel.approval.section.evidence.open_gaps", value=", ".join(gaps[:4]))
+            )
         if evidence_items:
-            sections.append(ApprovalSection(title="Evidence", items=tuple(evidence_items)))
+            sections.append(
+                ApprovalSection(
+                    title=self._t("kernel.approval.section.evidence.title"),
+                    items=tuple(evidence_items),
+                )
+            )
 
         authority_items: list[str] = []
         approval_route = str(contract_packet.get("approval_route", "") or "").strip()
@@ -352,11 +379,20 @@ class ApprovalCopyService:
             dict[str, Any], dict(contract_packet.get("authority_scope", {}) or {})
         )
         if approval_route:
-            authority_items.append(f"Approval route: {approval_route}")
+            authority_items.append(
+                self._t("kernel.approval.section.authority.approval_route", value=approval_route)
+            )
         resource_scope = authority_scope.get("resource_scope")
         if isinstance(resource_scope, list) and resource_scope:
             authority_items.append(
-                f"Authority scope: {', '.join(str(scope).strip() for scope in cast(list[Any], resource_scope)[:4] if str(scope).strip())}"
+                self._t(
+                    "kernel.approval.section.authority.resource_scope",
+                    value=", ".join(
+                        str(scope).strip()
+                        for scope in cast(list[Any], resource_scope)[:4]
+                        if str(scope).strip()
+                    ),
+                )
             )
         current_gaps = [
             str(item).strip()
@@ -364,12 +400,24 @@ class ApprovalCopyService:
             if str(item).strip()
         ]
         if current_gaps:
-            authority_items.append(f"Revalidation gaps: {', '.join(current_gaps[:4])}")
+            authority_items.append(
+                self._t(
+                    "kernel.approval.section.authority.current_gaps",
+                    value=", ".join(current_gaps[:4]),
+                )
+            )
         drift_expiry = contract_packet.get("drift_expiry")
         if drift_expiry:
-            authority_items.append(f"Drift expiry: {drift_expiry}")
+            authority_items.append(
+                self._t("kernel.approval.section.authority.drift_expiry", value=drift_expiry)
+            )
         if authority_items:
-            sections.append(ApprovalSection(title="Authority", items=tuple(authority_items)))
+            sections.append(
+                ApprovalSection(
+                    title=self._t("kernel.approval.section.authority.title"),
+                    items=tuple(authority_items),
+                )
+            )
 
         return tuple(sections)
 
