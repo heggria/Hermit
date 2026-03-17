@@ -9,7 +9,7 @@ COPY src src
 
 RUN uv build --wheel --out-dir /dist
 
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
