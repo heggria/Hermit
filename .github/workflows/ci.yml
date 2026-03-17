@@ -186,7 +186,7 @@ jobs:
         run: make coverage-diff DIFF_RANGE=origin/${{ github.base_ref }}
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: coverage-report
           path: coverage.xml
@@ -216,7 +216,7 @@ jobs:
         run: make docs-build
 
       - name: Upload docs artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: docs-site
           path: site
@@ -258,7 +258,7 @@ jobs:
         run: make sbom
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: hermit-sbom
           path: dist/hermit.sbom.json
@@ -291,7 +291,7 @@ jobs:
           make install-check
 
       - name: Upload distributions
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: hermit-dist
           path: dist/*
@@ -332,7 +332,7 @@ jobs:
         run: make mac-dmg
 
       - name: Upload macOS DMG
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
           name: hermit-macos-dmg
           path: dist/*.dmg
