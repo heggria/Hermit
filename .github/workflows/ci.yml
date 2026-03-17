@@ -183,7 +183,7 @@ jobs:
 
       - name: Enforce changed-lines coverage
         if: github.event_name == 'pull_request'
-        run: make coverage-diff DIFF_RANGE=origin/${{ github.base_ref }}...HEAD
+        run: make coverage-diff DIFF_RANGE=origin/${{ github.base_ref }}
 
       - name: Upload coverage report
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f

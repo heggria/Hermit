@@ -4,7 +4,7 @@ UV_CACHE_DIR ?= .uv-cache
 PYTEST_PARALLEL_FLAGS ?= -n auto --dist worksteal
 SYNC_GROUP_FLAGS ?= --group dev --group typecheck --group docs --group security --group release
 SYNC_MACOS_FLAGS ?= $(SYNC_GROUP_FLAGS) --extra macos
-DIFF_RANGE ?= origin/main...HEAD
+DIFF_RANGE ?= origin/main
 SBOM_PATH ?= dist/hermit.sbom.json
 
 sync:
