@@ -6,6 +6,7 @@ Instructions for Codex and other agentic tooling working in the Hermit repositor
 
 - Service redeploy skill: [`.agents/skills/hermit-service-redeploy/SKILL.md`](.agents/skills/hermit-service-redeploy/SKILL.md)
 - README Excalidraw assets skill: [`.agents/skills/hermit-readme-excalidraw-assets/SKILL.md`](.agents/skills/hermit-readme-excalidraw-assets/SKILL.md)
+- Self-iteration skill: [`.agents/skills/hermit-iterate/SKILL.md`](.agents/skills/hermit-iterate/SKILL.md)
 
 Use it when:
 
@@ -20,6 +21,11 @@ Use the README Excalidraw assets skill when:
 - regenerating GitHub-safe PNG assets from Excalidraw-styled SVG diagrams
 
 For this kind of work, the closing step must include local redeployment and verification as defined by that skill. Source edits alone, or a simple reload, are not enough.
+
+Use the self-iteration skill when:
+
+- the user provides a spec file and asks to iterate, or says "iterate on specs/xxx.md"
+- running a spec-driven self-iteration workflow (spec → Hermit execution → proof → PR)
 
 ## Project Overview
 
