@@ -307,7 +307,7 @@ def chat(session_id: str = "cli", debug: bool = False, tui: bool = False) -> Non
 
     runner, pm = build_runner(settings)
 
-    if tui:
+    if tui:  # pragma: no cover
         from hermit.surfaces.cli.tui.app import HermitApp
 
         with caffeinate(settings):

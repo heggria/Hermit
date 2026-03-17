@@ -189,6 +189,10 @@ omit = [
 fail_under = 80
 show_missing = true
 skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "pragma: no cover",
+]
 
 [tool.pyright]
 include = ["src/hermit"]

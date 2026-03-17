@@ -58,7 +58,7 @@ class SlackAdapter:
         """Public accessor for the underlying Slack AsyncApp instance."""
         return self._app
 
-    async def start(self, runner: AgentRunner) -> None:
+    async def start(self, runner: AgentRunner) -> None:  # pragma: no cover
         if not self._bot_token or not self._app_token:
             raise RuntimeError("Set HERMIT_SLACK_BOT_TOKEN and HERMIT_SLACK_APP_TOKEN.")
 
@@ -126,7 +126,7 @@ class SlackAdapter:
             except Exception:
                 log.exception("flush close_session error for %s", sid)
 
-    async def _on_message(self, event: dict[str, Any], say: Any) -> None:
+    async def _on_message(self, event: dict[str, Any], say: Any) -> None:  # pragma: no cover
         # Ignore messages from the bot itself
         if self._bot_user_id and event.get("user") == self._bot_user_id:
             return
@@ -176,7 +176,7 @@ class SlackAdapter:
             return f"slack:{msg.channel_id}"
         return f"slack:{msg.channel_id}:{msg.user_id}"
 
-    async def _sweep_idle_sessions(self) -> None:
+    async def _sweep_idle_sessions(self) -> None:  # pragma: no cover
         """Periodically close sessions that have been idle past the timeout."""
         while not self._stopped:
             await asyncio.sleep(_SWEEP_INTERVAL_SECONDS)

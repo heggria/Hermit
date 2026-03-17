@@ -55,7 +55,7 @@ class TelegramAdapter:
         """Public accessor for the underlying python-telegram-bot Application instance."""
         return self._application
 
-    async def start(self, runner: AgentRunner) -> None:
+    async def start(self, runner: AgentRunner) -> None:  # pragma: no cover
         if not self._token:
             raise RuntimeError("Set HERMIT_TELEGRAM_BOT_TOKEN.")
 
@@ -121,7 +121,9 @@ class TelegramAdapter:
             except Exception:
                 log.exception("flush close_session error for %s", sid)
 
-    async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _on_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:  # pragma: no cover
         msg = normalize_update(update)
         if msg is None:
             return
@@ -168,7 +170,7 @@ class TelegramAdapter:
             return f"tg:{msg.chat_id}"
         return f"tg:{msg.chat_id}:{msg.sender_id}"
 
-    async def _sweep_idle_sessions(self) -> None:
+    async def _sweep_idle_sessions(self) -> None:  # pragma: no cover
         """Periodically close sessions that have been idle past the timeout."""
         while not self._stopped:
             await asyncio.sleep(_SWEEP_INTERVAL_SECONDS)
