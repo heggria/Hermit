@@ -47,7 +47,7 @@ _MULTILINE_RE = re.compile(r"\s+")
 
 
 def normalize_text(text: str) -> str:
-    return _MULTILINE_RE.sub(" ", str(text or "")).strip()
+    return _MULTILINE_RE.sub(" ", str(text or "")).strip().lower()
 
 
 def has_explicit_new_task_marker(text: str) -> bool:

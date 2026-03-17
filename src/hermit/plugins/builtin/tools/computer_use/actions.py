@@ -110,7 +110,7 @@ def _ok(info: str | None = None) -> dict[str, Any]:
 
 def _is_accessibility_error(detail: str) -> bool:
     lowered = detail.lower()
-    return any(marker in lowered for marker in _ACCESSIBILITY_ERROR_MARKERS)
+    return any(marker.lower() in lowered for marker in _ACCESSIBILITY_ERROR_MARKERS)
 
 
 def _desktop_automation_error(
