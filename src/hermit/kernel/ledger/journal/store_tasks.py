@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from typing import Any, cast
 
 from hermit.kernel.ledger.journal.store_support import (
@@ -1220,7 +1221,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         task_id: str | None = None,
         after_event_seq: int | None = None,
         batch_size: int = 200,
-    ):
+    ) -> Iterator[dict[str, Any]]:
         cursor = after_event_seq
         while True:
             batch = self.list_events(
