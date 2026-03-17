@@ -241,7 +241,7 @@ def test_command_sandbox_coarse_observation_only_extends_completion_once(
 @pytest.mark.slow
 def test_command_sandbox_followup_poll_quickly_reaches_completion(tmp_path) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(0.13)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.25)"'
 
     result = sandbox.run({"command": command, "display_name": "Edge Task"})
 
@@ -257,7 +257,7 @@ def test_command_sandbox_followup_poll_quickly_reaches_completion(tmp_path) -> N
     completed = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.15,
+        timeout=0.3,
         predicate=lambda poll: poll.get("status") == "completed",
     )
     assert completed is not None

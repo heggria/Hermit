@@ -177,6 +177,10 @@ jobs:
       - name: Run coverage suite
         run: make test-cov
 
+      - name: Fetch base branch for diff-cover
+        if: github.event_name == 'pull_request'
+        run: git fetch origin ${{ github.base_ref }}
+
       - name: Enforce changed-lines coverage
         if: github.event_name == 'pull_request'
         run: make coverage-diff DIFF_RANGE=origin/${{ github.base_ref }}...HEAD
