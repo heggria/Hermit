@@ -12,7 +12,7 @@
 [![Docs](https://img.shields.io/badge/docs-github%20pages-0F172A)](https://heggria.github.io/Hermit/)
 [![PyPI](https://img.shields.io/pypi/v/hermit-agent)](https://pypi.org/project/hermit-agent/)
 [![Downloads](https://img.shields.io/pypi/dm/hermit-agent)](https://pypi.org/project/hermit-agent/)
-[![Discord](https://img.shields.io/discord/1483353136834936924?logo=discord&logoColor=white&label=Discord)](https://discord.gg/Sf958sbx)
+[![Discord](https://img.shields.io/discord/1483353136834936924?logo=discord&logoColor=white&label=Discord)](https://discord.gg/XCYqF3SN)
 [![Discussions](https://img.shields.io/github/discussions/heggria/Hermit)](https://github.com/heggria/Hermit/discussions)
 
 > **Hermit 把 agent 工作变成一条可治理、可检查、可本地掌控的执行路径。**
@@ -237,7 +237,7 @@ hermit task rollback <receipt_id>
 
 ## 社区
 
-- [Discord](https://discord.gg/Sf958sbx) — 实时聊天和支持
+- [Discord](https://discord.gg/XCYqF3SN) — 实时聊天和支持
 - [GitHub Discussions](https://github.com/heggria/Hermit/discussions) — 提问、交流想法
 - [Issues](https://github.com/heggria/Hermit/issues) — Bug 反馈和功能建议
 

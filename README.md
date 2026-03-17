@@ -12,7 +12,7 @@
 [![Docs](https://img.shields.io/badge/docs-github%20pages-0F172A)](https://heggria.github.io/Hermit/)
 [![PyPI](https://img.shields.io/pypi/v/hermit-agent)](https://pypi.org/project/hermit-agent/)
 [![Downloads](https://img.shields.io/pypi/dm/hermit-agent)](https://pypi.org/project/hermit-agent/)
-[![Discord](https://img.shields.io/discord/1483353136834936924?logo=discord&logoColor=white&label=Discord)](https://discord.gg/Sf958sbx)
+[![Discord](https://img.shields.io/discord/1483353136834936924?logo=discord&logoColor=white&label=Discord)](https://discord.gg/XCYqF3SN)
 [![Discussions](https://img.shields.io/github/discussions/heggria/Hermit)](https://github.com/heggria/Hermit/discussions)
 
 > **Hermit turns agent work into governed, inspectable, local-first execution.**
@@ -313,7 +313,7 @@ See [docs/roadmap.md](./docs/roadmap.md) for the current status and milestones.
 
 ## Community
 
-- [Discord](https://discord.gg/Sf958sbx) — real-time chat and support
+- [Discord](https://discord.gg/XCYqF3SN) — real-time chat and support
 - [GitHub Discussions](https://github.com/heggria/Hermit/discussions) — questions, ideas, and general conversation
 - [Issues](https://github.com/heggria/Hermit/issues) — bug reports and feature requests
 
