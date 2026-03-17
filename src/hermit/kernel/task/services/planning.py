@@ -4,15 +4,25 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from hermit.infra.system.i18n import tr_list_all_locales
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy.approvals.decisions import DecisionService
 
 _PLANNING_META_KEY = "pending_planning"
-_EXPLICIT_PLAN_RE = re.compile(
-    r"(先规划一下|先计划一下|先给个计划|先别执行|不要执行先规划|进入规划模式|先做规划|先出计划|plan\s+first)",
-    re.IGNORECASE,
-)
+_explicit_plan_re_cache: re.Pattern[str] | None = None
+
+
+def _get_explicit_plan_re() -> re.Pattern[str]:
+    global _explicit_plan_re_cache
+    if _explicit_plan_re_cache is None:
+        keywords = tr_list_all_locales("kernel.nlp.planning.explicit_keywords")
+        escaped = [
+            re.escape(k) if not any(c in k for c in r".\+*?[](){}^$|") else k for k in keywords if k
+        ]
+        parts = escaped + [r"plan\s+first"]
+        _explicit_plan_re_cache = re.compile(r"(" + "|".join(parts) + r")", re.IGNORECASE)
+    return _explicit_plan_re_cache
 
 
 @dataclass
@@ -41,7 +51,7 @@ class PlanningService:
 
     @staticmethod
     def planning_requested(text: str) -> bool:
-        return bool(_EXPLICIT_PLAN_RE.search(text or ""))
+        return bool(_get_explicit_plan_re().search(text or ""))
 
     def pending_for_conversation(self, conversation_id: str) -> bool:
         conversation = self.store.ensure_conversation(conversation_id, source_channel="chat")

@@ -6,6 +6,7 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+from hermit.infra.system.i18n import tr
 from hermit.plugins.builtin.hooks.image_memory.types import ImageRecord, utc_now_iso
 
 
@@ -202,11 +203,17 @@ class ImageMemoryEngine:
         records = self.search(session_id=session_id, limit=limit)
         lines: list[str] = []
         for index, record in enumerate(records, start=1):
-            tags = ", ".join(record.tags[:5]) or "无标签"
-            summary = record.summary or "暂无摘要"
+            tags = ", ".join(record.tags[:5]) or tr("tools.image_memory.no_tags")
+            summary = record.summary or tr("tools.image_memory.no_summary")
             lines.append(
-                f"- 图片{index}（image_id={record.image_id}，文件={record.original_file_name}）："
-                f"{summary}；标签：{tags}"
+                tr(
+                    "tools.image_memory.session_context_line",
+                    index=index,
+                    image_id=record.image_id,
+                    file_name=record.original_file_name,
+                    summary=summary,
+                    tags=tags,
+                )
             )
         return "\n".join(lines)
 

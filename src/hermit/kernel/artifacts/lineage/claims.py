@@ -458,7 +458,7 @@ def _probe_memory_evidence() -> None:
                 conversation_id="claim-memory",
                 scope_kind="conversation",
                 scope_ref="claim-memory",
-                category="项目约定",
+                category="project_convention",
                 content="默认工作目录固定到 /repo",
                 confidence=0.8,
                 evidence_refs=[artifact.artifact_id],
@@ -466,7 +466,7 @@ def _probe_memory_evidence() -> None:
             inspection = cast(
                 dict[str, Any],
                 MemoryGovernanceService().inspect_claim(
-                    category="项目约定",
+                    category="project_convention",
                     claim_text=belief.claim_text,
                     conversation_id="claim-memory",
                     workspace_root=str(base / "workspace"),

@@ -22,8 +22,8 @@ from hermit.kernel.ledger.journal.store_tasks import KernelTaskStoreMixin
 from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
 
-_SCHEMA_VERSION = "7"
-_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", _SCHEMA_VERSION}
+_SCHEMA_VERSION = "8"
+_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", _SCHEMA_VERSION}
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "conversation_projection_cache",
@@ -751,6 +751,7 @@ class KernelStore(
             )
             self._migrate_memory_schema_v4()
             self._migrate_kernel_convergence_v6()
+            self._migrate_category_english_v8()
             self._backfill_event_hash_chain()
             self._conn.execute(
                 """
@@ -787,8 +788,8 @@ class KernelStore(
             """
             UPDATE memory_records
             SET scope_kind = CASE
-                    WHEN category IN ('用户偏好') THEN 'global'
-                    WHEN category IN ('项目约定', '工具与环境', '环境与工具') THEN 'workspace'
+                    WHEN category IN ('用户偏好', 'user_preference') THEN 'global'
+                    WHEN category IN ('项目约定', '工具与环境', '环境与工具', 'project_convention', 'tooling_environment') THEN 'workspace'
                     ELSE 'conversation'
                 END
             WHERE scope_kind IS NULL OR scope_kind = ''
@@ -809,10 +810,10 @@ class KernelStore(
             """
             UPDATE memory_records
             SET retention_class = CASE
-                    WHEN category = '用户偏好' THEN 'user_preference'
-                    WHEN category = '项目约定' THEN 'project_convention'
-                    WHEN category IN ('工具与环境', '环境与工具') THEN 'tooling_environment'
-                    WHEN category = '进行中的任务' THEN 'task_state'
+                    WHEN category IN ('用户偏好', 'user_preference') THEN 'user_preference'
+                    WHEN category IN ('项目约定', 'project_convention') THEN 'project_convention'
+                    WHEN category IN ('工具与环境', '环境与工具', 'tooling_environment') THEN 'tooling_environment'
+                    WHEN category IN ('进行中的任务', 'active_task') THEN 'task_state'
                     ELSE 'volatile_fact'
                 END
             WHERE retention_class IS NULL OR retention_class = ''
@@ -892,6 +893,50 @@ class KernelStore(
                OR policy_result_ref = ''
                OR verifiability IS NULL
                OR verifiability = ''
+            """
+        )
+
+    def _migrate_category_english_v8(self) -> None:
+        mapping = [
+            ("用户偏好", "user_preference"),
+            ("项目约定", "project_convention"),
+            ("技术决策", "tech_decision"),
+            ("环境与工具", "tooling_environment"),
+            ("工具与环境", "tooling_environment"),
+            ("其他", "other"),
+            ("进行中的任务", "active_task"),
+        ]
+        for chinese, english in mapping:
+            self._conn.execute(
+                "UPDATE memory_records SET category = ? WHERE category = ?",
+                (english, chinese),
+            )
+            self._conn.execute(
+                "UPDATE beliefs SET category = ? WHERE category = ?",
+                (english, chinese),
+            )
+        self._conn.execute(
+            """
+            UPDATE memory_records
+            SET scope_kind = CASE
+                    WHEN category IN ('user_preference') THEN 'global'
+                    WHEN category IN ('project_convention', 'tooling_environment') THEN 'workspace'
+                    ELSE scope_kind
+                END
+            WHERE scope_kind IS NULL OR scope_kind = ''
+            """
+        )
+        self._conn.execute(
+            """
+            UPDATE memory_records
+            SET retention_class = CASE
+                    WHEN category = 'user_preference' THEN 'user_preference'
+                    WHEN category = 'project_convention' THEN 'project_convention'
+                    WHEN category = 'tooling_environment' THEN 'tooling_environment'
+                    WHEN category = 'active_task' THEN 'task_state'
+                    ELSE retention_class
+                END
+            WHERE retention_class IS NULL OR retention_class = ''
             """
         )
 

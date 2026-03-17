@@ -1,3 +1,7 @@
+---
+description: "Hermit architecture overview: kernel, runtime, plugin system, CLI surfaces, task lifecycle, and governed execution path from task to receipt."
+---
+
 # Hermit Architecture
 
 This document describes the implementation that exists in the current repository. It does not treat the `v0.1` kernel spec as fully shipped.

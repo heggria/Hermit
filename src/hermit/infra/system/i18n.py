@@ -130,6 +130,43 @@ def tr(
     return template
 
 
+def tr_list(
+    message_key: str,
+    *,
+    locale: str | None = None,
+    default: str | None = None,
+    separator: str = "|",
+) -> list[str]:
+    raw = tr(message_key, locale=locale, default=default or "")
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(separator) if item.strip()]
+
+
+def tr_list_all_locales(
+    message_key: str,
+    *,
+    separator: str = "|",
+) -> list[str]:
+    """Load a pipe-separated key from *all* locales and merge unique values.
+
+    Useful for NLP pattern sets that must match user input regardless of language.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    for loc in catalog_locales():
+        catalog = _read_catalog(loc)
+        raw = catalog.get(message_key, "")
+        if not raw:
+            continue
+        for item in raw.split(separator):
+            stripped = item.strip()
+            if stripped and stripped not in seen:
+                seen.add(stripped)
+                result.append(stripped)
+    return result
+
+
 def localize_schema(schema: Any, *, locale: str | None = None) -> Any:
     resolved_locale = resolve_locale(locale)
 

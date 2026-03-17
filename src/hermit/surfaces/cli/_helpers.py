@@ -44,10 +44,10 @@ def on_tool_call(name: str, inputs: dict[str, Any], result: object) -> None:
 
 def print_result(result: AgentResult) -> None:
     if result.thinking:
-        typer.echo(f"\n{DIM}── thinking ──{RESET}")
+        typer.echo(f"\n{DIM}{_t('cli.chat.thinking.header', '── thinking ──')}{RESET}")
         for line in result.thinking.splitlines():
             typer.echo(f"{DIM}{line}{RESET}")
-        typer.echo(f"{DIM}── /thinking ──{RESET}")
+        typer.echo(f"{DIM}{_t('cli.chat.thinking.footer', '── /thinking ──')}{RESET}")
     typer.echo(f"\n{result.text}")
 
 

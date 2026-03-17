@@ -1,4 +1,4 @@
-.PHONY: sync sync-macos install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-fast test-unit test-serial test-quick test-changed test-integration test-kernel test-property test-scenario test-cov coverage-diff lint format typecheck docs-build security sbom changelog demo-gif bump-version release-prep release-tag version-check lock-check build package-check install-check docker-smoke check verify verify-release precommit-install
+.PHONY: sync sync-macos install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-fast test-unit test-serial test-quick test-changed test-integration test-kernel test-property test-scenario test-cov coverage-diff bench lint format typecheck docs-build security sbom changelog demo-gif bump-version release-prep release-tag version-check lock-check build package-check install-check docker-smoke check verify verify-release precommit-install
 
 UV_CACHE_DIR ?= .uv-cache
 PYTEST_PARALLEL_FLAGS ?= -n auto --dist worksteal
@@ -93,6 +93,9 @@ test-quick:
 
 test-cov:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest $(PYTEST_PARALLEL_FLAGS) --cov=hermit --cov-report=term-missing --cov-report=xml
+
+bench:
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest tests/benchmark -m benchmark --benchmark-warmup=on -o "addopts=" -q
 
 coverage-diff: test-cov
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run diff-cover coverage.xml --compare-branch $(DIFF_RANGE) --fail-under=95

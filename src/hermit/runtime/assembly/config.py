@@ -147,6 +147,9 @@ class Settings(BaseSettings):
     feishu_app_id: str | None = None
     feishu_app_secret: str | None = None
     feishu_thread_progress: bool = True
+    telegram_bot_token: str | None = None
+    slack_bot_token: str | None = None
+    slack_app_token: str | None = None
     scheduler_enabled: bool = True
     scheduler_catch_up: bool = True
     scheduler_feishu_chat_id: str | None = None
@@ -232,6 +235,11 @@ class Settings(BaseSettings):
         _set_if_present(
             values, "feishu_thread_progress", env_file_values.get("HERMIT_FEISHU_THREAD_PROGRESS")
         )
+        _set_if_present(
+            values, "telegram_bot_token", env_file_values.get("HERMIT_TELEGRAM_BOT_TOKEN")
+        )
+        _set_if_present(values, "slack_bot_token", env_file_values.get("HERMIT_SLACK_BOT_TOKEN"))
+        _set_if_present(values, "slack_app_token", env_file_values.get("HERMIT_SLACK_APP_TOKEN"))
         _set_if_present(
             values, "scheduler_enabled", env_file_values.get("HERMIT_SCHEDULER_ENABLED")
         )
@@ -320,6 +328,11 @@ class Settings(BaseSettings):
         _override_if_present(
             values, "feishu_thread_progress", os.environ.get("HERMIT_FEISHU_THREAD_PROGRESS")
         )
+        _override_if_present(
+            values, "telegram_bot_token", os.environ.get("HERMIT_TELEGRAM_BOT_TOKEN")
+        )
+        _override_if_present(values, "slack_bot_token", os.environ.get("HERMIT_SLACK_BOT_TOKEN"))
+        _override_if_present(values, "slack_app_token", os.environ.get("HERMIT_SLACK_APP_TOKEN"))
         _override_if_present(
             values, "scheduler_enabled", os.environ.get("HERMIT_SCHEDULER_ENABLED")
         )

@@ -185,7 +185,7 @@ def _build_serve_preflight(
         if auth_key:
             items.append(
                 _PreflightItem(
-                    label="Codex 鉴权",
+                    label=t("cli.preflight.item.codex_auth.label", "Codex auth"),
                     ok=True,
                     detail=f"{auth_key} ({_describe_env_source(auth_key, env_file_keys)})",
                 )
@@ -193,7 +193,7 @@ def _build_serve_preflight(
         elif settings.resolved_openai_api_key:
             items.append(
                 _PreflightItem(
-                    label="Codex 鉴权",
+                    label=t("cli.preflight.item.codex_auth.label", "Codex auth"),
                     ok=True,
                     detail=t(
                         "cli.preflight.item.codex_auth.detail.local_api_key",
@@ -211,9 +211,13 @@ def _build_serve_preflight(
             )
             items.append(
                 _PreflightItem(
-                    label="Codex 鉴权",
+                    label=t("cli.preflight.item.codex_auth.label", "Codex auth"),
                     ok=False,
-                    detail=f"检测到本机 Codex 登录态（auth_mode={auth_mode}），但无可用 OpenAI API Key",
+                    detail=t(
+                        "cli.preflight.item.codex_auth.detail.missing_api_key",
+                        "Detected local Codex login (auth_mode={auth_mode}), but no usable OpenAI API key is available",
+                        auth_mode=auth_mode,
+                    ),
                 )
             )
         else:
@@ -225,7 +229,7 @@ def _build_serve_preflight(
             )
             items.append(
                 _PreflightItem(
-                    label="Codex 鉴权",
+                    label=t("cli.preflight.item.codex_auth.label", "Codex auth"),
                     ok=False,
                     detail=t(
                         "cli.preflight.item.codex_auth.detail.no_api_key",
@@ -426,12 +430,134 @@ def _build_serve_preflight(
             )
         )
 
+    if adapter == "telegram":
+        token_key = _resolve_env_key("HERMIT_TELEGRAM_BOT_TOKEN")
+        if token_key or settings.telegram_bot_token:
+            items.append(
+                _PreflightItem(
+                    label=t(
+                        "cli.preflight.item.telegram_bot_token.label",
+                        "Telegram Bot Token",
+                    ),
+                    ok=True,
+                    detail=(
+                        f"{token_key} ({_describe_env_source(token_key, env_file_keys)})"
+                        if token_key
+                        else t(
+                            "cli.preflight.item.profile_source.config",
+                            "config.toml profile",
+                        )
+                    ),
+                )
+            )
+        else:
+            errors.append(
+                t(
+                    "cli.preflight.error.telegram_bot_token_missing",
+                    "Missing Telegram Bot Token. Set `HERMIT_TELEGRAM_BOT_TOKEN`.",
+                )
+            )
+            items.append(
+                _PreflightItem(
+                    label=t(
+                        "cli.preflight.item.telegram_bot_token.label",
+                        "Telegram Bot Token",
+                    ),
+                    ok=False,
+                    detail=t(
+                        "cli.preflight.item.telegram_bot_token.detail.missing",
+                        "HERMIT_TELEGRAM_BOT_TOKEN not found",
+                    ),
+                )
+            )
+
+    if adapter == "slack":
+        bot_token_key = _resolve_env_key("HERMIT_SLACK_BOT_TOKEN")
+        if bot_token_key or settings.slack_bot_token:
+            items.append(
+                _PreflightItem(
+                    label=t(
+                        "cli.preflight.item.slack_bot_token.label",
+                        "Slack Bot Token",
+                    ),
+                    ok=True,
+                    detail=(
+                        f"{bot_token_key} ({_describe_env_source(bot_token_key, env_file_keys)})"
+                        if bot_token_key
+                        else t(
+                            "cli.preflight.item.profile_source.config",
+                            "config.toml profile",
+                        )
+                    ),
+                )
+            )
+        else:
+            errors.append(
+                t(
+                    "cli.preflight.error.slack_bot_token_missing",
+                    "Missing Slack Bot Token. Set `HERMIT_SLACK_BOT_TOKEN`.",
+                )
+            )
+            items.append(
+                _PreflightItem(
+                    label=t(
+                        "cli.preflight.item.slack_bot_token.label",
+                        "Slack Bot Token",
+                    ),
+                    ok=False,
+                    detail=t(
+                        "cli.preflight.item.slack_bot_token.detail.missing",
+                        "HERMIT_SLACK_BOT_TOKEN not found",
+                    ),
+                )
+            )
+
+        app_token_key = _resolve_env_key("HERMIT_SLACK_APP_TOKEN")
+        if app_token_key or settings.slack_app_token:
+            items.append(
+                _PreflightItem(
+                    label=t(
+                        "cli.preflight.item.slack_app_token.label",
+                        "Slack App Token",
+                    ),
+                    ok=True,
+                    detail=(
+                        f"{app_token_key} ({_describe_env_source(app_token_key, env_file_keys)})"
+                        if app_token_key
+                        else t(
+                            "cli.preflight.item.profile_source.config",
+                            "config.toml profile",
+                        )
+                    ),
+                )
+            )
+        else:
+            errors.append(
+                t(
+                    "cli.preflight.error.slack_app_token_missing",
+                    "Missing Slack App Token. Set `HERMIT_SLACK_APP_TOKEN`.",
+                )
+            )
+            items.append(
+                _PreflightItem(
+                    label=t(
+                        "cli.preflight.item.slack_app_token.label",
+                        "Slack App Token",
+                    ),
+                    ok=False,
+                    detail=t(
+                        "cli.preflight.item.slack_app_token.detail.missing",
+                        "HERMIT_SLACK_APP_TOKEN not found",
+                    ),
+                )
+            )
+
     return items, errors
 
 
 def run_serve_preflight(adapter: str, settings: Settings) -> None:
     items, errors = _build_serve_preflight(adapter, settings)
-    typer.echo("Hermit 启动前环境自检")
+    typer.echo(t("cli.preflight.title", "Hermit pre-start environment check"))
     for item in items:
         typer.echo(_format_preflight_item(item))
     typer.echo("")

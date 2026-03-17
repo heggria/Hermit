@@ -119,10 +119,12 @@ def test_approval_copy_service_covers_formatter_timeout_and_sections(
 ) -> None:
     monkeypatch.setenv("HERMIT_LOCALE", "en-US")
 
-    def slow_formatter(_facts: dict[str, Any]) -> dict[str, str]:
-        import time
+    import threading
 
-        time.sleep(0.02)
+    gate = threading.Event()
+
+    def slow_formatter(_facts: dict[str, Any]) -> dict[str, str]:
+        gate.wait()  # block indefinitely until gate is set
         return {"title": "slow", "summary": "slow", "detail": "slow"}
 
     timeout_copy = ApprovalCopyService(

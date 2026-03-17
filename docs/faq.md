@@ -1,3 +1,7 @@
+---
+description: "Frequently asked questions about Hermit: installation, supported platforms, plugin system, MCP compatibility, and governance model."
+---
+
 # FAQ
 
 ## Is Hermit an app, a runtime, or a kernel?

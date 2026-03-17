@@ -142,5 +142,14 @@
   "tools.grok.search.description": "Search the web using Grok (xAI) with real-time live search. Unlike web_search (DuckDuckGo), Grok directly reads and synthesizes current web content, which is ideal for breaking news, stock prices, recent events, or any query where freshness matters. Returns a comprehensive answer with inline citations. Requires XAI_API_KEY to be set.",
   "tools.grok.search.query": "The question or search query. This can be a natural-language question such as 'Why did MiniMax stock surge today?' or a plain search phrase.",
   "tools.grok.search.search_mode": "Live search mode. 'auto' (default) lets Grok decide when to search, 'on' forces live search, and 'off' uses Grok's training data only.",
-  "tools.grok.search.max_tokens": "Maximum tokens in the response. Default 2048."
+  "tools.grok.search.max_tokens": "Maximum tokens in the response. Default 2048.",
+  "tools.image_memory.no_tags": "no tags",
+  "tools.image_memory.no_summary": "no summary",
+  "tools.image_memory.context_line": "- Image {index} (image_id={image_id}, session={session_id}): {summary}; tags: {tags}",
+  "tools.image_memory.session_context_line": "- Image {index} (image_id={image_id}, file={file_name}): {summary}; tags: {tags}",
+  "tools.image_memory.retrieval_intro": "Below are the most relevant historical image semantics; use only when genuinely helpful:\n",
+  "tools.grok.citation_label": "Source {index}",
+  "tools.image_memory.reference_keywords": "image|photo|picture|screenshot",
+  "tools.computer_use.error.no_key_send": "Sending keystrokes is not allowed",
+  "tools.computer_use.error.no_control": "Control is not allowed"
 }

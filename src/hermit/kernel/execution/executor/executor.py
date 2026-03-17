@@ -455,8 +455,11 @@ class ToolExecutor:
             operator_summary=reconciliation.operator_summary,
         )
         result_class = str(reconciliation.result_class or "")
+        if result_class == "satisfied":
+            self._learn_contract_template(reconciliation, contract_ref)
         if result_class == "violated":
             self._invalidate_memories_for_reconciliation(reconciliation)
+            self._degrade_templates_for_violation(reconciliation)
         if resume_execution:
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="running")
             self._set_attempt_phase(attempt_ctx, "executing", reason="reconciliation_complete")
@@ -482,6 +485,31 @@ class ToolExecutor:
             "needs_attention" if failure_status == "needs_attention" else "failed",
         )
         return reconciliation, outcome
+
+    def _learn_contract_template(
+        self, reconciliation: ReconciliationRecord, contract_ref: str
+    ) -> None:
+        """Extract a learned template from a satisfied reconciliation."""
+        contract = (
+            self.store.get_execution_contract(contract_ref)
+            if hasattr(self.store, "get_execution_contract")
+            else None
+        )
+        if contract is None:
+            return
+        self.execution_contracts.template_learner.learn_from_reconciliation(
+            reconciliation=reconciliation,
+            contract=contract,
+        )
+
+    def _degrade_templates_for_violation(self, reconciliation: Any) -> None:
+        """Degrade contract templates that were learned from a now-violated reconciliation."""
+        reconciliation_ref = str(getattr(reconciliation, "reconciliation_id", "") or "").strip()
+        if not reconciliation_ref:
+            return
+        self.execution_contracts.template_learner.degrade_templates_for_violation(
+            reconciliation_ref
+        )
 
     def _invalidate_memories_for_reconciliation(self, reconciliation: Any) -> None:
         reconciliation_ref = str(getattr(reconciliation, "reconciliation_id", "") or "").strip()

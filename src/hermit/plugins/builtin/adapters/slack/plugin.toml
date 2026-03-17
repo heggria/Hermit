@@ -1,0 +1,27 @@
+[plugin]
+name = "slack"
+version = "0.1.0"
+description_key = "plugin.slack.description"
+description = "Slack messaging adapter via Socket Mode"
+author = "Hermit"
+builtin = true
+
+[entry]
+adapter = "adapter:register"
+hooks = "hooks:register"
+
+[variables.slack_bot_token]
+setting = "slack_bot_token"
+env = ["HERMIT_SLACK_BOT_TOKEN"]
+required = true
+secret = true
+description_key = "plugin.slack.variable.bot_token"
+description = "Slack bot token (xoxb-...)"
+
+[variables.slack_app_token]
+setting = "slack_app_token"
+env = ["HERMIT_SLACK_APP_TOKEN"]
+required = true
+secret = true
+description_key = "plugin.slack.variable.app_token"
+description = "Slack app-level token for Socket Mode (xapp-...)"

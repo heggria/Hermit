@@ -56,7 +56,7 @@ def test_context_compiler_selects_static_and_retrieval_memory(tmp_path: Path) ->
             conversation_id="chat-1",
             scope_kind="conversation",
             scope_ref="chat-1",
-            category="进行中的任务",
+            category="active_task",
             claim_text="当前正在清理全部定时任务",
             confidence=0.7,
         )
@@ -64,7 +64,7 @@ def test_context_compiler_selects_static_and_retrieval_memory(tmp_path: Path) ->
     memories = [
         _memory(
             memory_id="mem-pref",
-            category="用户偏好",
+            category="user_preference",
             claim_text="统一使用简体中文回复用户",
             retention_class="user_preference",
             scope_kind="global",
@@ -72,7 +72,7 @@ def test_context_compiler_selects_static_and_retrieval_memory(tmp_path: Path) ->
         ),
         _memory(
             memory_id="mem-project",
-            category="项目约定",
+            category="project_convention",
             claim_text="默认在仓库根目录执行命令",
             retention_class="project_convention",
             scope_kind="workspace",
@@ -80,7 +80,7 @@ def test_context_compiler_selects_static_and_retrieval_memory(tmp_path: Path) ->
         ),
         _memory(
             memory_id="mem-task",
-            category="进行中的任务",
+            category="active_task",
             claim_text="已清理全部定时任务，当前无任何定时任务",
             retention_class="task_state",
             scope_kind="conversation",
@@ -88,7 +88,7 @@ def test_context_compiler_selects_static_and_retrieval_memory(tmp_path: Path) ->
         ),
         _memory(
             memory_id="mem-expired",
-            category="技术决策",
+            category="tech_decision",
             claim_text="昨天的临时分析结论",
             retention_class="volatile_fact",
             scope_kind="conversation",
@@ -97,7 +97,7 @@ def test_context_compiler_selects_static_and_retrieval_memory(tmp_path: Path) ->
         ),
         _memory(
             memory_id="mem-sensitive",
-            category="其他",
+            category="other",
             claim_text="某用户的手机号是 13800000000",
             retention_class="sensitive_fact",
             scope_kind="conversation",
@@ -139,7 +139,7 @@ def test_context_compiler_skips_conversation_retrieval_for_smalltalk(tmp_path: P
     memories = [
         _memory(
             memory_id="mem-task",
-            category="进行中的任务",
+            category="active_task",
             claim_text="用户要求制作 GPT-5.4 vs Grok 3 对比文档，任务尚未完成。",
             retention_class="task_state",
             scope_kind="conversation",
@@ -147,7 +147,7 @@ def test_context_compiler_skips_conversation_retrieval_for_smalltalk(tmp_path: P
         ),
         _memory(
             memory_id="mem-pref",
-            category="用户偏好",
+            category="user_preference",
             claim_text="统一使用简体中文回复用户",
             retention_class="user_preference",
             scope_kind="global",
@@ -182,7 +182,7 @@ def test_context_compiler_keeps_followup_task_state_for_short_followup(tmp_path:
     memories = [
         _memory(
             memory_id="mem-task",
-            category="进行中的任务",
+            category="active_task",
             claim_text="用户要求制作 GPT-5.4 vs Grok 3 对比文档，任务尚未完成。",
             retention_class="task_state",
             scope_kind="conversation",

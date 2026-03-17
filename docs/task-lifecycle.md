@@ -1,3 +1,7 @@
+---
+description: "The Hermit task lifecycle: creation, steps, attempts, policy evaluation, approval, execution, receipts, and proof generation."
+---
+
 # Task Lifecycle
 
 Hermit's kernel is easiest to understand through the lifecycle of one task.

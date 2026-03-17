@@ -1,3 +1,7 @@
+---
+description: "Why Hermit exists: task-first durable work, governed execution with approvals, receipts and proofs, evidence-bound memory, and local-first trust."
+---
+
 # Why Hermit
 
 Hermit exists because many agents are optimized for responsiveness, but not for durable trust.

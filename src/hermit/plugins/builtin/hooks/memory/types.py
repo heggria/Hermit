@@ -6,13 +6,28 @@ from datetime import date
 from typing import Any
 
 DEFAULT_CATEGORIES = [
-    "用户偏好",
-    "项目约定",
-    "技术决策",
-    "环境与工具",
-    "其他",
-    "进行中的任务",
+    "user_preference",
+    "project_convention",
+    "tech_decision",
+    "tooling_environment",
+    "other",
+    "active_task",
 ]
+
+_LEGACY_CATEGORY_MAP: dict[str, str] = {
+    "用户偏好": "user_preference",
+    "项目约定": "project_convention",
+    "技术决策": "tech_decision",
+    "环境与工具": "tooling_environment",
+    "工具与环境": "tooling_environment",
+    "其他": "other",
+    "进行中的任务": "active_task",
+}
+
+
+def normalize_category(category: str) -> str:
+    """Map legacy Chinese category names to English internal constants."""
+    return _LEGACY_CATEGORY_MAP.get(category, category)
 
 
 @dataclass

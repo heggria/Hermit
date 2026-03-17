@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from hermit.infra.system.i18n import tr
+
 _TMP_PREFIX = "hermit_screenshot_"
 _CLICLICK = "cliclick"
 
@@ -59,8 +61,8 @@ _ACCESSIBILITY_ERROR_MARKERS = (
     "not permitted to send keystrokes",
     "not allowed to send keystrokes",
     "not allowed to control",
-    "不允许发送按键",
-    "不允许控制",
+    tr("tools.computer_use.error.no_key_send"),
+    tr("tools.computer_use.error.no_control"),
 )
 
 
@@ -108,7 +110,7 @@ def _ok(info: str | None = None) -> dict[str, Any]:
 
 def _is_accessibility_error(detail: str) -> bool:
     lowered = detail.lower()
-    return any(marker in lowered for marker in _ACCESSIBILITY_ERROR_MARKERS)
+    return any(marker.lower() in lowered for marker in _ACCESSIBILITY_ERROR_MARKERS)
 
 
 def _desktop_automation_error(
