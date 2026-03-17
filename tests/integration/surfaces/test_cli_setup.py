@@ -244,6 +244,138 @@ def test_build_serve_preflight_uses_profile_feishu_settings(tmp_path, monkeypatc
     assert details["Scheduler 飞书通知"] == "已配置"
 
 
+def test_build_serve_preflight_telegram_with_token(tmp_path, monkeypatch) -> None:
+    settings = SimpleNamespace(
+        base_dir=tmp_path / ".hermit",
+        resolved_profile="default",
+        provider="claude",
+        claude_api_key="sk-ant-test",
+        claude_auth_token=None,
+        claude_base_url=None,
+        resolved_openai_api_key=None,
+        codex_auth_file_exists=False,
+        codex_auth_mode=None,
+        codex_access_token=None,
+        codex_refresh_token=None,
+        model="claude-3-7-sonnet-latest",
+        telegram_bot_token="tg-token-123",
+    )
+    settings.base_dir.mkdir(parents=True)
+    monkeypatch.delenv("HERMIT_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_BASE_URL", raising=False)
+    monkeypatch.delenv("HERMIT_BASE_URL", raising=False)
+
+    items, errors = _build_serve_preflight("telegram", settings)
+    labels = {item.label for item in items}
+
+    assert errors == []
+    assert "Telegram Bot Token" in labels
+
+
+def test_build_serve_preflight_telegram_missing_token(tmp_path, monkeypatch) -> None:
+    settings = SimpleNamespace(
+        base_dir=tmp_path / ".hermit",
+        resolved_profile="default",
+        provider="claude",
+        claude_api_key="sk-ant-test",
+        claude_auth_token=None,
+        claude_base_url=None,
+        resolved_openai_api_key=None,
+        codex_auth_file_exists=False,
+        codex_auth_mode=None,
+        codex_access_token=None,
+        codex_refresh_token=None,
+        model="claude-3-7-sonnet-latest",
+        telegram_bot_token=None,
+    )
+    settings.base_dir.mkdir(parents=True)
+    monkeypatch.delenv("HERMIT_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_BASE_URL", raising=False)
+    monkeypatch.delenv("HERMIT_BASE_URL", raising=False)
+
+    _items, errors = _build_serve_preflight("telegram", settings)
+
+    assert len(errors) > 0
+    assert any("Telegram" in e for e in errors)
+
+
+def test_build_serve_preflight_slack_with_tokens(tmp_path, monkeypatch) -> None:
+    settings = SimpleNamespace(
+        base_dir=tmp_path / ".hermit",
+        resolved_profile="default",
+        provider="claude",
+        claude_api_key="sk-ant-test",
+        claude_auth_token=None,
+        claude_base_url=None,
+        resolved_openai_api_key=None,
+        codex_auth_file_exists=False,
+        codex_auth_mode=None,
+        codex_access_token=None,
+        codex_refresh_token=None,
+        model="claude-3-7-sonnet-latest",
+        slack_bot_token="xoxb-test",
+        slack_app_token="xapp-test",
+    )
+    settings.base_dir.mkdir(parents=True)
+    monkeypatch.delenv("HERMIT_SLACK_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_SLACK_APP_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_BASE_URL", raising=False)
+    monkeypatch.delenv("HERMIT_BASE_URL", raising=False)
+
+    items, errors = _build_serve_preflight("slack", settings)
+    labels = {item.label for item in items}
+
+    assert errors == []
+    assert "Slack Bot Token" in labels
+    assert "Slack App Token" in labels
+
+
+def test_build_serve_preflight_slack_missing_tokens(tmp_path, monkeypatch) -> None:
+    settings = SimpleNamespace(
+        base_dir=tmp_path / ".hermit",
+        resolved_profile="default",
+        provider="claude",
+        claude_api_key="sk-ant-test",
+        claude_auth_token=None,
+        claude_base_url=None,
+        resolved_openai_api_key=None,
+        codex_auth_file_exists=False,
+        codex_auth_mode=None,
+        codex_access_token=None,
+        codex_refresh_token=None,
+        model="claude-3-7-sonnet-latest",
+        slack_bot_token=None,
+        slack_app_token=None,
+    )
+    settings.base_dir.mkdir(parents=True)
+    monkeypatch.delenv("HERMIT_SLACK_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_SLACK_APP_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("HERMIT_CLAUDE_BASE_URL", raising=False)
+    monkeypatch.delenv("HERMIT_BASE_URL", raising=False)
+
+    _items, errors = _build_serve_preflight("slack", settings)
+
+    assert len(errors) >= 2
+    assert any("Slack Bot Token" in e for e in errors)
+    assert any("Slack App Token" in e for e in errors)
+
+
 def test_setup_supports_proxy_configuration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

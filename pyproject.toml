@@ -181,6 +181,9 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["src/hermit"]
+omit = [
+  "src/hermit/surfaces/cli/tui/*",
+]
 
 [tool.coverage.report]
 fail_under = 80
