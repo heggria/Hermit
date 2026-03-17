@@ -23,34 +23,34 @@ trust_zone: normal
 
 **目标**: `scripts/hermit-iterate.sh specs/governed-self-evolution.md` 能完整执行，任务记录可查询。
 
-- [ ] 确认 hermit-dev 环境可用（claude-code profile 生效）
-- [ ] 确认 `hermit run` 能成功发起任务、执行 tool calls、记录到 ledger
-- [ ] 确认 `hermit task list` / `hermit task show <id>` 能查到执行结果
-- [ ] 修复链路中遇到的任何阻塞问题
+- [x] 确认 hermit-dev 环境可用（claude-code profile 生效）
+- [x] 确认 `hermit run` 能成功发起任务、执行 tool calls、记录到 ledger
+- [x] 确认 `hermit task list` / `hermit task show <id>` 能查到执行结果
+- [x] 修复链路中遇到的任何阻塞问题
 
 ### Phase 2: 治理可见性 — 每步都有 receipt 和 proof
 
 **目标**: 迭代执行的每个 consequential action 都有 receipt，完成后能导出结构化 proof bundle。
 
-- [ ] 确认 tool execution 经过 PolicyEngine → ApprovalService → CapabilityGrant
-- [ ] 确认 write_file / bash 等 mutable tool 调用产生 ReceiptRecord
-- [ ] `hermit task proof-export <id> --output .hermit-proof/governed-self-evolution.json` 输出完整 proof
-- [ ] proof bundle 包含：task → steps → receipts → evidence → authority → reconciliation 全链
+- [x] 确认 tool execution 经过 PolicyEngine → ApprovalService → CapabilityGrant
+- [x] 确认 write_file / bash 等 mutable tool 调用产生 ReceiptRecord
+- [x] `hermit task proof-export <id> --output .hermit-proof/governed-self-evolution.json` 输出完整 proof
+- [x] proof bundle 包含：task → steps → receipts → evidence → authority → reconciliation 全链
 
 ### Phase 3: 失败回滚 — rollback 可用
 
 **目标**: 当测试失败时，能通过 `hermit task rollback` 回滚受影响的 receipt。
 
-- [ ] 确认 write_file receipt 包含 prestate snapshot
-- [ ] `hermit task rollback <receipt-id>` 能恢复文件到变更前状态
-- [ ] rollback 本身产生 RollbackRecord 并记入 ledger
+- [x] 确认 write_file receipt 包含 prestate snapshot
+- [x] `hermit task rollback <receipt-id>` 能恢复文件到变更前状态
+- [x] rollback 本身产生 RollbackRecord 并记入 ledger
 
 ### Phase 4: PR 闭环 — 自动创建带 proof 的 PR
 
 **目标**: 迭代完成后自动创建 PR，PR body 包含 acceptance results + proof summary。
 
-- [ ] hermit-iterate skill 的 step 7 完整执行
-- [ ] PR body 包含：
+- [x] hermit-iterate skill 的 step 7 完整执行
+- [x] PR body 包含：
   - 变更摘要
   - acceptance criteria 逐项 pass/fail
   - proof summary（task ID、status、receipt count、proof hash）
@@ -60,10 +60,10 @@ trust_zone: normal
 
 **目标**: 让整个流程从执行到展示都足够惊艳。
 
-- [ ] 执行过程有清晰的 structured logging（每步的 policy result、approval status、receipt ID）
-- [ ] proof export 结果人类可读（不只是 JSON dump）
-- [ ] 编写一个简单的 demo spec（如"给某模块加一个 utility function"）作为演示用例
-- [ ] 录制一次完整执行的 terminal 录屏或 log trace 作为 showcase material
+- [x] 执行过程有清晰的 structured logging（每步的 policy result、approval status、receipt ID）
+- [x] proof export 结果人类可读（不只是 JSON dump）
+- [x] 编写一个简单的 demo spec（如"给某模块加一个 utility function"）作为演示用例
+- [x] 录制一次完整执行的 terminal 录屏或 log trace 作为 showcase material
 
 ## Constraints
 
@@ -74,13 +74,13 @@ trust_zone: normal
 
 ## Acceptance Criteria
 
-- [ ] `make check` 通过
-- [ ] `scripts/hermit-iterate.sh specs/<demo-spec>.md` 端到端成功执行
-- [ ] `hermit task show <task-id>` 显示 completed 状态
-- [ ] `hermit task proof-export <task-id>` 输出有效 proof bundle
-- [ ] proof bundle 至少包含 1 个 receipt、关联的 evidence case、authority chain
-- [ ] `hermit task rollback <receipt-id>` 对 write_file receipt 可执行（如果有）
-- [ ] PR 自动创建，body 包含 acceptance results 和 proof summary
+- [x] `make check` 通过
+- [x] `scripts/hermit-iterate.sh specs/<demo-spec>.md` 端到端成功执行
+- [x] `hermit task show <task-id>` 显示 completed 状态
+- [x] `hermit task proof-export <task-id>` 输出有效 proof bundle
+- [x] proof bundle 至少包含 1 个 receipt、关联的 evidence case、authority chain
+- [x] `hermit task rollback <receipt-id>` 对 write_file receipt 可执行（如果有）
+- [x] PR 自动创建，body 包含 acceptance results 和 proof summary
 
 ## Context
 
