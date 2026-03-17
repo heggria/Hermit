@@ -15,6 +15,11 @@ theme:
   language: en
   logo: assets/hermit-macos-icon.svg
   favicon: assets/hermit-macos-icon.svg
+  custom_dir: docs/overrides
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: deep purple
   features:
     - navigation.instant
     - navigation.sections
@@ -22,6 +27,9 @@ theme:
     - content.code.copy
     - search.suggest
     - search.highlight
+
+extra_css:
+  - stylesheets/landing.css
 
 markdown_extensions:
   - admonition

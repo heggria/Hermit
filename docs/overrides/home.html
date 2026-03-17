@@ -1,0 +1,228 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+  {{ super() }}
+{% endblock %}
+
+{% block content %}{% endblock %}
+
+{% block hero %}
+<div class="hermit-landing">
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-inner">
+      <img src="assets/hermit-icon-white.svg" alt="Hermit" class="hero-logo" width="100" height="100">
+      <div class="hero-badge">Local-first &middot; Governed &middot; Inspectable</div>
+      <h1 class="hero-title">The agent kernel that<br><span class="hero-accent">stays legible after the run.</span></h1>
+      <p class="hero-subtitle">
+        Approve before side effects. Inspect receipts after execution. Roll back when needed.<br>
+        Same model loop. Different operator contract.
+      </p>
+      <div class="hero-install">
+        <div class="install-label">Install in one command</div>
+        <div class="install-block">
+          <code>curl -fsSL https://raw.githubusercontent.com/heggria/Hermit/main/install-macos.sh | bash</code>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <a href="getting-started/" class="btn btn-primary">Get Started</a>
+        <a href="https://github.com/heggria/Hermit" class="btn btn-secondary" target="_blank">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Contrast -->
+  <section class="contrast">
+    <div class="contrast-inner">
+      <div class="contrast-card contrast-before">
+        <div class="contrast-label">Generic Agent</div>
+        <ul>
+          <li>Chat-first sessions</li>
+          <li>Direct model-to-tool execution</li>
+          <li>Transcript as context</li>
+          <li>Tool logs as "audit"</li>
+          <li>Memory as sticky notes</li>
+        </ul>
+      </div>
+      <div class="contrast-arrow">
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </div>
+      <div class="contrast-card contrast-after">
+        <div class="contrast-label">Hermit</div>
+        <ul>
+          <li>Task-first durable work</li>
+          <li>Policy, approval &amp; scoped authority</li>
+          <li>Artifacts, beliefs &amp; working state</li>
+          <li>Receipts, proofs &amp; proof bundles</li>
+          <li>Evidence-bound memory governance</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features">
+    <h2 class="section-title">Why Hermit</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+        </div>
+        <h3>Task-First Kernel</h3>
+        <p>All meaningful work flows through durable Task objects. CLI, chat, scheduler, webhook, and adapters converge on the same task semantics.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <h3>Governed Execution</h3>
+        <p>The model proposes actions. The kernel decides whether they are allowed, whether they need approval, and what authority envelope they get.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </div>
+        <h3>Receipts &amp; Proofs</h3>
+        <p>Important actions produce receipts. Proof summaries and proof bundles make the action chain inspectable. Supported receipts can be rolled back.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <h3>Rollback Recovery</h3>
+        <p>Rollback-aware recovery for supported receipt classes. Undo actions when needed instead of hoping the model got it right.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        </div>
+        <h3>Artifact-Native Context</h3>
+        <p>Context is compiled from artifacts, working state, beliefs, memory records, and task state — not just transcript history.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </div>
+        <h3>Evidence-Bound Memory</h3>
+        <p>Memory is not an ungoverned scratchpad. Durable memory promotion is tied to evidence, scope, retention, and invalidation rules.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Demo -->
+  <section class="demo">
+    <h2 class="section-title">See It In Action</h2>
+    <p class="section-desc">One task, still visible afterward.</p>
+    <div class="demo-code">
+      <div class="code-window">
+        <div class="code-titlebar">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+          <span class="code-title">Terminal</span>
+        </div>
+        <pre><code><span class="cmd-comment"># Run a task</span>
+<span class="cmd-prompt">$</span> hermit run "Summarize the current repository"
+
+<span class="cmd-comment"># Inspect the task record</span>
+<span class="cmd-prompt">$</span> hermit task list
+<span class="cmd-prompt">$</span> hermit task show &lt;task_id&gt;
+
+<span class="cmd-comment"># View receipts and proof</span>
+<span class="cmd-prompt">$</span> hermit task receipts --task-id &lt;task_id&gt;
+<span class="cmd-prompt">$</span> hermit task proof &lt;task_id&gt;
+
+<span class="cmd-comment"># Roll back if needed</span>
+<span class="cmd-prompt">$</span> hermit task rollback &lt;receipt_id&gt;</code></pre>
+      </div>
+    </div>
+    <div class="demo-screenshot">
+      <img src="assets/task-proof-rollback-demo.png" alt="Hermit task show, proof, and rollback terminal screenshot" loading="lazy">
+    </div>
+  </section>
+
+  <!-- Execution Path -->
+  <section class="execution-path">
+    <h2 class="section-title">The Governed Execution Path</h2>
+    <div class="path-flow">
+      <span class="path-node">Task</span>
+      <span class="path-sep">&rarr;</span>
+      <span class="path-node">Step</span>
+      <span class="path-sep">&rarr;</span>
+      <span class="path-node">Policy</span>
+      <span class="path-sep">&rarr;</span>
+      <span class="path-node">Approval</span>
+      <span class="path-sep">&rarr;</span>
+      <span class="path-node">Authority</span>
+      <span class="path-sep">&rarr;</span>
+      <span class="path-node">Execution</span>
+      <span class="path-sep">&rarr;</span>
+      <span class="path-node">Receipt</span>
+      <span class="path-sep">&rarr;</span>
+      <span class="path-node path-node-end">Proof / Rollback</span>
+    </div>
+    <p class="path-desc">Models propose actions, the kernel authorizes, then the executor runs. No direct model-to-tool execution.</p>
+  </section>
+
+  <!-- Use Cases -->
+  <section class="use-cases">
+    <h2 class="section-title">Built For Work That Matters</h2>
+    <div class="cases-grid">
+      <div class="case-card">
+        <div class="case-icon">&#x1f4bb;</div>
+        <h4>Local Coding Agent</h4>
+        <p>Asks before writing outside the workspace. Every file change produces a receipt.</p>
+      </div>
+      <div class="case-card">
+        <div class="case-icon">&#x23f0;</div>
+        <h4>Scheduled Assistant</h4>
+        <p>Produces artifacts and keeps an inspectable task ledger across scheduled runs.</p>
+      </div>
+      <div class="case-card">
+        <div class="case-icon">&#x1f4ac;</div>
+        <h4>Channel Operator</h4>
+        <p>Approvals and task continuity matter when connected to Feishu, Slack, or other channels.</p>
+      </div>
+      <div class="case-card">
+        <div class="case-icon">&#x1f9e0;</div>
+        <h4>Memory Runtime</h4>
+        <p>Durable memory cites evidence. Memory promotion is governed, not a free-for-all scratchpad.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta">
+    <div class="cta-inner">
+      <h2>Ready to make agent work inspectable?</h2>
+      <p>Hermit is open source (MIT) and shipping today.</p>
+      <div class="cta-actions">
+        <a href="getting-started/" class="btn btn-primary btn-lg">Get Started</a>
+        <a href="architecture/" class="btn btn-secondary btn-lg">Read the Docs</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="landing-footer">
+    <div class="footer-inner">
+      <div class="footer-links">
+        <a href="getting-started/">Getting Started</a>
+        <a href="architecture/">Architecture</a>
+        <a href="governance/">Governance</a>
+        <a href="roadmap/">Roadmap</a>
+        <a href="faq/">FAQ</a>
+        <a href="https://github.com/heggria/Hermit" target="_blank">GitHub</a>
+      </div>
+      <div class="footer-copy">
+        MIT License &middot; Built for operators who need to trust their agents.
+      </div>
+    </div>
+  </footer>
+
+</div>
+{% endblock %}
