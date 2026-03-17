@@ -80,8 +80,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.13", "3.14"]
-        shard: [1, 2, 3, 4]
-        shard_total: [4]
 
     steps:
       - name: Check out repository
@@ -100,17 +98,8 @@ jobs:
       - name: Sync test environment
         run: uv sync --group dev
 
-      - name: Select test shard
-        run: |
-          python scripts/select_test_shard.py \
-            --shard ${{ matrix.shard }} \
-            --shard-total ${{ matrix.shard_total }} \
-            > .pytest-shard
-          echo "Shard ${{ matrix.shard }}/${{ matrix.shard_total }} will run:"
-          cat .pytest-shard
-
       - name: Run test suite
-        run: uv run pytest -q -n auto $(tr '\n' ' ' < .pytest-shard)
+        run: uv run pytest -q -n auto
 
   test-macos:
     runs-on: macos-latest
@@ -119,8 +108,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.13", "3.14"]
-        shard: [1, 2, 3, 4]
-        shard_total: [4]
 
     steps:
       - name: Check out repository
@@ -139,17 +126,8 @@ jobs:
       - name: Sync test environment
         run: uv sync --group dev --extra macos
 
-      - name: Select test shard
-        run: |
-          python scripts/select_test_shard.py \
-            --shard ${{ matrix.shard }} \
-            --shard-total ${{ matrix.shard_total }} \
-            > .pytest-shard
-          echo "Shard ${{ matrix.shard }}/${{ matrix.shard_total }} will run:"
-          cat .pytest-shard
-
       - name: Run test suite
-        run: uv run pytest -q -n auto $(tr '\n' ' ' < .pytest-shard)
+        run: uv run pytest -q -n auto
 
   coverage:
     runs-on: ubuntu-latest
