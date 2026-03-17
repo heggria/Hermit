@@ -205,7 +205,7 @@ def build_runtime(
 ) -> tuple[AgentRuntime, PluginManager]:
     if pm is None:
         pm = PluginManager(settings=settings)
-        builtin_dir = Path(__file__).resolve().parents[4] / "plugins" / "builtin"
+        builtin_dir = Path(__file__).resolve().parents[3] / "plugins" / "builtin"
         pm.discover_and_load(builtin_dir, settings.plugins_dir)
 
     workdir = (cwd or Path.cwd()).resolve()

@@ -142,7 +142,7 @@ def _invoke_entry(
             _plugin_path = Path(
                 manifest.plugin_dir if manifest.plugin_dir is not None else plugin_dir
             )
-            _pkg_root = Path(__file__).resolve().parents[4]  # src/hermit
+            _pkg_root = Path(__file__).resolve().parents[3]  # src/hermit
             try:
                 _rel = _plugin_path.resolve().relative_to(_pkg_root)
                 full_module = "hermit." + ".".join(_rel.parts) + "." + module_name
