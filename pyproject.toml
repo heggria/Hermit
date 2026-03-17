@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hermit-agent"
-version = "0.2.3"
+version = "0.2.5"
 description = "Local-first governed agent kernel for durable and inspectable AI work."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.13"
@@ -202,6 +202,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/hermit/surfaces/cli/main.py" = ["B008", "B904", "E402"]
+"src/hermit/surfaces/cli/_commands_*.py" = ["B008", "B904"]
+"src/hermit/surfaces/cli/_serve.py" = ["B904"]
 "src/hermit/plugins/builtin/adapters/feishu/adapter.py" = ["B009", "B010"]
 "src/hermit/plugins/builtin/adapters/feishu/reaction.py" = ["B009"]
 "src/hermit/runtime/capability/registry/tools.py" = ["B010"]
