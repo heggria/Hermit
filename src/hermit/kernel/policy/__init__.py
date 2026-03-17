@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
-    "ActionRequest",
     "POLICY_RULES_VERSION",
+    "ActionRequest",
     "PolicyDecision",
     "PolicyEngine",
     "PolicyObligations",

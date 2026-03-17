@@ -18,7 +18,7 @@ class PolicyReason:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PolicyReason":
+    def from_dict(cls, data: dict[str, Any]) -> PolicyReason:
         return cls(
             code=str(data.get("code", "")),
             message=str(data.get("message", "")),
@@ -44,7 +44,7 @@ class PolicyObligations:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PolicyObligations":
+    def from_dict(cls, data: dict[str, Any]) -> PolicyObligations:
         return cls(
             require_receipt=bool(data.get("require_receipt", False)),
             require_preview=bool(data.get("require_preview", False)),
@@ -135,7 +135,7 @@ class PolicyDecision:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PolicyDecision":
+    def from_dict(cls, data: dict[str, Any]) -> PolicyDecision:
         verdict = str(data.get("verdict", data.get("decision", "")) or "")
         obligations: Any = data.get("obligations", {})
         reasons: list[Any] = list(data.get("reasons", []) or [])

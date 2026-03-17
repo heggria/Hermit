@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -32,7 +32,7 @@ class ImageRecord:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ImageRecord":
+    def from_dict(cls, data: dict[str, Any]) -> ImageRecord:
         return cls(
             image_id=str(data["image_id"]),
             primary_session_id=str(data.get("primary_session_id", "")),

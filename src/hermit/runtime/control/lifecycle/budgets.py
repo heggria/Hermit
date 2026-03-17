@@ -12,7 +12,7 @@ class Deadline:
     hard_at: float
 
     @classmethod
-    def start(cls, *, soft_seconds: float, hard_seconds: float) -> "Deadline":
+    def start(cls, *, soft_seconds: float, hard_seconds: float) -> Deadline:
         now = time.time()
         soft = max(float(soft_seconds), 0.0)
         hard = max(float(hard_seconds), soft)

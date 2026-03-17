@@ -1424,10 +1424,7 @@ class TaskController:
         if has_ambiguous_followup_marker(cleaned):
             return True
         context_texts = self._task_context_texts(task_id)
-        for context_text in context_texts:
-            if texts_overlap(cleaned, context_text):
-                return True
-        return False
+        return any(texts_overlap(cleaned, context_text) for context_text in context_texts)
 
     def _task_context_texts(self, task_id: str) -> list[str]:
         task = self.store.get_task(task_id)

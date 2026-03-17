@@ -77,12 +77,12 @@ dev = [
   "coverage>=7.13.4",
   "httpx>=0.28.0",
   "pre-commit>=4.2.0",
-  "pytest>=8.3.5",
-  "pytest-asyncio>=0.26.0",
+  "pytest>=9.0.0",
+  "pytest-asyncio>=1.0.0",
   "pytest-cov>=7.0.0",
   "pytest-timeout>=2.4.0",
   "pytest-xdist>=3.8.0",
-  "ruff>=0.13.0",
+  "ruff>=0.14.0",
   "watchfiles>=1.1.1",
 ]
 typecheck = [
@@ -166,6 +166,11 @@ fail_under = 80
 show_missing = true
 skip_covered = true
 
+[tool.pyright]
+include = ["src/hermit"]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+
 [tool.ruff]
 target-version = "py313"
 line-length = 100
@@ -180,9 +185,19 @@ select = [
   "E",
   "F",
   "I",
+  "RUF",
+  "SIM",
+  "UP",
 ]
 ignore = [
   "E501",
+  "RUF001",
+  "RUF002",
+  "RUF003",
+  "RUF005",
+  "RUF012",
+  "SIM105",
+  "SIM108",
 ]
 
 [tool.ruff.lint.per-file-ignores]

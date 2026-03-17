@@ -64,9 +64,7 @@ class FakeProvider:
     def stream(self, request: ProviderRequest):
         raise NotImplementedError
 
-    def clone(
-        self, *, model: str | None = None, system_prompt: str | None = None
-    ) -> "FakeProvider":
+    def clone(self, *, model: str | None = None, system_prompt: str | None = None) -> FakeProvider:
         return self
 
 

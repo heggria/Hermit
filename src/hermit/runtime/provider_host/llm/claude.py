@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, cast
+from collections.abc import Iterable
+from typing import Any, cast
 
 from hermit.runtime.capability.registry.tools import ToolSpec
 from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, get_runtime_budget
@@ -19,10 +20,10 @@ from hermit.runtime.provider_host.shared.messages import (
     split_internal_tool_context,
 )
 
-_CACHE_CONTROL_EPHEMERAL: Dict[str, str] = {"type": "ephemeral"}
+_CACHE_CONTROL_EPHEMERAL: dict[str, str] = {"type": "ephemeral"}
 
 
-def _set_cache_on_message(messages: List[Dict[str, Any]], idx: int) -> None:
+def _set_cache_on_message(messages: list[dict[str, Any]], idx: int) -> None:
     msg = messages[idx]
     content = msg.get("content")
     if isinstance(content, str):
@@ -43,9 +44,9 @@ def _set_cache_on_message(messages: List[Dict[str, Any]], idx: int) -> None:
 
 
 def _inject_cache_control(
-    messages: List[Dict[str, Any]],
-    system_prompt: Optional[str],
-) -> tuple[Any, List[Dict[str, Any]]]:
+    messages: list[dict[str, Any]],
+    system_prompt: str | None,
+) -> tuple[Any, list[dict[str, Any]]]:
     system_payload: Any = system_prompt
     if system_prompt:
         system_payload = [
@@ -66,7 +67,7 @@ def _inject_cache_control(
     return system_payload, result
 
 
-def _cache_tools(tool_schemas: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+def _cache_tools(tool_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not tool_schemas:
         return tool_schemas
     schemas = list(tool_schemas)
@@ -76,8 +77,8 @@ def _cache_tools(tool_schemas: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
     return schemas
 
 
-def _strip_thinking_blocks(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    cleaned: List[Dict[str, Any]] = []
+def _strip_thinking_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
     for msg in messages:
         if msg.get("role") != "assistant":
             cleaned.append(msg)
@@ -113,7 +114,7 @@ class ClaudeProvider(Provider):
         client: Any,
         *,
         model: str,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
     ) -> None:
         self.client = client
         self.model = model
@@ -122,9 +123,9 @@ class ClaudeProvider(Provider):
     def clone(
         self,
         *,
-        model: Optional[str] = None,
-        system_prompt: Optional[str] = None,
-    ) -> "ClaudeProvider":
+        model: str | None = None,
+        system_prompt: str | None = None,
+    ) -> ClaudeProvider:
         return ClaudeProvider(
             self.client,
             model=model or self.model,
@@ -149,7 +150,7 @@ class ClaudeProvider(Provider):
             cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0),
         )
 
-    def _payload(self, request: ProviderRequest, *, stream: bool = False) -> Dict[str, Any]:
+    def _payload(self, request: ProviderRequest, *, stream: bool = False) -> dict[str, Any]:
         prepared_messages = prepare_messages_for_provider(request.messages)
         prepared_messages, internal_contexts = split_internal_tool_context(prepared_messages)
         system_prompt = (
@@ -163,7 +164,7 @@ class ClaudeProvider(Provider):
         cached_messages = cached_messages + [prepared_messages[-1]] if prepared_messages else []
         if request.thinking_budget > 0:
             cached_messages = _strip_thinking_blocks(cached_messages)
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": request.model or self.model,
             "max_tokens": request.max_tokens,
             "messages": cached_messages,
@@ -203,9 +204,9 @@ class ClaudeProvider(Provider):
 
     def stream(self, request: ProviderRequest) -> Iterable[ProviderEvent]:
         raw_stream = self.client.messages.create(**self._payload(request, stream=True))
-        current_block: Optional[Dict[str, Any]] = None
+        current_block: dict[str, Any] | None = None
         usage = UsageMetrics()
-        stop_reason: Optional[str] = None
+        stop_reason: str | None = None
 
         for event in raw_stream:
             event_type = getattr(event, "type", "")
@@ -267,7 +268,7 @@ def build_claude_provider(
     settings: Any,
     *,
     model: str,
-    system_prompt: Optional[str] = None,
+    system_prompt: str | None = None,
 ) -> ClaudeProvider:
     from anthropic import Anthropic
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Tuple, cast
+from collections.abc import Iterable
+from typing import Any, cast
 
 from hermit.runtime.capability.registry.tools import serialize_tool_result
 
@@ -42,7 +43,7 @@ def block_value(block: Any, key: str, default: Any = None) -> Any:
     return getattr(block, key, default)
 
 
-def normalize_block(block: Any) -> Dict[str, Any]:
+def normalize_block(block: Any) -> dict[str, Any]:
     """Convert SDK blocks or raw dicts to Hermit's internal block shape."""
     if isinstance(block, dict):
         typed_block = cast(dict[str, Any], block)
@@ -52,7 +53,7 @@ def normalize_block(block: Any) -> Dict[str, Any]:
             return {k: v for k, v in typed_block.items() if k in allowed}
         return dict(typed_block)
 
-    raw: Dict[str, Any] = {}
+    raw: dict[str, Any] = {}
     if hasattr(block, "model_dump"):
         raw = block.model_dump()
     elif hasattr(block, "to_dict"):
@@ -70,7 +71,7 @@ def normalize_block(block: Any) -> Dict[str, Any]:
     return raw
 
 
-def normalize_message(message: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_message(message: dict[str, Any]) -> dict[str, Any]:
     role = str(message.get("role", "user"))
     content = message.get("content", "")
     if isinstance(content, list):
@@ -81,7 +82,7 @@ def normalize_message(message: Dict[str, Any]) -> Dict[str, Any]:
     return {"role": role, "content": content}
 
 
-def normalize_messages(messages: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def normalize_messages(messages: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return [normalize_message(message) for message in messages]
 
 
@@ -113,9 +114,9 @@ def _stringify_internal_tool_content(content: Any) -> str:
 
 
 def split_internal_tool_context(
-    messages: list[Dict[str, Any]],
-) -> Tuple[list[Dict[str, Any]], list[str]]:
-    sanitized: list[Dict[str, Any]] = []
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    sanitized: list[dict[str, Any]] = []
     contexts: list[str] = []
 
     for message in messages:
@@ -124,7 +125,7 @@ def split_internal_tool_context(
             sanitized.append(dict(message))
             continue
 
-        blocks: list[Dict[str, Any]] = []
+        blocks: list[dict[str, Any]] = []
         for raw_block in cast(list[Any], content):
             if not isinstance(raw_block, dict):
                 continue

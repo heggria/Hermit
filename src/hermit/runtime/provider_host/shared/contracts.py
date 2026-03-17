@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Protocol
+from typing import Any, Protocol
 
 from hermit.runtime.capability.registry.tools import ToolSpec
 
@@ -93,7 +94,7 @@ class Provider(Protocol):
         *,
         model: str | None = None,
         system_prompt: str | None = None,
-    ) -> "Provider": ...
+    ) -> Provider: ...
 
 
 class ProviderFactory(Protocol):

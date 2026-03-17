@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import inspect
 from collections import defaultdict
-from typing import Any, Callable, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 
@@ -33,15 +34,15 @@ class HooksEngine:
         bucket.append((priority, handler))
         bucket.sort(key=lambda t: t[0])
 
-    def fire(self, event: str, **kwargs: Any) -> List[Any]:
-        results: List[Any] = []
+    def fire(self, event: str, **kwargs: Any) -> list[Any]:
+        results: list[Any] = []
         handlers: _HandlerBucket = self._handlers.get(_event_key(event), [])
         for _priority, handler in handlers:
             result = _safe_call(handler, kwargs)
             results.append(result)
         return results
 
-    def fire_first(self, event: str, **kwargs: Any) -> Optional[Any]:
+    def fire_first(self, event: str, **kwargs: Any) -> Any | None:
         handlers: _HandlerBucket = self._handlers.get(_event_key(event), [])
         for _priority, handler in handlers:
             result = _safe_call(handler, kwargs)

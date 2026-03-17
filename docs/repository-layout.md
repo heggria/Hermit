@@ -1,6 +1,6 @@
 # Repository Layout
 
-This document describes the actual current repository structure and the responsibility boundaries between areas. It is not a “future cleanup plan.”
+This document describes the actual current repository structure and the responsibility boundaries between areas. It is not a "future cleanup plan."
 
 ## Top-Level Structure
 
@@ -9,6 +9,7 @@ This document describes the actual current repository structure and the responsi
 ├── docs/                 文档
 ├── src/                  Python 源码根目录
 ├── tests/                测试
+├── scripts/              开发和运维脚本
 ├── skills/               仓库内附带的辅助 skill
 ├── README.md
 ├── pyproject.toml
@@ -22,38 +23,58 @@ This document describes the actual current repository structure and the responsi
 
 ```text
 src/hermit/
-├── builtin/              内置插件
-├── companion/            macOS 菜单栏 companion
-├── core/                 runner / session / tools / sandbox
-├── plugin/               插件契约、加载器、管理器
-├── provider/             provider 协议、实现与 runtime services
-├── storage/              原子写、文件锁、JSON store
-├── config.py             Settings 与派生路径
-├── context.py            基础 system prompt 上下文
-├── i18n.py               本地化工具
-├── locales/              文案 catalog
-├── logging.py            日志配置
-└── main.py               CLI 入口
+├── apps/                          macOS companion (menubar, app bundle)
+│   └── companion/
+├── infra/                         Infrastructure primitives
+│   ├── locking/                     FileGuard
+│   ├── storage/                     JsonStore, atomic_write
+│   └── system/                      sandbox, i18n, executables
+│       └── locales/                 en-US / zh-CN locale files
+├── kernel/                        Governed execution kernel
+│   ├── artifacts/                   lineage, claims, evidence
+│   ├── authority/                   grants, identity, workspaces
+│   ├── context/                     compiler, injection, memory governance
+│   ├── execution/                   controller, executor, recovery, suspension
+│   ├── ledger/                      events, journal (SQLite), projections
+│   ├── policy/                      approvals, decisions, permits, evaluators, guards
+│   ├── task/                        models, projections, services, state
+│   └── verification/                receipts, proofs, rollbacks
+├── plugins/                       Plugin system
+│   └── builtin/                     Built-in plugins (see below)
+├── runtime/                       Runtime / provider layer
+│   ├── assembly/                    config, context assembly
+│   ├── capability/                  contracts, loader, registry, MCP resolver
+│   ├── control/                     dispatch, lifecycle, runner
+│   ├── observation/                 logging setup
+│   └── provider_host/               LLM providers (Claude, Codex), execution runtime
+└── surfaces/                      User-facing entry points
+    └── cli/                         Typer CLI dispatcher (main.py)
 ```
 
-## `src/hermit/builtin/`
+## `src/hermit/plugins/builtin/`
 
-Directory for builtin plugins. The main ones currently include:
+Directory for builtin plugins, organized by entrypoint category:
 
-- `memory`
-- `image_memory`
-- `orchestrator`
-- `web_tools`
-- `grok`
-- `computer_use`
-- `scheduler`
-- `webhook`
-- `github`
-- `mcp_loader`
-- `feishu`
-- `compact`
-- `planner`
-- `usage`
+- `adapters/` — messaging adapters
+  - `feishu/` — Feishu messaging adapter
+- `bundles/` — slash command bundles
+  - `compact/` — `/compact` command
+  - `planner/` — `/plan` command
+  - `usage/` — `/usage` command
+- `hooks/` — event-driven hooks
+  - `image_memory/` — Image memory hooks
+  - `memory/` — Memory system with evidence governance
+  - `scheduler/` — Scheduled task execution
+  - `webhook/` — HTTP webhook receiver with signature verification
+- `mcp/` — MCP integrations
+  - `github/` — GitHub MCP integration
+  - `mcp_loader/` — MCP server loader
+- `subagents/` — subagent plugins
+  - `orchestrator/` — Subagent orchestration
+- `tools/` — tool plugins
+  - `computer_use/` — Computer use capabilities
+  - `grok/` — Grok search
+  - `web_tools/` — Web search/scraping
 
 Each plugin usually contains:
 
@@ -62,45 +83,44 @@ Each plugin usually contains:
 - `skills/`
 - optional `rules/`
 
-## `src/hermit/core/`
+## `src/hermit/runtime/`
 
-Current runtime core layer:
+Runtime layer organized into sub-packages:
 
-- `agent.py`
-- `runner.py`
-- `sandbox.py`
-- `session.py`
-- `tools.py`
+- `assembly/` — config and context assembly
+- `capability/` — plugin contracts, loader, registry (tools, plugins), MCP resolver
+- `control/` — AgentRunner, session lifecycle, budget management, dispatch
+- `observation/` — logging configuration
+- `provider_host/` — LLM provider implementations (Claude, Codex), execution runtime, shared contracts and message normalization
 
-This layer does not hold product features. It only holds the shared execution framework.
+## `src/hermit/kernel/`
 
-## `src/hermit/plugin/`
+Governed execution kernel with layered sub-packages:
 
-Plugin infrastructure:
+- `task/` — TaskRecord models, TaskController, ingress routing, projections, state continuation
+- `ledger/` — KernelStore (SQLite journal), event store, ledger projections
+- `execution/` — ToolExecutor, execution contracts, coordination (dispatch, observation), recovery (reconciliations)
+- `policy/` — approvals, decisions, permits (authorization plans), evaluators, guards (rules)
+- `verification/` — receipt issuance, proof generation, rollback execution
+- `context/` — context compiler, provider input injection, memory governance
+- `artifacts/` — artifact models, lineage, claims, evidence cases
+- `authority/` — identity, workspaces, capability grants
 
-- `base.py` defines manifests, hook events, and the command / adapter / subagent contracts
-- `loader.py` parses `plugin.toml` and loads entrypoints
-- `manager.py` aggregates all plugin assets
-- `config.py` resolves plugin variables and templates
+## `src/hermit/infra/`
 
-## `src/hermit/provider/`
+Infrastructure primitives:
 
-Provider-related code:
+- `storage/` — JsonStore, atomic_write for file-based JSON persistence
+- `locking/` — FileGuard for file-based locking
+- `system/` — sandbox, i18n, executables, locale catalogs
 
-- `contracts.py` defines the unified provider contract
-- `messages.py` normalizes blocks
-- `runtime.py` implements the shared tool loop
-- `services.py` builds providers and helper services
-- `profiles.py` parses `config.toml`
-- `providers/` contains concrete provider implementations
-
-## `src/hermit/companion/`
+## `src/hermit/apps/companion/`
 
 Separate macOS companion layer:
 
-- `control.py` service control
-- `menubar.py` menu bar UI
-- `appbundle.py` local app bundle and Login Item handling
+- `control.py` — service control
+- `menubar.py` — menu bar UI
+- `appbundle.py` — local app bundle and Login Item handling
 
 It is not part of the plugin system.
 
@@ -114,50 +134,28 @@ The most important documentation currently in the repository:
 - `cli-and-operations.md`
 - `desktop-companion.md`
 - `i18n.md`
-- `openclaw-comparison.md`
+- `kernel-spec-v0.1.md`
+- `kernel-conformance-matrix-v0.1.md`
+- `kernel-conformance-matrix-v0.2-core.md`
 
 ## `tests/`
 
-Test coverage is already fairly broad. The current focus includes:
+Tests are organized into `unit/` and `integration/` sub-directories. Coverage includes:
 
-- CLI
-- config / profile
+- CLI and config/profile
 - provider runtime
 - session / memory / hooks
 - scheduler / webhook
 - Feishu adapter
 - companion
+- kernel task lifecycle, policy, executor, proofs
 
-This review actually ran:
+Run tests with:
 
 ```bash
-uv run pytest -q
+make test
 ```
 
-Result:
+## The Plugin Layer Is the Main Extension Surface
 
-- current suite size is large and CI-sharded; use `make test` for the live count
-
-## Known Structural Characteristics in the Current Repository
-
-### `build/` Is a Packaging Artifact, Not Source
-
-The repository currently includes mirrored packaging output under `build/lib/...`. Read and modify the source under `src/hermit/`, not the build artifacts.
-
-### There Are Still a Few Non-Core Files at the Root
-
-For example:
-
-- `beijing_weekend_trip_march2026.md`
-
-These files do not affect runtime behavior, but they are not part of the core project structure.
-
-### The Plugin Layer Is the Main Extension Surface
-
-Most Hermit capabilities are now pushed down into `src/hermit/builtin/` instead of continuing to expand `core/`.
-
-## What Changed in This Version of the Document
-
-- removed “next step suggestion” style content
-- rewrote the document around the real current directory structure
-- clearly separated source, plugins, companion, tests, and packaging artifacts
+Most Hermit capabilities are pushed down into `src/hermit/plugins/builtin/` instead of continuing to expand the runtime core.

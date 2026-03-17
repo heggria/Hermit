@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import contextlib
 import threading
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Dict, Iterator
 
 try:
     import fcntl as _fcntl
@@ -40,7 +40,7 @@ class FileGuard:
     same lock object.
     """
 
-    _registry: Dict[Path, threading.RLock] = {}
+    _registry: dict[Path, threading.RLock] = {}
     _registry_lock: threading.Lock = threading.Lock()
 
     @classmethod

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List
 
 from hermit.kernel.context.memory.text import is_duplicate, shares_topic
 from hermit.kernel.context.models.context import TaskExecutionContext
@@ -288,9 +288,9 @@ class MemoryGovernanceService:
         return category
 
     def filter_static_categories(
-        self, categories: Dict[str, List[MemoryEntry]]
-    ) -> Dict[str, List[MemoryEntry]]:
-        filtered: Dict[str, List[MemoryEntry]] = {}
+        self, categories: dict[str, list[MemoryEntry]]
+    ) -> dict[str, list[MemoryEntry]]:
+        filtered: dict[str, list[MemoryEntry]] = {}
         for category, entries in categories.items():
             if not entries:
                 continue
@@ -354,9 +354,9 @@ class MemoryGovernanceService:
         self,
         *,
         classification: MemoryClassification,
-        active_records: List[MemoryRecord],
-    ) -> List[MemoryRecord]:
-        candidates: List[MemoryRecord] = []
+        active_records: list[MemoryRecord],
+    ) -> list[MemoryRecord]:
+        candidates: list[MemoryRecord] = []
         for record in active_records:
             if record.status != "active":
                 continue
@@ -381,7 +381,7 @@ class MemoryGovernanceService:
         *,
         classification: MemoryClassification,
         claim_text: str,
-        active_records: List[MemoryRecord],
+        active_records: list[MemoryRecord],
         entry_from_record: Callable[[MemoryRecord], MemoryEntry],
     ) -> tuple[MemoryRecord | None, list[MemoryRecord]]:
         duplicate: MemoryRecord | None = None

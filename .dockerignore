@@ -1,0 +1,51 @@
+# Version control
+.git
+.github
+.gitignore
+
+# Virtual environments & caches
+.venv
+.pkg-venv/
+.uv-cache/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.mypy_cache/
+__pycache__
+
+# Build & distribution
+build/
+dist/
+dist-test/
+*.egg-info
+
+# Testing & coverage
+tests/
+.coverage*
+coverage.xml
+htmlcov/
+.hypothesis/
+reports/
+
+# Documentation
+docs/
+site/
+mkdocs.yml
+
+# OS & editor
+.DS_Store
+.env
+*.md
+!src/**/*.md
+
+# Scripts & config not needed in image
+scripts/
+Makefile
+docker-compose.yml
+Dockerfile
+.pre-commit-config.yaml
+.dockerignore
+AGENTS.md
+CLAUDE.md
+.agents/
+.claude/

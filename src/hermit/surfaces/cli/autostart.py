@@ -19,7 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from hermit.infra.system.i18n import tr
 
@@ -59,7 +59,7 @@ def _plist_path(adapter: str) -> Path:
     return _LAUNCH_AGENTS_DIR / f"{_label(adapter)}.plist"
 
 
-def _find_executable() -> Optional[Path]:
+def _find_executable() -> Path | None:
     """Return the absolute path to the ``hermit`` binary.
 
     Search order:
@@ -130,7 +130,7 @@ def _plist_program_arguments(plist: Path) -> list[str]:
     return [str(arg) for arg in cast(list[Any], args)]
 
 
-def _adapter_from_program_arguments(args: list[str]) -> Optional[str]:
+def _adapter_from_program_arguments(args: list[str]) -> str | None:
     if not args:
         return None
     if "--adapter" in args:
@@ -160,7 +160,7 @@ def existing_adapters() -> list[str]:
     return sorted(adapters)
 
 
-def enable(adapter: str = "feishu", log_dir: Optional[Path] = None) -> str:
+def enable(adapter: str = "feishu", log_dir: Path | None = None) -> str:
     """Install and load a per-adapter LaunchAgent.
 
     Calling ``enable`` for two different adapters creates two independent plist
@@ -256,7 +256,7 @@ def disable(adapter: str = "feishu") -> str:
     )
 
 
-def status(adapter: Optional[str] = None) -> str:
+def status(adapter: str | None = None) -> str:
     """Return a human-readable summary of auto-start state.
 
     If ``adapter`` is given, show only that adapter.

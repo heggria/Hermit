@@ -4,8 +4,9 @@ import importlib
 import importlib.util
 import sys
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, List, Optional, cast
+from typing import Any, cast
 
 import structlog
 
@@ -21,7 +22,7 @@ from hermit.runtime.capability.loader.config import resolve_plugin_context
 log = structlog.get_logger()
 
 
-def parse_manifest(plugin_dir: Path) -> Optional[PluginManifest]:
+def parse_manifest(plugin_dir: Path) -> PluginManifest | None:
     toml_path = plugin_dir / "plugin.toml"
     if not toml_path.exists():
         return None
@@ -83,8 +84,8 @@ def parse_manifest(plugin_dir: Path) -> Optional[PluginManifest]:
     )
 
 
-def discover_plugins(*search_dirs: Path) -> List[PluginManifest]:
-    manifests: List[PluginManifest] = []
+def discover_plugins(*search_dirs: Path) -> list[PluginManifest]:
+    manifests: list[PluginManifest] = []
     for search_dir in search_dirs:
         if not search_dir.exists():
             continue

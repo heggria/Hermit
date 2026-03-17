@@ -1230,6 +1230,5 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
             if not batch:
                 break
-            for event in batch:
-                yield event
+            yield from batch
             cursor = int(batch[-1]["event_seq"])

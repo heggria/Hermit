@@ -4,7 +4,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional, cast
+from typing import Any, cast
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,10 +18,10 @@ from hermit.runtime.provider_host.shared.profiles import (
 )
 
 
-def _parse_headers_str(raw_headers: Optional[str]) -> Dict[str, str]:
+def _parse_headers_str(raw_headers: str | None) -> dict[str, str]:
     if not raw_headers:
         return {}
-    headers: Dict[str, str] = {}
+    headers: dict[str, str] = {}
     raw_items = raw_headers.replace("\n", ",").split(",")
     for raw_item in raw_items:
         item = raw_item.strip()
@@ -46,10 +46,10 @@ def _override_if_present(values: dict[str, object], key: str, value: object | No
         values[key] = value
 
 
-def _read_env_file_values(path: Path) -> Dict[str, str]:
+def _read_env_file_values(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
-    values: Dict[str, str] = {}
+    values: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -65,7 +65,7 @@ def _codex_auth_path() -> Path:
     return Path.home() / ".codex" / "auth.json"
 
 
-def _read_codex_auth() -> Dict[str, Any]:
+def _read_codex_auth() -> dict[str, Any]:
     auth_path = _codex_auth_path()
     if not auth_path.exists():
         return {}
@@ -73,20 +73,20 @@ def _read_codex_auth() -> Dict[str, Any]:
         raw = json.loads(auth_path.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    return cast(Dict[str, Any], raw) if isinstance(raw, dict) else {}
+    return cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
 
 
 def _codex_auth_exists() -> bool:
     return _codex_auth_path().exists()
 
 
-def _codex_auth_mode() -> Optional[str]:
+def _codex_auth_mode() -> str | None:
     raw = _read_codex_auth()
     value = raw.get("auth_mode")
     return str(value).strip() if value is not None else None
 
 
-def _codex_auth_api_key() -> Optional[str]:
+def _codex_auth_api_key() -> str | None:
     raw = _read_codex_auth()
     for key in ("OPENAI_API_KEY", "openai_api_key", "api_key"):
         value = raw.get(key)
@@ -95,22 +95,22 @@ def _codex_auth_api_key() -> Optional[str]:
     return None
 
 
-def _codex_access_token() -> Optional[str]:
+def _codex_access_token() -> str | None:
     raw = _read_codex_auth()
     tokens_raw = raw.get("tokens")
     if not isinstance(tokens_raw, dict):
         return None
-    tokens = cast(Dict[str, Any], tokens_raw)
+    tokens = cast(dict[str, Any], tokens_raw)
     value = tokens.get("access_token")
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _codex_refresh_token() -> Optional[str]:
+def _codex_refresh_token() -> str | None:
     raw = _read_codex_auth()
     tokens_raw = raw.get("tokens")
     if not isinstance(tokens_raw, dict):
         return None
-    tokens = cast(Dict[str, Any], tokens_raw)
+    tokens = cast(dict[str, Any], tokens_raw)
     value = tokens.get("refresh_token")
     return value.strip() if isinstance(value, str) and value.strip() else None
 
@@ -126,15 +126,15 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
-    profile: Optional[str] = None
+    profile: str | None = None
     provider: str = "claude"
-    claude_api_key: Optional[str] = Field(default=None, alias="CLAUDE_API_KEY")
-    claude_auth_token: Optional[str] = None
-    claude_base_url: Optional[str] = None
-    claude_headers: Optional[str] = None
-    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
-    openai_base_url: Optional[str] = None
-    openai_headers: Optional[str] = None
+    claude_api_key: str | None = Field(default=None, alias="CLAUDE_API_KEY")
+    claude_auth_token: str | None = None
+    claude_base_url: str | None = None
+    claude_headers: str | None = None
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_base_url: str | None = None
+    openai_headers: str | None = None
     codex_command: str = "codex"
     locale: str = Field(default_factory=locale_from_env)
     model: str = "claude-3-7-sonnet-latest"
@@ -142,24 +142,24 @@ class Settings(BaseSettings):
     max_turns: int = 100
     tool_output_limit: int = 4000
     thinking_budget: int = 0
-    image_model: Optional[str] = None
+    image_model: str | None = None
     image_context_limit: int = 3
-    feishu_app_id: Optional[str] = None
-    feishu_app_secret: Optional[str] = None
+    feishu_app_id: str | None = None
+    feishu_app_secret: str | None = None
     feishu_thread_progress: bool = True
     scheduler_enabled: bool = True
     scheduler_catch_up: bool = True
-    scheduler_feishu_chat_id: Optional[str] = None
+    scheduler_feishu_chat_id: str | None = None
     kernel_dispatch_worker_count: int = 4
     webhook_enabled: bool = True
-    webhook_host: Optional[str] = None
-    webhook_port: Optional[int] = None
-    webhook_control_secret: Optional[str] = None
+    webhook_host: str | None = None
+    webhook_port: int | None = None
+    webhook_control_secret: str | None = None
     approval_copy_formatter_enabled: bool = True
-    approval_copy_model: Optional[str] = None
+    approval_copy_model: str | None = None
     approval_copy_formatter_timeout_ms: int = 500
     progress_summary_enabled: bool = True
-    progress_summary_model: Optional[str] = None
+    progress_summary_model: str | None = None
     progress_summary_max_tokens: int = 160
     progress_summary_keepalive_seconds: float = 15.0
 
@@ -168,7 +168,7 @@ class Settings(BaseSettings):
     def _apply_legacy_provider_env(cls, data: object) -> object:
         if not isinstance(data, dict):
             data = {}
-        values: Dict[str, Any] = cast(Dict[str, Any], dict(cast(Any, data)))
+        values: dict[str, Any] = cast(dict[str, Any], dict(cast(Any, data)))
         base_dir_raw_v = values.get("base_dir") or os.environ.get("HERMIT_BASE_DIR")
         base_dir_raw = str(base_dir_raw_v) if base_dir_raw_v is not None else None
         base_dir = Path(base_dir_raw).expanduser() if base_dir_raw else Path.home() / ".hermit"
@@ -372,7 +372,7 @@ class Settings(BaseSettings):
         return values
 
     @model_validator(mode="after")
-    def _normalize_locale_value(self) -> "Settings":
+    def _normalize_locale_value(self) -> Settings:
         self.locale = normalize_locale(self.locale)
         return self
 
@@ -424,7 +424,7 @@ class Settings(BaseSettings):
         )
 
     @property
-    def default_profile(self) -> Optional[str]:
+    def default_profile(self) -> str | None:
         return load_profile_catalog(self.base_dir).default_profile
 
     @property
@@ -432,7 +432,7 @@ class Settings(BaseSettings):
         return load_profile_catalog(self.base_dir).disabled_builtin_plugins
 
     @property
-    def resolved_profile(self) -> Optional[str]:
+    def resolved_profile(self) -> str | None:
         resolved = resolve_profile(self.base_dir, self.profile)
         return resolved.name
 
@@ -489,11 +489,11 @@ class Settings(BaseSettings):
         return self.base_dir / "context.md"
 
     @property
-    def parsed_claude_headers(self) -> Dict[str, str]:
+    def parsed_claude_headers(self) -> dict[str, str]:
         return _parse_headers_str(self.claude_headers)
 
     @property
-    def parsed_openai_headers(self) -> Dict[str, str]:
+    def parsed_openai_headers(self) -> dict[str, str]:
         return _parse_headers_str(self.openai_headers)
 
     @property
@@ -515,11 +515,11 @@ class Settings(BaseSettings):
         return bool(self.claude_api_key or self.claude_auth_token or self.openai_api_key)
 
     @property
-    def resolved_openai_api_key(self) -> Optional[str]:
+    def resolved_openai_api_key(self) -> str | None:
         return self.openai_api_key or _codex_auth_api_key()
 
     @property
-    def codex_auth_mode(self) -> Optional[str]:
+    def codex_auth_mode(self) -> str | None:
         return _codex_auth_mode()
 
     @property
@@ -527,31 +527,31 @@ class Settings(BaseSettings):
         return _codex_auth_exists()
 
     @property
-    def codex_access_token(self) -> Optional[str]:
+    def codex_access_token(self) -> str | None:
         return _codex_access_token()
 
     @property
-    def codex_refresh_token(self) -> Optional[str]:
+    def codex_refresh_token(self) -> str | None:
         return _codex_refresh_token()
 
     @property
-    def anthropic_api_key(self) -> Optional[str]:
+    def anthropic_api_key(self) -> str | None:
         return self.claude_api_key
 
     @property
-    def auth_token(self) -> Optional[str]:
+    def auth_token(self) -> str | None:
         return self.claude_auth_token
 
     @property
-    def base_url(self) -> Optional[str]:
+    def base_url(self) -> str | None:
         return self.claude_base_url
 
     @property
-    def custom_headers(self) -> Optional[str]:
+    def custom_headers(self) -> str | None:
         return self.claude_headers
 
     @property
-    def parsed_custom_headers(self) -> Dict[str, str]:
+    def parsed_custom_headers(self) -> dict[str, str]:
         return self.parsed_claude_headers
 
 

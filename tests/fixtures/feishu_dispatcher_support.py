@@ -8,7 +8,7 @@ import copy
 import json
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -47,7 +47,7 @@ class FakeResponse:
 class FakeMessagesAPI:
     def __init__(self, answer: str = "ok") -> None:
         self.answer = answer
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
 
     def create(self, **kwargs: Any) -> FakeResponse:
         self.calls.append(copy.deepcopy(kwargs))

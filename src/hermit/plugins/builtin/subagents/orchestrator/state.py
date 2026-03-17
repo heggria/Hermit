@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
+from typing import Any, cast
 
-Worker = Callable[[Dict[str, object]], Awaitable[Dict[str, object]]]
+Worker = Callable[[dict[str, object]], Awaitable[dict[str, object]]]
 
 
 @dataclass
 class SharedState:
-    messages: List[Dict[str, object]] = field(default_factory=list[Dict[str, object]])
+    messages: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     route: str = "direct"
-    research: Optional[str] = None
-    code: Optional[str] = None
-    final: Optional[str] = None
+    research: str | None = None
+    code: str | None = None
+    final: str | None = None
 
-    def to_dict(self) -> Dict[str, object]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "messages": list(self.messages),
             "route": self.route,
@@ -40,9 +41,9 @@ class SimpleOrchestrator:
             payload = await self.coder(payload)
 
         return SharedState(
-            messages=list(cast(List[Any], payload.get("messages") or [])),
+            messages=list(cast(list[Any], payload.get("messages") or [])),
             route=str(payload.get("route", "direct")),
-            research=cast(Optional[str], payload.get("research")),
-            code=cast(Optional[str], payload.get("code")),
-            final=cast(Optional[str], payload.get("final")),
+            research=cast(str | None, payload.get("research")),
+            code=cast(str | None, payload.get("code")),
+            final=cast(str | None, payload.get("final")),
         )

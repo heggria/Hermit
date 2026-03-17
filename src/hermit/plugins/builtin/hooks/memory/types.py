@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Optional
+from typing import Any
 
 DEFAULT_CATEGORIES = [
     "用户偏好",
@@ -22,7 +22,7 @@ class MemoryEntry:
     score: int = 5
     locked: bool = False
     created_at: date = field(default_factory=date.today)
-    updated_at: Optional[date] = None
+    updated_at: date | None = None
     confidence: float = 0.5
     supersedes: list[str] = field(default_factory=list[str])
     scope_kind: str = ""
@@ -30,9 +30,7 @@ class MemoryEntry:
     retention_class: str = ""
 
     def __post_init__(self) -> None:
-        if self.updated_at is None:
-            self.updated_at = self.created_at
-        elif self.updated_at < self.created_at:
+        if self.updated_at is None or self.updated_at < self.created_at:
             self.updated_at = self.created_at
 
     def render(self) -> str:

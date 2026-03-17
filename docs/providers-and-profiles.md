@@ -12,7 +12,7 @@ Hermit currently supports three providers:
 - `codex`
 - `codex-oauth`
 
-The provider entrypoint is built through `src/hermit/provider/services.py`.
+The provider entrypoint is built through `src/hermit/runtime/provider_host/`.
 
 ## `claude`
 

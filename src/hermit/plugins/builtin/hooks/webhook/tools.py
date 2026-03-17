@@ -155,10 +155,10 @@ def _handle_update(payload: dict[str, Any]) -> str:
     route = routes[name]
     changed: list[str] = []
 
-    if "prompt_template" in payload and payload["prompt_template"]:
+    if payload.get("prompt_template"):
         route["prompt_template"] = str(payload["prompt_template"])
         changed.append("prompt_template")
-    if "path" in payload and payload["path"]:
+    if payload.get("path"):
         route["path"] = str(payload["path"])
         changed.append("path")
     if "secret" in payload:

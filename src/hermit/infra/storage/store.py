@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any
 
 from hermit.infra.locking.lock import FileGuard
 from hermit.infra.storage.atomic import atomic_write
@@ -44,18 +45,18 @@ class JsonStore:
     def __init__(
         self,
         path: Path,
-        default: Optional[Dict[str, Any]] = None,
+        default: dict[str, Any] | None = None,
         cross_process: bool = False,
     ) -> None:
         self.path = Path(path)
-        self._default: Dict[str, Any] = default if default is not None else {}
+        self._default: dict[str, Any] = default if default is not None else {}
         self._cross_process = cross_process
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def read(self) -> Dict[str, Any]:
+    def read(self) -> dict[str, Any]:
         """Return the current file contents as a dict.
 
         Returns ``default`` if the file does not exist or contains invalid
@@ -68,7 +69,7 @@ class JsonStore:
         except (json.JSONDecodeError, OSError):
             return dict(self._default)
 
-    def write(self, data: Dict[str, Any]) -> None:
+    def write(self, data: dict[str, Any]) -> None:
         """Atomically overwrite the file with *data*.
 
         This is safe for a single writer; for concurrent read-modify-write
@@ -77,7 +78,7 @@ class JsonStore:
         atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2))
 
     @contextlib.contextmanager
-    def update(self) -> Iterator[Dict[str, Any]]:
+    def update(self) -> Iterator[dict[str, Any]]:
         """Atomic read-modify-write as a context manager.
 
         Acquires the lock, reads current data, yields it for in-place

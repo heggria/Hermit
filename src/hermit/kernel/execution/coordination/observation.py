@@ -28,7 +28,7 @@ class ObservationProgress:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ObservationProgress":
+    def from_dict(cls, data: dict[str, Any]) -> ObservationProgress:
         percent = data.get("progress_percent")
         try:
             progress_percent = int(percent) if percent is not None else None
@@ -139,7 +139,7 @@ class ObservationTicket:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ObservationTicket":
+    def from_dict(cls, data: dict[str, Any]) -> ObservationTicket:
         return cls(
             observer_kind=str(data.get("observer_kind", "")),
             job_id=str(data.get("job_id", "")),
@@ -173,7 +173,7 @@ class ObservationTicket:
             final_is_error=bool(data.get("final_is_error", False)),
         )
 
-    def schedule_next_poll(self, *, now: float | None = None) -> "ObservationTicket":
+    def schedule_next_poll(self, *, now: float | None = None) -> ObservationTicket:
         current = time.time() if now is None else now
         self.next_poll_at = current + max(self.poll_after_seconds, 0.0)
         return self

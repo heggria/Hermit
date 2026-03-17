@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Protocol
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from hermit.runtime.capability.contracts.hooks import HooksEngine
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
 CommandHandler = Callable[["AgentRunner", str, str], Any]
 
 
-class HookEvent(str, Enum):
+class HookEvent(StrEnum):
     SYSTEM_PROMPT = "system_prompt"
     REGISTER_TOOLS = "register_tools"
     SESSION_START = "session_start"
@@ -32,7 +33,7 @@ class SubagentSpec:
     name: str
     description: str
     system_prompt: str
-    tools: List[str] = field(default_factory=list[str])
+    tools: list[str] = field(default_factory=list[str])
     model: str = ""
 
 
@@ -62,11 +63,11 @@ class McpServerSpec:
     name: str
     description: str
     transport: str  # "stdio" | "http"
-    command: Optional[List[str]] = None
-    env: Optional[dict[str, str]] = None
-    url: Optional[str] = None
-    headers: Optional[dict[str, str]] = None
-    allowed_tools: Optional[List[str]] = None
+    command: list[str] | None = None
+    env: dict[str, str] | None = None
+    url: str | None = None
+    headers: dict[str, str] | None = None
+    allowed_tools: list[str] | None = None
     tool_governance: dict[str, McpToolGovernance] = field(
         default_factory=dict[str, McpToolGovernance]
     )
@@ -85,8 +86,8 @@ class CommandSpec:
 @dataclass
 class PluginVariableSpec:
     name: str
-    setting: Optional[str] = None
-    env: List[str] = field(default_factory=list[str])
+    setting: str | None = None
+    env: list[str] = field(default_factory=list[str])
     default: Any = None
     required: bool = False
     secret: bool = False
@@ -106,7 +107,7 @@ class AdapterProtocol(Protocol):
     """Interface that every message-channel adapter must implement."""
 
     @property
-    def required_skills(self) -> List[str]:
+    def required_skills(self) -> list[str]:
         """Skill names to preload into system prompt at adapter startup.
 
         Equivalent to Claude Code subagent's ``skills`` field — the full
@@ -134,8 +135,8 @@ class PluginManifest:
     entry: dict[str, str] = field(default_factory=dict[str, str])
     config: dict[str, Any] = field(default_factory=dict[str, Any])
     variables: dict[str, PluginVariableSpec] = field(default_factory=dict[str, PluginVariableSpec])
-    dependencies: List[str] = field(default_factory=list[str])
-    plugin_dir: Optional[Any] = None
+    dependencies: list[str] = field(default_factory=list[str])
+    plugin_dir: Any | None = None
 
 
 class PluginContext:

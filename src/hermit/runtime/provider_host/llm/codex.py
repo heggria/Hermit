@@ -6,8 +6,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional, cast
+from typing import Any, cast
 
 from hermit.runtime.capability.registry.tools import ToolSpec, serialize_tool_result
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
@@ -394,10 +395,10 @@ class CodexProvider(Provider):
         *,
         api_key: str,
         model: str,
-        cwd: Optional[Path] = None,
-        system_prompt: Optional[str] = None,
+        cwd: Path | None = None,
+        system_prompt: str | None = None,
         base_url: str = _DEFAULT_BASE_URL,
-        default_headers: Optional[dict[str, str]] = None,
+        default_headers: dict[str, str] | None = None,
         connect_timeout: float | None = None,
         read_timeout: float | None = None,
     ) -> None:
@@ -413,9 +414,7 @@ class CodexProvider(Provider):
         self.connect_timeout = float(connect_timeout or budget.provider_connect_timeout)
         self.read_timeout = float(read_timeout or budget.provider_read_timeout)
 
-    def clone(
-        self, *, model: Optional[str] = None, system_prompt: Optional[str] = None
-    ) -> "CodexProvider":
+    def clone(self, *, model: str | None = None, system_prompt: str | None = None) -> CodexProvider:
         return CodexProvider(
             api_key=self.api_key,
             model=model or self.model,
@@ -635,9 +634,9 @@ class CodexOAuthProvider(Provider):
         *,
         token_manager: CodexOAuthTokenManager,
         model: str,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         base_url: str = _CODEX_OAUTH_BASE_URL,
-        default_headers: Optional[dict[str, str]] = None,
+        default_headers: dict[str, str] | None = None,
         connect_timeout: float | None = None,
         read_timeout: float | None = None,
     ) -> None:
@@ -651,8 +650,8 @@ class CodexOAuthProvider(Provider):
         self.read_timeout = float(read_timeout or budget.provider_read_timeout)
 
     def clone(
-        self, *, model: Optional[str] = None, system_prompt: Optional[str] = None
-    ) -> "CodexOAuthProvider":
+        self, *, model: str | None = None, system_prompt: str | None = None
+    ) -> CodexOAuthProvider:
         return CodexOAuthProvider(
             token_manager=self.token_manager,
             model=model or self.model,

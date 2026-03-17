@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
+from typing import Any, cast
 
 import structlog
 
@@ -28,19 +29,19 @@ ENTRY_RE = re.compile(
     r"^- \[(\d{4}-\d{2}-\d{2})\] \[s:(\d+)(🔒?)\] (.+?)(?:\s+<!--memory:(.+?)-->)?$"
 )
 HEADING_RE = re.compile(r"^## (.+)$")
-MergeFn = Callable[[str, List[MemoryEntry]], List[MemoryEntry]]
+MergeFn = Callable[[str, list[MemoryEntry]], list[MemoryEntry]]
 
 
 class MemoryEngine:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def load(self) -> Dict[str, List[MemoryEntry]]:
+    def load(self) -> dict[str, list[MemoryEntry]]:
         if not self.path.exists():
             return {category: [] for category in DEFAULT_CATEGORIES}
 
-        categories: Dict[str, List[MemoryEntry]] = {category: [] for category in DEFAULT_CATEGORIES}
-        current_category: Optional[str] = None
+        categories: dict[str, list[MemoryEntry]] = {category: [] for category in DEFAULT_CATEGORIES}
+        current_category: str | None = None
         for line in self.path.read_text(encoding="utf-8").splitlines():
             heading_match = HEADING_RE.match(line)
             if heading_match:
@@ -68,9 +69,9 @@ class MemoryEngine:
                 )
         return categories
 
-    def save(self, categories: Dict[str, List[MemoryEntry]]) -> None:
+    def save(self, categories: dict[str, list[MemoryEntry]]) -> None:
         """Atomically overwrite memories.md with *categories*."""
-        lines: List[str] = []
+        lines: list[str] = []
         ordered_categories = list(DEFAULT_CATEGORIES)
         ordered_categories.extend(
             category for category in categories if category not in ordered_categories
@@ -87,7 +88,7 @@ class MemoryEngine:
 
         atomic_write(self.path, "\n".join(lines).rstrip() + "\n")
 
-    def append_entries(self, new_entries: List[MemoryEntry]) -> Dict[str, List[MemoryEntry]]:
+    def append_entries(self, new_entries: list[MemoryEntry]) -> dict[str, list[MemoryEntry]]:
         """Append only genuinely new entries without applying score updates."""
         with FileGuard.acquire(self.path, cross_process=True):
             categories = self.load()
@@ -105,12 +106,12 @@ class MemoryEngine:
 
     def record_session(
         self,
-        new_entries: List[MemoryEntry],
-        used_keywords: Optional[Set[str]] = None,
+        new_entries: list[MemoryEntry],
+        used_keywords: set[str] | None = None,
         session_index: int = 1,
-        merge_fn: Optional[MergeFn] = None,
+        merge_fn: MergeFn | None = None,
         merge_threshold: int = 8,
-    ) -> Dict[str, List[MemoryEntry]]:
+    ) -> dict[str, list[MemoryEntry]]:
         """Update memory scores, add new entries, and persist atomically.
 
         The entire load → modify → save sequence runs under FileGuard so that
@@ -134,7 +135,7 @@ class MemoryEngine:
                     if entry.score >= 7:
                         entry.locked = True
 
-            filtered: Dict[str, List[MemoryEntry]] = {
+            filtered: dict[str, list[MemoryEntry]] = {
                 category: [entry for entry in entries if entry.score > 0]
                 for category, entries in categories.items()
             }
@@ -157,7 +158,7 @@ class MemoryEngine:
 
     @staticmethod
     def summary_prompt(
-        categories: Dict[str, List[MemoryEntry]], limit_per_category: int = 10
+        categories: dict[str, list[MemoryEntry]], limit_per_category: int = 10
     ) -> str:
         return render_summary_prompt(categories, limit_per_category=limit_per_category)
 
@@ -165,7 +166,7 @@ class MemoryEngine:
         self,
         query: str,
         *,
-        categories: Optional[Dict[str, List[MemoryEntry]]] = None,
+        categories: dict[str, list[MemoryEntry]] | None = None,
         limit: int = 6,
         char_budget: int = 1200,
     ) -> str:
@@ -207,9 +208,9 @@ class MemoryEngine:
         self,
         query: str,
         *,
-        categories: Optional[Dict[str, List[MemoryEntry]]] = None,
+        categories: dict[str, list[MemoryEntry]] | None = None,
         limit: int = 6,
-    ) -> List[Tuple[MemoryEntry, float]]:
+    ) -> list[tuple[MemoryEntry, float]]:
         query_tokens = self._topic_tokens(query)
         query_paths = set(re.findall(r"/[\w./-]+", query))
         query_numbers = set(re.findall(r"\d+(?:\.\d+)?", query))
@@ -217,7 +218,7 @@ class MemoryEngine:
             return []
 
         categories = categories or self.load()
-        ranked: List[Tuple[MemoryEntry, float]] = []
+        ranked: list[tuple[MemoryEntry, float]] = []
         for entries in categories.values():
             for entry in entries:
                 score = self._retrieval_score(entry, query_tokens, query_paths, query_numbers)
@@ -243,7 +244,7 @@ class MemoryEngine:
         return ranked[:limit]
 
     @staticmethod
-    def _entry_referenced(entry: MemoryEntry, keywords: Set[str]) -> bool:
+    def _entry_referenced(entry: MemoryEntry, keywords: set[str]) -> bool:
         text = entry.content.lower()
         return any(keyword in text for keyword in keywords)
 
@@ -251,9 +252,9 @@ class MemoryEngine:
     def _retrieval_score(
         cls,
         entry: MemoryEntry,
-        query_tokens: Set[str],
-        query_paths: Set[str],
-        query_numbers: Set[str],
+        query_tokens: set[str],
+        query_paths: set[str],
+        query_numbers: set[str],
     ) -> float:
         entry_tokens = cls._topic_tokens(entry.content)
         entry_paths = set(re.findall(r"/[\w./-]+", entry.content))
@@ -275,7 +276,7 @@ class MemoryEngine:
         return score
 
     @staticmethod
-    def _is_duplicate(entries: List[MemoryEntry], content: str) -> bool:
+    def _is_duplicate(entries: list[MemoryEntry], content: str) -> bool:
         return is_duplicate(entries, content)
 
     @staticmethod
@@ -291,7 +292,7 @@ class MemoryEngine:
         return cast(dict[str, Any], raw)
 
     @classmethod
-    def _resolve_supersedes(cls, entries: List[MemoryEntry], new_entry: MemoryEntry) -> None:
+    def _resolve_supersedes(cls, entries: list[MemoryEntry], new_entry: MemoryEntry) -> None:
         for existing in entries:
             if existing.locked and existing.score >= 8:
                 continue
@@ -320,7 +321,7 @@ class MemoryEngine:
         return looks_like_override(old_content, new_content)
 
     @staticmethod
-    def _topic_tokens(content: str) -> Set[str]:
+    def _topic_tokens(content: str) -> set[str]:
         return topic_tokens(content)
 
     @staticmethod
@@ -332,8 +333,8 @@ class MemoryEngine:
         return shares_topic(left, right)
 
 
-def group_entries(entries: List[MemoryEntry]) -> Dict[str, List[MemoryEntry]]:
-    grouped: Dict[str, List[MemoryEntry]] = defaultdict(list)
+def group_entries(entries: list[MemoryEntry]) -> dict[str, list[MemoryEntry]]:
+    grouped: dict[str, list[MemoryEntry]] = defaultdict(list)
     for entry in entries:
         grouped[entry.category].append(entry)
     return dict(grouped)

@@ -4,7 +4,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple, cast
+from typing import Any, cast
 
 import structlog
 
@@ -114,7 +114,7 @@ def register(ctx: PluginContext) -> None:
             getattr(result, "messages", []) or [],
         )
 
-    def _hook_session_end(session_id: str, messages: List[Dict[str, Any]]) -> None:
+    def _hook_session_end(session_id: str, messages: list[dict[str, Any]]) -> None:
         _save_memories(engine, settings, session_id, messages)
 
     ctx.add_hook(HookEvent.SYSTEM_PROMPT, _hook_system_prompt, priority=20)
@@ -179,7 +179,7 @@ def _inject_relevant_memory(
 
 def _knowledge_categories(
     engine: MemoryEngine, settings: Any | None
-) -> Dict[str, List[MemoryEntry]]:
+) -> dict[str, list[MemoryEntry]]:
     if settings is None:
         return {}
     kernel_db_path = getattr(settings, "kernel_db_path", None)
@@ -295,7 +295,7 @@ def _save_memories(
     engine: MemoryEngine,
     settings: Any,
     session_id: str,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
 ) -> None:
     if not messages:
         log.info("memory_save_skipped", session_id=session_id, reason="no_messages")
@@ -315,7 +315,7 @@ def _checkpoint_memories(
     engine: MemoryEngine,
     settings: Any,
     session_id: str,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
 ) -> None:
     if not session_id:
         log.info("memory_checkpoint_skipped", reason="missing_session_id")
@@ -390,7 +390,7 @@ def _checkpoint_memories(
 def _extract_and_save(
     engine: MemoryEngine,
     settings: Any,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     *,
     session_id: str = "",
 ) -> None:
@@ -424,9 +424,9 @@ def _promote_memories_via_kernel(
     settings: Any,
     *,
     session_id: str,
-    messages: List[Dict[str, Any]],
-    used_keywords: Set[str],
-    new_entries: List[MemoryEntry],
+    messages: list[dict[str, Any]],
+    used_keywords: set[str],
+    new_entries: list[MemoryEntry],
     mode: str,
 ) -> bool:
     kernel_db_path = getattr(settings, "kernel_db_path", None)
@@ -802,7 +802,7 @@ def _store_memory_artifact(
     step_id: str,
     kind: str,
     payload: Any,
-    metadata: Dict[str, Any],
+    metadata: dict[str, Any],
     task_context: Any,
     event_type: str | None,
     entity_id: str,
@@ -833,7 +833,7 @@ def _store_memory_artifact(
     return artifact.artifact_id
 
 
-def _memory_entry_payload(entry: MemoryEntry) -> Dict[str, Any]:
+def _memory_entry_payload(entry: MemoryEntry) -> dict[str, Any]:
     return {
         "category": entry.category,
         "content": entry.content,
@@ -846,10 +846,10 @@ def _memory_entry_payload(entry: MemoryEntry) -> Dict[str, Any]:
 def _extract_memory_payload(
     engine: MemoryEngine,
     settings: Any,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     *,
     max_tokens: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     transcript = _format_transcript(messages)
     if len(transcript.strip()) < 20:
         log.info(
@@ -885,8 +885,8 @@ def _extract_memory_payload(
         )
         return {"used_keywords": set(), "new_entries": []}
 
-    used_keywords: Set[str] = set(data.get("used_keywords", []))
-    new_entries: List[MemoryEntry] = []
+    used_keywords: set[str] = set(data.get("used_keywords", []))
+    new_entries: list[MemoryEntry] = []
     for item in data.get("new_memories", []):
         content = item.get("content", "").strip()
         if content:
@@ -906,8 +906,8 @@ def _extract_memory_payload(
     return {"used_keywords": used_keywords, "new_entries": new_entries}
 
 
-def _consolidate_category_entries(category: str, entries: List[MemoryEntry]) -> List[MemoryEntry]:  # pyright: ignore[reportUnusedFunction]
-    consolidated: List[MemoryEntry] = []
+def _consolidate_category_entries(category: str, entries: list[MemoryEntry]) -> list[MemoryEntry]:  # pyright: ignore[reportUnusedFunction]
+    consolidated: list[MemoryEntry] = []
     for entry in sorted(
         entries,
         key=lambda item: (item.updated_at, item.created_at, item.score, item.confidence),
@@ -953,7 +953,7 @@ def _infer_confidence(content: str) -> float:
     return 0.55
 
 
-def _should_checkpoint(messages: List[Dict[str, Any]]) -> Tuple[bool, str]:
+def _should_checkpoint(messages: list[dict[str, Any]]) -> tuple[bool, str]:
     user_text = _collect_role_text(messages, "user")
     assistant_text = _collect_role_text(messages, "assistant")
     transcript = _format_transcript(messages)
@@ -976,8 +976,8 @@ def _should_checkpoint(messages: List[Dict[str, Any]]) -> Tuple[bool, str]:
 def _pending_messages(
     state_file: Path,
     session_id: str,
-    messages: List[Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], int]:
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
     data = _read_state(state_file)
     raw_sessions = data.get("sessions", {})
     sessions: dict[str, Any] = (
@@ -1018,7 +1018,7 @@ def _clear_session_progress(state_file: Path, session_id: str) -> None:
             sessions.pop(session_id, None)
 
 
-def _read_state(state_file: Path) -> Dict[str, Any]:
+def _read_state(state_file: Path) -> dict[str, Any]:
     return JsonStore(
         state_file,
         default={"session_index": 0, "sessions": {}},
@@ -1026,8 +1026,8 @@ def _read_state(state_file: Path) -> Dict[str, Any]:
     ).read()
 
 
-def _format_transcript(messages: List[Dict[str, Any]]) -> str:
-    lines: List[str] = []
+def _format_transcript(messages: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
     total = 0
     for msg in messages:
         role = msg.get("role", "unknown")
@@ -1047,14 +1047,14 @@ def _format_transcript(messages: List[Dict[str, Any]]) -> str:
     return "\n\n".join(lines)
 
 
-def _message_text(msg: Dict[str, Any]) -> str:
+def _message_text(msg: dict[str, Any]) -> str:
     content = msg.get("content", "")
     if isinstance(content, str):
         return content[:_MAX_MSG_CHARS]
     if not isinstance(content, list):
         return str(content)[:_MAX_MSG_CHARS] if content else ""
 
-    parts: List[str] = []
+    parts: list[str] = []
     for raw_block in cast(list[Any], content):
         if not isinstance(raw_block, dict):
             continue
@@ -1070,7 +1070,7 @@ def _message_text(msg: Dict[str, Any]) -> str:
     return "\n".join(parts).strip()
 
 
-def _collect_role_text(messages: List[Dict[str, Any]], role: str) -> str:
+def _collect_role_text(messages: list[dict[str, Any]], role: str) -> str:
     return "\n".join(_message_text(msg) for msg in messages if msg.get("role") == role).strip()
 
 

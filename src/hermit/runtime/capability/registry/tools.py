@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Optional, cast
+from typing import Any, cast
 
 from hermit.infra.storage import atomic_write
 from hermit.infra.system.i18n import localize_schema, resolve_locale, tr
@@ -117,7 +118,7 @@ def _write_path(root_dir: Path, raw_path: str) -> Path:
 def create_builtin_tool_registry(
     root_dir: Path,
     sandbox: CommandSandbox,
-    config_root_dir: Optional[Path] = None,
+    config_root_dir: Path | None = None,
     locale: str | None = None,
 ) -> ToolRegistry:
     root_dir = root_dir.resolve()

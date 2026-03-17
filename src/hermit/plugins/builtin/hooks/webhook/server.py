@@ -69,10 +69,10 @@ class FlattenDict:
 
 
 class WebhookServer:
-    def __init__(self, config: WebhookConfig, hooks: "HooksEngine") -> None:
+    def __init__(self, config: WebhookConfig, hooks: HooksEngine) -> None:
         self._config = config
         self._hooks = hooks
-        self._runner: "AgentRunner | None" = None
+        self._runner: AgentRunner | None = None
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="webhook")
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -392,7 +392,7 @@ class WebhookServer:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self, runner: "AgentRunner") -> None:
+    def start(self, runner: AgentRunner) -> None:
         self._runner = runner
         uv_config = uvicorn.Config(
             self._app,

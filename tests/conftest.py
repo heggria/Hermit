@@ -18,7 +18,7 @@ _patched = False
 
 
 def _ensure_patched() -> None:
-    global _patched  # noqa: PLW0603
+    global _patched
     if _patched:
         return
     from hermit.kernel.ledger.journal.store import KernelStore
@@ -34,7 +34,7 @@ def _ensure_patched() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _auto_close_kernel_stores() -> None:  # noqa: PT004
+def _auto_close_kernel_stores() -> None:
     """Close all KernelStore connections opened during a test."""
     _ensure_patched()
     yield
@@ -52,7 +52,7 @@ def _auto_close_kernel_stores() -> None:  # noqa: PT004
 # Default locale — most tests expect en-US; zh-CN tests override locally.
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True, scope="session")
-def _default_locale() -> None:  # noqa: PT004
+def _default_locale() -> None:
     os.environ["HERMIT_LOCALE"] = "en-US"
     yield  # type: ignore[misc]
     os.environ.pop("HERMIT_LOCALE", None)
@@ -78,13 +78,13 @@ _lock_file = None
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    global _lock_file  # noqa: PLW0603
+    global _lock_file
     # xdist workers have workerinput; skip lock for them
     if hasattr(config, "workerinput"):
         return
     lock_path = Path.home() / ".hermit" / ".test-suite.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    _lock_file = open(lock_path, "w")
+    _lock_file = lock_path.open("w")
     try:
         fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -94,7 +94,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
-    global _lock_file  # noqa: PLW0603
+    global _lock_file
     if _lock_file is not None:
         fcntl.flock(_lock_file, fcntl.LOCK_UN)
         _lock_file.close()

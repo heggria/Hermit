@@ -3,13 +3,13 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, cast
 
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.runtime.provider_host.shared.messages import normalize_block, normalize_messages
 
 
-def sanitize_session_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def sanitize_session_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Repair orphaned tool-use blocks before a session is reused.
 
     Claude requires every assistant ``tool_use`` block to be followed by a user
@@ -122,7 +122,7 @@ def sanitize_session_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, 
 @dataclass
 class Session:
     session_id: str
-    messages: List[Dict[str, Any]] = field(default_factory=list[Dict[str, Any]])
+    messages: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     created_at: float = field(default_factory=time.time)
     last_active_at: float = field(default_factory=time.time)
     total_input_tokens: int = 0
@@ -134,18 +134,18 @@ class Session:
         self.messages.append({"role": "user", "content": text})
         self.last_active_at = time.time()
 
-    def append_assistant(self, blocks: List[Any]) -> None:
+    def append_assistant(self, blocks: list[Any]) -> None:
         self.messages.append({"role": "assistant", "content": blocks})
         self.last_active_at = time.time()
 
-    def append_tool_results(self, results: List[Dict[str, Any]]) -> None:
+    def append_tool_results(self, results: list[dict[str, Any]]) -> None:
         self.messages.append({"role": "user", "content": results})
         self.last_active_at = time.time()
 
     def is_expired(self, idle_timeout_seconds: int) -> bool:
         return (time.time() - self.last_active_at) > idle_timeout_seconds
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
             "messages": self.messages,
@@ -158,7 +158,7 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Session:
+    def from_dict(cls, data: dict[str, Any]) -> Session:
         return cls(
             session_id=str(data["session_id"]),
             messages=sanitize_session_messages(normalize_messages(list(data.get("messages", [])))),
@@ -183,7 +183,7 @@ class SessionManager:
     ) -> None:
         self.sessions_dir = sessions_dir
         self.idle_timeout_seconds = idle_timeout_seconds
-        self._active: Dict[str, Session] = {}
+        self._active: dict[str, Session] = {}
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self._store = store or KernelStore(self.sessions_dir.parent / "kernel" / "state.db")
 
@@ -212,7 +212,7 @@ class SessionManager:
         self._active[session.session_id] = session
         self._persist(session)
 
-    def close(self, session_id: str) -> Optional[Session]:
+    def close(self, session_id: str) -> Session | None:
         session = self._active.pop(session_id, None)
         if session is None:
             session = self._load_from_store(session_id)
@@ -220,7 +220,7 @@ class SessionManager:
             self._finalize(session)
         return session
 
-    def list_sessions(self) -> List[str]:
+    def list_sessions(self) -> list[str]:
         return sorted(set(self._store.list_conversations()) | set(self._active.keys()))
 
     def _persist(self, session: Session) -> None:
@@ -235,7 +235,7 @@ class SessionManager:
             last_task_id=None,
         )
 
-    def _load_from_store(self, session_id: str) -> Optional[Session]:
+    def _load_from_store(self, session_id: str) -> Session | None:
         conversation = self._store.get_conversation(session_id)
         if conversation is None:
             return None

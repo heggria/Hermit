@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from hermit import __version__
 from hermit.apps.companion.appbundle import (

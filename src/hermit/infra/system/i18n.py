@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-from functools import lru_cache
+from collections.abc import Mapping
+from functools import cache
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, cast
 
 DEFAULT_LOCALE = "en-US"
 
@@ -84,7 +85,7 @@ def _catalog_paths(locale: str) -> list[Path]:
     return paths
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_catalog(locale: str) -> dict[str, str]:
     canonical = normalize_locale(locale)
     catalog = dict(_read_catalog(DEFAULT_LOCALE))

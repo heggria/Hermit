@@ -38,7 +38,7 @@ class TaskExecutionContext:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TaskExecutionContext":
+    def from_dict(cls, data: dict[str, Any]) -> TaskExecutionContext:
         return cls(
             conversation_id=str(data["conversation_id"]),
             task_id=str(data["task_id"]),

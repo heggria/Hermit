@@ -46,7 +46,7 @@
 - `governance`
   - 只负责 supersede、invalidate、时效衰减、冲突处理
 
-当前问题之一是这些职责大量集中在 `src/hermit/builtin/memory/hooks.py`，后续修复应尽量把“规则判断”抽走，而不是继续加 if/else。
+当前问题之一是这些职责大量集中在 `src/hermit/plugins/builtin/hooks/memory/hooks.py`，后续修复应尽量把“规则判断”抽走，而不是继续加 if/else。
 
 ### 2. 静态注入和检索注入分开治理
 
@@ -253,13 +253,13 @@
 
 第一批改动最可能涉及：
 
-- `src/hermit/builtin/memory/hooks.py`
-- `src/hermit/kernel/knowledge.py`
-- `src/hermit/kernel/store.py`
-- `src/hermit/kernel/models.py`
-- `tests/test_memory_hooks.py`
-- `tests/test_memory_engine.py`
-- 新增 `tests/test_memory_governance.py`
+- `src/hermit/plugins/builtin/hooks/memory/hooks.py`
+- `src/hermit/kernel/context/memory/knowledge.py`
+- `src/hermit/kernel/ledger/journal/store.py`
+- `src/hermit/kernel/task/models/records.py`
+- `tests/unit/plugins/memory/test_memory_hooks.py`
+- `tests/unit/plugins/memory/test_memory_engine.py`
+- `tests/unit/kernel/test_memory_governance.py`
 
 建议新增的抽象：
 

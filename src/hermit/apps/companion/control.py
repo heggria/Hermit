@@ -8,11 +8,11 @@ import subprocess
 import sys
 import time
 import traceback
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
 
 from hermit.infra.system.executables import resolve_uv_bin
 from hermit.infra.system.i18n import catalog_locales, tr

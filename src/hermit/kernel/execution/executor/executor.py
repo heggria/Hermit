@@ -159,9 +159,7 @@ def _is_governed_action(tool: ToolSpec, policy: PolicyDecision) -> bool:
         return False
     if policy.action_class in {"read_local", "network_read"} and not policy.requires_receipt:
         return False
-    if policy.action_class == "ephemeral_ui_mutation":
-        return False
-    return True
+    return policy.action_class != "ephemeral_ui_mutation"
 
 
 def _needs_witness(action_class: str) -> bool:
@@ -2483,9 +2481,12 @@ class ToolExecutor:
                 return None, witness_ref, "approval_drift"
             if plan_status not in {"awaiting_approval", "preflighted", "authorized"}:
                 return None, witness_ref, "approval_drift"
-        if witness_ref and _needs_witness(action_request.action_class):
-            if not self._validate_state_witness(witness_ref, action_request, attempt_ctx):
-                return None, witness_ref, "witness_drift"
+        if (
+            witness_ref
+            and _needs_witness(action_request.action_class)
+            and not self._validate_state_witness(witness_ref, action_request, attempt_ctx)
+        ):
+            return None, witness_ref, "witness_drift"
         return approval_record, witness_ref, None
 
     def _authorization_reason(

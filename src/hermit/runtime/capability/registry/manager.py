@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
 
@@ -38,17 +38,17 @@ class PluginManager:
     def __init__(self, settings: Any = None) -> None:
         self.hooks = HooksEngine()
         self.settings = settings
-        self._manifests: List[PluginManifest] = []
-        self._all_skills: List[SkillDefinition] = []
-        self._all_rules_parts: List[str] = []
-        self._all_tools: List[ToolSpec] = []
-        self._all_subagents: List[SubagentSpec] = []
-        self._all_adapters: Dict[str, AdapterSpec] = {}
-        self._all_mcp: List[McpServerSpec] = []
-        self._all_commands: List[CommandSpec] = []
+        self._manifests: list[PluginManifest] = []
+        self._all_skills: list[SkillDefinition] = []
+        self._all_rules_parts: list[str] = []
+        self._all_tools: list[ToolSpec] = []
+        self._all_subagents: list[SubagentSpec] = []
+        self._all_adapters: dict[str, AdapterSpec] = {}
+        self._all_mcp: list[McpServerSpec] = []
+        self._all_commands: list[CommandSpec] = []
         self._mcp_manager: Any = None
         self._runtime: Any = None
-        self._registry: Optional[ToolRegistry] = None
+        self._registry: ToolRegistry | None = None
         self._model: str = ""
         self._max_tokens: int = 2048
         self._tool_output_limit: int = 4000
@@ -168,7 +168,7 @@ class PluginManager:
         )
 
     def configure_subagent_runtime(
-        self, runtime: "AgentRuntime", on_tool_call: "ToolCallback | None" = None
+        self, runtime: AgentRuntime, on_tool_call: ToolCallback | None = None
     ) -> None:
         self._runtime = runtime
         self._model = runtime.model
@@ -179,10 +179,10 @@ class PluginManager:
     def build_system_prompt(
         self,
         base_prompt: str,
-        preloaded_skills: Optional[List[str]] = None,
+        preloaded_skills: list[str] | None = None,
     ) -> str:
         locale = resolve_locale(getattr(self.settings, "locale", None))
-        parts: List[str] = [base_prompt]
+        parts: list[str] = [base_prompt]
 
         if self._all_rules_parts:
             combined = "\n\n".join(self._all_rules_parts)
@@ -218,7 +218,7 @@ class PluginManager:
     def on_session_start(self, session_id: str) -> None:
         self.hooks.fire(HookEvent.SESSION_START, session_id=session_id)
 
-    def on_session_end(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
+    def on_session_end(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         self.hooks.fire(HookEvent.SESSION_END, session_id=session_id, messages=messages)
 
     def setup_commands(self, runner: _RunnerCommandHost) -> None:
@@ -226,7 +226,7 @@ class PluginManager:
         for spec in self._all_commands:
             runner.add_command(spec.name, spec.handler, spec.help_text, spec.cli_only)
 
-    def on_pre_run(self, prompt: str, **kwargs: Any) -> tuple[str, Dict[str, Any]]:
+    def on_pre_run(self, prompt: str, **kwargs: Any) -> tuple[str, dict[str, Any]]:
         """Fire PRE_RUN hooks.
 
         Hooks may return:
@@ -234,7 +234,7 @@ class PluginManager:
         - dict: {"prompt": "...", ...} to replace prompt AND pass control
           signals (e.g. disable_tools=True) to the runner.
         """
-        run_opts: Dict[str, Any] = {}
+        run_opts: dict[str, Any] = {}
         results = self.hooks.fire(HookEvent.PRE_RUN, prompt=prompt, **kwargs)
         for result in results:
             if isinstance(result, str):
@@ -260,11 +260,11 @@ class PluginManager:
             raise KeyError(f"Adapter '{name}' not found. Available: {', '.join(available)}")
         return spec.factory(self.settings)
 
-    def list_adapters(self) -> List[str]:
+    def list_adapters(self) -> list[str]:
         return list(self._all_adapters.keys())
 
     @property
-    def manifests(self) -> List[PluginManifest]:
+    def manifests(self) -> list[PluginManifest]:
         return list(self._manifests)
 
     def _build_delegation_tool(self, spec: SubagentSpec) -> ToolSpec:
@@ -374,7 +374,7 @@ class PluginManager:
     # ── MCP lifecycle ──────────────────────────────────────────────
 
     @property
-    def mcp_specs(self) -> List[McpServerSpec]:
+    def mcp_specs(self) -> list[McpServerSpec]:
         return list(self._all_mcp)
 
     def start_mcp_servers(self, registry: ToolRegistry) -> None:

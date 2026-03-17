@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 
 import structlog
 
@@ -103,7 +104,7 @@ class AgentRuntime:
         max_turns: int = 10,
         tool_output_limit: int = 4000,
         thinking_budget: int = 0,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         tool_executor: ToolExecutor | None = None,
         locale: str | None = None,
     ) -> None:
@@ -125,11 +126,11 @@ class AgentRuntime:
     def clone(
         self,
         *,
-        registry: Optional[ToolRegistry] = None,
-        model: Optional[str] = None,
-        system_prompt: Optional[str] = None,
-        max_turns: Optional[int] = None,
-    ) -> "AgentRuntime":
+        registry: ToolRegistry | None = None,
+        model: str | None = None,
+        system_prompt: str | None = None,
+        max_turns: int | None = None,
+    ) -> AgentRuntime:
         return AgentRuntime(
             provider=self.provider.clone(
                 model=model or self.model,
@@ -160,8 +161,8 @@ class AgentRuntime:
 
     def _tool_result_block(
         self, *, tool_name: str, tool_use_id: str, content: Any, is_error: bool = False
-    ) -> Dict[str, Any]:
-        block: Dict[str, Any] = {
+    ) -> dict[str, Any]:
+        block: dict[str, Any] = {
             "type": "tool_result",
             "tool_use_id": tool_use_id,
             "content": content,
@@ -479,18 +480,18 @@ class AgentRuntime:
     def _execute_tool_turn(
         self,
         *,
-        messages: List[Dict[str, Any]],
-        tool_use_blocks: List[Dict[str, Any]],
-        tool_result_blocks: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tool_use_blocks: list[dict[str, Any]],
+        tool_result_blocks: list[dict[str, Any]],
         turn: int,
-        on_tool_call: Optional[ToolCallback],
-        on_tool_start: Optional[ToolStartCallback],
+        on_tool_call: ToolCallback | None,
+        on_tool_start: ToolStartCallback | None,
         disable_tools: bool,
         readonly_only: bool,
         task_context: TaskExecutionContext | None,
         usage: UsageMetrics,
         tool_calls: int,
-    ) -> AgentResult | tuple[List[Dict[str, Any]], int]:
+    ) -> AgentResult | tuple[list[dict[str, Any]], int]:
         for index, block in enumerate(tool_use_blocks):
             tool_name = str(block_value(block, "name"))
             tool_input = dict(block_value(block, "input", {}) or {})
@@ -625,9 +626,9 @@ class AgentRuntime:
 
     def _apply_appended_notes(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         task_context: TaskExecutionContext | None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if (
             self.tool_executor is None
             or task_context is None
@@ -642,11 +643,11 @@ class AgentRuntime:
     def _resume_observation_turn(
         self,
         *,
-        pending_tool_blocks: List[Dict[str, Any]],
-        tool_result_blocks: List[Dict[str, Any]],
+        pending_tool_blocks: list[dict[str, Any]],
+        tool_result_blocks: list[dict[str, Any]],
         observation: dict[str, Any],
-        on_tool_call: Optional[ToolCallback],
-    ) -> tuple[List[Dict[str, Any]], int]:
+        on_tool_call: ToolCallback | None,
+    ) -> tuple[list[dict[str, Any]], int]:
         if not pending_tool_blocks:
             return tool_result_blocks, 0
         current = pending_tool_blocks[0]
@@ -670,8 +671,8 @@ class AgentRuntime:
     def run_stream(
         self,
         prompt: str,
-        message_history: Optional[List[Dict[str, Any]]] = None,
-        on_token: Optional[StreamCallback] = None,
+        message_history: list[dict[str, Any]] | None = None,
+        on_token: StreamCallback | None = None,
     ) -> AgentResult:
         if on_token is None:
             on_token = lambda kind, text: None  # noqa: E731
@@ -683,14 +684,14 @@ class AgentRuntime:
                 on_token("text", result.text)
             return result
 
-        messages: List[Dict[str, Any]] = normalize_messages(message_history or [])
+        messages: list[dict[str, Any]] = normalize_messages(message_history or [])
         messages.append({"role": "user", "content": prompt})
         tool_calls = 0
         usage = UsageMetrics()
 
         for turn in range(1, self.max_turns + 1):
-            response_blocks: List[Dict[str, Any]] = []
-            stop_reason: Optional[str] = None
+            response_blocks: list[dict[str, Any]] = []
+            stop_reason: str | None = None
             try:
                 for event in self.provider.stream(
                     self._request(messages, disable_tools=False, readonly_only=False, stream=True)
@@ -741,7 +742,7 @@ class AgentRuntime:
                     )
                 )
 
-            tool_result_blocks: List[Dict[str, Any]] = []
+            tool_result_blocks: list[dict[str, Any]] = []
             for block in tool_use_blocks:
                 tool_name = str(block_value(block, "name"))
                 try:

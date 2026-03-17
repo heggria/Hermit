@@ -4,9 +4,10 @@ import datetime
 import json
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from hermit.infra.storage import atomic_write
 from hermit.infra.system.i18n import resolve_locale, tr
@@ -57,7 +58,7 @@ def _result_preview(text: str, *, limit: int = 280) -> str:
     return cleaned[: limit - 1].rstrip() + "…"
 
 
-def _locale_for_runner(runner: "AgentRunner | None" = None) -> str:
+def _locale_for_runner(runner: AgentRunner | None = None) -> str:
     settings = getattr(getattr(runner, "pm", None), "settings", None)
     return resolve_locale(getattr(settings, "locale", None))
 
@@ -65,14 +66,14 @@ def _locale_for_runner(runner: "AgentRunner | None" = None) -> str:
 def _t(
     message_key: str,
     *,
-    runner: "AgentRunner | None" = None,
+    runner: AgentRunner | None = None,
     default: str | None = None,
     **kwargs: object,
 ) -> str:
     return tr(message_key, locale=_locale_for_runner(runner), default=default, **kwargs)
 
 
-def _resolve_help_text(help_text: str, *, runner: "AgentRunner | None" = None) -> str:
+def _resolve_help_text(help_text: str, *, runner: AgentRunner | None = None) -> str:
     return tr(help_text, locale=_locale_for_runner(runner), default=help_text)
 
 
@@ -83,7 +84,7 @@ class DispatchResult:
     text: str
     is_command: bool = False
     should_exit: bool = False
-    agent_result: Optional[AgentResult] = None
+    agent_result: AgentResult | None = None
 
 
 class AgentRunner:
@@ -94,7 +95,7 @@ class AgentRunner:
     """
 
     # Class-level registry for core commands (populated by decorators at import time).
-    _core_commands: Dict[str, tuple[CommandHandler, str, bool]] = {}
+    _core_commands: dict[str, tuple[CommandHandler, str, bool]] = {}
 
     @classmethod
     def register_command(
@@ -109,11 +110,11 @@ class AgentRunner:
         return decorator
 
     @classmethod
-    def core_command_specs(cls) -> Dict[str, tuple[CommandHandler, str, bool]]:
+    def core_command_specs(cls) -> dict[str, tuple[CommandHandler, str, bool]]:
         return dict(cls._core_commands)
 
     @property
-    def command_specs(self) -> Dict[str, tuple[CommandHandler, str, bool]]:
+    def command_specs(self) -> dict[str, tuple[CommandHandler, str, bool]]:
         """Public accessor for the instance command registry."""
         return self._commands
 
@@ -137,7 +138,7 @@ class AgentRunner:
         self._session_started: set[str] = set()
         self._observation_service: ObservationService | None = None
         # Instance-level copy: core commands + plugin commands added later via add_command()
-        self._commands: Dict[str, tuple[CommandHandler, str, bool]] = dict(self._core_commands)
+        self._commands: dict[str, tuple[CommandHandler, str, bool]] = dict(self._core_commands)
         self._dispatch_service: object | None = None
 
     def start_background_services(self) -> None:
@@ -314,8 +315,8 @@ class AgentRunner:
         raw_text: str | None = None,
         readonly_only: bool = False,
         disable_tools: bool = False,
-        on_tool_call: Optional[ToolCallback] = None,
-        on_tool_start: Optional[ToolStartCallback] = None,
+        on_tool_call: ToolCallback | None = None,
+        on_tool_start: ToolStartCallback | None = None,
     ) -> AgentResult:
         session = self.session_manager.get_or_create(task_ctx.conversation_id)
         compiled_input = self._compile_provider_input(
@@ -464,8 +465,8 @@ class AgentRunner:
         self,
         step_attempt_id: str,
         *,
-        on_tool_call: Optional[ToolCallback] = None,
-        on_tool_start: Optional[ToolStartCallback] = None,
+        on_tool_call: ToolCallback | None = None,
+        on_tool_start: ToolStartCallback | None = None,
     ) -> AgentResult:
         task_ctx = self.task_controller.context_for_attempt(step_attempt_id)
         session_id = task_ctx.conversation_id
@@ -673,8 +674,8 @@ class AgentRunner:
         self,
         session_id: str,
         text: str,
-        on_tool_call: Optional[ToolCallback] = None,
-        on_tool_start: Optional[ToolStartCallback] = None,
+        on_tool_call: ToolCallback | None = None,
+        on_tool_start: ToolStartCallback | None = None,
     ) -> DispatchResult:
         """Route a raw user message: slash commands are handled here; everything
         else is forwarded to the agent.
@@ -717,8 +718,8 @@ class AgentRunner:
         self,
         session_id: str,
         text: str,
-        on_tool_call: Optional[ToolCallback] = None,
-        on_tool_start: Optional[ToolStartCallback] = None,
+        on_tool_call: ToolCallback | None = None,
+        on_tool_start: ToolStartCallback | None = None,
     ) -> AgentResult:
         """Process a single user message within a session."""
         source_channel = self.task_controller.source_from_session(session_id)
@@ -893,8 +894,8 @@ class AgentRunner:
         self,
         step_attempt_id: str,
         *,
-        on_tool_call: Optional[ToolCallback] = None,
-        on_tool_start: Optional[ToolStartCallback] = None,
+        on_tool_call: ToolCallback | None = None,
+        on_tool_start: ToolStartCallback | None = None,
     ) -> AgentResult:
         _resume_attempt_fn = getattr(self.task_controller, "resume_attempt", None)
         task_ctx: TaskExecutionContext = cast(
@@ -957,8 +958,8 @@ class AgentRunner:
         action: str,
         target_id: str,
         reason: str = "",
-        on_tool_call: Optional[ToolCallback] = None,
-        on_tool_start: Optional[ToolStartCallback] = None,
+        on_tool_call: ToolCallback | None = None,
+        on_tool_start: ToolStartCallback | None = None,
     ) -> DispatchResult:
         if action in {"approve_once", "approve_mutable_workspace", "deny"}:
             return self._resolve_approval(
@@ -1269,8 +1270,8 @@ class AgentRunner:
         action: str,
         approval_id: str,
         reason: str = "",
-        on_tool_call: Optional[ToolCallback] = None,
-        on_tool_start: Optional[ToolStartCallback] = None,
+        on_tool_call: ToolCallback | None = None,
+        on_tool_start: ToolStartCallback | None = None,
     ) -> DispatchResult:
         from hermit.kernel.policy.approvals.approvals import ApprovalService
 

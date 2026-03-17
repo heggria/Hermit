@@ -5,8 +5,9 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from hermit.kernel.authority.identity.models import PrincipalRecord
 from hermit.kernel.ledger.events.store_ledger import KernelLedgerStoreMixin
@@ -1125,7 +1126,7 @@ class KernelStore(
             stored_prev = str(row["prev_event_hash"] or "").strip()
             stored_algo = str(row["hash_chain_algo"] or "").strip()
             prev_event_hash = previous_by_task.get(task_key) if task_key else None
-            if not stored_hash or not stored_prev and prev_event_hash or not stored_algo:
+            if not stored_hash or (not stored_prev and prev_event_hash) or not stored_algo:
                 event_hash = self._compute_event_hash(
                     event_id=str(row["event_id"]),
                     task_id=row["task_id"],

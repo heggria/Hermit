@@ -83,7 +83,7 @@ These surfaces are converging on shared task semantics instead of remaining inde
 
 ## Core Runtime Modules
 
-### `src/hermit/main.py`
+### `src/hermit/surfaces/cli/main.py`
 
 Responsibilities:
 
@@ -93,7 +93,7 @@ Responsibilities:
 - task inspection and approval commands
 - service lifecycle
 
-### `src/hermit/core/runner.py`
+### `src/hermit/runtime/control/runner/runner.py`
 
 Responsibilities:
 
@@ -102,7 +102,7 @@ Responsibilities:
 - hook dispatch
 - integration between provider runtime and task kernel paths
 
-### `src/hermit/plugin/manager.py`
+### `src/hermit/runtime/capability/registry/manager.py`
 
 Responsibilities:
 
@@ -112,7 +112,7 @@ Responsibilities:
 - subagent and adapter assembly
 - MCP startup and shutdown
 
-### `src/hermit/provider/runtime.py`
+### `src/hermit/runtime/provider_host/`
 
 Responsibilities:
 
@@ -122,28 +122,16 @@ Responsibilities:
 
 ## Task Kernel Modules
 
-The kernel is implemented under `src/hermit/kernel/`.
+The kernel is implemented under `src/hermit/kernel/` with the following layered sub-packages:
 
-Important modules include:
-
-- `models.py`
-- `controller.py`
-- `executor.py`
-- `store.py`
-- `policy/`
-- `approvals.py`
-- `decisions.py`
-- `context_compiler.py`
-- `memory_governance.py`
-
-Canonical domain packages for the spec hard cut now live alongside the kernel:
-
-- `src/hermit/identity/`
-- `src/hermit/capabilities/`
-- `src/hermit/workspaces/`
-- `receipts.py`
-- `proofs.py`
-- `rollbacks.py`
+- `task/` — TaskRecord models, TaskController, ingress routing, projections, state
+- `ledger/` — KernelStore (SQLite-backed journal), event store, projections
+- `execution/` — ToolExecutor, execution contracts, coordination (dispatch, observation), recovery
+- `policy/` — approvals, decisions, permits, evaluators, guards
+- `verification/` — receipts, proofs, rollbacks
+- `context/` — context compiler, provider input injection, memory governance
+- `artifacts/` — artifact models, lineage, claims, evidence
+- `authority/` — identity, workspaces, capability grants
 
 ## First-Class Kernel Objects
 

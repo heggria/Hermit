@@ -4,4 +4,4 @@ from hermit.infra.locking.lock import FileGuard
 from hermit.infra.storage.atomic import atomic_write
 from hermit.infra.storage.store import JsonStore
 
-__all__ = ["atomic_write", "FileGuard", "JsonStore"]
+__all__ = ["FileGuard", "JsonStore", "atomic_write"]

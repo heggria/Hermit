@@ -20,7 +20,7 @@ class ProgressSummary:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ProgressSummary":
+    def from_dict(cls, data: dict[str, Any]) -> ProgressSummary:
         percent = data.get("progress_percent")
         try:
             progress_percent = int(percent) if percent is not None else None

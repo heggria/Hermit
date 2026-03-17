@@ -87,7 +87,7 @@ _DISPLAYABLE_TOPIC_KINDS = {
 }
 _TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 
-_active_adapter: "FeishuAdapter | None" = None
+_active_adapter: FeishuAdapter | None = None
 _lark_receive_loop_patched: bool = False
 _lark_connect_patched: bool = False
 _lark_runtime_patched: bool = False
@@ -271,7 +271,7 @@ with suppress(Exception), warnings.catch_warnings():
     _patch_lark_runtime(_lark_ws_client_module)
 
 
-def get_active_adapter() -> "FeishuAdapter | None":
+def get_active_adapter() -> FeishuAdapter | None:
     return _active_adapter
 
 
@@ -1609,13 +1609,15 @@ class FeishuAdapter:
 
             def _on_tool_start(name: str, tool_input: dict[str, Any]) -> None:
                 nonlocal current_hint, schedule_reacted
-                if not schedule_reacted:
-                    if name in _SCHEDULE_REACTION_TOOLS or (
+                if not schedule_reacted and (
+                    name in _SCHEDULE_REACTION_TOOLS
+                    or (
                         name == "read_skill"
                         and str(tool_input.get("name", "")).strip().lower() == "scheduler"
-                    ):
-                        schedule_reacted = True
-                        add_reaction(self._client, msg.message_id, "Get")
+                    )
+                ):
+                    schedule_reacted = True
+                    add_reaction(self._client, msg.message_id, "Get")
                 if not progress_enabled:
                     return
                 current_hint = format_tool_start_hint(name, tool_input, locale=self._locale())

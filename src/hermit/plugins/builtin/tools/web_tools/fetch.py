@@ -59,9 +59,7 @@ def handle_fetch(payload: dict[str, Any]) -> str:
     except (LookupError, UnicodeDecodeError):
         html = raw.decode("utf-8", errors="replace")
 
-    if "json" in content_type:
-        text = html.strip()
-    elif "text/plain" in content_type:
+    if "json" in content_type or "text/plain" in content_type:
         text = html.strip()
     else:
         text = _html_to_text(html)

@@ -105,9 +105,7 @@ def _should_watch(_change: Change, path: str) -> bool:
     file_path = Path(path)
     if any(part in IGNORED_PARTS for part in file_path.parts):
         return False
-    if file_path.suffix in IGNORED_SUFFIXES:
-        return False
-    return True
+    return file_path.suffix not in IGNORED_SUFFIXES
 
 
 def _format_paths(changes: set[tuple[Change, str]]) -> str:

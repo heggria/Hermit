@@ -14,7 +14,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import typer
 
@@ -976,7 +976,7 @@ def auth_status() -> None:
 
 
 @app.command()
-def init(base_dir: Optional[Path] = None) -> None:
+def init(base_dir: Path | None = None) -> None:
     """Initialize the local Hermit workspace."""
     settings = get_settings()
     if base_dir is not None:
@@ -1127,7 +1127,7 @@ def _remove_pid(path: Path) -> None:
         pass
 
 
-def _read_pid(path: Path) -> Optional[int]:
+def _read_pid(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
@@ -1921,7 +1921,7 @@ def task_events(
 
 @task_app.command("receipts")
 def task_receipts(
-    task_id: Optional[str] = typer.Option(
+    task_id: str | None = typer.Option(
         None,
         help=_cli_t("cli.task.receipts.task_id", "Optional task ID filter."),
     ),
@@ -1968,7 +1968,7 @@ def task_proof(
 @task_app.command("proof-export")
 def task_proof_export(
     task_id: str = typer.Argument(..., help=_cli_t("cli.task.common.task_id", "Task ID.")),
-    output: Optional[Path] = typer.Option(
+    output: Path | None = typer.Option(
         None,
         help=_cli_t(
             "cli.task.proof_export.output",
@@ -1988,7 +1988,7 @@ def task_proof_export(
 
 @task_app.command("claim-status")
 def task_claims(
-    task_id: Optional[str] = typer.Argument(
+    task_id: str | None = typer.Argument(
         None,
         help=_cli_t("cli.task.common.task_id", "Optional task ID."),
     ),
@@ -2022,7 +2022,7 @@ def task_rollback(
 
 @task_app.command("projections-rebuild")
 def task_projections_rebuild(
-    task_id: Optional[str] = typer.Argument(
+    task_id: str | None = typer.Argument(
         None,
         help=_cli_t("cli.task.projections.task_id", "Optional task ID."),
     ),
@@ -2183,11 +2183,11 @@ def task_capability_revoke(
 
 @memory_app.command("inspect")
 def memory_inspect(
-    memory_id: Optional[str] = typer.Argument(
+    memory_id: str | None = typer.Argument(
         None,
         help=_cli_t("cli.memory.inspect.memory_id", "Optional memory ID."),
     ),
-    claim_text: Optional[str] = typer.Option(
+    claim_text: str | None = typer.Option(
         None,
         "--claim-text",
         help=_cli_t(
@@ -2200,12 +2200,12 @@ def memory_inspect(
         "--category",
         help=_cli_t("cli.memory.inspect.category", "Category hint used for raw claim inspection."),
     ),
-    conversation_id: Optional[str] = typer.Option(
+    conversation_id: str | None = typer.Option(
         None,
         "--conversation-id",
         help=_cli_t("cli.memory.inspect.conversation_id", "Conversation scope hint."),
     ),
-    workspace_root: Optional[Path] = typer.Option(
+    workspace_root: Path | None = typer.Option(
         None,
         "--workspace-root",
         help=_cli_t("cli.memory.inspect.workspace_root", "Workspace scope hint."),
@@ -2281,12 +2281,12 @@ def memory_inspect(
 
 @memory_app.command("list")
 def memory_list(
-    status: Optional[str] = typer.Option(
+    status: str | None = typer.Option(
         "active",
         "--status",
         help=_cli_t("cli.memory.list.status", "Optional status filter."),
     ),
-    conversation_id: Optional[str] = typer.Option(
+    conversation_id: str | None = typer.Option(
         None,
         "--conversation-id",
         help=_cli_t("cli.memory.list.conversation_id", "Optional conversation filter."),
@@ -2419,7 +2419,7 @@ def memory_rebuild(
 
 @memory_app.command("export")
 def memory_export(
-    output: Optional[Path] = typer.Option(
+    output: Path | None = typer.Option(
         None,
         "--output",
         help=_cli_t("cli.memory.export.output", "Optional output path for the exported mirror."),
@@ -2603,7 +2603,7 @@ def autostart_disable(
 
 @autostart_app.command("status")
 def autostart_status(
-    adapter: Optional[str] = typer.Option(
+    adapter: str | None = typer.Option(
         None,
         help=_cli_t("cli.autostart.status.adapter", "Show only this adapter; omit for all."),
     ),
@@ -2669,18 +2669,18 @@ def schedule_add(
         ...,
         help=_cli_t("cli.schedule.add.prompt", "Agent prompt to execute."),
     ),
-    cron: Optional[str] = typer.Option(
+    cron: str | None = typer.Option(
         None,
         help=_cli_t("cli.schedule.add.cron", "Cron expression (e.g. '0 9 * * 1-5')."),
     ),
-    once: Optional[str] = typer.Option(
+    once: str | None = typer.Option(
         None,
         help=_cli_t(
             "cli.schedule.add.once",
             "One-time datetime (ISO format, e.g. '2026-03-15T14:00').",
         ),
     ),
-    interval: Optional[int] = typer.Option(
+    interval: int | None = typer.Option(
         None,
         help=_cli_t("cli.schedule.add.interval", "Interval in seconds (minimum 60)."),
     ),
@@ -2839,7 +2839,7 @@ def schedule_disable(
 
 @schedule_app.command("history")
 def schedule_history(
-    job_id: Optional[str] = typer.Option(
+    job_id: str | None = typer.Option(
         None,
         help=_cli_t("cli.schedule.history.job_id", "Filter by task ID."),
     ),

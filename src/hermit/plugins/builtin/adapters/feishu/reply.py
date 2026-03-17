@@ -7,7 +7,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from hermit.infra.system.i18n import resolve_locale, tr
 
@@ -800,7 +800,7 @@ def reply_with_card(client: Any, message_id: str, text: str, *, locale: str | No
     return True
 
 
-def send_text_message(client: Any, chat_id: str, text: str) -> Optional[str]:
+def send_text_message(client: Any, chat_id: str, text: str) -> str | None:
     """Send a new text message to a chat. Returns message_id or None."""
     from lark_oapi.api.im.v1 import (
         CreateMessageRequest,
@@ -826,7 +826,7 @@ def send_text_message(client: Any, chat_id: str, text: str) -> Optional[str]:
     return getattr(response.data, "message_id", None)
 
 
-def send_card(client: Any, chat_id: str, card: dict[str, Any]) -> Optional[str]:
+def send_card(client: Any, chat_id: str, card: dict[str, Any]) -> str | None:
     """Send an interactive card message. Returns message_id for later PATCH."""
     from lark_oapi.api.im.v1 import (
         CreateMessageRequest,
@@ -906,7 +906,7 @@ def smart_reply(client: Any, message_id: str, text: str, *, locale: str | None =
 
 def smart_send_message(
     client: Any, chat_id: str, text: str, *, locale: str | None = None
-) -> Optional[str]:
+) -> str | None:
     """Send a new message to a chat using the same card/text heuristic as smart_reply()."""
     if should_use_card(text):
         card = build_result_card(text, locale=locale)
@@ -1292,7 +1292,7 @@ def build_error_card(hint: str | None = None, *, locale: str | None = None) -> d
     }
 
 
-def reply_card_return_id(client: Any, message_id: str, card: dict[str, Any]) -> Optional[str]:
+def reply_card_return_id(client: Any, message_id: str, card: dict[str, Any]) -> str | None:
     """Reply to a message with a card and return the new reply's message_id.
 
     Returns None on failure so callers can safely skip subsequent PATCH calls.

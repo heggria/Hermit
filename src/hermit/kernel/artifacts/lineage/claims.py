@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from hermit.infra.storage.atomic import atomic_write
 from hermit.kernel.artifacts.lineage.claim_manifest import CLAIM_ROWS, PROFILE_LABELS
@@ -392,7 +393,7 @@ _probe_artifact_context_active = False
 
 
 def _probe_artifact_context() -> None:
-    global _probe_artifact_context_active  # noqa: PLW0603
+    global _probe_artifact_context_active
     if _probe_artifact_context_active:
         return
     _probe_artifact_context_active = True
