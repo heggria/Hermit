@@ -839,3 +839,42 @@ def test_runner_prepare_prompt_context_sanitizes_session_and_command_mapping(mon
     )
     runner.dispatch("oc_1", "/task rollback receipt-1")
     assert dispatched == [("rollback", "receipt-1")]
+
+
+def test_runner_handle_merges_external_run_opts() -> None:
+    class IngressController:
+        def source_from_session(self, session_id: str) -> str:
+            return "chat"
+
+        def ensure_conversation(
+            self, conversation_id: str, *, source_channel: str | None = None
+        ) -> None:
+            return None
+
+        def resolve_text_command(self, session_id: str, text: str):
+            return None
+
+        def decide_ingress(self, **kwargs):
+            return SimpleNamespace(mode="start")
+
+        def start_task(self, **kwargs):
+            return SimpleNamespace(task_id="t-1", step_id="s-1", step_attempt_id="a-1")
+
+        def mark_blocked(self, ctx) -> None:
+            pass
+
+        def update_attempt_phase(self, attempt_id: str, phase: str) -> None:
+            pass
+
+        def finalize_result(self, ctx, *, status, result_preview, result_text) -> None:
+            pass
+
+    controller = IngressController()
+    agent = _Agent()
+    runner = AgentRunner(agent, _SessionManager(), _PluginManager(), task_controller=controller)  # type: ignore[arg-type]
+
+    agent.run_result = AgentResult(text="ok", turns=1, tool_calls=0, messages=[])
+    runner.handle("cli-oneshot", "hello", run_opts={"policy_profile": "autonomous"})
+
+    assert len(agent.run_calls) == 1
+    assert agent.run_calls[0]["prompt"]

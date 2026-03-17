@@ -400,7 +400,11 @@ class AgentRunner:
             goal=task_goal,
             source_channel=source,
             kind=task_kind,
-            policy_profile="readonly" if run_opts.get("readonly_only", False) else "default",
+            policy_profile=(
+                "readonly"
+                if run_opts.get("readonly_only", False)
+                else str(run_opts.get("policy_profile", "default"))
+            ),
             workspace_root=str(getattr(self.agent, "workspace_root", "") or ""),
             parent_task_id=parent_task_id,
             requested_by=requested_by,
@@ -720,17 +724,22 @@ class AgentRunner:
         text: str,
         on_tool_call: ToolCallback | None = None,
         on_tool_start: ToolStartCallback | None = None,
+        run_opts: dict[str, object] | None = None,
     ) -> AgentResult:
         """Process a single user message within a session."""
         source_channel = self.task_controller.source_from_session(session_id)
-        session, prompt, run_opts, task_goal = self._prepare_prompt_context(
+        session, prompt, prepared_run_opts, task_goal = self._prepare_prompt_context(
             session_id,
             text,
             source_channel=source_channel,
         )
+        if run_opts:
+            prepared_run_opts.update(run_opts)
+        run_opts = prepared_run_opts
 
         ingress = None
-        if hasattr(self.task_controller, "decide_ingress"):
+        skip_ingress = session_id == "cli-oneshot" or run_opts.get("skip_ingress", False)
+        if not skip_ingress and hasattr(self.task_controller, "decide_ingress"):
             ingress = self.task_controller.decide_ingress(
                 conversation_id=session_id,
                 source_channel=source_channel,
@@ -806,7 +815,11 @@ class AgentRunner:
             goal=task_goal,
             source_channel=source_channel,
             kind=task_kind,
-            policy_profile="readonly" if run_opts.get("readonly_only", False) else "default",
+            policy_profile=(
+                "readonly"
+                if run_opts.get("readonly_only", False)
+                else str(run_opts.get("policy_profile", "default"))
+            ),
             workspace_root=str(getattr(self.agent, "workspace_root", "") or ""),
             parent_task_id=parent_task_id,
             ingress_metadata=ingress_metadata,
