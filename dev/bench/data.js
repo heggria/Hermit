@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773752580995,
+  "lastUpdate": 1773752872854,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -146,6 +146,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0008970293711402258",
             "extra": "mean: 334.9918944145291 usec\nrounds: 3921"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e14e164d0ce64d2f0fcc293630962667f15899a3",
+          "message": "chore: bump actions/attest-build-provenance from 2.4.0 to 4.1.0 (#15)\n\nBumps [actions/attest-build-provenance](https://github.com/actions/attest-build-provenance) from 2.4.0 to 4.1.0.\n- [Release notes](https://github.com/actions/attest-build-provenance/releases)\n- [Changelog](https://github.com/actions/attest-build-provenance/blob/main/RELEASE.md)\n- [Commits](https://github.com/actions/attest-build-provenance/compare/e8998f949152b193b063cb0ec769d69d929409be...a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32)\n\n---\nupdated-dependencies:\n- dependency-name: actions/attest-build-provenance\n  dependency-version: 4.1.0\n  dependency-type: direct:production\n  update-type: version-update:semver-major\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-03-17T21:07:07+08:00",
+          "tree_id": "225ea9badbe68c1830adc86a832337178f62a42a",
+          "url": "https://github.com/heggria/Hermit/commit/e14e164d0ce64d2f0fcc293630962667f15899a3"
+        },
+        "date": 1773752872562,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.1226789729155677,
+            "unit": "iter/sec",
+            "range": "stddev: 0.010426578466603957",
+            "extra": "mean: 471.10279639999817 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 175.12143607317012,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009692022880016154",
+            "extra": "mean: 5.710323204420131 msec\nrounds: 181"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2498.255963071184,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001845249917376389",
+            "extra": "mean: 400.2792407110554 usec\nrounds: 3095"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 3924.3169352036043,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003006619995422023",
+            "extra": "mean: 254.821416443042 usec\nrounds: 4099"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 4941.620615910666,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001199398424914741",
+            "extra": "mean: 202.362762689688 usec\nrounds: 6127"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 28920.08670458724,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004105747713558337",
+            "extra": "mean: 34.57804294346677 usec\nrounds: 31134"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 3175.5427167855023,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00021862885750037394",
+            "extra": "mean: 314.9068015095911 usec\nrounds: 3577"
           }
         ]
       }
