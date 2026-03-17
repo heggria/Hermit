@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 class RunnerBridge:
     """Bridges AgentRunner.dispatch() into Textual messages via a worker thread."""
 
-    def __init__(self, app: App, runner: AgentRunner, session_id: str) -> None:
+    def __init__(self, app: App[None], runner: AgentRunner, session_id: str) -> None:
         self._app = app
         self._runner = runner
         self._session_id = session_id

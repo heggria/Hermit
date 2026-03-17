@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
@@ -41,7 +43,7 @@ class StatusBar(Widget):
         self,
         model: str = "",
         session_id: str = "cli",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._model = model

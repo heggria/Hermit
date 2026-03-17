@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from textual.events import Key
 from textual.widgets import TextArea
 
@@ -33,13 +35,13 @@ class InputArea(TextArea):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(language=None, **kwargs)
         self._history: list[str] = []
         self._history_index = -1
         self._draft = ""
 
-    def _on_key(self, event: Key) -> None:
+    async def _on_key(self, event: Key) -> None:
         if event.key == "enter":
             # Enter = submit; prevent TextArea from inserting a newline.
             event.prevent_default()

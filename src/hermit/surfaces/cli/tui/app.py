@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 CSS_PATH = Path(__file__).parent / "styles" / "hermit.tcss"
 
 
-class HermitApp(App):
+class HermitApp(App[None]):
     """Textual TUI for Hermit chat."""
 
     TITLE = "Hermit"
@@ -141,7 +141,7 @@ class HermitApp(App):
     def action_cancel(self) -> None:
         pass
 
-    def action_quit(self) -> None:
+    async def action_quit(self) -> None:
         self._do_quit()
 
     def _do_quit(self) -> None:

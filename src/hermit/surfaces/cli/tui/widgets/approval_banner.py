@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.events import Key
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Static
@@ -46,7 +47,7 @@ class ApprovalBanner(Widget):
         text += "\n[bold yellow]\\[y][/] approve  [bold yellow]\\[n][/] reject"
         yield Static(text)
 
-    def on_key(self, event) -> None:
+    def on_key(self, event: Key) -> None:
         if event.key == "y":
             self.post_message(self.Approved(self._approval_id))
             self.remove()

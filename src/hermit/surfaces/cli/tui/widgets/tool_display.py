@@ -10,7 +10,7 @@ from textual.widgets import LoadingIndicator, Static
 
 
 def _compact_args(inputs: dict[str, Any], limit: int = 60) -> str:
-    parts = []
+    parts: list[str] = []
     for k, v in inputs.items():
         r = repr(v)
         if len(r) > limit:
