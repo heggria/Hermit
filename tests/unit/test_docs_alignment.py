@@ -45,7 +45,7 @@ def test_public_entry_points_share_macos_brand_icon() -> None:
     readme = _read("README.md")
     readme_zh = _read("README.zh-CN.md")
     wiki_home = _read("docs/wiki-home.md")
-    docs_index = _read("docs/index.md")
+    docs_home_template = _read("docs/overrides/home.html")
     mkdocs = _read("mkdocs.yml")
 
     assert (ROOT / "docs/assets/hermit-macos-icon.svg").exists()
@@ -55,7 +55,7 @@ def test_public_entry_points_share_macos_brand_icon() -> None:
         "raw.githubusercontent.com/heggria/Hermit/main/docs/assets/hermit-macos-icon.svg"
         in wiki_home
     )
-    assert "assets/hermit-macos-icon.svg" in docs_index
+    assert "hermit-icon-white.svg" in docs_home_template
     assert "logo: assets/hermit-macos-icon.svg" in mkdocs
     assert "favicon: assets/hermit-macos-icon.svg" in mkdocs
 
