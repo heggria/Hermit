@@ -36,6 +36,9 @@ reports/
 .DS_Store
 .env
 
+# Cache
+.cache/
+
 # Test artifacts
 *.cover
 MagicMock

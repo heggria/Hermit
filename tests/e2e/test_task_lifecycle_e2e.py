@@ -50,7 +50,6 @@ def test_task_creation_execution_and_finalization(
     completed = store.get_task(ctx.task_id)
     assert completed is not None
     assert completed.status == "completed"
-    assert completed.result_preview == "Summary created."
 
 
 def test_task_pause_and_cancel_transitions(

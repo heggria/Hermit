@@ -231,8 +231,8 @@ def test_proof_export_produces_verifiable_bundle(
 
     # Build summary
     summary = proof_service.build_proof_summary(ctx.task_id)
-    assert summary["valid"] is True
-    assert summary["total_receipts"] >= 1
+    assert summary["chain_verification"]["valid"] is True
+    assert summary["receipt_count"] >= 1
     assert summary["missing_receipt_bundle_count"] == 0
 
     # Export proof
@@ -245,4 +245,4 @@ def test_proof_export_produces_verifiable_bundle(
     assert bundle_artifact is not None
     bundle_content = json.loads(artifacts.read_text(bundle_artifact.uri))
     assert bundle_content["task_id"] == ctx.task_id
-    assert bundle_content["verification"]["valid"] is True
+    assert bundle_content["chain_verification"]["valid"] is True

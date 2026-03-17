@@ -65,7 +65,7 @@ def test_memory_lifecycle_create_inspect_rebuild_export(
     # 3. Preview governance for a new claim
     preview_result = runner.invoke(
         app,
-        ["memory", "inspect", "--claim-text", "以后用英文回复我", "--json"],
+        ["memory", "inspect", "--claim-text", "以后都用简体中文回复我，不要再切英文。", "--json"],
     )
     assert preview_result.exit_code == 0
     preview = json.loads(preview_result.output)

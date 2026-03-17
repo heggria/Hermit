@@ -38,10 +38,10 @@ def test_write_and_rollback_restores_file(
     assert result.receipt_id is not None
     assert target.read_text(encoding="utf-8") == "version: 2\n"
 
-    # Get receipt and verify rollback is available
+    # Get receipt and verify rollback is supported
     receipt = store.get_receipt(result.receipt_id)
     assert receipt is not None
-    assert receipt.rollback_status == "available"
+    assert receipt.rollback_supported is True
     assert len(receipt.rollback_artifact_refs) >= 1
 
     # Execute rollback
