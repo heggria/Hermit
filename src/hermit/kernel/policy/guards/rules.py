@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations, PolicyReason
@@ -204,6 +205,42 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 ],
                 obligations=PolicyObligations(require_receipt=False),
                 normalized_constraints={"denied_paths": sensitive_paths},
+                risk_level="critical",
+            )
+        )
+        return outcomes
+
+    # Kernel self-modification guard
+    kernel_paths = list(request.derived.get("kernel_paths", []))
+    if request.action_class in {"write_local", "patch_file"} and kernel_paths:
+        outcomes.append(
+            RuleOutcome(
+                verdict="approval_required",
+                reasons=[
+                    PolicyReason(
+                        "kernel_self_modification",
+                        "Modifying kernel source requires elevated approval. "
+                        "This action targets governed execution internals.",
+                        "warning",
+                    )
+                ],
+                obligations=PolicyObligations(
+                    require_receipt=True,
+                    require_preview=True,
+                    require_approval=True,
+                    require_evidence=True,
+                    approval_risk_level="critical",
+                ),
+                normalized_constraints={"kernel_paths": kernel_paths},
+                approval_packet={
+                    "title": "Approve kernel self-modification",
+                    "summary": (
+                        f"Agent requests to modify kernel source: "
+                        f"{', '.join(Path(p).name for p in kernel_paths)}. "
+                        f"This changes governed execution internals."
+                    ),
+                    "risk_level": "critical",
+                },
                 risk_level="critical",
             )
         )
