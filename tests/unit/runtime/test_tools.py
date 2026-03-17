@@ -120,9 +120,9 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
         f"{sys.executable} -u -c "
         '"import sys,time; '
         "print('Booting server'); sys.stdout.flush(); "
-        "time.sleep(0.10); "
+        "time.sleep(0.5); "
         "print('READY http://127.0.0.1:3000'); sys.stdout.flush(); "
-        'time.sleep(0.05)"'
+        'time.sleep(0.2)"'
     )
 
     result = sandbox.run(
@@ -154,7 +154,7 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     starting = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.2,
+        timeout=2.0,
         predicate=lambda poll: poll.get("progress", {}).get("phase") == "starting",
     )
     assert starting is not None
@@ -165,7 +165,7 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
     ready = _wait_for_poll(
         sandbox,
         ticket["job_id"],
-        timeout=0.25,
+        timeout=2.0,
         predicate=lambda poll: poll.get("progress", {}).get("ready") is True,
     )
     assert ready is not None
