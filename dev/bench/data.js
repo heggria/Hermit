@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773753157250,
+  "lastUpdate": 1773756086491,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -292,6 +292,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0001664239483984334",
             "extra": "mean: 304.12364784217885 usec\nrounds: 3754"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bshengtao@gmail.com",
+            "name": "Heggria",
+            "username": "heggria"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c0eb96a304132cc1e6c01d3a8ec782813847f4a",
+          "message": "iterate(demo-governed-hello): Add governed iteration marker file\" (#18)\n\n* feat: 将所有硬编码中文字符串提取到 i18n 系统\n\n将 ~250 个硬编码中文字符串从 22 个 Python 源文件提取到 locale 文件中，\n通过 tr() / tr_list() / tr_list_all_locales() 加载。\n\n主要变更：\n- 新增 tr_list_all_locales() 辅助函数，合并所有 locale 的 NLP 模式\n- 内存分类从中文改为英文内部常量，添加 _LEGACY_CATEGORY_MAP 向后兼容\n- NLP 模式（问候语、续接标记、控制意图等）改为从 locale 加载\n- LLM prompt、用户界面字符串全部通过 tr() 国际化\n- SQLite schema v7→v8 迁移，更新 category 列\n- 更新所有测试文件中的分类字符串引用\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 修复 slack/telegram adapter 和 template_learner 的 pyright 错误\n\n- slack adapter: 添加 app 公开属性，标记 handler 函数为已使用\n- telegram adapter: 添加 application 公开属性\n- template_learner: 为 dataclass 字段添加显式类型注解\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* Revert \"fix: 修复 slack/telegram adapter 和 template_learner 的 pyright 错误\"\n\nThis reverts commit 608e35c8a1b3eb634605004be370a6849f2eafc7.\n\n* feat: i18n 提取、文档站优化、新增 slack/telegram adapter 及 TUI 基础\n\n- 提取 CLI/kernel/executor/approval 中剩余硬编码中文到 i18n 系统\n- 优化 docs landing page、mkdocs 配置、新增 blog/tags 支持\n- 新增 slack/telegram adapter 和 template_learner\n- 新增 CLI TUI 模块基础结构\n- 补充 e2e 测试（schedule、signed_proofs、uncertain_outcome 等）\n- CI 新增 pyright 类型检查 job\n- 更新 pyproject.toml 依赖和 uv.lock\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 修复 TUI 模块的 pyright 类型错误\n\n- App 添加泛型参数 App[None]\n- action_quit / _on_key 改为 async 以匹配基类签名\n- 补充 **kwargs / event 参数类型注解\n- parts 列表添加 list[str] 类型标注\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 补充 telegram adapter/hooks 测试覆盖并排除 TUI 模块 coverage\n\n- 新增 telegram adapter 单元测试（init、session_id、dedup、stop 等）\n- 新增 telegram hooks 单元测试（dispatch_result 各场景、register）\n- 新增 preflight 测试覆盖 telegram/slack adapter 配置检查\n- TUI 模块加入 coverage omit（UI widget 难以单元测试）\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 补充 slack adapter 测试并标记不可单元测试的 async 方法\n\n- 新增 slack adapter/hooks 单元测试\n- adapter async 方法（start/on_message/sweep）添加 pragma: no cover\n  这些方法依赖 Telegram/Slack SDK 实际网络连接，需集成测试覆盖\n- TUI 入口代码块添加 pragma: no cover\n- coverage 配置新增 exclude_also 规则\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 为 benchmark CI step 添加 github-token 以支持 PR 评论\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(i18n): 修复 i18n 标记匹配时的大小写不一致问题\n\n- continuation.py: normalize_text 添加 .lower() 使英文 corrective markers 能正确匹配\n- actions.py: _is_accessibility_error 对 i18n marker 做 lowercase 后再比较\n\n* fix(ci): 添加 CI gate job 以匹配 branch protection 要求的 status check\n\nbranch protection 要求名为 \"CI\" 的 check，但之前没有任何 job\n产生该名称的 check run，导致 PR 永远 pending。\n\n* feat: governed self-evolution pipeline (Phase 1-3)\n\n- Add autonomous policy profile for non-interactive execution\n- Add --policy option to `hermit run` CLI command\n- Skip ingress routing for cli-oneshot sessions\n- Add iteration_summary readonly tool to core registry\n- Add hermit-iterate skill and script for spec-driven iteration\n- Add write_file tool usage guidance to iteration prompt\n- Verify rollback-capable receipts via write_file prestate capture\n- Add governed-self-evolution master spec and Phase 3/4 test specs\n\nGoverned execution chain verified end-to-end:\n  spec → parse → execute → receipt (rollback-capable) → proof-export → rollback\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* chore: add proof bundle from Phase 2 iteration\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* iterate(demo-governed-hello): Add governed iteration marker file\"\n\nTask: task_8c1a6eeffe95\nProof: .hermit-proof/demo-governed-hello.json\n\n* fix: resolve pyright type errors in runner policy_profile resolution\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* iterate(demo-governed-hello): Add governed iteration marker file\"\n\nTask: task_47196b115812\nProof: .hermit-proof/demo-governed-hello.json\n\n* feat: Phase 5 - human-readable proof formatter and governance logging\n\n- Add format_proof_summary() and format_receipt_table() to kernel verification\n- Add governed_tool_execution structured log for receipt-producing actions\n- Integrate formatter into hermit-iterate.sh for PR body and .md export\n- Add demo-add-proof-summary-util spec for showcase iteration\n- 4 new tests for proof formatter\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* iterate(demo-governed-hello): Add governed iteration marker file\"\n\nTask: task_f60e0232f028\nProof: .hermit-proof/demo-governed-hello.json\n\n* feat: Phase 5 showcase trace and governance logging\n\n- Add showcase-trace.md with curated execution trace for demo\n- Human-readable proof summary in .hermit-proof/*.md\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* docs: mark all governed-self-evolution phases as complete\n\nAll 5 phases and 7 acceptance criteria verified:\n- Phase 1: End-to-end hermit-iterate execution\n- Phase 2: Receipt and proof visibility\n- Phase 3: Rollback verification (file_restore)\n- Phase 4: PR close-loop with proof summary\n- Phase 5: Governance logging, human-readable formatter, showcase trace\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: update FakeRunner.handle() signature to accept run_opts kwarg\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* test: add coverage for autonomous policy profile and run_opts merging\n\nCover all branches of _evaluate_autonomous() in rules.py and the\nrun_opts merge path in runner.handle() to satisfy the 95% diff\ncoverage gate.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-03-17T22:00:17+08:00",
+          "tree_id": "6d028731a35cb9697fd033fd0fa677f40f82528c",
+          "url": "https://github.com/heggria/Hermit/commit/8c0eb96a304132cc1e6c01d3a8ec782813847f4a"
+        },
+        "date": 1773756086130,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.530349328672139,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0021076513965115127",
+            "extra": "mean: 395.2023495999953 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 197.46157758482371,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006293093815996358",
+            "extra": "mean: 5.064276363184779 msec\nrounds: 201"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2285.5434643973404,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00021804316758875766",
+            "extra": "mean: 437.5326987114127 usec\nrounds: 3880"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 4199.174650010599,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000005630214479645608",
+            "extra": "mean: 238.14203583970388 usec\nrounds: 4269"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 6555.516223804672,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008125047291580818",
+            "extra": "mean: 152.54328810426205 usec\nrounds: 11357"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 42961.79418619635,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000005074895535732954",
+            "extra": "mean: 23.276495289419284 usec\nrounds: 46173"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 5104.209874720299,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002250265830901162",
+            "extra": "mean: 195.9167088627597 usec\nrounds: 6059"
           }
         ]
       }
