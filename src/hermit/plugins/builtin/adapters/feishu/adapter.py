@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import resolve_locale, tr, tr_list_all_locales
 from hermit.kernel.policy.approvals.approval_copy import ApprovalCopyService
 from hermit.kernel.task.projections.projections import ProjectionService
 from hermit.plugins.builtin.adapters.feishu.normalize import FeishuMessage, normalize_event
@@ -53,27 +53,8 @@ _TOPIC_REFRESH_INTERVAL_SECONDS = 5
 
 # Minimum seconds between consecutive PATCH calls on the progress card.
 _PATCH_MIN_INTERVAL = 1.0
-_RAW_CONTROL_TEXT = {
-    "开始执行",
-    "执行吧",
-    "确认执行",
-    "继续执行",
-    "approve",
-    "deny",
-    "通过",
-    "批准",
-    "同意",
-}
-_RAW_CONTROL_PREFIXES = (
-    "批准 ",
-    "批准一次 ",
-    "批准可变工作区 ",
-    "拒绝 ",
-    "approve ",
-    "approve_once ",
-    "approve_mutable_workspace ",
-    "deny ",
-)
+_RAW_CONTROL_TEXT = frozenset(tr_list_all_locales("feishu.adapter.control_texts"))
+_RAW_CONTROL_PREFIXES = tuple(tr_list_all_locales("feishu.adapter.control_prefixes"))
 _SCHEDULE_REACTION_TOOLS = frozenset(
     {"schedule_list", "schedule_create", "schedule_update", "schedule_delete"}
 )
@@ -1754,7 +1735,7 @@ class FeishuAdapter:
                 text = (
                     _disambiguation_fn(ingress)
                     if _disambiguation_fn is not None
-                    else "我没法确认你要继续哪个任务，请先切换任务。"
+                    else tr("feishu.adapter.error.task_switch_needed")
                 )
                 if self._client and msg.message_id:
                     smart_reply(self._client, msg.message_id, text, locale=self._locale())
@@ -1805,7 +1786,10 @@ class FeishuAdapter:
 
         if self._client is not None and msg.message_id:
             lowered = raw_text.lower()
-            if any(token in lowered for token in ("schedule", "提醒", "定时")):
+            if any(
+                token in lowered
+                for token in tr_list_all_locales("feishu.adapter.schedule_keywords")
+            ):
                 add_reaction(self._client, msg.message_id, "Get")
         try:
             ingress_metadata: dict[str, Any] = {

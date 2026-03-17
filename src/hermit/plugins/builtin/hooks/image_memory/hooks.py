@@ -8,6 +8,7 @@ from typing import Any
 
 import structlog
 
+from hermit.infra.system.i18n import tr, tr_list_all_locales
 from hermit.plugins.builtin.hooks.image_memory.engine import ImageMemoryEngine
 from hermit.runtime.capability.contracts.base import HookEvent, PluginContext
 from hermit.runtime.capability.registry.tools import ToolSpec
@@ -15,30 +16,25 @@ from hermit.runtime.provider_host.execution.services import VisionAnalysisServic
 
 log = structlog.get_logger()
 
-_VISION_PROMPT = """\
-你是图片语义提取助手。请阅读图片并只返回合法 JSON：
-{
-  "summary": "1-2 句中文摘要",
-  "tags": ["标签1", "标签2"],
-  "ocr_text": "图中可读文字，没有则返回空字符串"
-}
-
-要求：
-- summary 简洁、具体、可脱离上下文理解
-- tags 控制在 3-8 个，优先具体对象/场景/用途
-- 不要输出 Markdown，不要解释
-"""
-
 _SUPPORTED_VISION_MIME_TYPES = {
     "image/jpeg",
     "image/png",
     "image/gif",
     "image/webp",
 }
-_IMAGE_REFERENCE_RE = re.compile(
-    r"图片|图里|这张图|那张图|截图|照片|二维码|海报|image|photo|picture|screenshot",
-    re.IGNORECASE,
-)
+_image_reference_re_cache: re.Pattern[str] | None = None
+
+
+def _get_image_reference_re() -> re.Pattern[str]:
+    global _image_reference_re_cache
+    if _image_reference_re_cache is None:
+        keywords = tr_list_all_locales("tools.image_memory.reference_keywords")
+        if not keywords:
+            keywords = ["image", "photo", "picture", "screenshot"]
+        _image_reference_re_cache = re.compile(
+            "|".join(re.escape(k) for k in keywords), re.IGNORECASE
+        )
+    return _image_reference_re_cache
 
 
 def register(ctx: PluginContext) -> None:
@@ -84,7 +80,7 @@ def _inject_image_context(
     *,
     session_id: str | None = None,
 ) -> str:
-    if not session_id or not _IMAGE_REFERENCE_RE.search(prompt):
+    if not session_id or not _get_image_reference_re().search(prompt):
         return prompt
 
     records = engine.search(session_id=session_id, limit=settings.image_context_limit)
@@ -95,16 +91,22 @@ def _inject_image_context(
 
     lines: list[str] = []
     for index, record in enumerate(records, start=1):
-        tags = ", ".join(record.tags[:5]) or "无标签"
-        summary = str(record.summary or "暂无摘要")
+        tags = ", ".join(record.tags[:5]) or tr("tools.image_memory.no_tags")
+        summary = str(record.summary or tr("tools.image_memory.no_summary"))
         lines.append(
-            f"- 图片{index}（image_id={record.image_id}，session={record.primary_session_id}）："
-            f"{summary}；标签：{tags}"
+            tr(
+                "tools.image_memory.context_line",
+                index=index,
+                image_id=record.image_id,
+                session_id=record.primary_session_id,
+                summary=summary,
+                tags=tags,
+            )
         )
 
     return (
         "<image_context>\n"
-        "以下是与当前请求最相关的历史图片语义，请只在确有帮助时使用：\n"
+        f"{tr('tools.image_memory.retrieval_intro')}"
         f"{chr(10).join(lines)}\n"
         "</image_context>\n\n"
         f"{prompt}"
@@ -354,8 +356,8 @@ def _analyze_image(settings: Any, mime_type: str, image_bytes: bytes) -> dict[st
     provider = build_provider(settings, model=model)
     service = VisionAnalysisService(provider, model=model)
     data = service.analyze_image(
-        system_prompt=_VISION_PROMPT,
-        text="请分析这张图片并返回 JSON。",
+        system_prompt=tr("prompt.image_memory.vision"),
+        text=tr("prompt.image_memory.analyze"),
         image_block={
             "type": "image",
             "source": {

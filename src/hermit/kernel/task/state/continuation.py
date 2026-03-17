@@ -4,69 +4,45 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from hermit.infra.system.i18n import tr_list_all_locales
 from hermit.kernel.context.memory.text import shares_topic, topic_tokens
 
-BRANCH_MARKERS = (
-    "顺便",
-    "另外",
-    "再查一下",
-    "再问一下",
-    "顺手",
-)
-EXPLICIT_NEW_TASK_MARKERS = (
-    "新任务",
-    "新开一个",
-    "新开个",
-    "另一个",
-    "重新开始",
-    "从头开始",
-    "换个话题",
-    "顺便问下",
-    "顺便再问",
-)
-CONTINUE_MARKERS = (
-    "继续",
-    "接着",
-    "然后",
-    "补充",
-    "补充一点",
-    "补充说明",
-    "说明",
-    "加上",
-    "再加",
-    "改成",
-    "改为",
-    "放到",
-    "发到",
-    "写到",
-    "去掉",
-    "删掉",
-    "保留",
-    "就按",
-    "按照",
-    "extra note",
-    "follow up",
-)
-AMBIGUOUS_FOLLOWUP_MARKERS = (
-    "这个",
-    "那个",
-    "这份",
-    "这条",
-    "上面",
-    "上一条",
-    "刚才",
-)
-CORRECTIVE_MARKERS = (
-    "我的意思是",
-    "我是说",
-    "我的意思不是",
-    "不是这个意思",
-    "你理解错了",
-    "你误解了",
-    "你搞错了",
-    "理解错了",
-)
-_CORRECTIVE_PATTERN = re.compile(r"不是.+而是.+")
+
+def _load_markers(key: str) -> tuple[str, ...]:
+    return tuple(tr_list_all_locales(key))
+
+
+def _branch_markers() -> tuple[str, ...]:
+    return _load_markers("kernel.nlp.continuation.branch")
+
+
+def _explicit_new_task_markers() -> tuple[str, ...]:
+    return _load_markers("kernel.nlp.continuation.new_task")
+
+
+def _continue_markers() -> tuple[str, ...]:
+    return _load_markers("kernel.nlp.continuation.continue")
+
+
+def _ambiguous_followup_markers() -> tuple[str, ...]:
+    return _load_markers("kernel.nlp.continuation.ambiguous_followup")
+
+
+def _corrective_markers() -> tuple[str, ...]:
+    return _load_markers("kernel.nlp.continuation.corrective")
+
+
+def _corrective_pattern() -> re.Pattern[str]:
+    parts = [p for p in tr_list_all_locales("kernel.nlp.continuation.corrective_re") if p]
+    if not parts:
+        return re.compile(r"(?!)")
+    return re.compile("|".join(parts))
+
+
+def _branch_primary_keywords() -> tuple[str, ...]:
+    return tuple(tr_list_all_locales("kernel.nlp.continuation.branch_primary"))
+
+
 _MULTILINE_RE = re.compile(r"\s+")
 
 
@@ -76,29 +52,29 @@ def normalize_text(text: str) -> str:
 
 def has_explicit_new_task_marker(text: str) -> bool:
     cleaned = normalize_text(text)
-    return any(marker in cleaned for marker in EXPLICIT_NEW_TASK_MARKERS)
+    return any(marker in cleaned for marker in _explicit_new_task_markers())
 
 
 def has_continue_marker(text: str) -> bool:
     cleaned = normalize_text(text)
-    return any(marker in cleaned for marker in CONTINUE_MARKERS)
+    return any(marker in cleaned for marker in _continue_markers())
 
 
 def has_ambiguous_followup_marker(text: str) -> bool:
     cleaned = normalize_text(text)
-    return any(marker in cleaned for marker in AMBIGUOUS_FOLLOWUP_MARKERS)
+    return any(marker in cleaned for marker in _ambiguous_followup_markers())
 
 
 def has_branch_marker(text: str) -> bool:
     cleaned = normalize_text(text)
-    return any(marker in cleaned for marker in BRANCH_MARKERS)
+    return any(marker in cleaned for marker in _branch_markers())
 
 
 def has_corrective_marker(text: str) -> bool:
     cleaned = normalize_text(text)
-    if any(marker in cleaned for marker in CORRECTIVE_MARKERS):
+    if any(marker in cleaned for marker in _corrective_markers()):
         return True
-    return bool(_CORRECTIVE_PATTERN.search(cleaned))
+    return bool(_corrective_pattern().search(cleaned))
 
 
 def texts_overlap(text: str, candidate_text: str) -> bool:
@@ -172,7 +148,7 @@ def build_continuation_guidance(
             is_corrective_request=has_corrective_marker(cleaned),
             has_continue_marker=has_continue_marker(cleaned),
             has_explicit_topic_shift=has_explicit_new_task_marker(cleaned)
-            and "顺便" not in cleaned,
+            and not any(kw in cleaned for kw in _branch_primary_keywords()),
             has_strong_topic_shift=False,
             has_topic_overlap=False,
         )
@@ -187,7 +163,9 @@ def build_continuation_guidance(
     ambiguous_request = _is_ambiguous_request(cleaned)
     corrective_request = has_corrective_marker(cleaned)
     continue_request = has_continue_marker(cleaned)
-    explicit_topic_shift = has_explicit_new_task_marker(cleaned) and "顺便" not in cleaned
+    explicit_topic_shift = has_explicit_new_task_marker(cleaned) and not any(
+        kw in cleaned for kw in _branch_primary_keywords()
+    )
     topic_overlap = any(texts_overlap(cleaned, text) for text in anchor_texts if text)
     strong_topic_shift = (
         bool(cleaned)
@@ -232,6 +210,12 @@ def _is_short_request(text: str) -> bool:
 def _is_ambiguous_request(text: str) -> bool:
     return has_ambiguous_followup_marker(text) or has_corrective_marker(text)
 
+
+BRANCH_MARKERS = _branch_markers
+EXPLICIT_NEW_TASK_MARKERS = _explicit_new_task_markers
+CONTINUE_MARKERS = _continue_markers
+AMBIGUOUS_FOLLOWUP_MARKERS = _ambiguous_followup_markers
+CORRECTIVE_MARKERS = _corrective_markers
 
 __all__ = [
     "AMBIGUOUS_FOLLOWUP_MARKERS",

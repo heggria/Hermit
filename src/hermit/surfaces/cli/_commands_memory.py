@@ -62,38 +62,101 @@ def _memory_payload_from_record(record: Any, *, settings: Settings) -> dict[str,
 def _render_memory_payload(payload: dict[str, Any]) -> str:
     inspection = dict(payload.get("inspection", {}) or {})
     lines = [
-        f"Memory ID: {payload.get('memory_id', '-')}",
-        f"Claim: {payload.get('claim_text', '')}",
-        f"Stored Category: {payload.get('stored_category', payload.get('category', '-'))}",
-        f"Resolved Category: {inspection.get('category', '-')}",
-        f"Retention: {inspection.get('retention_class', payload.get('retention_class', '-'))}",
-        f"Status: {payload.get('status', inspection.get('status', '-'))}",
-        f"Scope: {inspection.get('scope_kind', payload.get('scope_kind', '-'))} {inspection.get('scope_ref', payload.get('scope_ref', '-'))}",
-        f"Subject: {inspection.get('subject_key', '-') or '-'}",
-        f"Topic: {inspection.get('topic_key', '-') or '-'}",
-        f"Promotion Reason: {payload.get('promotion_reason', '-')}",
-        f"Confidence: {payload.get('confidence', '-')}",
-        f"Trust Tier: {payload.get('trust_tier', '-')}",
-        f"Expires At: {format_epoch(payload.get('expires_at'))}",
-        f"Invalidated At: {format_epoch(payload.get('invalidated_at'))}",
-        f"Superseded By: {payload.get('superseded_by_memory_id') or '-'}",
+        t(
+            "cli.memory.inspect.label.memory_id",
+            "Memory ID: {value}",
+            value=payload.get("memory_id", "-"),
+        ),
+        t("cli.memory.inspect.label.claim", "Claim: {value}", value=payload.get("claim_text", "")),
+        t(
+            "cli.memory.inspect.label.stored_category",
+            "Stored Category: {value}",
+            value=payload.get("stored_category", payload.get("category", "-")),
+        ),
+        t(
+            "cli.memory.inspect.label.resolved_category",
+            "Resolved Category: {value}",
+            value=inspection.get("category", "-"),
+        ),
+        t(
+            "cli.memory.inspect.label.retention",
+            "Retention: {value}",
+            value=inspection.get("retention_class", payload.get("retention_class", "-")),
+        ),
+        t(
+            "cli.memory.inspect.label.status",
+            "Status: {value}",
+            value=payload.get("status", inspection.get("status", "-")),
+        ),
+        t(
+            "cli.memory.inspect.label.scope",
+            "Scope: {kind} {ref}",
+            kind=inspection.get("scope_kind", payload.get("scope_kind", "-")),
+            ref=inspection.get("scope_ref", payload.get("scope_ref", "-")),
+        ),
+        t(
+            "cli.memory.inspect.label.subject",
+            "Subject: {value}",
+            value=inspection.get("subject_key", "-") or "-",
+        ),
+        t(
+            "cli.memory.inspect.label.topic",
+            "Topic: {value}",
+            value=inspection.get("topic_key", "-") or "-",
+        ),
+        t(
+            "cli.memory.inspect.label.promotion_reason",
+            "Promotion Reason: {value}",
+            value=payload.get("promotion_reason", "-"),
+        ),
+        t(
+            "cli.memory.inspect.label.confidence",
+            "Confidence: {value}",
+            value=payload.get("confidence", "-"),
+        ),
+        t(
+            "cli.memory.inspect.label.trust_tier",
+            "Trust Tier: {value}",
+            value=payload.get("trust_tier", "-"),
+        ),
+        t(
+            "cli.memory.inspect.label.expires_at",
+            "Expires At: {value}",
+            value=format_epoch(payload.get("expires_at")),
+        ),
+        t(
+            "cli.memory.inspect.label.invalidated_at",
+            "Invalidated At: {value}",
+            value=format_epoch(payload.get("invalidated_at")),
+        ),
+        t(
+            "cli.memory.inspect.label.superseded_by",
+            "Superseded By: {value}",
+            value=payload.get("superseded_by_memory_id") or "-",
+        ),
     ]
     source_belief_ref = payload.get("source_belief_ref")
     if source_belief_ref:
-        lines.append(f"Source Belief: {source_belief_ref}")
+        lines.append(
+            t(
+                "cli.memory.inspect.label.source_belief",
+                "Source Belief: {value}",
+                value=source_belief_ref,
+            )
+        )
     if payload.get("supersedes"):
-        lines.append("Supersedes:")
+        lines.append(t("cli.memory.inspect.label.supersedes", "Supersedes:"))
         lines.extend([f"  - {item}" for item in payload["supersedes"]])
     explanations = list(inspection.get("explanation", []) or [])
     if explanations:
-        lines.append("Governance:")
+        lines.append(t("cli.memory.inspect.label.governance", "Governance:"))
         lines.extend([f"  - {item}" for item in explanations])
     structured_assertion = cast(dict[str, Any], (inspection.get("structured_assertion", {}) or {}))
     matched_signals = cast(
         dict[str, list[str]], structured_assertion.get("matched_signals", {}) or {}
     )
     if matched_signals:
-        lines.append("Matched Signals:")
+        lines.append(t("cli.memory.inspect.label.matched_signals", "Matched Signals:"))
         for name, hits in sorted(matched_signals.items()):
             lines.append(f"  - {name}: {', '.join(hits)}")
     return "\n".join(lines)
@@ -141,7 +204,7 @@ def memory_inspect(
         ),
     ),
     category: str = typer.Option(
-        "其他",
+        "other",
         "--category",
         help=cli_t("cli.memory.inspect.category", "Category hint used for raw claim inspection."),
     ),
@@ -316,14 +379,38 @@ def memory_status(
     if json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
-    typer.echo(f"Total Records: {payload['total_records']}")
-    typer.echo(f"Active Records: {payload['active_records']}")
-    typer.echo(f"Expired Records: {payload['expired_records']}")
-    typer.echo(f"Superseded Links: {payload['superseded_links']}")
-    typer.echo("By Status:")
+    typer.echo(
+        t(
+            "cli.memory.status.label.total_records",
+            "Total Records: {value}",
+            value=payload["total_records"],
+        )
+    )
+    typer.echo(
+        t(
+            "cli.memory.status.label.active_records",
+            "Active Records: {value}",
+            value=payload["active_records"],
+        )
+    )
+    typer.echo(
+        t(
+            "cli.memory.status.label.expired_records",
+            "Expired Records: {value}",
+            value=payload["expired_records"],
+        )
+    )
+    typer.echo(
+        t(
+            "cli.memory.status.label.superseded_links",
+            "Superseded Links: {value}",
+            value=payload["superseded_links"],
+        )
+    )
+    typer.echo(t("cli.memory.status.label.by_status", "By Status:"))
     for key, value in sorted(by_status.items()):
         typer.echo(f"  - {key}: {value}")
-    typer.echo("By Retention:")
+    typer.echo(t("cli.memory.status.label.by_retention", "By Retention:"))
     for key, value in sorted(by_retention.items()):
         typer.echo(f"  - {key}: {value}")
 
@@ -357,8 +444,14 @@ def memory_rebuild(
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     typer.echo(
-        f"Rebuilt memory mirror. active {before_active} -> {after_active}; "
-        f"superseded={result['superseded_count']} duplicate={result['duplicate_count']}"
+        t(
+            "cli.memory.rebuild.done",
+            "Rebuilt memory mirror. active {before} -> {after}; superseded={superseded} duplicate={duplicate}",
+            before=before_active,
+            after=after_active,
+            superseded=result["superseded_count"],
+            duplicate=result["duplicate_count"],
+        )
     )
 
 

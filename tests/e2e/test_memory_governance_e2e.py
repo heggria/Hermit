@@ -32,7 +32,7 @@ def test_memory_lifecycle_create_inspect_rebuild_export(
     older = store.create_memory_record(
         task_id="task-memory-1",
         conversation_id="chat-memory",
-        category="进行中的任务",
+        category="active_task",
         claim_text="已设定每日定时任务：每天早上 10 点搜索 AI 最新动态。",
         confidence=0.8,
         evidence_refs=[],
@@ -40,7 +40,7 @@ def test_memory_lifecycle_create_inspect_rebuild_export(
     newer = store.create_memory_record(
         task_id="task-memory-2",
         conversation_id="chat-memory",
-        category="进行中的任务",
+        category="active_task",
         claim_text="当前无任何定时任务，已全部清理完成。",
         confidence=0.9,
         evidence_refs=[],
@@ -48,7 +48,7 @@ def test_memory_lifecycle_create_inspect_rebuild_export(
     _preference = store.create_memory_record(
         task_id="task-memory-3",
         conversation_id="chat-memory",
-        category="用户偏好",
+        category="user_preference",
         claim_text="以后都用简体中文回复我。",
         confidence=0.95,
         evidence_refs=[],
@@ -69,7 +69,7 @@ def test_memory_lifecycle_create_inspect_rebuild_export(
     )
     assert preview_result.exit_code == 0
     preview = json.loads(preview_result.output)
-    assert preview["inspection"]["category"] == "用户偏好"
+    assert preview["inspection"]["category"] == "user_preference"
     assert preview["inspection"]["retention_class"] == "user_preference"
 
     # 4. List records

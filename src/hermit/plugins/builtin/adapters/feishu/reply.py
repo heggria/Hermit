@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import resolve_locale, tr, tr_list_all_locales
 
 log = logging.getLogger(__name__)
 
@@ -492,11 +492,17 @@ def _extract_section_blocks(text: str) -> tuple[str, list[tuple[str, str]]]:
 
 def _header_template(text: str) -> str:
     lowered = text.lower()
-    if any(token in lowered for token in ("error", "failed", "failure", "异常", "错误", "失败")):
+    if any(
+        token in lowered for token in set(tr_list_all_locales("feishu.reply.status.error_tokens"))
+    ):
         return "red"
-    if any(token in lowered for token in ("warning", "warn", "注意", "风险", "谨慎", "提醒")):
+    if any(
+        token in lowered for token in set(tr_list_all_locales("feishu.reply.status.warning_tokens"))
+    ):
         return "orange"
-    if any(token in lowered for token in ("success", "done", "完成", "已完成", "成功", "通过")):
+    if any(
+        token in lowered for token in set(tr_list_all_locales("feishu.reply.status.success_tokens"))
+    ):
         return "green"
     return "blue"
 

@@ -91,5 +91,14 @@
   "feishu.adapter.image_prompt.multi": "用户发送了 {count} 张图片。",
   "feishu.adapter.image_prompt.empty_summary": "暂无摘要",
   "feishu.adapter.image_prompt.no_tags": "无标签",
-  "feishu.adapter.image_prompt.entry": "图片{index}（image_id={image_id}）：{summary}；标签：{tags}"
+  "feishu.adapter.image_prompt.entry": "图片{index}（image_id={image_id}）：{summary}；标签：{tags}",
+  "feishu.adapter.control_texts": "开始执行|执行吧|确认执行|继续执行|approve|通过|批准|同意",
+  "feishu.adapter.control_prefixes": "批准 |批准一次 |批准可变工作区 |拒绝 ",
+  "feishu.adapter.error.task_switch_needed": "我没法确认你要继续哪个任务，请先切换任务。",
+  "feishu.adapter.schedule_keywords": "schedule|提醒|定时",
+  "feishu.reply.status.error_tokens": "error|failed|failure|异常|错误|失败",
+  "feishu.reply.status.warning_tokens": "warning|warn|注意|风险|谨慎|提醒",
+  "feishu.reply.status.success_tokens": "success|done|完成|已完成|成功|通过",
+  "feishu.normalize.mention_all": "@所有人",
+  "feishu.tools.bitable_add_example": "{\"任务名\": \"完成接入\", \"状态\": \"进行中\", \"优先级\": \"高\"}"
 }

@@ -103,7 +103,9 @@ def handle_grok_search(payload: dict[str, Any]) -> str:
         lines = [_t("tools.grok.search.citations.title")]
         for i, c in enumerate(citations, 1):
             c_d = cast(dict[str, Any], c)
-            title = cast(str, c_d.get("title") or c_d.get("url") or f"来源 {i}")
+            title = cast(
+                str, c_d.get("title") or c_d.get("url") or tr("tools.grok.citation_label", index=i)
+            )
             url = cast(str, c_d.get("url") or "")
             lines.append(
                 _t("tools.grok.search.citations.item", index=i, title=title, url=url)

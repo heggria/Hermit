@@ -4,37 +4,26 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from hermit.infra.system.i18n import tr, tr_list_all_locales
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
 
-_TOPIC_STOPWORDS = {
-    "默认",
-    "现在",
-    "以后",
-    "统一",
-    "使用",
-    "需要",
-    "必须",
-    "采用",
-    "改为",
-    "切换到",
-    "the",
-    "and",
-    "for",
-    "with",
-    "from",
-    "that",
-    "this",
-    "use",
-}
-_DIRECTIONAL_TERMS = ("改为", "改成", "切换到", "统一", "默认", "采用", "固定到", "使用", "现在")
+
+def _topic_stopwords() -> set[str]:
+    return set(tr_list_all_locales("kernel.nlp.topic_stopwords"))
+
+
+def _directional_terms() -> tuple[str, ...]:
+    return tuple(tr_list_all_locales("kernel.nlp.directional_terms"))
 
 
 def summary_prompt(
     categories: dict[str, list[MemoryEntry]],
     *,
     limit_per_category: int = 3,
-    intro: str = "以下是跨会话记忆，请优先遵循其中的长期约定：",
+    intro: str = "",
 ) -> str:
+    if not intro:
+        intro = tr("kernel.memory.static_intro")
     if not any(entries for entries in categories.values()):
         return ""
     lines = [intro]
@@ -49,14 +38,15 @@ def summary_prompt(
 
 def topic_tokens(content: str) -> set[str]:
     raw_tokens = re.findall(r"[\w\-/\.]{2,}|[\u4e00-\u9fff]{2,}", str(content or "").lower())
-    return {token for token in raw_tokens if token not in _TOPIC_STOPWORDS}
+    stopwords = _topic_stopwords()
+    return {token for token in raw_tokens if token not in stopwords}
 
 
 def normalize_topic(content: str) -> str:
     text = str(content or "").lower()
     text = re.sub(r"/[\w./-]+", "<path>", text)
     text = re.sub(r"\d+(?:\.\d+)?", "<num>", text)
-    for word in _DIRECTIONAL_TERMS:
+    for word in _directional_terms():
         text = text.replace(word, "")
     text = re.sub(r"[^\w\u4e00-\u9fff<>]+", "", text)
     return text
@@ -106,4 +96,4 @@ def looks_like_override(old_content: str, new_content: str) -> bool:
     new_paths = set(re.findall(r"/[\w./-]+", str(new_content or "")))
     if old_paths != new_paths and (old_paths or new_paths):
         return True
-    return any(term in str(new_content or "") for term in _DIRECTIONAL_TERMS)
+    return any(term in str(new_content or "") for term in _directional_terms())

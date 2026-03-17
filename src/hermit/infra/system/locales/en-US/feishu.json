@@ -91,5 +91,14 @@
   "feishu.adapter.image_prompt.multi": "The user sent {count} images.",
   "feishu.adapter.image_prompt.empty_summary": "No summary yet",
   "feishu.adapter.image_prompt.no_tags": "no tags",
-  "feishu.adapter.image_prompt.entry": "Image {index} (image_id={image_id}): {summary}; tags: {tags}"
+  "feishu.adapter.image_prompt.entry": "Image {index} (image_id={image_id}): {summary}; tags: {tags}",
+  "feishu.adapter.control_texts": "approve|execute it|run it|continue",
+  "feishu.adapter.control_prefixes": "approve |approve once |approve mutable workspace |deny ",
+  "feishu.adapter.error.task_switch_needed": "I can't determine which task to continue. Please switch tasks first.",
+  "feishu.adapter.schedule_keywords": "schedule|remind|timer",
+  "feishu.reply.status.error_tokens": "error|failed|failure",
+  "feishu.reply.status.warning_tokens": "warning|warn|caution|risk",
+  "feishu.reply.status.success_tokens": "success|done|completed|passed",
+  "feishu.normalize.mention_all": "@all",
+  "feishu.tools.bitable_add_example": "{\"Task\": \"Complete integration\", \"Status\": \"In progress\", \"Priority\": \"High\"}"
 }

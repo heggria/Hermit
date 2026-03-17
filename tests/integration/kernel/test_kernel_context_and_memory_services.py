@@ -85,7 +85,7 @@ def _belief(
         conversation_id="chat-1",
         scope_kind=scope_kind,
         scope_ref=scope_ref,
-        category="项目约定",
+        category="project_convention",
         claim_text=claim_text,
         confidence=confidence,
     )
@@ -132,23 +132,24 @@ def test_working_state_snapshot_truncates_lengths() -> None:
     assert len(snapshot.recent_results) == 8
 
 
-def test_memory_governance_classification_and_scope_matching(tmp_path: Path) -> None:
+def test_memory_governance_classification_and_scope_matching(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
     governance = MemoryGovernanceService()
     ctx = _context(tmp_path)
 
     sensitive = governance.classify_claim(
-        category="用户偏好",
+        category="user_preference",
         claim_text="我的手机号不要写进总结里",
         conversation_id="chat-1",
     )
     project = governance.classify_claim(
-        category="项目约定",
+        category="project_convention",
         claim_text="默认工作目录固定到 /repo",
         conversation_id="chat-1",
         workspace_root=str(tmp_path),
     )
     task_state = governance.classify_claim(
-        category="进行中的任务",
+        category="active_task",
         claim_text="当前无任何定时任务",
         conversation_id="chat-9",
     )
@@ -167,64 +168,70 @@ def test_memory_governance_classification_and_scope_matching(tmp_path: Path) -> 
     assert governance.scope_matches("mystery", "x", context=ctx) is False
 
 
-def test_memory_governance_reclassifies_claims_from_text_signals(tmp_path: Path) -> None:
+def test_memory_governance_reclassifies_claims_from_text_signals(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
     governance = MemoryGovernanceService()
 
     preference = governance.classify_claim(
-        category="其他",
+        category="other",
         claim_text="以后都用简体中文回复我，不要再切英文。",
         conversation_id="chat-1",
     )
     task_state = governance.classify_claim(
-        category="其他",
+        category="other",
         claim_text="当前无任何定时任务，刚刚已经全部清理完成。",
         conversation_id="chat-9",
     )
     tooling = governance.classify_claim(
-        category="其他",
+        category="other",
         claim_text="Hermit 仓库位于 /Users/beta/work/Hermit，默认使用 uv 管理依赖。",
         conversation_id="chat-1",
         workspace_root=str(tmp_path),
     )
     neutral = governance.classify_claim(
-        category="其他",
+        category="other",
         claim_text="SQLite 在这个阶段比向量库更轻。",
         conversation_id="chat-1",
     )
 
-    assert preference.category == "用户偏好"
+    assert preference.category == "user_preference"
     assert preference.retention_class == "user_preference"
     assert preference.scope_kind == "global"
 
-    assert task_state.category == "进行中的任务"
+    assert task_state.category == "active_task"
     assert task_state.retention_class == "task_state"
     assert task_state.scope_ref == "chat-9"
     assert task_state.expires_at is not None
 
-    assert tooling.category == "工具与环境"
+    assert tooling.category == "tooling_environment"
     assert tooling.retention_class == "tooling_environment"
     assert tooling.scope_kind == "workspace"
 
-    assert neutral.category == "其他"
+    assert neutral.category == "other"
     assert neutral.retention_class == "volatile_fact"
 
 
-def test_memory_governance_inspection_exposes_subject_topic_and_explanation(tmp_path: Path) -> None:
+def test_memory_governance_inspection_exposes_subject_topic_and_explanation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
     governance = MemoryGovernanceService()
 
     inspection = governance.inspect_claim(
-        category="其他",
+        category="other",
         claim_text="当前无任何定时任务，刚刚已经全部清理完成。",
         conversation_id="chat-9",
         workspace_root=str(tmp_path),
     )
 
-    assert inspection["category"] == "进行中的任务"
+    assert inspection["category"] == "active_task"
     assert inspection["retention_class"] == "task_state"
     assert inspection["subject_key"] == "schedule"
     assert inspection["topic_key"]
     assert any(str(item).startswith("signal:task_state=") for item in inspection["explanation"])
-    assert inspection["structured_assertion"]["resolved_category"] == "进行中的任务"
+    assert inspection["structured_assertion"]["resolved_category"] == "active_task"
 
 
 def test_memory_governance_static_retrieval_and_expiry_rules(tmp_path: Path) -> None:
@@ -233,7 +240,7 @@ def test_memory_governance_static_retrieval_and_expiry_rules(tmp_path: Path) -> 
 
     static_memory = _memory(
         "m-static",
-        category="项目约定",
+        category="project_convention",
         claim_text="默认工作目录固定到 /repo",
         retention_class="project_convention",
         scope_kind="workspace",
@@ -241,7 +248,7 @@ def test_memory_governance_static_retrieval_and_expiry_rules(tmp_path: Path) -> 
     )
     sensitive_memory = _memory(
         "m-sensitive",
-        category="其他",
+        category="other",
         claim_text="用户病史需要谨慎处理",
         retention_class="sensitive_fact",
         scope_kind="conversation",
@@ -249,7 +256,7 @@ def test_memory_governance_static_retrieval_and_expiry_rules(tmp_path: Path) -> 
     )
     revoked_memory = _memory(
         "m-revoked",
-        category="其他",
+        category="other",
         claim_text="旧结论",
         retention_class="revoked",
         scope_kind="conversation",
@@ -257,7 +264,7 @@ def test_memory_governance_static_retrieval_and_expiry_rules(tmp_path: Path) -> 
     )
     expired_memory = _memory(
         "m-expired",
-        category="其他",
+        category="other",
         claim_text="会过期",
         expires_at=time.time() - 1,
     )
@@ -269,31 +276,32 @@ def test_memory_governance_static_retrieval_and_expiry_rules(tmp_path: Path) -> 
     assert governance.is_expired(expired_memory) is True
 
 
-def test_memory_governance_candidate_and_supersede_detection(tmp_path: Path) -> None:
+def test_memory_governance_candidate_and_supersede_detection(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
     governance = MemoryGovernanceService()
     classification = governance.classify_claim(
-        category="进行中的任务",
+        category="active_task",
         claim_text="当前无任何定时任务",
         conversation_id="chat-2",
     )
     active_records = [
         _memory(
             "m-1",
-            category="进行中的任务",
+            category="active_task",
             claim_text="已设定每日定时任务：每天早上 10 点自动搜索 AI 最新动态并推送日报到飞书群。",
             retention_class="task_state",
             scope_ref="chat-1",
         ),
         _memory(
             "m-2",
-            category="进行中的任务",
+            category="active_task",
             claim_text="当前无任何定时任务",
             retention_class="task_state",
             scope_ref="chat-3",
         ),
         _memory(
             "m-3",
-            category="进行中的任务",
+            category="active_task",
             claim_text="失效记录",
             retention_class="task_state",
             status="invalidated",
@@ -325,17 +333,20 @@ def test_memory_governance_candidate_and_supersede_detection(tmp_path: Path) -> 
     assert [record.memory_id for record in superseded] == ["m-1"]
 
 
-def test_memory_governance_task_state_subjects_do_not_cross_supersede(tmp_path: Path) -> None:
+def test_memory_governance_task_state_subjects_do_not_cross_supersede(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
     governance = MemoryGovernanceService()
     classification = governance.classify_claim(
-        category="其他",
+        category="other",
         claim_text="当前无任何定时任务，刚刚已经全部清理完成。",
         conversation_id="chat-2",
     )
     active_records = [
         _memory(
             "m-readme",
-            category="进行中的任务",
+            category="active_task",
             claim_text="用户希望改写 README.md，使其更吸引外部开发者参与贡献。",
             retention_class="task_state",
             scope_ref="chat-1",
@@ -343,7 +354,7 @@ def test_memory_governance_task_state_subjects_do_not_cross_supersede(tmp_path: 
         ),
         _memory(
             "m-schedule",
-            category="进行中的任务",
+            category="active_task",
             claim_text="已设定每日定时任务：每天早上 10 点自动搜索 AI 最新动态并推送日报到飞书群。",
             retention_class="task_state",
             scope_ref="chat-3",
@@ -359,7 +370,8 @@ def test_memory_governance_task_state_subjects_do_not_cross_supersede(tmp_path: 
     assert [record.memory_id for record in candidates] == ["m-schedule"]
 
 
-def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> None:
+def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
     compiler = ContextCompiler(artifact_store=ArtifactStore(tmp_path / "artifacts"))
     ctx = _context(tmp_path)
     working_state = WorkingStateSnapshot(
@@ -370,7 +382,7 @@ def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> No
     memories = [
         _memory(
             "m-static",
-            category="项目约定",
+            category="project_convention",
             claim_text="默认工作目录固定到 /repo",
             retention_class="project_convention",
             scope_kind="workspace",
@@ -379,7 +391,7 @@ def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> No
         ),
         _memory(
             "m-rank-1",
-            category="其他",
+            category="other",
             claim_text="AI 日报每天 10 点发送",
             scope_kind="conversation",
             scope_ref="chat-1",
@@ -387,7 +399,7 @@ def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> No
         ),
         _memory(
             "m-rank-2",
-            category="其他",
+            category="other",
             claim_text="日报需要带上来源链接",
             scope_kind="conversation",
             scope_ref="chat-1",
@@ -395,7 +407,7 @@ def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> No
         ),
         _memory(
             "m-rank-3",
-            category="其他",
+            category="other",
             claim_text="日报内容使用中文",
             scope_kind="conversation",
             scope_ref="chat-1",
@@ -403,7 +415,7 @@ def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> No
         ),
         _memory(
             "m-rank-4",
-            category="其他",
+            category="other",
             claim_text="日报风格偏简洁",
             scope_kind="conversation",
             scope_ref="chat-1",
@@ -411,7 +423,7 @@ def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> No
         ),
         _memory(
             "m-rank-5",
-            category="其他",
+            category="other",
             claim_text="日报最后附带结论",
             scope_kind="conversation",
             scope_ref="chat-1",
@@ -419,7 +431,7 @@ def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> No
         ),
         _memory(
             "m-rank-6",
-            category="其他",
+            category="other",
             claim_text="日报不要写无关背景",
             scope_kind="conversation",
             scope_ref="chat-1",
@@ -427,19 +439,19 @@ def test_context_compiler_builds_pack_artifact_and_prompts(tmp_path: Path) -> No
         ),
         _memory(
             "m-expired",
-            category="其他",
+            category="other",
             claim_text="过期记忆",
             expires_at=time.time() - 1,
         ),
         _memory(
             "m-inactive",
-            category="其他",
+            category="other",
             claim_text="失效记忆",
             status="invalidated",
         ),
         _memory(
             "m-out",
-            category="其他",
+            category="other",
             claim_text="别的会话",
             scope_kind="conversation",
             scope_ref="chat-other",
@@ -490,7 +502,7 @@ def test_context_compiler_helpers_cover_payload_conversion_and_scoring(tmp_path:
     ctx = _context(tmp_path)
     memory = _memory(
         "m-1",
-        category="项目约定",
+        category="project_convention",
         claim_text="默认工作目录固定到 /repo",
         retention_class="project_convention",
         scope_kind="workspace",
@@ -506,8 +518,8 @@ def test_context_compiler_helpers_cover_payload_conversion_and_scoring(tmp_path:
     score = compiler._retrieval_score(memory, context=ctx, query="请使用 /repo")
 
     assert payload["claim_text"] == "默认工作目录固定到 /repo"
-    assert categories["项目约定"][0].content == "默认工作目录固定到 /repo"
-    assert categories["项目约定"][0].supersedes == ["旧约定"]
+    assert categories["project_convention"][0].content == "默认工作目录固定到 /repo"
+    assert categories["project_convention"][0].supersedes == ["旧约定"]
     assert score > 100.0
 
 
@@ -523,7 +535,7 @@ def test_memory_services_support_duplicate_promotion_and_mirror_render(tmp_path:
             conversation_id="chat-1",
             scope_kind="conversation",
             scope_ref="chat-1",
-            category="项目约定",
+            category="project_convention",
             content="默认工作目录固定到 /repo",
             confidence=0.8,
             evidence_refs=[],
@@ -565,14 +577,14 @@ def test_memory_services_support_duplicate_promotion_and_mirror_render(tmp_path:
         refreshed_memory = store.get_memory_record(promoted.memory_id)
 
         assert duplicate.memory_id == promoted.memory_id
-        assert categories["项目约定"][0].content == "默认工作目录固定到 /repo"
+        assert categories["project_convention"][0].content == "默认工作目录固定到 /repo"
         assert exported == mirror
         assert "默认工作目录固定到 /repo" in mirror.read_text(encoding="utf-8")
         assert refreshed_belief is not None and refreshed_belief.status == "invalidated"
         assert refreshed_belief.supersedes == ["旧约定"]
         assert refreshed_belief.contradicts == ["belief-2"]
         assert refreshed_memory is not None and refreshed_memory.status == "invalidated"
-        assert refreshed_memory.structured_assertion["resolved_category"] == "项目约定"
+        assert refreshed_memory.structured_assertion["resolved_category"] == "project_convention"
     finally:
         store.close()
 
@@ -584,7 +596,7 @@ def test_memory_record_service_reconcile_marks_duplicates(tmp_path: Path) -> Non
         first = store.create_memory_record(
             task_id="task-1",
             conversation_id="chat-1",
-            category="项目约定",
+            category="project_convention",
             claim_text="默认工作目录固定到 /repo",
             scope_kind="workspace",
             scope_ref=str(tmp_path.resolve()),
@@ -593,7 +605,7 @@ def test_memory_record_service_reconcile_marks_duplicates(tmp_path: Path) -> Non
         second = store.create_memory_record(
             task_id="task-2",
             conversation_id="chat-1",
-            category="项目约定",
+            category="project_convention",
             claim_text="默认工作目录固定到 /repo",
             scope_kind="workspace",
             scope_ref=str(tmp_path.resolve()),
@@ -620,7 +632,7 @@ def test_memory_promotion_requires_satisfied_reconciliation(tmp_path: Path) -> N
             conversation_id="chat-guarded",
             scope_kind="conversation",
             scope_ref="chat-guarded",
-            category="项目约定",
+            category="project_convention",
             content="默认工作目录固定到 /repo",
             confidence=0.8,
             evidence_refs=[],

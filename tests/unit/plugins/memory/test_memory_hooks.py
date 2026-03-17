@@ -75,7 +75,7 @@ def test_registered_hooks_fire_with_context(tmp_path) -> None:
         store.create_memory_record(
             task_id="task_1",
             conversation_id="chat_1",
-            category="项目约定",
+            category="project_convention",
             content="默认工作目录固定到 /repo",
             confidence=0.9,
             evidence_refs=[],
@@ -85,9 +85,12 @@ def test_registered_hooks_fire_with_context(tmp_path) -> None:
     engine = MemoryEngine(settings.memory_file)
     engine.save(
         {
-            "项目约定": [
+            "project_convention": [
                 MemoryEntry(
-                    category="项目约定", content="默认工作目录固定到 /repo", score=8, locked=True
+                    category="project_convention",
+                    content="默认工作目录固定到 /repo",
+                    score=8,
+                    locked=True,
                 )
             ]
         }
@@ -108,9 +111,12 @@ def test_inject_memory_logs_counts_when_entries_exist(tmp_path) -> None:
     engine = MemoryEngine(tmp_path / "memories.md")
     engine.save(
         {
-            "项目约定": [
+            "project_convention": [
                 MemoryEntry(
-                    category="项目约定", content="默认工作目录固定到 /repo", score=8, locked=True
+                    category="project_convention",
+                    content="默认工作目录固定到 /repo",
+                    score=8,
+                    locked=True,
                 )
             ]
         }
@@ -128,13 +134,13 @@ def test_inject_memory_only_keeps_static_categories(tmp_path) -> None:
     store = KernelStore(settings.kernel_db_path)
     try:
         for category, content in [
-            ("用户偏好", "只能用中文回复用户"),
-            ("项目约定", "默认工作目录固定到 /repo"),
-            ("工具与环境", "Hermit 仓库位于 /Users/beta/work/Hermit"),
-            ("进行中的任务", "当前无任何定时任务"),
-            ("其他", "今天已完成热门话题搜索"),
-            ("技术决策", "当前默认 provider 为 claude"),
-            ("环境与工具", "图片记忆库当前为空"),
+            ("user_preference", "只能用中文回复用户"),
+            ("project_convention", "默认工作目录固定到 /repo"),
+            ("tooling_environment", "Hermit 仓库位于 /Users/beta/work/Hermit"),
+            ("active_task", "当前无任何定时任务"),
+            ("other", "今天已完成热门话题搜索"),
+            ("tech_decision", "当前默认 provider 为 claude"),
+            ("tooling_environment", "图片记忆库当前为空"),
         ]:
             store.create_memory_record(
                 task_id="task_static",
@@ -149,17 +155,23 @@ def test_inject_memory_only_keeps_static_categories(tmp_path) -> None:
     engine = MemoryEngine(tmp_path / "memories.md")
     engine.save(
         {
-            "用户偏好": [MemoryEntry(category="用户偏好", content="只能用中文回复用户")],
-            "项目约定": [MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")],
-            "工具与环境": [
+            "user_preference": [
+                MemoryEntry(category="user_preference", content="只能用中文回复用户")
+            ],
+            "project_convention": [
+                MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")
+            ],
+            "tooling_environment": [
                 MemoryEntry(
-                    category="工具与环境", content="Hermit 仓库位于 /Users/beta/work/Hermit"
+                    category="tooling_environment",
+                    content="Hermit 仓库位于 /Users/beta/work/Hermit",
                 )
             ],
-            "进行中的任务": [MemoryEntry(category="进行中的任务", content="当前无任何定时任务")],
-            "其他": [MemoryEntry(category="其他", content="今天已完成热门话题搜索")],
-            "技术决策": [MemoryEntry(category="技术决策", content="当前默认 provider 为 claude")],
-            "环境与工具": [MemoryEntry(category="环境与工具", content="图片记忆库当前为空")],
+            "active_task": [MemoryEntry(category="active_task", content="当前无任何定时任务")],
+            "other": [MemoryEntry(category="other", content="今天已完成热门话题搜索")],
+            "tech_decision": [
+                MemoryEntry(category="tech_decision", content="当前默认 provider 为 claude")
+            ],
         }
     )
 
@@ -182,13 +194,19 @@ def test_inject_memory_prefers_kernel_memory_records_when_available(tmp_path) ->
         store.create_memory_record(
             task_id="task_kernel_memory",
             conversation_id="chat-kernel-memory",
-            category="项目约定",
+            category="project_convention",
             content="Kernel memory takes precedence",
             confidence=0.9,
             evidence_refs=[],
         )
         engine = MemoryEngine(settings.memory_file)
-        engine.save({"项目约定": [MemoryEntry(category="项目约定", content="legacy mirror entry")]})
+        engine.save(
+            {
+                "project_convention": [
+                    MemoryEntry(category="project_convention", content="legacy mirror entry")
+                ]
+            }
+        )
 
         content = hooks._inject_memory(engine, settings)
 
@@ -204,7 +222,7 @@ def test_inject_memory_filters_non_static_kernel_categories(tmp_path) -> None:
         store.create_memory_record(
             task_id="task_pref",
             conversation_id="chat-memory",
-            category="用户偏好",
+            category="user_preference",
             content="只能用中文回复用户",
             confidence=0.9,
             evidence_refs=[],
@@ -212,7 +230,7 @@ def test_inject_memory_filters_non_static_kernel_categories(tmp_path) -> None:
         store.create_memory_record(
             task_id="task_task",
             conversation_id="chat-memory",
-            category="进行中的任务",
+            category="active_task",
             content="当前无任何定时任务",
             confidence=0.9,
             evidence_refs=[],
@@ -231,7 +249,13 @@ def test_inject_memory_filters_non_static_kernel_categories(tmp_path) -> None:
 def test_kernel_memory_does_not_fallback_to_markdown_when_db_is_empty(tmp_path) -> None:
     settings = _settings(tmp_path, include_kernel=True)
     engine = MemoryEngine(settings.memory_file)
-    engine.save({"项目约定": [MemoryEntry(category="项目约定", content="legacy mirror entry")]})
+    engine.save(
+        {
+            "project_convention": [
+                MemoryEntry(category="project_convention", content="legacy mirror entry")
+            ]
+        }
+    )
 
     content = hooks._inject_memory(engine, settings)
 
@@ -383,7 +407,7 @@ def test_checkpoint_memories_appends_and_marks_processed(tmp_path) -> None:
         {"role": "user", "content": "记住：服务端口改为 8080"},
         {"role": "assistant", "content": "收到"},
     ]
-    new_entries = [MemoryEntry(category="环境与工具", content="服务端口改为 8080")]
+    new_entries = [MemoryEntry(category="tooling_environment", content="服务端口改为 8080")]
 
     with (
         patch.object(hooks, "_pending_messages", return_value=(messages, 0)),
@@ -411,7 +435,7 @@ def test_checkpoint_memories_promotes_durable_memory_via_kernel(tmp_path) -> Non
         {"role": "user", "content": "记住：默认工作目录固定到 /repo"},
         {"role": "assistant", "content": "收到"},
     ]
-    new_entries = [MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")]
+    new_entries = [MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")]
 
     with (
         patch.object(hooks, "_pending_messages", return_value=(messages, 0)),
@@ -462,10 +486,14 @@ def test_extract_and_save_returns_when_nothing_extracted(tmp_path) -> None:
 def test_extract_and_save_records_session_when_payload_present(tmp_path) -> None:
     settings = _settings(tmp_path)
     engine = MemoryEngine(settings.memory_file)
-    entries = [MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")]
+    entries = [MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")]
 
-    before = {"项目约定": [MemoryEntry(category="项目约定", content="旧约定")]}
-    after = {"项目约定": [MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")]}
+    before = {"project_convention": [MemoryEntry(category="project_convention", content="旧约定")]}
+    after = {
+        "project_convention": [
+            MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")
+        ]
+    }
     with (
         patch.object(
             hooks,
@@ -535,8 +563,8 @@ def test_extract_memory_payload_builds_entries_and_skips_empty_content(tmp_path)
     service.extract_json.return_value = {
         "used_keywords": ["repo"],
         "new_memories": [
-            {"category": "项目约定", "content": "默认工作目录固定到 /repo"},
-            {"category": "其他", "content": "   "},
+            {"category": "project_convention", "content": "默认工作目录固定到 /repo"},
+            {"category": "other", "content": "   "},
         ],
     }
     with (
@@ -558,19 +586,19 @@ def test_extract_memory_payload_builds_entries_and_skips_empty_content(tmp_path)
 
     assert payload["used_keywords"] == {"repo"}
     assert len(payload["new_entries"]) == 1
-    assert payload["new_entries"][0].category == "项目约定"
+    assert payload["new_entries"][0].category == "project_convention"
     assert log_mock.call_count >= 2
 
 
 def test_consolidate_category_entries_merges_supersede_history() -> None:
     newer = MemoryEntry(
-        category="项目约定", content="默认工作目录固定到 /repo", supersedes=["旧约定 A"]
+        category="project_convention", content="默认工作目录固定到 /repo", supersedes=["旧约定 A"]
     )
     older = MemoryEntry(
-        category="项目约定", content="默认工作目录使用 /repo", supersedes=["旧约定 B"]
+        category="project_convention", content="默认工作目录使用 /repo", supersedes=["旧约定 B"]
     )
 
-    merged = hooks._consolidate_category_entries("项目约定", [older, newer])
+    merged = hooks._consolidate_category_entries("project_convention", [older, newer])
 
     assert len(merged) == 1
     assert "旧约定 A" in merged[0].supersedes
@@ -578,15 +606,15 @@ def test_consolidate_category_entries_merges_supersede_history() -> None:
 
 
 def test_should_merge_entries_rejects_different_categories() -> None:
-    left = MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")
-    right = MemoryEntry(category="环境与工具", content="默认工作目录固定到 /repo")
+    left = MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")
+    right = MemoryEntry(category="tooling_environment", content="默认工作目录固定到 /repo")
 
     assert hooks._should_merge_entries(left, right) is False
 
 
 def test_should_merge_entries_accepts_duplicates() -> None:
-    left = MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")
-    right = MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")
+    left = MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")
+    right = MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")
 
     assert hooks._should_merge_entries(left, right) is True
 
