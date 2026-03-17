@@ -196,7 +196,7 @@ def test_run_and_chat_commands_delegate_to_runner_and_cleanup(
     )
 
     class FakeRunner:
-        def handle(self, session_id: str, prompt: str, on_tool_call=None) -> AgentResult:
+        def handle(self, session_id: str, prompt: str, on_tool_call=None, **kwargs) -> AgentResult:
             events.append(("handle", f"{session_id}:{prompt}"))
             return AgentResult(text="one-shot done", turns=1, tool_calls=0)
 
