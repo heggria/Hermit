@@ -33,9 +33,25 @@ class EvidenceCaseService:
         unresolved_gaps: list[str] = []
         if policy.obligations.require_evidence and witness_ref is None:
             unresolved_gaps.append("missing_required_witness")
-        sufficiency_score = max(
-            0.0, min(1.0, 0.25 * len(support_refs) - 0.2 * len(unresolved_gaps))
-        )
+        ref_weights = {
+            "witness_ref": 0.35,
+            "policy_result_ref": 0.25,
+            "context_pack_ref": 0.20,
+            "action_request_ref": 0.20,
+        }
+        weighted_sum = 0.0
+        ref_map = {
+            "witness_ref": witness_ref,
+            "policy_result_ref": policy_result_ref,
+            "context_pack_ref": context_pack_ref,
+            "action_request_ref": action_request_ref,
+        }
+        for key, weight in ref_weights.items():
+            if ref_map.get(key):
+                weighted_sum += weight
+        baseline_score = 0.25 * len(support_refs)
+        raw_score = max(weighted_sum, baseline_score) - 0.2 * len(unresolved_gaps)
+        sufficiency_score = max(0.0, min(1.0, raw_score))
         status = (
             "sufficient" if sufficiency_score >= 0.5 and not unresolved_gaps else "insufficient"
         )
@@ -44,7 +60,7 @@ class EvidenceCaseService:
             subject_kind="contract",
             subject_ref=contract_ref,
             support_refs=support_refs,
-            contradiction_refs=[],
+            contradiction_refs=self._find_prior_contradictions(attempt_ctx.task_id, contract_ref),
             freshness_window={
                 "context_pack_ref": context_pack_ref,
                 "witness_ref": witness_ref,
@@ -127,9 +143,7 @@ class EvidenceCaseService:
             operator_summary=summary,
         )
         self.store.append_event(
-            event_type="evidence_case.invalidated"
-            if status == "invalidated"
-            else "evidence_case.contradicted",
+            event_type=f"evidence_case.{status}",
             entity_type="evidence_case",
             entity_id=evidence_case_id,
             task_id=record.task_id,
@@ -139,6 +153,30 @@ class EvidenceCaseService:
                 "status": status,
                 "summary": summary,
             },
+        )
+
+    def mark_stale(self, evidence_case_id: str, *, summary: str) -> None:
+        self.invalidate(
+            evidence_case_id,
+            contradictions=["policy_version_drift"],
+            summary=summary,
+            status="stale",
+        )
+
+    def mark_expired(self, evidence_case_id: str, *, summary: str) -> None:
+        self.invalidate(
+            evidence_case_id,
+            contradictions=["contract_expiry"],
+            summary=summary,
+            status="expired",
+        )
+
+    def mark_superseded(self, evidence_case_id: str, *, superseded_by: str, summary: str) -> None:
+        self.invalidate(
+            evidence_case_id,
+            contradictions=[f"superseded_by:{superseded_by}"],
+            summary=summary,
+            status="superseded",
         )
 
     def _store_artifact(
@@ -161,3 +199,15 @@ class EvidenceCaseService:
             metadata={"evidence_case_id": evidence_case_ref},
         )
         return artifact.artifact_id
+
+    def _find_prior_contradictions(self, task_id: str, contract_ref: str) -> list[str]:
+        if not hasattr(self.store, "list_evidence_cases"):
+            return []
+        refs: list[str] = []
+        for case in self.store.list_evidence_cases(task_id=task_id, limit=100):
+            if (
+                str(case.status or "") == "invalidated"
+                and str(case.subject_ref or "") == contract_ref
+            ):
+                refs.append(case.evidence_case_id)
+        return refs

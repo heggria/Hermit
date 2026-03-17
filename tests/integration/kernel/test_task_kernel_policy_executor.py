@@ -363,10 +363,12 @@ def test_approval_copy_service_uses_display_copy_and_falls_back_for_legacy_recor
 
 
 def test_approval_copy_service_formatter_timeout_falls_back_to_template() -> None:
-    def slow_formatter(_facts: dict[str, Any]) -> dict[str, str]:
-        import time
+    import threading
 
-        time.sleep(0.02)
+    gate = threading.Event()
+
+    def slow_formatter(_facts: dict[str, Any]) -> dict[str, str]:
+        gate.wait()  # block indefinitely until gate is set
         return {
             "title": "slow",
             "summary": "slow",

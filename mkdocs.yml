@@ -9,12 +9,38 @@ strict: true
 exclude_docs: |
   oss-docs-redesign-proposal.md
   wiki-home.md
+  ecosystem-submissions.md
+  getting-started.zh-CN.md
+  why-hermit.zh-CN.md
+
+plugins:
+  - search
+  - social:
+      enabled: !ENV [CI, false]
+  - blog:
+      blog_dir: blog
+      post_date_format: yyyy-MM-dd
+      blog_toc: true
+  - tags
+  - rss:
+      match_path: blog/posts/.*
+      date_from_meta:
+        as_creation: date
+      categories:
+        - categories
+        - tags
+      image: https://heggria.github.io/Hermit/assets/social-preview.png
 
 theme:
   name: material
   language: en
   logo: assets/hermit-macos-icon.svg
   favicon: assets/hermit-macos-icon.svg
+  custom_dir: docs/overrides
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: deep purple
   features:
     - navigation.instant
     - navigation.sections
@@ -22,6 +48,20 @@ theme:
     - content.code.copy
     - search.suggest
     - search.highlight
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/heggria/Hermit
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/XCYqF3SN
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/hermit-agent/
+    - icon: fontawesome/solid/rss
+      link: /Hermit/feed_rss_created.xml
+
+extra_css:
+  - stylesheets/landing.css
 
 markdown_extensions:
   - admonition
@@ -38,6 +78,8 @@ nav:
   - Getting Started: getting-started.md
   - Demo Flows: demo-flows.md
   - Why Hermit: why-hermit.md
+  - Comparisons: comparisons.md
+  - Design Philosophy: design-philosophy.md
   - Architecture: architecture.md
   - Governance: governance.md
   - Task Lifecycle: task-lifecycle.md
@@ -50,3 +92,5 @@ nav:
   - FAQ: faq.md
   - Roadmap: roadmap.md
   - Status And Compatibility: status-and-compatibility.md
+  - Blog: blog/index.md
+  - Tags: tags.md

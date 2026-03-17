@@ -458,7 +458,7 @@ def _probe_memory_evidence() -> None:
                 conversation_id="claim-memory",
                 scope_kind="conversation",
                 scope_ref="claim-memory",
-                category="项目约定",
+                category="project_convention",
                 content="默认工作目录固定到 /repo",
                 confidence=0.8,
                 evidence_refs=[artifact.artifact_id],
@@ -466,7 +466,7 @@ def _probe_memory_evidence() -> None:
             inspection = cast(
                 dict[str, Any],
                 MemoryGovernanceService().inspect_claim(
-                    category="项目约定",
+                    category="project_convention",
                     claim_text=belief.claim_text,
                     conversation_id="claim-memory",
                     workspace_root=str(base / "workspace"),
@@ -558,7 +558,15 @@ def _semantic_probe_results(*, include_expensive_probes: bool = True) -> dict[st
     }
     if include_expensive_probes:
         probes["artifact_context"] = _probe_artifact_context
-    return {row_id: _semantic_probe(row_id, probe) for row_id, probe in probes.items()}
+    results = {row_id: _semantic_probe(row_id, probe) for row_id, probe in probes.items()}
+    results["reconciliation_coverage"] = _semantic_probe(
+        "reconciliation_coverage", _probe_reconciliation_coverage
+    )
+    results["proof_chain_complete"] = _semantic_probe(
+        "proof_chain_complete", _probe_proof_chain_complete
+    )
+    results["retry_stale_guard"] = _semantic_probe("retry_stale_guard", _probe_retry_stale_guard)
+    return results
 
 
 def _conditional_row_status(row_id: str, caps: dict[str, Any]) -> dict[str, Any]:
@@ -740,6 +748,37 @@ def task_claim_status(
             "strongest_export_mode": proof_summary.get("strongest_export_mode"),
         },
     }
+
+
+def _probe_reconciliation_coverage() -> None:
+    from hermit.kernel.execution.recovery.reconcile import ReconcileService
+
+    assert hasattr(ReconcileService, "_reconcile_store_observation"), (
+        "ReconcileService must have _reconcile_store_observation"
+    )
+    service = ReconcileService.__new__(ReconcileService)
+    assert hasattr(service, "_reconcile_store_observation")
+    assert hasattr(service, "_lookup_store_record")
+
+
+def _probe_proof_chain_complete() -> None:
+    from hermit.kernel.verification.proofs.proofs import ProofService
+
+    assert hasattr(ProofService, "_chain_completeness"), (
+        "ProofService must have _chain_completeness"
+    )
+    assert hasattr(ProofService, "_validate_bundle_artifact_hashes"), (
+        "ProofService must have _validate_bundle_artifact_hashes"
+    )
+
+
+def _probe_retry_stale_guard() -> None:
+    from hermit.kernel.execution.executor.executor import ToolExecutor
+
+    assert hasattr(ToolExecutor, "_contract_expired"), "ToolExecutor must have _contract_expired"
+    assert hasattr(ToolExecutor, "_policy_version_drifted"), (
+        "ToolExecutor must have _policy_version_drifted"
+    )
 
 
 __all__ = [

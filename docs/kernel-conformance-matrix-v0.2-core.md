@@ -12,6 +12,10 @@ This matrix tracks the repository-level `v0.2 Core` execution-loop hardening tha
 | Durable memory promotion is reconciliation-gated | `implemented` | `src/hermit/kernel/context/memory/knowledge.py`, `src/hermit/plugins/builtin/hooks/memory/hooks.py` | `tests/integration/kernel/test_kernel_context_and_memory_services.py`, `tests/unit/kernel/test_memory_governance.py` |
 | Projection / proof surfaces expose contract-loop entities | `implemented` | `src/hermit/kernel/task/projections/projections.py`, `src/hermit/kernel/verification/proofs/proofs.py`, `src/hermit/kernel/task/services/topics.py` | `tests/integration/surfaces/test_cli.py::test_task_proof_commands_report_and_export_proof_bundle`, `tests/unit/test_docs_alignment.py::test_conformance_matrix_rows_match_claim_manifest` |
 
+| Idempotent reconciliation prevents duplicate reconciliation records for the same receipt | `implemented` | `src/hermit/kernel/execution/recovery/reconciliations.py` | `tests/unit/kernel/test_reconcile_service.py` |
+| Contract expiry and policy version drift trigger durable re-entry before execution | `implemented` | `src/hermit/kernel/execution/executor/executor.py` | `tests/unit/kernel/test_contract_expiry_and_policy_revalidation.py` |
+| Violated reconciliation invalidates memories learned from the same reconciliation ref | `implemented` | `src/hermit/kernel/execution/executor/executor.py`, `src/hermit/kernel/context/memory/knowledge.py` | `tests/unit/kernel/test_reconcile_service.py` |
+
 Notes:
 
 - The repository still preserves the existing `v0.1` claim labels and operator-facing `task claim-status` output.

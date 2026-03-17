@@ -1,0 +1,23 @@
+class HermitAgent < Formula
+  include Language::Python::Virtualenv
+
+  desc "Local-first governed agent kernel for durable and inspectable AI work"
+  homepage "https://heggria.github.io/Hermit/"
+  url "PLACEHOLDER_URL"
+  sha256 "PLACEHOLDER_SHA256"
+  license "MIT"
+
+  depends_on "python@3.13"
+
+  def install
+    virtualenv_install_with_resources
+  end
+
+  def post_install
+    system bin/"hermit", "init", "-q"
+  end
+
+  test do
+    assert_match "hermit", shell_output("#{bin}/hermit --help")
+  end
+end

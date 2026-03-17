@@ -10,4 +10,4 @@
 - MCP tool naming: `mcp__<server>__<tool>` (double underscore separator)
 - Use `FileGuard.acquire(path, cross_process=True)` for atomic file operations
 - Skills in `skills/<skill-name>/SKILL.md` with `name` and `description` frontmatter
-- Use `src/hermit/plugin/` (current), not `src/hermit/plugins/` (legacy)
+- Plugin system: `src/hermit/plugins/` (plugin code), `src/hermit/runtime/capability/` (registry/loader)

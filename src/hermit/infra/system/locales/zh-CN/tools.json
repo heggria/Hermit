@@ -142,5 +142,14 @@
   "tools.grok.search.description": "使用 Grok（xAI）进行实时网页搜索。和 web_search（DuckDuckGo）不同，Grok 会直接读取并综合当前网页内容，适合处理突发新闻、股票价格、近期事件或任何对时效性要求高的问题。返回结果会附带内联引用。需要先配置 XAI_API_KEY。",
   "tools.grok.search.query": "问题或搜索查询内容。可以是自然语言问题，例如“为什么 MiniMax 股票今天暴涨？”，也可以是普通搜索短语。",
   "tools.grok.search.search_mode": "实时搜索模式。'auto'（默认）由 Grok 自行决定是否搜索，'on' 强制实时搜索，'off' 仅使用模型训练数据。",
-  "tools.grok.search.max_tokens": "响应的最大 token 数，默认 2048。"
+  "tools.grok.search.max_tokens": "响应的最大 token 数，默认 2048。",
+  "tools.image_memory.no_tags": "无标签",
+  "tools.image_memory.no_summary": "暂无摘要",
+  "tools.image_memory.context_line": "- 图片{index}（image_id={image_id}，session={session_id}）：{summary}；标签：{tags}",
+  "tools.image_memory.session_context_line": "- 图片{index}（image_id={image_id}，文件={file_name}）：{summary}；标签：{tags}",
+  "tools.image_memory.retrieval_intro": "以下是与当前请求最相关的历史图片语义，请只在确有帮助时使用：\n",
+  "tools.grok.citation_label": "来源 {index}",
+  "tools.image_memory.reference_keywords": "图片|图里|这张图|那张图|截图|照片|二维码|海报|image|photo|picture|screenshot",
+  "tools.computer_use.error.no_key_send": "不允许发送按键",
+  "tools.computer_use.error.no_control": "不允许控制"
 }

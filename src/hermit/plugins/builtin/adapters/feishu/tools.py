@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any, cast
 
+from hermit.infra.system.i18n import tr
 from hermit.plugins.builtin.adapters.feishu._client import build_lark_client
 from hermit.runtime.capability.contracts.base import PluginContext
 from hermit.runtime.capability.registry.tools import ToolSpec
@@ -790,7 +791,7 @@ def _build_bitable_add_tool() -> ToolSpec:
                     "type": "object",
                     "description": (
                         "Key-value pairs of column name → value. "
-                        'Example: {"任务名": "完成接入", "状态": "进行中", "优先级": "高"}'
+                        f"Example: {tr('feishu.tools.bitable_add_example')}"
                     ),
                 },
             },

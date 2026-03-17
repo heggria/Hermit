@@ -4,6 +4,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from hermit.infra.system.i18n import tr, tr_list_all_locales
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.memory.governance import MemoryGovernanceService
 from hermit.kernel.context.memory.text import shares_topic, summary_prompt, topic_tokens
@@ -13,34 +14,13 @@ from hermit.kernel.ledger.journal.store_support import sha256_hex as _sha256_hex
 from hermit.kernel.task.models.records import BeliefRecord, MemoryRecord
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
 
-_GREETING_QUERIES = {
-    "hi",
-    "hello",
-    "你好",
-    "您好",
-    "嗨",
-    "在吗",
-    "早上好",
-    "上午好",
-    "中午好",
-    "下午好",
-    "晚上好",
-}
-_FOLLOWUP_MARKERS = (
-    "继续",
-    "接着",
-    "然后",
-    "刚才",
-    "上面",
-    "上一条",
-    "那个",
-    "这些",
-    "确认",
-    "批准",
-    "同意",
-    "开始执行",
-    "执行吧",
-)
+
+def _greeting_queries() -> set[str]:
+    return set(tr_list_all_locales("kernel.nlp.greeting_texts"))
+
+
+def _followup_markers() -> tuple[str, ...]:
+    return tuple(tr_list_all_locales("kernel.nlp.followup_markers"))
 
 
 @dataclass
@@ -255,7 +235,7 @@ class ContextCompiler:
         return summary_prompt(
             categories,
             limit_per_category=5,
-            intro="以下是与当前任务最相关的跨会话记忆，只在相关时优先遵循：",
+            intro=tr("kernel.memory.retrieval_intro"),
         )
 
     def _memory_payload(self, memory: MemoryRecord) -> dict[str, Any]:
@@ -324,12 +304,12 @@ class ContextCompiler:
     @classmethod
     def _is_smalltalk_query(cls, query: str) -> bool:
         cleaned = re.sub(r"\s+", "", str(query or "")).lower()
-        return cleaned in _GREETING_QUERIES
+        return cleaned in _greeting_queries()
 
     @staticmethod
     def _is_followup_query(query: str) -> bool:
         cleaned = re.sub(r"\s+", "", str(query or ""))
-        return any(marker in cleaned for marker in _FOLLOWUP_MARKERS)
+        return any(marker in cleaned for marker in _followup_markers())
 
     @classmethod
     def _memory_relevant_to_query(cls, memory: MemoryRecord, *, query: str) -> bool:

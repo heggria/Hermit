@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from hermit.infra.system.i18n import tr_list_all_locales
 from hermit.kernel.context.memory.text import shares_topic, topic_tokens
 from hermit.kernel.task.models.records import ConversationRecord, TaskRecord
 from hermit.kernel.task.state.continuation import (
@@ -178,9 +179,8 @@ class IngressRouter:
 
     @staticmethod
     def _looks_like_approval_followup(text: str) -> bool:
-        return any(
-            marker in text for marker in ("执行", "批准", "approve", "草稿", "不要发", "改成")
-        )
+        markers = tr_list_all_locales("kernel.nlp.approval_followup_markers")
+        return any(marker in text for marker in markers)
 
     @staticmethod
     def _looks_like_focus_followup(text: str) -> bool:

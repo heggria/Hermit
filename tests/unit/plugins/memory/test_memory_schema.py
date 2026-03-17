@@ -14,7 +14,7 @@ def test_memory_record_roundtrips_new_schema_fields(tmp_path: Path) -> None:
         record = store.create_memory_record(
             task_id="task-1",
             conversation_id="chat-1",
-            category="项目约定",
+            category="project_convention",
             claim_text="默认在 /repo 执行命令",
             structured_assertion={"workspace_root": "/repo"},
             scope_kind="workspace",
@@ -48,20 +48,20 @@ def test_active_memory_query_excludes_expired_invalidated_and_revoked(tmp_path: 
         active = store.create_memory_record(
             task_id="task-1",
             conversation_id="chat-1",
-            category="用户偏好",
+            category="user_preference",
             content="统一使用简体中文",
         )
         store.create_memory_record(
             task_id="task-2",
             conversation_id="chat-1",
-            category="技术决策",
+            category="tech_decision",
             content="这是过期事实",
             expires_at=time.time() - 1,
         )
         store.create_memory_record(
             task_id="task-3",
             conversation_id="chat-1",
-            category="技术决策",
+            category="tech_decision",
             content="这是失效事实",
             status="invalidated",
             invalidated_at=time.time(),
@@ -69,7 +69,7 @@ def test_active_memory_query_excludes_expired_invalidated_and_revoked(tmp_path: 
         store.create_memory_record(
             task_id="task-4",
             conversation_id="chat-1",
-            category="其他",
+            category="other",
             content="这是撤销事实",
             status="revoked",
         )
@@ -138,7 +138,7 @@ def test_schema_v3_database_requires_hard_cut_archive_or_delete(tmp_path: Path) 
                 "memory-legacy",
                 "task-1",
                 "chat-1",
-                "进行中的任务",
+                "active_task",
                 "旧 content 字段",
                 "superseded",
                 0.7,
@@ -160,7 +160,7 @@ def test_schema_v3_database_requires_hard_cut_archive_or_delete(tmp_path: Path) 
     except KernelSchemaError as exc:
         message = str(exc)
         assert "schema_version=3" in message
-        assert "requires schema_version=7" in message
+        assert "requires schema_version=8" in message
         assert "Archive or delete" in message
     else:
         raise AssertionError("KernelStore should hard-fail for schema_version=3")
@@ -173,7 +173,7 @@ def test_memory_mirror_exports_scope_and_retention_metadata(tmp_path: Path) -> N
         store.create_memory_record(
             task_id="task-1",
             conversation_id="chat-1",
-            category="项目约定",
+            category="project_convention",
             claim_text="默认在 /repo 执行命令",
             scope_kind="workspace",
             scope_ref="/repo",

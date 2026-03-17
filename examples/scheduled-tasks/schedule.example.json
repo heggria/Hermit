@@ -1,0 +1,6 @@
+{
+  "name": "daily-summary",
+  "cron": "0 9 * * *",
+  "prompt": "Summarize yesterday's activity and create a task record",
+  "enabled": true
+}

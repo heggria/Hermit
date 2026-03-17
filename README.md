@@ -1,7 +1,11 @@
 # Hermit
 
 <p align="center">
-  <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="96" height="96">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/hermit-icon-white.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./docs/assets/hermit-macos-icon.svg">
+    <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="96" height="96">
+  </picture>
 </p>
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
@@ -10,6 +14,10 @@
 [![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-black)](./LICENSE)
 [![Docs](https://img.shields.io/badge/docs-github%20pages-0F172A)](https://heggria.github.io/Hermit/)
+[![PyPI](https://img.shields.io/pypi/v/hermit-agent)](https://pypi.org/project/hermit-agent/)
+[![Downloads](https://img.shields.io/pypi/dm/hermit-agent)](https://pypi.org/project/hermit-agent/)
+[![Discord](https://img.shields.io/discord/1483353136834936924?logo=discord&logoColor=white&label=Discord)](https://discord.gg/XCYqF3SN)
+[![Discussions](https://img.shields.io/github/discussions/heggria/Hermit)](https://github.com/heggria/Hermit/discussions)
 
 > **Hermit turns agent work into governed, inspectable, local-first execution.**
 >
@@ -39,6 +47,12 @@ macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/heggria/Hermit/main/install-macos.sh | bash
+```
+
+Or via Homebrew:
+
+```bash
+brew tap heggria/tap && brew install hermit-agent
 ```
 
 That installs Hermit, initializes `~/.hermit`, installs the optional menu bar companion, and preserves any provider credentials already present in your shell.
@@ -71,7 +85,11 @@ hermit task rollback <receipt_id>
 
 The point of Hermit is not only that the model can do work. The point is that the work stays visible afterward: task state, approvals, receipts, proof material, and supported recovery paths.
 
-If you want a recording-ready walkthrough, start with [docs/demo-flows.md](./docs/demo-flows.md).
+If you want a recording-ready walkthrough, start with [docs/demo-flows.md](./docs/demo-flows.md). For runnable scripts, see the [examples/](./examples/) directory.
+
+![Hermit demo: run, inspect, prove](./docs/assets/demo.gif)
+
+Terminal recording: [watch on asciinema](https://asciinema.org/a/g1Uryq817Y9viPaM) | [interactive player on the docs site](https://heggria.github.io/Hermit/)
 
 Real CLI example from this repository's task kernel:
 
@@ -266,6 +284,8 @@ For a lightweight reading surface on GitHub, use the [project wiki](https://gith
 - [Getting started](./docs/getting-started.md)
 - [Demo flows](./docs/demo-flows.md)
 - [Why Hermit](./docs/why-hermit.md)
+- [Design Philosophy](./docs/design-philosophy.md)
+- [Comparisons](./docs/comparisons.md)
 - [Architecture](./docs/architecture.md)
 - [Kernel spec v0.1](./docs/kernel-spec-v0.1.md)
 - [Kernel spec section checklist](./docs/kernel-spec-v0.1-section-checklist.md)
@@ -296,6 +316,12 @@ Near-term direction:
 - align package metadata, docs, and repo language around the kernel thesis
 
 See [docs/roadmap.md](./docs/roadmap.md) for the current status and milestones.
+
+## Community
+
+- [Discord](https://discord.gg/XCYqF3SN) — real-time chat and support
+- [GitHub Discussions](https://github.com/heggria/Hermit/discussions) — questions, ideas, and general conversation
+- [Issues](https://github.com/heggria/Hermit/issues) — bug reports and feature requests
 
 ## Contributing
 

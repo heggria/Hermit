@@ -152,7 +152,7 @@ jobs:
 
     steps:
       - name: Download PyPI distributions
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: hermit-release-pypi-dist
           path: dist
@@ -173,13 +173,13 @@ jobs:
 
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: hermit-release-python-dist
           path: dist
 
       - name: Attest Python release bundle
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
           subject-path: "dist/*"
 
@@ -194,13 +194,13 @@ jobs:
 
     steps:
       - name: Download macOS DMG bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: hermit-release-macos-dmg
           path: macos-dmg
 
       - name: Attest macOS DMG bundle
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
           subject-path: "macos-dmg/*"
 
@@ -218,13 +218,13 @@ jobs:
 
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: hermit-release-python-dist
           path: dist
 
       - name: Download macOS DMG bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: hermit-release-macos-dmg
           path: macos-dmg
@@ -237,3 +237,63 @@ jobs:
           files: |
             dist/*
             macos-dmg/*
+
+  update-homebrew:
+    needs:
+      - build-python
+      - publish-pypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Download release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: hermit-release-pypi-dist
+          path: dist
+
+      - name: Compute sdist SHA256
+        id: sha
+        run: |
+          SDIST="$(ls dist/hermit_agent-*.tar.gz | head -n 1)"
+          SHA256="$(shasum -a 256 "$SDIST" | cut -d ' ' -f 1)"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve version from tag
+        id: ver
+        run: |
+          TAG="${{ needs.build-python.outputs.release_tag }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          SHA256="${{ steps.sha.outputs.sha256 }}"
+          TAP_REPO="heggria/homebrew-tap"
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Formula
+
+          sed -e "s|PLACEHOLDER_URL|https://files.pythonhosted.org/packages/source/h/hermit-agent/hermit_agent-${VERSION}.tar.gz|" \
+              -e "s|PLACEHOLDER_SHA256|${SHA256}|" \
+              -e "s|PLACEHOLDER_VERSION|${VERSION}|" \
+              Formula/hermit-agent.rb.template > tap/Formula/hermit-agent.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/hermit-agent.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date."
+          else
+            git commit -m "hermit-agent ${VERSION}"
+            git push
+          fi

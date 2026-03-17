@@ -202,6 +202,7 @@ class ProofService:
         receipt_bundle_payload = self._build_receipt_bundle_payload(
             receipt, context_manifest_ref=context_manifest_ref
         )
+        self._validate_bundle_artifact_hashes(receipt, receipt_bundle_payload)
         signature_meta = self._signature_metadata(
             receipt_bundle_payload, artifact_kind="receipt.bundle"
         )
@@ -316,6 +317,9 @@ class ProofService:
                 task_id, receipts, receipt_bundle_refs, context_manifest_refs
             ),
         }
+        proof_payload["chain_completeness"] = self._chain_completeness(
+            receipts, contracts, evidence_cases, authorization_plans, reconciliations
+        )
         inclusion = self._receipt_inclusion_proofs(receipt_bundles)
         proof_payload["receipt_merkle_root"] = inclusion["root"]
         proof_payload["receipt_inclusion_proofs"] = inclusion["proofs"]
@@ -372,6 +376,17 @@ class ProofService:
                     break
         action_request_ref = receipt.action_request_ref or self._action_request_ref(decision)
         evidence_refs = list(decision.evidence_refs) if decision is not None else []
+        attempt = (
+            self.store.get_step_attempt(receipt.step_attempt_id)
+            if receipt.step_attempt_id
+            else None
+        )
+        contract_ref = getattr(attempt, "execution_contract_ref", None) if attempt else None
+        evidence_case_ref = getattr(attempt, "evidence_case_ref", None) if attempt else None
+        authorization_plan_ref = (
+            getattr(attempt, "authorization_plan_ref", None) if attempt else None
+        )
+        reconciliation_ref = getattr(attempt, "reconciliation_ref", None) if attempt else None
         return {
             "schema": "context.manifest/v1",
             "task_id": receipt.task_id,
@@ -390,6 +405,10 @@ class ProofService:
             "environment_ref": receipt.environment_ref,
             "evidence_refs": evidence_refs,
             "memory_refs": memory_refs,
+            "contract_ref": contract_ref,
+            "evidence_case_ref": evidence_case_ref,
+            "authorization_plan_ref": authorization_plan_ref,
+            "reconciliation_ref": reconciliation_ref,
         }
 
     def _build_receipt_bundle_payload(
@@ -718,3 +737,95 @@ class ProofService:
         if not isinstance(payload, dict):
             raise RuntimeError(f"Artifact {artifact_id} is not a JSON object")
         return cast(dict[str, Any], payload)
+
+    def _chain_completeness(
+        self,
+        receipts: list[Any],
+        contracts: list[Any],
+        evidence_cases: list[Any],
+        authorization_plans: list[Any],
+        reconciliations: list[Any],
+    ) -> dict[str, Any]:
+        contract_ids = {getattr(r, "contract_id", None) for r in contracts}
+        evidence_case_ids = {getattr(r, "evidence_case_id", None) for r in evidence_cases}
+        authorization_plan_ids = {
+            getattr(r, "authorization_plan_id", None) for r in authorization_plans
+        }
+        reconciliation_ids = {getattr(r, "reconciliation_id", None) for r in reconciliations}
+        chains: list[dict[str, Any]] = []
+        complete_chains = 0
+        incomplete_chains = 0
+        for receipt in receipts:
+            attempt = (
+                self.store.get_step_attempt(receipt.step_attempt_id)
+                if receipt.step_attempt_id
+                else None
+            )
+            gaps: list[str] = []
+            contract_ref = getattr(attempt, "execution_contract_ref", None) if attempt else None
+            evidence_ref = getattr(attempt, "evidence_case_ref", None) if attempt else None
+            auth_ref = getattr(attempt, "authorization_plan_ref", None) if attempt else None
+            recon_ref = getattr(attempt, "reconciliation_ref", None) if attempt else None
+            if not contract_ref or contract_ref not in contract_ids:
+                gaps.append("contract")
+            if not evidence_ref or evidence_ref not in evidence_case_ids:
+                gaps.append("evidence_case")
+            if not auth_ref or auth_ref not in authorization_plan_ids:
+                gaps.append("authorization_plan")
+            if not recon_ref or recon_ref not in reconciliation_ids:
+                gaps.append("reconciliation")
+            chains.append({"receipt_id": receipt.receipt_id, "gaps": gaps, "complete": not gaps})
+            if gaps:
+                incomplete_chains += 1
+            else:
+                complete_chains += 1
+        total = len(receipts)
+        return {
+            "total_receipts": total,
+            "complete_chains": complete_chains,
+            "incomplete_chains": incomplete_chains,
+            "completeness_percent": (complete_chains / total * 100.0) if total else 100.0,
+            "chains": chains,
+        }
+
+    def _validate_bundle_artifact_hashes(self, receipt: Any, bundle: dict[str, Any]) -> None:
+        task_id = getattr(receipt, "task_id", None)
+        step_id = getattr(receipt, "step_id", None)
+        step_attempt_id = getattr(receipt, "step_attempt_id", None)
+        all_hashes: dict[str, str | None] = {}
+        for key in ("input_hashes", "output_hashes", "rollback_artifact_hashes"):
+            all_hashes.update(bundle.get(key) or {})
+        for artifact_id, expected_hash in all_hashes.items():
+            artifact = self.store.get_artifact(artifact_id)
+            if artifact is None:
+                self.store.append_event(
+                    event_type="proof.validation_warning",
+                    entity_type="receipt",
+                    entity_id=getattr(receipt, "receipt_id", ""),
+                    task_id=task_id,
+                    step_id=step_id,
+                    actor="proof_service",
+                    payload={
+                        "warning": "referenced_artifact_missing",
+                        "artifact_ref": artifact_id,
+                        "step_attempt_id": step_attempt_id,
+                    },
+                )
+                continue
+            actual_hash = artifact.content_hash
+            if expected_hash is not None and actual_hash != expected_hash:
+                self.store.append_event(
+                    event_type="proof.validation_warning",
+                    entity_type="receipt",
+                    entity_id=getattr(receipt, "receipt_id", ""),
+                    task_id=task_id,
+                    step_id=step_id,
+                    actor="proof_service",
+                    payload={
+                        "warning": "artifact_hash_mismatch",
+                        "artifact_ref": artifact_id,
+                        "expected_hash": expected_hash,
+                        "actual_hash": actual_hash,
+                        "step_attempt_id": step_attempt_id,
+                    },
+                )

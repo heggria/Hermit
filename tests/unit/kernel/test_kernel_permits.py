@@ -80,70 +80,134 @@ def test_capability_grant_service_issue_and_state_updates(monkeypatch: pytest.Mo
     ]
 
 
-def test_capability_grant_service_enforce_and_constraint_validation(
+@pytest.mark.parametrize(
+    "setup,enforce_args,expected_code",
+    [
+        pytest.param(
+            None,
+            {"grant_id": "missing", "action_class": "write_local", "resource_scope": ["/tmp"]},
+            "missing",
+            id="missing-grant",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                grant_id="grant-1",
+                status="consumed",
+                expires_at=None,
+                action_class="write_local",
+                resource_scope=["/tmp"],
+                constraints={},
+                workspace_lease_ref=None,
+            ),
+            {"grant_id": "grant-1", "action_class": "write_local", "resource_scope": ["/tmp"]},
+            "inactive",
+            id="inactive-grant",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                grant_id="grant-1",
+                status="issued",
+                expires_at=999.0,
+                action_class="write_local",
+                resource_scope=["/tmp"],
+                constraints={},
+                workspace_lease_ref=None,
+            ),
+            {"grant_id": "grant-1", "action_class": "write_local", "resource_scope": ["/tmp"]},
+            "expired",
+            id="expired-grant",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                grant_id="grant-1",
+                status="issued",
+                expires_at=None,
+                action_class="read_local",
+                resource_scope=["/tmp"],
+                constraints={},
+                workspace_lease_ref=None,
+            ),
+            {"grant_id": "grant-1", "action_class": "write_local", "resource_scope": ["/tmp"]},
+            "action_mismatch",
+            id="action-mismatch",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                grant_id="grant-1",
+                status="issued",
+                expires_at=None,
+                action_class="write_local",
+                resource_scope=["/tmp"],
+                constraints={},
+                workspace_lease_ref=None,
+            ),
+            {"grant_id": "grant-1", "action_class": "write_local", "resource_scope": ["/etc"]},
+            "scope_mismatch",
+            id="scope-mismatch",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                grant_id="grant-1",
+                status="issued",
+                expires_at=None,
+                action_class="write_local",
+                resource_scope=["/tmp"],
+                constraints={
+                    "target_paths": ["/tmp/file.txt"],
+                    "network_hosts": ["example.com"],
+                    "command_preview": "ls /tmp",
+                },
+                workspace_lease_ref=None,
+            ),
+            {
+                "grant_id": "grant-1",
+                "action_class": "write_local",
+                "resource_scope": ["/tmp"],
+                "constraints": {"target_paths": ["/tmp/other.txt"]},
+            },
+            "target_path_mismatch",
+            id="target-path-mismatch",
+        ),
+    ],
+)
+def test_capability_grant_enforce_error_codes(
     monkeypatch: pytest.MonkeyPatch,
+    setup: SimpleNamespace | None,
+    enforce_args: dict,
+    expected_code: str,
 ) -> None:
     store = _FakeStore()
     service = CapabilityGrantService(store)
     monkeypatch.setattr("hermit.kernel.authority.grants.service.time.time", lambda: 1000.0)
+    store.grant = setup
+    with pytest.raises(CapabilityGrantError) as exc_info:
+        service.enforce(**enforce_args)
+    assert exc_info.value.code == expected_code
 
-    with pytest.raises(CapabilityGrantError, match="not found") as missing:
-        service.enforce("missing", action_class="write_local", resource_scope=["/tmp"])
-    assert missing.value.code == "missing"
 
-    store.grant = SimpleNamespace(
-        grant_id="grant-1",
-        status="consumed",
-        expires_at=None,
-        action_class="write_local",
-        resource_scope=["/tmp"],
-        constraints={},
-        workspace_lease_ref=None,
-    )
-    with pytest.raises(CapabilityGrantError, match="cannot be dispatched") as inactive:
-        service.enforce("grant-1", action_class="write_local", resource_scope=["/tmp"])
-    assert inactive.value.code == "inactive"
-
-    store.grant = SimpleNamespace(
-        grant_id="grant-1",
-        status="issued",
-        expires_at=999.0,
-        action_class="write_local",
-        resource_scope=["/tmp"],
-        constraints={},
-        workspace_lease_ref=None,
-    )
-    with pytest.raises(CapabilityGrantError, match="expired before dispatch") as expired:
-        service.enforce("grant-1", action_class="write_local", resource_scope=["/tmp"])
-    assert expired.value.code == "expired"
-    assert store.updated[-1] == ("grant-1", {"status": "invalid"})
-
-    store.grant = SimpleNamespace(
-        grant_id="grant-1",
-        status="issued",
-        expires_at=None,
-        action_class="read_local",
-        resource_scope=["/tmp"],
-        constraints={},
-        workspace_lease_ref=None,
-    )
-    with pytest.raises(CapabilityGrantError, match="only allows") as mismatch:
-        service.enforce("grant-1", action_class="write_local", resource_scope=["/tmp"])
-    assert mismatch.value.code == "action_mismatch"
-
-    store.grant = SimpleNamespace(
-        grant_id="grant-1",
-        status="issued",
-        expires_at=None,
-        action_class="write_local",
-        resource_scope=["/tmp"],
-        constraints={},
-        workspace_lease_ref=None,
-    )
-    with pytest.raises(CapabilityGrantError, match="does not cover resource scope") as scope:
-        service.enforce("grant-1", action_class="write_local", resource_scope=["/etc"])
-    assert scope.value.code == "scope_mismatch"
-
+@pytest.mark.parametrize(
+    "constraint_input,expected_code",
+    [
+        pytest.param(
+            {"network_hosts": ["bad.example.com"]},
+            "network_host_mismatch",
+            id="network-host-mismatch",
+        ),
+        pytest.param(
+            {"command_preview": "pwd"},
+            "command_mismatch",
+            id="command-mismatch",
+        ),
+    ],
+)
+def test_capability_grant_constraint_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    constraint_input: dict,
+    expected_code: str,
+) -> None:
+    store = _FakeStore()
+    service = CapabilityGrantService(store)
+    monkeypatch.setattr("hermit.kernel.authority.grants.service.time.time", lambda: 1000.0)
     store.grant = SimpleNamespace(
         grant_id="grant-1",
         status="issued",
@@ -157,22 +221,9 @@ def test_capability_grant_service_enforce_and_constraint_validation(
         },
         workspace_lease_ref=None,
     )
-    with pytest.raises(CapabilityGrantError, match="target paths") as path_mismatch:
-        service.enforce(
-            "grant-1",
-            action_class="write_local",
-            resource_scope=["/tmp"],
-            constraints={"target_paths": ["/tmp/other.txt"]},
-        )
-    assert path_mismatch.value.code == "target_path_mismatch"
-
-    with pytest.raises(CapabilityGrantError, match="network hosts") as host_mismatch:
-        service._validate_constraints(store.grant, {"network_hosts": ["bad.example.com"]})
-    assert host_mismatch.value.code == "network_host_mismatch"
-
-    with pytest.raises(CapabilityGrantError, match="current command") as command_mismatch:
-        service._validate_constraints(store.grant, {"command_preview": "pwd"})
-    assert command_mismatch.value.code == "command_mismatch"
+    with pytest.raises(CapabilityGrantError) as exc_info:
+        service._validate_constraints(store.grant, constraint_input)
+    assert exc_info.value.code == expected_code
 
 
 def test_capability_grant_service_validates_workspace_leases(

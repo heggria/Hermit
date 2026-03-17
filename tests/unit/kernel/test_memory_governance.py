@@ -11,15 +11,17 @@ from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
 def test_governance_filters_static_categories() -> None:
     governance = MemoryGovernanceService()
     categories = {
-        "用户偏好": [MemoryEntry(category="用户偏好", content="只能用中文回复用户")],
-        "项目约定": [MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo")],
-        "进行中的任务": [MemoryEntry(category="进行中的任务", content="当前无任何定时任务")],
-        "其他": [MemoryEntry(category="其他", content="今天已完成热门话题搜索")],
+        "user_preference": [MemoryEntry(category="user_preference", content="只能用中文回复用户")],
+        "project_convention": [
+            MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")
+        ],
+        "active_task": [MemoryEntry(category="active_task", content="当前无任何定时任务")],
+        "other": [MemoryEntry(category="other", content="今天已完成热门话题搜索")],
     }
 
     filtered = governance.filter_static_categories(categories)
 
-    assert set(filtered) == {"用户偏好", "项目约定"}
+    assert set(filtered) == {"user_preference", "project_convention"}
 
 
 def test_memory_promotion_supersedes_task_state_across_conversations(tmp_path: Path) -> None:
@@ -33,7 +35,7 @@ def test_memory_promotion_supersedes_task_state_across_conversations(tmp_path: P
             conversation_id="chat-a",
             scope_kind="conversation",
             scope_ref="chat-a",
-            category="进行中的任务",
+            category="active_task",
             content="已设定每日定时任务：每天早上 10 点自动搜索 AI 最新动态并推送日报到飞书群。",
             confidence=0.8,
             evidence_refs=[],
@@ -63,7 +65,7 @@ def test_memory_promotion_supersedes_task_state_across_conversations(tmp_path: P
             conversation_id="chat-b",
             scope_kind="conversation",
             scope_ref="chat-b",
-            category="进行中的任务",
+            category="active_task",
             content="2026-03-13 用户要求清理全部定时任务，已完成：当前无任何定时任务。",
             confidence=0.8,
             evidence_refs=[],
@@ -111,7 +113,7 @@ def test_memory_promotion_keeps_unrelated_task_entries_active(tmp_path: Path) ->
             conversation_id="chat-a",
             scope_kind="conversation",
             scope_ref="chat-a",
-            category="进行中的任务",
+            category="active_task",
             content="已设定每日定时任务：每天早上 10 点自动搜索 AI 最新动态并推送日报到飞书群。",
             confidence=0.8,
             evidence_refs=[],
@@ -141,7 +143,7 @@ def test_memory_promotion_keeps_unrelated_task_entries_active(tmp_path: Path) ->
             conversation_id="chat-b",
             scope_kind="conversation",
             scope_ref="chat-b",
-            category="进行中的任务",
+            category="active_task",
             content="用户希望改写 Hermit 的 README.md，使其更吸引外部开发者参与贡献。",
             confidence=0.8,
             evidence_refs=[],
@@ -184,7 +186,7 @@ def test_reconcile_active_records_supersedes_newer_conflicts_across_conversation
         old_memory = store.create_memory_record(
             task_id="task_old",
             conversation_id="chat-a",
-            category="进行中的任务",
+            category="active_task",
             content="已设定每日定时任务：每天早上 10 点自动搜索 AI 最新动态并推送日报到飞书群。",
             confidence=0.8,
             evidence_refs=[],
@@ -192,7 +194,7 @@ def test_reconcile_active_records_supersedes_newer_conflicts_across_conversation
         latest_memory = store.create_memory_record(
             task_id="task_new",
             conversation_id="chat-b",
-            category="进行中的任务",
+            category="active_task",
             content="2026-03-13 用户要求清理全部定时任务，已完成：当前无任何定时任务。",
             confidence=0.8,
             evidence_refs=[],

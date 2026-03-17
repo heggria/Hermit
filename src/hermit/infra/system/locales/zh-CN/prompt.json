@@ -28,5 +28,8 @@
   "prompt.delegation.description": "把任务委派给 {name} 子 agent。{description}",
   "prompt.delegation.task": "要委派给子 agent 的任务内容。",
   "prompt.delegation.unavailable": "[子 agent '{name}' 当前不可用：agent runner 尚未配置]",
-  "prompt.scheduler.execution": "下面是一条已经创建好的定时任务。不要询问澄清问题，不要索要 chat_id、open_id 或其他投递元数据，不要再次创建定时任务。请直接写出要发送给用户的提醒内容。\n\n定时任务原始提示词：\n{task_prompt}"
+  "prompt.scheduler.execution": "下面是一条已经创建好的定时任务。不要询问澄清问题，不要索要 chat_id、open_id 或其他投递元数据，不要再次创建定时任务。请直接写出要发送给用户的提醒内容。\n\n定时任务原始提示词：\n{task_prompt}",
+  "prompt.memory.extraction": "你是通用记忆提取助手。从对话中全面提取所有值得长期记忆的信息，不限于技术内容。只输出合法 JSON：\n{\n  \"used_keywords\": [\"关键词1\"],\n  \"new_memories\": [\n    {\"category\": \"分类名\", \"content\": \"简洁描述\"}\n  ]\n}\n\n## 分类说明\n- user_preference：沟通习惯、语言偏好、工作风格、审美倾向、常用工具、个人习惯\n- project_convention：项目结构、命名规范、分支策略、部署流程、团队分工、协作规则\n- tech_decision：技术选型及理由、架构设计、踩过的坑、性能优化、Bug 修复方案\n- tooling_environment：开发环境配置、工具链、API 地址、代理设置、服务端口、安装步骤\n- other：人物关系、日程习惯、知识见解、任何不属于以上分类但值得记住的信息\n- active_task：明确的待办事项、未完成工作、后续计划\n\n## 提取范围（尽量全面）\n- 用户明确表达的偏好、要求、纠正\n- 做出的决策及其理由\n- 发现的问题及解决方案\n- 项目结构、约定、流程的新增或变更\n- 具体配置（文件路径、命令、端口、参数名）\n- 人物及其职责、项目所属关系\n- 反复出现的模式或问题\n- 用户提到的日程、计划、习惯\n- 学到的经验教训\n\n## 质量要求\n- used_keywords：从 <existing_memories> 中找到本次对话涉及的关键词（人名、项目名、技术名词等）\n- content 必须简洁自包含，脱离上下文也能理解\n- 保留具体细节（路径、命令、参数名），避免泛泛而谈\n- 一条记忆只记一件事，不要合并不相关的信息\n- 已有记忆中已存在的信息不要重复提取\n- 纯粹的闲聊寒暄不需要记忆\n- 如无值得记忆的信息，返回空数组",
+  "prompt.image_memory.vision": "你是图片语义提取助手。请阅读图片并只返回合法 JSON：\n{\n  \"summary\": \"1-2 句中文摘要\",\n  \"tags\": [\"标签1\", \"标签2\"],\n  \"ocr_text\": \"图中可读文字，没有则返回空字符串\"\n}\n\n要求：\n- summary 简洁、具体、可脱离上下文理解\n- tags 控制在 3-8 个，优先具体对象/场景/用途",
+  "prompt.image_memory.analyze": "请分析这张图片并返回 JSON。"
 }

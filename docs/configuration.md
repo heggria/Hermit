@@ -1,3 +1,7 @@
+---
+description: "Configure Hermit: environment variables, context files, memory settings, plugin directories, provider profiles, and runtime options."
+---
+
 # Hermit Configuration
 
 This document explains how Hermit is configured today: where settings come from, how profiles work, and where local-first state is stored.

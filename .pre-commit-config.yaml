@@ -9,9 +9,11 @@ repos:
       - id: check-merge-conflict
       - id: check-toml
       - id: check-yaml
+        exclude: mkdocs\.yml
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: check-added-large-files
+        args: ['--maxkb=1500']
 
   - repo: local
     hooks:

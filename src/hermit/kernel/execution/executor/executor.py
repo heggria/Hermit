@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import difflib
-import hashlib
 import json
 import time
 from dataclasses import dataclass, replace
@@ -14,6 +13,7 @@ from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.authority.grants import CapabilityGrantError, CapabilityGrantService
 from hermit.kernel.authority.workspaces import WorkspaceLeaseService, capture_execution_environment
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.errors import ContractError
 from hermit.kernel.execution.controller.contracts import contract_for
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
 from hermit.kernel.execution.coordination.observation import (
@@ -23,7 +23,9 @@ from hermit.kernel.execution.coordination.observation import (
     normalize_observation_progress,
     normalize_observation_ticket,
 )
-from hermit.kernel.execution.recovery.reconcile import ReconcileService
+from hermit.kernel.execution.executor.snapshot import RuntimeSnapshotManager
+from hermit.kernel.execution.executor.witness import WitnessCapture
+from hermit.kernel.execution.recovery.reconcile import ReconcileOutcome, ReconcileService
 from hermit.kernel.execution.recovery.reconciliations import ReconciliationService
 from hermit.kernel.execution.suspension.git_worktree import GitWorktreeInspector
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -38,6 +40,7 @@ from hermit.kernel.policy.approvals.approval_copy import ApprovalCopyService
 from hermit.kernel.policy.approvals.approvals import ApprovalService
 from hermit.kernel.policy.approvals.decisions import DecisionService
 from hermit.kernel.policy.permits.authorization_plans import AuthorizationPlanService
+from hermit.kernel.task.models.records import ReconciliationRecord
 from hermit.kernel.task.projections.progress_summary import (
     ProgressSummaryFormatter,
     normalize_progress_summary,
@@ -247,6 +250,10 @@ class ToolExecutor:
         self.evidence_cases = EvidenceCaseService(store, artifact_store)
         self.authorization_plans = AuthorizationPlanService(store, artifact_store)
         self.reconciliations = ReconciliationService(store, artifact_store, self.reconcile_service)
+        self._witness = WitnessCapture(
+            store=store, artifact_store=artifact_store, git_worktree=self.git_worktree
+        )
+        self._snapshot = RuntimeSnapshotManager(store=store, artifact_store=artifact_store)
         self.progress_summarizer = progress_summarizer
         self.progress_summary_keepalive_seconds = max(
             float(progress_summary_keepalive_seconds or 0.0), 0.0
@@ -316,6 +323,23 @@ class ToolExecutor:
             else None
         )
         return contract, evidence_case, authorization_plan
+
+    @staticmethod
+    def _contract_expired(contract: Any) -> bool:
+        expiry_at = getattr(contract, "expiry_at", None)
+        if expiry_at is None:
+            return False
+        try:
+            return float(expiry_at) < time.time()
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _policy_version_drifted(attempt: Any) -> bool:
+        recorded_version = str(getattr(attempt, "policy_version", "") or "").strip()
+        if not recorded_version:
+            return False
+        return recorded_version != POLICY_RULES_VERSION
 
     def _synthesize_contract_loop(
         self,
@@ -399,7 +423,7 @@ class ToolExecutor:
         result_code_hint: str,
         authorized_effect_summary: str,
         resume_execution: bool = False,
-    ) -> tuple[Any | None, Any | None]:
+    ) -> tuple[ReconciliationRecord | None, ReconcileOutcome | None]:
         contract_ref, _evidence_case_ref, _authorization_plan_ref = self._contract_refs(attempt_ctx)
         if contract_ref is None:
             return None, None
@@ -431,6 +455,11 @@ class ToolExecutor:
             operator_summary=reconciliation.operator_summary,
         )
         result_class = str(reconciliation.result_class or "")
+        if result_class == "satisfied":
+            self._learn_contract_template(reconciliation, contract_ref)
+        if result_class == "violated":
+            self._invalidate_memories_for_reconciliation(reconciliation)
+            self._degrade_templates_for_violation(reconciliation)
         if resume_execution:
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="running")
             self._set_attempt_phase(attempt_ctx, "executing", reason="reconciliation_complete")
@@ -456,6 +485,45 @@ class ToolExecutor:
             "needs_attention" if failure_status == "needs_attention" else "failed",
         )
         return reconciliation, outcome
+
+    def _learn_contract_template(
+        self, reconciliation: ReconciliationRecord, contract_ref: str
+    ) -> None:
+        """Extract a learned template from a satisfied reconciliation."""
+        contract = (
+            self.store.get_execution_contract(contract_ref)
+            if hasattr(self.store, "get_execution_contract")
+            else None
+        )
+        if contract is None:
+            return
+        self.execution_contracts.template_learner.learn_from_reconciliation(
+            reconciliation=reconciliation,
+            contract=contract,
+        )
+
+    def _degrade_templates_for_violation(self, reconciliation: Any) -> None:
+        """Degrade contract templates that were learned from a now-violated reconciliation."""
+        reconciliation_ref = str(getattr(reconciliation, "reconciliation_id", "") or "").strip()
+        if not reconciliation_ref:
+            return
+        self.execution_contracts.template_learner.degrade_templates_for_violation(
+            reconciliation_ref
+        )
+
+    def _invalidate_memories_for_reconciliation(self, reconciliation: Any) -> None:
+        reconciliation_ref = str(getattr(reconciliation, "reconciliation_id", "") or "").strip()
+        if not reconciliation_ref or not hasattr(self.store, "list_memory_records"):
+            return
+        for record in self.store.list_memory_records(status="active", limit=5000):
+            learned_ref = str(getattr(record, "learned_from_reconciliation_ref", "") or "").strip()
+            if learned_ref == reconciliation_ref:
+                self.store.update_memory_record(
+                    record.memory_id,
+                    status="invalidated",
+                    invalidation_reason=f"reconciliation_violated:{reconciliation_ref}",
+                    invalidated_at=time.time(),
+                )
 
     @staticmethod
     def _reconciliation_execution_status(reconciliation: Any | None) -> str:
@@ -573,6 +641,23 @@ class ToolExecutor:
                     policy_result_ref=policy_ref,
                     preview_artifact=preview_artifact,
                     witness_ref=witness_ref,
+                )
+            if contract is not None and self._contract_expired(contract):
+                return self._supersede_attempt_for_drift(
+                    attempt_ctx=attempt_ctx,
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    drift_reason="contract_expiry",
+                )
+            attempt_record_for_policy = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
+            if attempt_record_for_policy is not None and self._policy_version_drifted(
+                attempt_record_for_policy
+            ):
+                return self._supersede_attempt_for_drift(
+                    attempt_ctx=attempt_ctx,
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    drift_reason="policy_version_drift",
                 )
             resolution = self._admissibility_resolution(evidence_case, authorization_plan)
             if resolution is not None and policy.verdict != "deny":
@@ -1192,81 +1277,10 @@ class ToolExecutor:
         self.clear_suspended_state(step_attempt_id)
 
     def _runtime_snapshot_envelope(self, payload: dict[str, Any]) -> dict[str, Any]:
-        unknown = set(payload) - _RUNTIME_SNAPSHOT_V3_ALLOWED_KEYS
-        if unknown:
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.unsupported_working_state_keys",
-                    default="Unsupported working-state keys: {keys}",
-                    keys=sorted(unknown),
-                )
-            )
-        envelope = {
-            "schema_version": _RUNTIME_SNAPSHOT_SCHEMA_VERSION,
-            "kind": _RUNTIME_SNAPSHOT_KEY,
-            "expires_at": time.time() + _RUNTIME_SNAPSHOT_TTL_SECONDS,
-            "payload": payload,
-        }
-        encoded = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
-        if len(encoded) > _RUNTIME_SNAPSHOT_MAX_BYTES:
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.snapshot_too_large",
-                    default="Runtime snapshot exceeds working-state size limit",
-                )
-            )
-        return envelope
+        return self._snapshot.create_envelope(payload)
 
     def _runtime_snapshot_payload(self, envelope: dict[str, Any]) -> dict[str, Any]:
-        schema_version = int(envelope.get("schema_version", 0))
-        if schema_version not in {1, 2, _RUNTIME_SNAPSHOT_SCHEMA_VERSION}:
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.unsupported_snapshot_schema",
-                    default="Unsupported runtime snapshot schema version",
-                )
-            )
-        if str(envelope.get("kind", "")) != _RUNTIME_SNAPSHOT_KEY:
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.invalid_snapshot_kind",
-                    default="Invalid runtime snapshot kind",
-                )
-            )
-        expires_at = float(envelope.get("expires_at", 0) or 0)
-        if expires_at and expires_at < time.time():
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.snapshot_expired",
-                    default="Runtime snapshot expired",
-                )
-            )
-        payload = dict(envelope.get("payload", {}))
-        allowed_keys = (
-            _RUNTIME_SNAPSHOT_V1_ALLOWED_KEYS
-            if schema_version == 1
-            else _RUNTIME_SNAPSHOT_V2_ALLOWED_KEYS
-            if schema_version == 2
-            else _RUNTIME_SNAPSHOT_V3_ALLOWED_KEYS
-        )
-        unknown = set(payload) - allowed_keys
-        if unknown:
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.snapshot_contains_unsupported_keys",
-                    default="Runtime snapshot contains unsupported keys: {keys}",
-                    keys=sorted(unknown),
-                )
-            )
-        encoded = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
-        if len(encoded) > _RUNTIME_SNAPSHOT_MAX_BYTES:
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.snapshot_too_large",
-                    default="Runtime snapshot exceeds working-state size limit",
-                )
-            )
-        return payload
+        return self._snapshot.extract_payload(envelope)
 
     def _store_resume_messages(
         self,
@@ -1282,28 +1296,7 @@ class ToolExecutor:
         )
 
     def _load_resume_messages(self, resume_messages_ref: str) -> list[dict[str, Any]]:
-        artifact = self.store.get_artifact(resume_messages_ref)
-        if artifact is None:
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.unknown_resume_messages_artifact",
-                    default="Unknown resume messages artifact: {resume_messages_ref}",
-                    resume_messages_ref=resume_messages_ref,
-                )
-            )
-        payload: Any = json.loads(self.artifact_store.read_text(artifact.uri))
-        if not isinstance(payload, list):
-            raise RuntimeError(
-                _t(
-                    "kernel.executor.error.resume_messages_not_list",
-                    default="Runtime resume messages artifact is not a list",
-                )
-            )
-        return [
-            cast(dict[str, Any], message)
-            for message in cast(list[Any], payload)
-            if isinstance(message, dict)
-        ]
+        return self._snapshot.load_resume_messages(resume_messages_ref)
 
     def _store_runtime_snapshot_artifact(
         self,
@@ -2027,21 +2020,23 @@ class ToolExecutor:
         if "actor" in request_overrides:
             actor: Any = request_overrides["actor"]
             if not isinstance(actor, dict):
-                raise RuntimeError(
+                raise ContractError(
+                    "invalid_override",
                     _t(
                         "kernel.executor.error.request_overrides_actor_dict",
                         default="request_overrides.actor must be a dict",
-                    )
+                    ),
                 )
             action_request.actor = dict(cast(dict[str, Any], actor))
         if "context" in request_overrides:
             context: Any = request_overrides["context"]
             if not isinstance(context, dict):
-                raise RuntimeError(
+                raise ContractError(
+                    "invalid_override",
                     _t(
                         "kernel.executor.error.request_overrides_context_dict",
                         default="request_overrides.context must be a dict",
-                    )
+                    ),
                 )
             merged_context = dict(action_request.context)
             merged_context.update(cast(dict[str, Any], context))
@@ -2207,67 +2202,22 @@ class ToolExecutor:
         action_request: ActionRequest,
         attempt_ctx: TaskExecutionContext,
     ) -> str:
-        payload = self._state_witness_payload(action_request, attempt_ctx)
-        witness_ref = self._store_json_artifact(
-            payload=payload,
-            kind="state.witness",
-            attempt_ctx=attempt_ctx,
-            metadata={"tool_name": action_request.tool_name},
-            event_type="witness.captured",
-            entity_type="step_attempt",
-            entity_id=attempt_ctx.step_attempt_id,
-            payload_summary={
-                "tool_name": action_request.tool_name,
-                "action_class": action_request.action_class,
-            },
+        return self._witness.capture(
+            action_request, attempt_ctx, store_artifact=self._store_json_artifact
         )
-        return witness_ref
 
     def _state_witness_payload(
         self,
         action_request: ActionRequest,
         attempt_ctx: TaskExecutionContext,
     ) -> dict[str, Any]:
-        workspace_root = Path(attempt_ctx.workspace_root or ".").resolve()
-        target_paths = list(action_request.derived.get("target_paths", []))
-        files = [self._path_witness(path, workspace_root=workspace_root) for path in target_paths]
-        return {
-            "action_class": action_request.action_class,
-            "tool_name": action_request.tool_name,
-            "resource_scopes": list(action_request.resource_scopes),
-            "cwd": str(workspace_root),
-            "git": self._git_witness(workspace_root),
-            "files": files,
-            "network_hosts": list(action_request.derived.get("network_hosts", [])),
-            "command_preview": action_request.derived.get("command_preview"),
-        }
+        return self._witness.payload(action_request, attempt_ctx)
 
     def _path_witness(self, path: str, *, workspace_root: Path) -> dict[str, Any]:
-        candidate = Path(path)
-        if not candidate.is_absolute():
-            candidate = (workspace_root / candidate).resolve()
-        result: dict[str, Any] = {"path": str(candidate)}
-        try:
-            exists = candidate.exists()
-        except OSError as exc:
-            return {"path": str(candidate), "error": str(exc), "exists": False}
-        result["exists"] = exists
-        if not exists:
-            return result
-        try:
-            stat = candidate.stat()
-            result["mtime_ns"] = stat.st_mtime_ns
-            result["size"] = stat.st_size
-            if candidate.is_file():
-                result["sha256"] = hashlib.sha256(candidate.read_bytes()).hexdigest()
-            else:
-                result["kind"] = "directory"
-        except OSError as exc:
-            result["error"] = str(exc)
-        return result
+        return self._witness.path_witness(path, workspace_root=workspace_root)
 
     def _git_witness(self, workspace_root: Path) -> dict[str, Any]:
-        return self.git_worktree.snapshot(workspace_root).to_witness()
+        return self._witness.git_witness(workspace_root)
 
     def _validate_state_witness(
         self,
@@ -2275,25 +2225,7 @@ class ToolExecutor:
         action_request: ActionRequest,
         attempt_ctx: TaskExecutionContext,
     ) -> bool:
-        artifact = self.store.get_artifact(witness_ref)
-        if artifact is None:
-            return False
-        stored = json.loads(self.artifact_store.read_text(artifact.uri))
-        current = self._state_witness_payload(action_request, attempt_ctx)
-        valid = stored == current
-        self.store.append_event(
-            event_type="witness.validated" if valid else "witness.failed",
-            entity_type="step_attempt",
-            entity_id=attempt_ctx.step_attempt_id,
-            task_id=attempt_ctx.task_id,
-            step_id=attempt_ctx.step_id,
-            actor="kernel",
-            payload={
-                "state_witness_ref": witness_ref,
-                "tool_name": action_request.tool_name,
-            },
-        )
-        return valid
+        return self._witness.validate(witness_ref, action_request, attempt_ctx)
 
     def _requested_action_payload(
         self,
@@ -2677,26 +2609,39 @@ class ToolExecutor:
             "witness_drift": "witness_drift_reenter_policy",
             "approval_drift": "approval_drift_reenter_policy",
             "evidence_drift": "evidence_drift_reenter_policy",
+            "contract_expiry": "contract_expiry_reenter_policy",
+            "policy_version_drift": "policy_version_drift_reenter_policy",
         }.get(drift_reason, "contract_drift_reenter_policy")
         reentry_boundary = {
             "witness_drift": "policy_recompile",
             "approval_drift": "approval_revalidation",
             "evidence_drift": "admission_recompile",
+            "contract_expiry": "policy_recompile",
+            "policy_version_drift": "policy_recompile",
         }.get(drift_reason, "policy_recompile")
         evidence_summary = {
             "witness_drift": "Evidence invalidated because the state witness drifted before execution.",
             "approval_drift": "Evidence invalidated because the approval context drifted before execution.",
             "evidence_drift": "Evidence invalidated because the prior evidence case is no longer admissible.",
+            "contract_expiry": "Contract expired before execution could proceed.",
+            "policy_version_drift": "Policy version changed since contract was issued.",
         }.get(drift_reason, "Evidence invalidated because the contract loop drifted.")
         authorization_summary = {
             "witness_drift": "Authorization plan invalidated because the state witness drifted.",
             "approval_drift": "Authorization plan invalidated because approval must be revalidated.",
             "evidence_drift": "Authorization plan invalidated because the supporting evidence drifted.",
+            "contract_expiry": "Contract expired before execution could proceed.",
+            "policy_version_drift": "Policy version changed since contract was issued.",
         }.get(drift_reason, "Authorization plan invalidated because the contract loop drifted.")
         successor_contract_id = (
             self.store.generate_id("contract") if hasattr(self.store, "generate_id") else None
         )
         if current.execution_contract_ref and successor_contract_id:
+            if drift_reason == "contract_expiry":
+                self.store.update_execution_contract(
+                    current.execution_contract_ref,
+                    status="expired",
+                )
             self.execution_contracts.supersede(
                 current.execution_contract_ref,
                 superseded_by_contract_id=successor_contract_id,
@@ -2704,16 +2649,32 @@ class ToolExecutor:
                 reason=reason_key,
             )
         if current.evidence_case_ref:
-            self.evidence_cases.invalidate(
-                current.evidence_case_ref,
-                contradictions=[drift_reason],
-                summary=evidence_summary,
-            )
+            if drift_reason == "contract_expiry":
+                self.evidence_cases.mark_expired(
+                    current.evidence_case_ref,
+                    summary=evidence_summary,
+                )
+            elif drift_reason == "policy_version_drift":
+                self.evidence_cases.mark_stale(
+                    current.evidence_case_ref,
+                    summary=evidence_summary,
+                )
+            else:
+                self.evidence_cases.invalidate(
+                    current.evidence_case_ref,
+                    contradictions=[drift_reason],
+                    summary=evidence_summary,
+                )
         if current.authorization_plan_ref:
+            auth_status = {
+                "contract_expiry": "expired",
+                "policy_version_drift": "superseded",
+            }.get(drift_reason, "invalidated")
             self.authorization_plans.invalidate(
                 current.authorization_plan_ref,
                 gaps=[drift_reason],
                 summary=authorization_summary,
+                status=auth_status,
             )
         if current.approval_id:
             self.store.append_event(

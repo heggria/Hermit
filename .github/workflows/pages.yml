@@ -44,11 +44,16 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install system dependencies for social cards
+        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libffi-dev
+
       - name: Sync docs environment
         run: uv sync --group docs
 
       - name: Build docs
         run: make docs-build
+        env:
+          CI: "true"
 
       - name: Configure Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b

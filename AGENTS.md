@@ -47,7 +47,7 @@ make test-cov         # Run tests with coverage
 make lint             # Ruff linting
 make format           # Ruff formatting
 make verify           # Full verification: version-check, lint, test, package-check, install-check
-make check            # Quick check: lint + test
+make check            # Quick check: lint + typecheck + test
 make precommit-install # Install git hooks (scripts/git-hooks/)
 ```
 
@@ -61,9 +61,9 @@ Run a single test:
 uv run pytest tests/test_some_file.py::test_function_name -q
 ```
 
-Kernel convergence tests (core subset):
+Kernel tests (core subset):
 ```bash
-make test-kernel-convergence
+make test-kernel
 ```
 
 ## Development Environment

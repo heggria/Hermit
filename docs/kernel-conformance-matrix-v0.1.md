@@ -24,6 +24,9 @@ Status legend:
 | Memory writes are evidence-bound and kernel-backed | `implemented` | `src/hermit/kernel/context/memory/knowledge.py`, `src/hermit/kernel/context/memory/governance.py`, `src/hermit/plugins/builtin/hooks/memory/hooks.py` | `tests/unit/kernel/test_memory_governance.py`, `tests/unit/plugins/memory/test_memory_hooks.py`, CLI `memory export` |
 | Verifiable profile exposes proof coverage and exportable bundles | `implemented` | `src/hermit/kernel/verification/proofs/proofs.py`, `src/hermit/kernel/ledger/events/store_ledger.py`, `src/hermit/surfaces/cli/main.py` | `tests/integration/kernel/test_task_kernel_policy_executor.py`, CLI `task proof-export` |
 | Strong signed proofs and inclusion proofs are available when signing is configured | `conditional` | `src/hermit/kernel/verification/proofs/proofs.py`, `src/hermit/kernel/ledger/events/store_ledger.py` | `tests/unit/kernel/test_kernel_store_tasks_support.py`, CLI `task claim-status` |
+| All consequential action types produce durable reconciliation records | `implemented` | `src/hermit/kernel/execution/recovery/reconcile.py`, `src/hermit/kernel/execution/recovery/reconciliations.py` | `tests/unit/kernel/test_reconcile_service.py` |
+| Proof export reconstructs full contract/evidence/authority/receipt/reconciliation chains | `implemented` | `src/hermit/kernel/verification/proofs/proofs.py` | `tests/unit/kernel/test_proof_chain_completeness.py` |
+| Contract-sensitive retries invalidate stale contract, approval, evidence, and witness state | `implemented` | `src/hermit/kernel/execution/executor/executor.py`, `src/hermit/kernel/artifacts/lineage/evidence_cases.py` | `tests/unit/kernel/test_contract_expiry_and_policy_revalidation.py` |
 
 ## Current Hard-Cut Boundaries
 

@@ -5,7 +5,11 @@ from types import ModuleType, SimpleNamespace
 
 from typer.testing import CliRunner
 
-import hermit.surfaces.cli.main as main_mod
+import hermit.surfaces.cli._commands_memory as memory_mod
+import hermit.surfaces.cli._commands_plugin as plugin_mod
+import hermit.surfaces.cli._commands_schedule as schedule_mod
+import hermit.surfaces.cli._commands_task as task_mod
+from hermit.surfaces.cli.main import app
 
 
 def test_cli_plugin_and_task_commands_cover_error_paths(tmp_path: Path, monkeypatch) -> None:
@@ -16,35 +20,34 @@ def test_cli_plugin_and_task_commands_cover_error_paths(tmp_path: Path, monkeypa
     settings.plugins_dir.mkdir(parents=True, exist_ok=True)
     (settings.plugins_dir / "existing").mkdir()
 
-    monkeypatch.setattr(main_mod, "get_settings", lambda: settings)
-    monkeypatch.setattr(main_mod, "_ensure_workspace", lambda settings: None)
+    monkeypatch.setattr(plugin_mod, "get_settings", lambda: settings)
+    monkeypatch.setattr(plugin_mod, "ensure_workspace", lambda settings: None)
     monkeypatch.setattr(
-        main_mod.subprocess,
+        plugin_mod.subprocess,
         "run",
         lambda *args, **kwargs: SimpleNamespace(returncode=1, stderr="clone failed"),
     )
-    monkeypatch.setattr(
-        main_mod,
-        "_get_kernel_store",
-        lambda: SimpleNamespace(
-            get_task=lambda task_id: None,
-            get_capability_grant=lambda grant_id: None,
-            get_memory_record=lambda memory_id: None,
-        ),
+
+    fake_store = SimpleNamespace(
+        get_task=lambda task_id: None,
+        get_capability_grant=lambda grant_id: None,
+        get_memory_record=lambda memory_id: None,
     )
+    monkeypatch.setattr(task_mod, "get_settings", lambda: settings)
+    monkeypatch.setattr(task_mod, "ensure_workspace", lambda settings: None)
+    monkeypatch.setattr(task_mod, "get_kernel_store", lambda: fake_store)
+    monkeypatch.setattr(memory_mod, "get_settings", lambda: settings)
+    monkeypatch.setattr(memory_mod, "ensure_workspace", lambda settings: None)
+    monkeypatch.setattr(memory_mod, "get_kernel_store", lambda: fake_store)
 
     runner = CliRunner()
-    install_exists = runner.invoke(
-        main_mod.app, ["plugin", "install", "https://example.com/existing.git"]
-    )
-    install_failed = runner.invoke(
-        main_mod.app, ["plugin", "install", "https://example.com/new.git"]
-    )
-    info_missing = runner.invoke(main_mod.app, ["plugin", "info", "missing"])
-    task_show_missing = runner.invoke(main_mod.app, ["task", "show", "task-missing"])
-    grant_missing = runner.invoke(main_mod.app, ["task", "capability", "revoke", "grant-missing"])
-    memory_inspect_missing = runner.invoke(main_mod.app, ["memory", "inspect", "memory-missing"])
-    memory_inspect_require_target = runner.invoke(main_mod.app, ["memory", "inspect"])
+    install_exists = runner.invoke(app, ["plugin", "install", "https://example.com/existing.git"])
+    install_failed = runner.invoke(app, ["plugin", "install", "https://example.com/new.git"])
+    info_missing = runner.invoke(app, ["plugin", "info", "missing"])
+    task_show_missing = runner.invoke(app, ["task", "show", "task-missing"])
+    grant_missing = runner.invoke(app, ["task", "capability", "revoke", "grant-missing"])
+    memory_inspect_missing = runner.invoke(app, ["memory", "inspect", "memory-missing"])
+    memory_inspect_require_target = runner.invoke(app, ["memory", "inspect"])
 
     assert install_exists.exit_code == 1
     assert "already exists" in install_exists.output
@@ -81,13 +84,13 @@ def test_cli_schedule_and_autostart_cover_validation_and_not_found(
 
     import hermit.surfaces.cli as surfaces_cli_pkg
 
-    monkeypatch.setattr(main_mod, "_get_schedule_store", lambda: store)
+    monkeypatch.setattr(schedule_mod, "get_schedule_store", lambda: store)
     monkeypatch.setattr(surfaces_cli_pkg, "autostart", autostart_mod, raising=False)
     monkeypatch.setitem(__import__("sys").modules, "hermit.surfaces.cli.autostart", autostart_mod)
 
     runner = CliRunner()
     add_invalid_choice = runner.invoke(
-        main_mod.app,
+        app,
         [
             "schedule",
             "add",
@@ -102,25 +105,25 @@ def test_cli_schedule_and_autostart_cover_validation_and_not_found(
         ],
     )
     add_invalid_interval = runner.invoke(
-        main_mod.app,
+        app,
         ["schedule", "add", "--name", "x", "--prompt", "y", "--interval", "30"],
     )
     add_invalid_datetime = runner.invoke(
-        main_mod.app,
+        app,
         ["schedule", "add", "--name", "x", "--prompt", "y", "--once", "not-a-date"],
     )
     add_past_once = runner.invoke(
-        main_mod.app,
+        app,
         ["schedule", "add", "--name", "x", "--prompt", "y", "--once", "2020-01-01T00:00:00"],
     )
-    remove_missing = runner.invoke(main_mod.app, ["schedule", "remove", "missing"])
-    enable_missing = runner.invoke(main_mod.app, ["schedule", "enable", "missing"])
-    disable_missing = runner.invoke(main_mod.app, ["schedule", "disable", "missing"])
-    history_empty = runner.invoke(main_mod.app, ["schedule", "history"])
-    list_empty = runner.invoke(main_mod.app, ["schedule", "list"])
-    auto_enable = runner.invoke(main_mod.app, ["autostart", "enable", "--adapter", "feishu"])
-    auto_disable = runner.invoke(main_mod.app, ["autostart", "disable", "--adapter", "feishu"])
-    auto_status = runner.invoke(main_mod.app, ["autostart", "status", "--adapter", "feishu"])
+    remove_missing = runner.invoke(app, ["schedule", "remove", "missing"])
+    enable_missing = runner.invoke(app, ["schedule", "enable", "missing"])
+    disable_missing = runner.invoke(app, ["schedule", "disable", "missing"])
+    history_empty = runner.invoke(app, ["schedule", "history"])
+    list_empty = runner.invoke(app, ["schedule", "list"])
+    auto_enable = runner.invoke(app, ["autostart", "enable", "--adapter", "feishu"])
+    auto_disable = runner.invoke(app, ["autostart", "disable", "--adapter", "feishu"])
+    auto_status = runner.invoke(app, ["autostart", "status", "--adapter", "feishu"])
 
     assert add_invalid_choice.exit_code == 1
     assert "exactly one" in add_invalid_choice.output

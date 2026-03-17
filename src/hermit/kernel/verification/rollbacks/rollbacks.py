@@ -8,6 +8,7 @@ from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.authority.grants import CapabilityGrantService
 from hermit.kernel.authority.workspaces import WorkspaceLeaseService
+from hermit.kernel.errors import RollbackError
 from hermit.kernel.execution.suspension.git_worktree import GitWorktreeInspector
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy.approvals.decisions import DecisionService
@@ -219,7 +220,7 @@ class RollbackService:
             repo_path = Path(str(prestate["repo_path"]))
             head = str(prestate["head"])
             if bool(prestate.get("dirty")):
-                raise RuntimeError(self._t("kernel.rollback.error.dirty_repo"))
+                raise RollbackError("dirty_repo", self._t("kernel.rollback.error.dirty_repo"))
             self._git_worktree().hard_reset(repo_path, head)
             return {"result_summary": self._t("kernel.rollback.result.git_reset", head=head)}
         if receipt.action_type == "memory_write" and strategy == "supersede_or_invalidate":
@@ -234,8 +235,9 @@ class RollbackService:
                     count=len(targets.get("memory_ids", [])),
                 )
             }
-        raise RuntimeError(
-            self._t("kernel.rollback.error.strategy_not_executable", strategy=strategy)
+        raise RollbackError(
+            "strategy_not_executable",
+            self._t("kernel.rollback.error.strategy_not_executable", strategy=strategy),
         )
 
     def _mark_unsupported(self, receipt: ReceiptRecord, summary: str) -> dict[str, Any]:
@@ -248,10 +250,14 @@ class RollbackService:
 
     def _prestate_payload(self, receipt: ReceiptRecord) -> dict[str, Any]:
         if not receipt.rollback_artifact_refs:
-            raise RuntimeError(self._t("kernel.rollback.error.prestate_missing"))
+            raise RollbackError(
+                "prestate_missing", self._t("kernel.rollback.error.prestate_missing")
+            )
         artifact = self.store.get_artifact(receipt.rollback_artifact_refs[0])
         if artifact is None:
-            raise RuntimeError(self._t("kernel.rollback.error.artifact_missing"))
+            raise RollbackError(
+                "artifact_missing", self._t("kernel.rollback.error.artifact_missing")
+            )
         return json.loads(self.artifact_store.read_text(artifact.uri))
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:

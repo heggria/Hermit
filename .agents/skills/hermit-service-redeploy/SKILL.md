@@ -9,7 +9,7 @@ Use this skill after changes that must take effect in the locally running Hermit
 
 ## When to use
 
-- Modified code under `hermit/` that is exercised by `hermit serve`
+- Modified code under `src/hermit/` that is exercised by `hermit serve`
 - Changed builtin plugins, adapters, scheduler, webhook, or Feishu behavior
 - Changed packaging or install behavior where the running process may still use the installed `uv tool` copy
 - Updated config or resources that are loaded only at service startup or reload

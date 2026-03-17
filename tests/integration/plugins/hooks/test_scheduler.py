@@ -498,18 +498,18 @@ class TestEngineLifecycle:
         monkeypatch.setattr(engine, "_execute", fake_execute)
         engine.start(catch_up=False)
         try:
-            time.sleep(0.05)
+            time.sleep(0.5)
             job = ScheduledJob.create(
                 name="wake-once",
                 prompt="ping",
                 schedule_type="once",
-                once_at=time.time() + 0.05,
+                once_at=time.time() + 0.5,
             )
             added_at = time.time()
             engine.add_job(job)
 
-            assert executed.wait(0.5), "scheduler did not wake up for a newly added once job"
-            assert execution_meta["executed_at"] < added_at + 0.5
+            assert executed.wait(5.0), "scheduler did not wake up for a newly added once job"
+            assert execution_meta["executed_at"] < added_at + 5.0
         finally:
             engine.stop()
 

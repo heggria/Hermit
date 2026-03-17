@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import resolve_locale, tr, tr_list_all_locales
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.services.ingress_router import BindingDecision, IngressRouter
@@ -32,21 +32,10 @@ _LOW_SIGNAL_RE = re.compile(r"^[\s\?\uff1f!！,，。\.~～…]+$")
 _SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
 _FEISHU_TAG_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
 _ARTIFACT_REF_RE = re.compile(r"\bartifact_[a-z0-9]{6,}\b", re.IGNORECASE)
-_GREETING_TEXTS = {
-    "hi",
-    "hello",
-    "你好",
-    "您好",
-    "嗨",
-    "哈喽",
-    "在吗",
-    "有人吗",
-    "早上好",
-    "上午好",
-    "中午好",
-    "下午好",
-    "晚上好",
-}
+
+
+def _greeting_texts() -> set[str]:
+    return set(tr_list_all_locales("kernel.nlp.greeting_texts"))
 
 
 @dataclass(frozen=True)
@@ -534,7 +523,10 @@ class TaskController:
                 parent_task_id=None,
             )
 
-        if self._is_explicit_new_task_message(normalized) and "顺便" not in normalized:
+        _branch_primaries = tr_list_all_locales("kernel.nlp.continuation.branch_primary")
+        if self._is_explicit_new_task_message(normalized) and not any(
+            kw in normalized for kw in _branch_primaries
+        ):
             self.store.update_ingress(
                 ingress.ingress_id,
                 status="bound",
@@ -1401,7 +1393,8 @@ class TaskController:
         lowered = cleaned.lower()
         if not cleaned:
             return True
-        if lowered in _GREETING_TEXTS or cleaned in _GREETING_TEXTS:
+        greetings = _greeting_texts()
+        if lowered in greetings or cleaned in greetings:
             return True
         return bool(_LOW_SIGNAL_RE.match(cleaned))
 

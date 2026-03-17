@@ -25,9 +25,9 @@ def test_memory_engine_save_and_load(tmp_path) -> None:
     path = tmp_path / "memories.md"
     engine = MemoryEngine(path)
     source = {
-        "用户偏好": [
+        "user_preference": [
             MemoryEntry(
-                category="用户偏好",
+                category="user_preference",
                 content="所有回答使用简体中文",
                 score=8,
                 locked=True,
@@ -39,20 +39,20 @@ def test_memory_engine_save_and_load(tmp_path) -> None:
     engine.save(source)
     loaded = engine.load()
 
-    assert loaded["用户偏好"][0].content == "所有回答使用简体中文"
-    assert loaded["用户偏好"][0].locked is True
+    assert loaded["user_preference"][0].content == "所有回答使用简体中文"
+    assert loaded["user_preference"][0].locked is True
 
 
 def test_memory_engine_loads_legacy_format_without_meta(tmp_path) -> None:
     path = tmp_path / "memories.md"
     path.write_text(
-        "## 用户偏好\n- [2026-03-09] [s:8🔒] 所有回答使用简体中文\n",
+        "## user_preference\n- [2026-03-09] [s:8🔒] 所有回答使用简体中文\n",
         encoding="utf-8",
     )
     engine = MemoryEngine(path)
     loaded = engine.load()
 
-    entry = loaded["用户偏好"][0]
+    entry = loaded["user_preference"][0]
     assert entry.content == "所有回答使用简体中文"
     assert entry.confidence == 0.5
     assert entry.supersedes == []
@@ -64,9 +64,9 @@ def test_memory_engine_roundtrips_meta_comment(tmp_path) -> None:
     engine = MemoryEngine(path)
     engine.save(
         {
-            "项目约定": [
+            "project_convention": [
                 MemoryEntry(
-                    category="项目约定",
+                    category="project_convention",
                     content="默认工作目录改为 /repo",
                     created_at=date(2026, 3, 9),
                     updated_at=date(2026, 3, 11),
@@ -79,7 +79,7 @@ def test_memory_engine_roundtrips_meta_comment(tmp_path) -> None:
 
     raw = path.read_text(encoding="utf-8")
     assert "<!--memory:" in raw
-    loaded = engine.load()["项目约定"][0]
+    loaded = engine.load()["project_convention"][0]
     assert loaded.updated_at == date(2026, 3, 11)
     assert loaded.confidence == 0.82
     assert loaded.supersedes == ["默认工作目录改为 /old"]
@@ -90,9 +90,9 @@ def test_memory_engine_record_session_applies_decay_and_reference_boost(tmp_path
     engine = MemoryEngine(path)
     engine.save(
         {
-            "技术决策": [
-                MemoryEntry(category="技术决策", content="SQLite 适合 Agent 记忆", score=5),
-                MemoryEntry(category="技术决策", content="ChromaDB 对 MVP 过重", score=5),
+            "tech_decision": [
+                MemoryEntry(category="tech_decision", content="SQLite 适合 Agent 记忆", score=5),
+                MemoryEntry(category="tech_decision", content="ChromaDB 对 MVP 过重", score=5),
             ]
         }
     )
@@ -103,8 +103,8 @@ def test_memory_engine_record_session_applies_decay_and_reference_boost(tmp_path
         session_index=1,
     )
 
-    assert updated["技术决策"][0].score == 6
-    assert updated["技术决策"][1].score == 4
+    assert updated["tech_decision"][0].score == 6
+    assert updated["tech_decision"][1].score == 4
 
 
 def test_memory_engine_record_session_keeps_locked_entries_and_locks_at_threshold(tmp_path) -> None:
@@ -112,11 +112,13 @@ def test_memory_engine_record_session_keeps_locked_entries_and_locks_at_threshol
     engine = MemoryEngine(path)
     engine.save(
         {
-            "项目约定": [
-                MemoryEntry(category="项目约定", content="固定规则", score=8, locked=True),
+            "project_convention": [
+                MemoryEntry(
+                    category="project_convention", content="固定规则", score=8, locked=True
+                ),
             ],
-            "技术决策": [
-                MemoryEntry(category="技术决策", content="SQLite 方案", score=6, locked=False),
+            "tech_decision": [
+                MemoryEntry(category="tech_decision", content="SQLite 方案", score=6, locked=False),
             ],
         }
     )
@@ -127,10 +129,10 @@ def test_memory_engine_record_session_keeps_locked_entries_and_locks_at_threshol
         session_index=1,
     )
 
-    assert updated["项目约定"][0].score == 8
-    assert updated["项目约定"][0].locked is True
-    assert updated["技术决策"][0].score == 7
-    assert updated["技术决策"][0].locked is True
+    assert updated["project_convention"][0].score == 8
+    assert updated["project_convention"][0].locked is True
+    assert updated["tech_decision"][0].score == 7
+    assert updated["tech_decision"][0].locked is True
 
 
 def test_memory_engine_record_session_appends_unique_new_entry(tmp_path) -> None:
@@ -139,11 +141,11 @@ def test_memory_engine_record_session_appends_unique_new_entry(tmp_path) -> None
     engine.save({})
 
     updated = engine.record_session(
-        new_entries=[MemoryEntry(category="环境与工具", content="默认使用 uv 管理依赖")],
+        new_entries=[MemoryEntry(category="tooling_environment", content="默认使用 uv 管理依赖")],
         session_index=1,
     )
 
-    assert [entry.content for entry in updated["环境与工具"]] == ["默认使用 uv 管理依赖"]
+    assert [entry.content for entry in updated["tooling_environment"]] == ["默认使用 uv 管理依赖"]
 
 
 def test_memory_engine_prevents_substring_duplicates(tmp_path) -> None:
@@ -151,18 +153,20 @@ def test_memory_engine_prevents_substring_duplicates(tmp_path) -> None:
     engine = MemoryEngine(path)
     engine.save(
         {
-            "项目约定": [
-                MemoryEntry(category="项目约定", content="H5Bridge 需兼容客户端参数"),
+            "project_convention": [
+                MemoryEntry(category="project_convention", content="H5Bridge 需兼容客户端参数"),
             ]
         }
     )
 
     updated = engine.record_session(
-        new_entries=[MemoryEntry(category="项目约定", content="H5Bridge 需兼容客户端参数")],
+        new_entries=[
+            MemoryEntry(category="project_convention", content="H5Bridge 需兼容客户端参数")
+        ],
         session_index=1,
     )
 
-    assert len(updated["项目约定"]) == 1
+    assert len(updated["project_convention"]) == 1
 
 
 def test_memory_engine_append_entries_only_adds_new_items(tmp_path) -> None:
@@ -170,21 +174,25 @@ def test_memory_engine_append_entries_only_adds_new_items(tmp_path) -> None:
     engine = MemoryEngine(path)
     engine.save(
         {
-            "用户偏好": [
-                MemoryEntry(category="用户偏好", content="统一使用中文", score=8, locked=True),
+            "user_preference": [
+                MemoryEntry(
+                    category="user_preference", content="统一使用中文", score=8, locked=True
+                ),
             ]
         }
     )
 
     updated = engine.append_entries(
         [
-            MemoryEntry(category="用户偏好", content="统一使用中文"),
-            MemoryEntry(category="项目约定", content="默认在仓库根目录执行命令"),
+            MemoryEntry(category="user_preference", content="统一使用中文"),
+            MemoryEntry(category="project_convention", content="默认在仓库根目录执行命令"),
         ]
     )
 
-    assert len(updated["用户偏好"]) == 1
-    assert [entry.content for entry in updated["项目约定"]] == ["默认在仓库根目录执行命令"]
+    assert len(updated["user_preference"]) == 1
+    assert [entry.content for entry in updated["project_convention"]] == [
+        "默认在仓库根目录执行命令"
+    ]
 
 
 def test_memory_engine_append_entries_supersedes_old_version(tmp_path) -> None:
@@ -192,8 +200,8 @@ def test_memory_engine_append_entries_supersedes_old_version(tmp_path) -> None:
     engine = MemoryEngine(path)
     engine.save(
         {
-            "环境与工具": [
-                MemoryEntry(category="环境与工具", content="服务端口为 3000", score=5),
+            "tooling_environment": [
+                MemoryEntry(category="tooling_environment", content="服务端口为 3000", score=5),
             ]
         }
     )
@@ -201,11 +209,13 @@ def test_memory_engine_append_entries_supersedes_old_version(tmp_path) -> None:
     with patch("hermit.plugins.builtin.hooks.memory.engine.log.info") as log_mock:
         updated = engine.append_entries(
             [
-                MemoryEntry(category="环境与工具", content="服务端口改为 8080", confidence=0.8),
+                MemoryEntry(
+                    category="tooling_environment", content="服务端口改为 8080", confidence=0.8
+                ),
             ]
         )
 
-    entries = updated["环境与工具"]
+    entries = updated["tooling_environment"]
     assert len(entries) == 1
     assert entries[0].content == "服务端口改为 8080"
     assert entries[0].supersedes == ["服务端口为 3000"]
@@ -217,8 +227,8 @@ def test_memory_engine_uses_merge_function_when_threshold_exceeded(tmp_path) -> 
     engine = MemoryEngine(path)
     engine.save(
         {
-            "其他": [
-                MemoryEntry(category="其他", content=f"entry-{index}", score=5)
+            "other": [
+                MemoryEntry(category="other", content=f"entry-{index}", score=5)
                 for index in range(9)
             ]
         }
@@ -233,7 +243,7 @@ def test_memory_engine_uses_merge_function_when_threshold_exceeded(tmp_path) -> 
         ],
     )
 
-    assert [entry.content for entry in merged["其他"]] == ["merged"]
+    assert [entry.content for entry in merged["other"]] == ["merged"]
 
 
 def test_memory_engine_record_session_merges_similar_entries(tmp_path) -> None:
@@ -241,14 +251,22 @@ def test_memory_engine_record_session_merges_similar_entries(tmp_path) -> None:
     engine = MemoryEngine(path)
     engine.save(
         {
-            "项目约定": [
-                MemoryEntry(category="项目约定", content="默认工作目录使用 /repo", score=5),
-                MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo", score=5),
-                MemoryEntry(category="项目约定", content="统一在 /repo 根目录执行命令", score=5),
-                MemoryEntry(category="项目约定", content="部署走 Render", score=5),
-                MemoryEntry(category="项目约定", content="环境变量写入 .env", score=5),
-                MemoryEntry(category="项目约定", content="不要把 secrets 写进文档", score=5),
-                MemoryEntry(category="项目约定", content="统一使用中文", score=5),
+            "project_convention": [
+                MemoryEntry(
+                    category="project_convention", content="默认工作目录使用 /repo", score=5
+                ),
+                MemoryEntry(
+                    category="project_convention", content="默认工作目录固定到 /repo", score=5
+                ),
+                MemoryEntry(
+                    category="project_convention", content="统一在 /repo 根目录执行命令", score=5
+                ),
+                MemoryEntry(category="project_convention", content="部署走 Render", score=5),
+                MemoryEntry(category="project_convention", content="环境变量写入 .env", score=5),
+                MemoryEntry(
+                    category="project_convention", content="不要把 secrets 写进文档", score=5
+                ),
+                MemoryEntry(category="project_convention", content="统一使用中文", score=5),
             ]
         }
     )
@@ -260,7 +278,7 @@ def test_memory_engine_record_session_merges_similar_entries(tmp_path) -> None:
         merge_fn=_consolidate_category_entries,
     )
 
-    repo_entries = [entry for entry in merged["项目约定"] if "/repo" in entry.content]
+    repo_entries = [entry for entry in merged["project_convention"] if "/repo" in entry.content]
     assert len(repo_entries) == 1
     assert "默认工作目录" in repo_entries[0].content or "/repo" in repo_entries[0].content
 
@@ -270,15 +288,20 @@ def test_memory_engine_retrieve_prefers_query_relevant_entries(tmp_path) -> None
     engine = MemoryEngine(path)
     engine.save(
         {
-            "项目约定": [
+            "project_convention": [
                 MemoryEntry(
-                    category="项目约定", content="默认工作目录固定到 /repo", score=8, locked=True
+                    category="project_convention",
+                    content="默认工作目录固定到 /repo",
+                    score=8,
+                    locked=True,
                 ),
-                MemoryEntry(category="项目约定", content="部署走 Render", score=5),
+                MemoryEntry(category="project_convention", content="部署走 Render", score=5),
             ],
-            "环境与工具": [
-                MemoryEntry(category="环境与工具", content="服务端口改为 8080", score=6),
-                MemoryEntry(category="环境与工具", content="默认使用 uv 管理依赖", score=6),
+            "tooling_environment": [
+                MemoryEntry(category="tooling_environment", content="服务端口改为 8080", score=6),
+                MemoryEntry(
+                    category="tooling_environment", content="默认使用 uv 管理依赖", score=6
+                ),
             ],
         }
     )
@@ -298,19 +321,22 @@ def test_memory_engine_retrieval_prompt_respects_budget(tmp_path) -> None:
     engine = MemoryEngine(path)
     engine.save(
         {
-            "项目约定": [
+            "project_convention": [
                 MemoryEntry(
-                    category="项目约定", content="默认工作目录固定到 /repo", score=8, locked=True
+                    category="project_convention",
+                    content="默认工作目录固定到 /repo",
+                    score=8,
+                    locked=True,
                 ),
                 MemoryEntry(
-                    category="项目约定",
+                    category="project_convention",
                     content="统一在 /repo 根目录执行所有命令",
                     score=7,
                     locked=True,
                 ),
             ],
-            "环境与工具": [
-                MemoryEntry(category="环境与工具", content="服务端口改为 8080", score=6),
+            "tooling_environment": [
+                MemoryEntry(category="tooling_environment", content="服务端口改为 8080", score=6),
             ],
         }
     )
@@ -318,7 +344,7 @@ def test_memory_engine_retrieval_prompt_respects_budget(tmp_path) -> None:
     with patch("hermit.plugins.builtin.hooks.memory.engine.log.info") as log_mock:
         prompt = engine.retrieval_prompt("处理 /repo 的 8080 配置", limit=5, char_budget=80)
 
-    assert "以下是与当前任务最相关的跨会话记忆" in prompt
+    assert "Below are the most relevant cross-session memories" in prompt
     assert "服务端口改为 8080" not in prompt
     assert log_mock.call_count == 2
 
@@ -327,9 +353,12 @@ def test_memory_engine_retrieval_prompt_can_break_on_heading_budget(tmp_path) ->
     path = tmp_path / "memories.md"
     engine = MemoryEngine(path)
     categories = {
-        "项目约定": [
+        "project_convention": [
             MemoryEntry(
-                category="项目约定", content="默认工作目录固定到 /repo", score=8, locked=True
+                category="project_convention",
+                content="默认工作目录固定到 /repo",
+                score=8,
+                locked=True,
             )
         ]
     }
@@ -339,7 +368,7 @@ def test_memory_engine_retrieval_prompt_can_break_on_heading_budget(tmp_path) ->
             "处理 /repo", categories=categories, limit=5, char_budget=30
         )
 
-    assert "## 项目约定" not in prompt
+    assert "## project_convention" not in prompt
     assert log_mock.call_count == 2
 
 
@@ -414,8 +443,8 @@ def test_bump_session_index_initializes_and_increments(tmp_path) -> None:
 def test_should_checkpoint_on_explicit_memory_signal() -> None:
     should_checkpoint, reason = _should_checkpoint(
         [
-            {"role": "user", "content": "记住：以后统一用中文回复"},
-            {"role": "assistant", "content": [{"type": "text", "text": "收到"}]},
+            {"role": "user", "content": "Remember this: always reply in Chinese from now on"},
+            {"role": "assistant", "content": [{"type": "text", "text": "Got it."}]},
         ]
     )
     assert should_checkpoint is True
@@ -425,12 +454,18 @@ def test_should_checkpoint_on_explicit_memory_signal() -> None:
 def test_should_checkpoint_on_batched_conversation() -> None:
     should_checkpoint, reason = _should_checkpoint(
         [
-            {"role": "user", "content": "我们把默认工作目录固定到 /repo"},
+            {
+                "role": "user",
+                "content": "We decided to switch to /repo as the default working directory",
+            },
             {
                 "role": "assistant",
-                "content": [{"type": "text", "text": "好的，我会按这个约定执行。"}],
+                "content": [{"type": "text", "text": "OK, I will follow this convention."}],
             },
-            {"role": "user", "content": "另外部署走 render，环境变量放 .env，不写进文档。"},
+            {
+                "role": "user",
+                "content": "Also deploy via render, put env vars in .env, don't write them into docs.",
+            },
         ]
     )
     assert should_checkpoint is True
@@ -438,15 +473,20 @@ def test_should_checkpoint_on_batched_conversation() -> None:
 
 
 def test_should_merge_entries_detects_shared_topic() -> None:
-    left = MemoryEntry(category="项目约定", content="默认工作目录使用 /repo")
-    right = MemoryEntry(category="项目约定", content="统一在 /repo 根目录执行命令")
+    left = MemoryEntry(category="project_convention", content="默认工作目录使用 /repo")
+    right = MemoryEntry(category="project_convention", content="统一在 /repo 根目录执行命令")
     assert _should_merge_entries(left, right) is True
 
 
 def test_infer_confidence_prefers_hard_constraints() -> None:
-    assert _infer_confidence("默认工作目录固定到 /repo，必须执行") == 0.8
-    assert _infer_confidence("这里有一条比较长的普通经验总结，用于后续参考和复用。") == 0.65
-    assert _infer_confidence("简短备注") == 0.55
+    assert _infer_confidence("Default working directory fixed to /repo, must execute") == 0.8
+    assert (
+        _infer_confidence(
+            "Here is a longer general experience summary for future reference and reuse."
+        )
+        == 0.65
+    )
+    assert _infer_confidence("short note") == 0.55
 
 
 def test_inject_relevant_memory_fails_closed_without_kernel_context(tmp_path) -> None:
@@ -454,9 +494,12 @@ def test_inject_relevant_memory_fails_closed_without_kernel_context(tmp_path) ->
     engine = MemoryEngine(path)
     engine.save(
         {
-            "项目约定": [
+            "project_convention": [
                 MemoryEntry(
-                    category="项目约定", content="默认工作目录固定到 /repo", score=8, locked=True
+                    category="project_convention",
+                    content="默认工作目录固定到 /repo",
+                    score=8,
+                    locked=True,
                 ),
             ]
         }
@@ -470,7 +513,9 @@ def test_inject_relevant_memory_fails_closed_without_kernel_context(tmp_path) ->
 
 
 def test_memory_engine_duplicate_detection_supports_substring_overlap() -> None:
-    existing = [MemoryEntry(category="项目约定", content="默认工作目录固定到 /repo 根目录")]
+    existing = [
+        MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo 根目录")
+    ]
     assert MemoryEngine._is_duplicate(existing, "工作目录固定到 /repo") is True
 
 
@@ -479,8 +524,8 @@ def test_memory_engine_parse_meta_handles_invalid_json() -> None:
 
 
 def test_memory_engine_resolve_supersedes_skips_non_override() -> None:
-    existing = [MemoryEntry(category="项目约定", content="部署走 Render", score=5)]
-    new_entry = MemoryEntry(category="项目约定", content="统一使用中文", score=5)
+    existing = [MemoryEntry(category="project_convention", content="部署走 Render", score=5)]
+    new_entry = MemoryEntry(category="project_convention", content="统一使用中文", score=5)
 
     MemoryEngine._resolve_supersedes(existing, new_entry)
 
@@ -490,7 +535,12 @@ def test_memory_engine_resolve_supersedes_skips_non_override() -> None:
 
 def test_memory_engine_looks_like_override_covers_path_and_directional_terms() -> None:
     assert MemoryEngine._looks_like_override("默认工作目录为 /old", "默认工作目录改为 /new") is True
-    assert MemoryEngine._looks_like_override("部署方式 render", "现在部署方式 cloudrun") is True
+    assert (
+        MemoryEngine._looks_like_override(
+            "deploy method render", "switch to deploy method cloudrun"
+        )
+        is True
+    )
     assert MemoryEngine._looks_like_override("部署走 Render", "统一使用中文") is False
 
 
@@ -505,17 +555,17 @@ def test_memory_engine_shares_topic_handles_empty_and_substring() -> None:
 def test_group_entries_groups_by_category() -> None:
     grouped = group_entries(
         [
-            MemoryEntry(category="项目约定", content="A"),
-            MemoryEntry(category="环境与工具", content="B"),
+            MemoryEntry(category="project_convention", content="A"),
+            MemoryEntry(category="tooling_environment", content="B"),
         ]
     )
 
-    assert sorted(grouped) == ["环境与工具", "项目约定"]
+    assert sorted(grouped) == ["project_convention", "tooling_environment"]
 
 
 def test_memory_entry_post_init_clamps_updated_at_to_created_at() -> None:
     entry = MemoryEntry(
-        category="项目约定",
+        category="project_convention",
         content="A",
         created_at=date(2026, 3, 11),
         updated_at=date(2026, 3, 9),

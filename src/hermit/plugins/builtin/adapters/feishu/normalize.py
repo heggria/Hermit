@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, cast
 
+from hermit.infra.system.i18n import tr
+
 
 @dataclass
 class FeishuMessage:
@@ -85,7 +87,7 @@ def _extract_post_text(parsed: dict[str, Any]) -> str:
                     if isinstance(user_name, str) and user_name.strip():
                         pieces.append(f"@{user_name.strip()}")
                     elif user_id == "all":
-                        pieces.append("@所有人")
+                        pieces.append(tr("feishu.normalize.mention_all"))
             paragraph_text = "".join(pieces).strip()
             if paragraph_text:
                 segments.append(paragraph_text)

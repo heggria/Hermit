@@ -11,6 +11,7 @@ from typing import Any, cast
 import structlog
 
 from hermit.infra.storage import FileGuard, atomic_write
+from hermit.infra.system.i18n import tr
 from hermit.kernel.context.memory.text import (
     is_duplicate,
     looks_like_override,
@@ -21,7 +22,11 @@ from hermit.kernel.context.memory.text import (
 from hermit.kernel.context.memory.text import (
     summary_prompt as render_summary_prompt,
 )
-from hermit.plugins.builtin.hooks.memory.types import DEFAULT_CATEGORIES, MemoryEntry
+from hermit.plugins.builtin.hooks.memory.types import (
+    DEFAULT_CATEGORIES,
+    MemoryEntry,
+    normalize_category,
+)
 
 log = structlog.get_logger()
 
@@ -45,7 +50,7 @@ class MemoryEngine:
         for line in self.path.read_text(encoding="utf-8").splitlines():
             heading_match = HEADING_RE.match(line)
             if heading_match:
-                current_category = str(heading_match.group(1) or "")
+                current_category = normalize_category(str(heading_match.group(1) or ""))
                 categories.setdefault(current_category, [])
                 continue
             entry_match = ENTRY_RE.match(line)
@@ -124,7 +129,7 @@ class MemoryEngine:
             lowered_keywords = {keyword.lower() for keyword in used_keywords}
 
             for category, entries in categories.items():
-                slow_decay = category == "项目约定" and session_index % 2 == 0
+                slow_decay = category == "project_convention" and session_index % 2 == 0
                 for entry in entries:
                     if entry.locked:
                         continue
@@ -177,7 +182,7 @@ class MemoryEngine:
             )
             return ""
 
-        lines = ["以下是与当前任务最相关的跨会话记忆，只在相关时优先遵循："]
+        lines = [tr("kernel.memory.retrieval_intro")]
         total = len(lines[0])
         current_category: str | None = None
         injected = 0

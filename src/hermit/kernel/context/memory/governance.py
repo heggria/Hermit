@@ -6,91 +6,36 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from hermit.infra.system.i18n import tr_list_all_locales
 from hermit.kernel.context.memory.text import is_duplicate, shares_topic
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.task.models.records import BeliefRecord, MemoryRecord
-from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
+from hermit.plugins.builtin.hooks.memory.types import MemoryEntry, normalize_category
 
 MemoryScopeKind = str
 MemoryRetentionClass = str
 
 _TASK_STATE_TTL_SECONDS = 7 * 24 * 60 * 60
 _VOLATILE_FACT_TTL_SECONDS = 24 * 60 * 60
-_SENSITIVE_SIGNAL_TOKENS = ("病史", "医疗", "股价", "财务", "手机号", "身份证", "住址")
-_PREFERENCE_SIGNAL_TOKENS = (
-    "以后都",
-    "今后都",
-    "统一使用",
-    "统一回复",
-    "偏好",
-    "习惯",
-    "请一直",
-    "不要再",
-    "务必",
-    "必须",
-)
-_TASK_STATE_SIGNAL_TOKENS = (
-    "当前",
-    "正在",
-    "待办",
-    "未完成",
-    "已完成",
-    "已删除",
-    "已清理",
-    "进行中",
-    "已设定",
-    "用户希望",
-    "需要改写",
-    "下一步",
-    "稍后",
-)
-_PROJECT_CONVENTION_SIGNAL_TOKENS = (
-    "默认",
-    "约定",
-    "规范",
-    "命名",
-    "分支策略",
-    "部署流程",
-    "统一在",
-    "提交信息",
-    "工作目录",
-)
-_TOOLING_SIGNAL_TOKENS = (
-    "/",
-    "仓库位于",
-    "端口",
-    "API",
-    "环境变量",
-    "workspace",
-    "uv",
-    "python",
-    ".env",
-)
-_CLAIM_STOP_TOKENS = {
-    "当前",
-    "已经",
-    "已",
-    "正在",
-    "需要",
-    "用户",
-    "希望",
-    "默认",
-    "统一",
-    "全部",
-    "没有",
-    "任何",
-    "请",
-    "我",
-    "后续",
-}
-_SUBJECT_HINT_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"README(?:\.md)?", "readme"),
-    (r"定时任务|schedule", "schedule"),
-    (r"日报|daily report", "daily-report"),
-    (r"飞书|feishu", "feishu"),
-    (r"memory|记忆", "memory"),
-    (r"部署|deploy", "deploy"),
-)
+
+
+def _signal_tokens(key: str) -> tuple[str, ...]:
+    return tuple(tr_list_all_locales(key))
+
+
+def _claim_stop_tokens() -> set[str]:
+    return set(tr_list_all_locales("kernel.nlp.claim_stop_tokens"))
+
+
+def _subject_hint_patterns() -> tuple[tuple[str, str], ...]:
+    raw = tr_list_all_locales("kernel.nlp.subject_hint_patterns")
+    result: list[tuple[str, str]] = []
+    for item in raw:
+        if ":" not in item:
+            continue
+        pattern, subject = item.rsplit(":", 1)
+        result.append((pattern, subject))
+    return tuple(result)
 
 
 @dataclass(frozen=True)
@@ -138,29 +83,26 @@ _DEFAULT_POLICY = MemoryCategoryPolicy(
     ttl_seconds=_VOLATILE_FACT_TTL_SECONDS,
 )
 _CATEGORY_POLICIES: dict[str, MemoryCategoryPolicy] = {
-    "用户偏好": MemoryCategoryPolicy(
+    "user_preference": MemoryCategoryPolicy(
         "user_preference", "global", static_injection=True, retrieval_allowed=True
     ),
-    "项目约定": MemoryCategoryPolicy(
+    "project_convention": MemoryCategoryPolicy(
         "project_convention", "workspace", static_injection=True, retrieval_allowed=True
     ),
-    "工具与环境": MemoryCategoryPolicy(
+    "tooling_environment": MemoryCategoryPolicy(
         "tooling_environment", "workspace", static_injection=True, retrieval_allowed=True
     ),
-    "环境与工具": MemoryCategoryPolicy(
-        "tooling_environment", "workspace", static_injection=False, retrieval_allowed=True
-    ),
-    "进行中的任务": MemoryCategoryPolicy(
+    "active_task": MemoryCategoryPolicy(
         "task_state",
         "conversation",
         static_injection=False,
         retrieval_allowed=True,
         ttl_seconds=_TASK_STATE_TTL_SECONDS,
     ),
-    "技术决策": MemoryCategoryPolicy(
+    "tech_decision": MemoryCategoryPolicy(
         "volatile_fact", "conversation", static_injection=False, retrieval_allowed=True
     ),
-    "其他": MemoryCategoryPolicy(
+    "other": MemoryCategoryPolicy(
         "volatile_fact",
         "conversation",
         static_injection=False,
@@ -172,7 +114,8 @@ _CATEGORY_POLICIES: dict[str, MemoryCategoryPolicy] = {
 
 class MemoryGovernanceService:
     def policy_for(self, category: str) -> MemoryCategoryPolicy:
-        return _CATEGORY_POLICIES.get(category, _DEFAULT_POLICY)
+        normalized = normalize_category(category)
+        return _CATEGORY_POLICIES.get(normalized, _DEFAULT_POLICY)
 
     def classify_belief(
         self,
@@ -252,22 +195,34 @@ class MemoryGovernanceService:
 
     def analyze_claim(self, *, category: str, claim_text: str) -> ClaimSignals:
         text = claim_text.strip()
+        cat = normalize_category(category)
         matched_signals = {
-            "sensitive": [token for token in _SENSITIVE_SIGNAL_TOKENS if token in text],
-            "stable_preference": [token for token in _PREFERENCE_SIGNAL_TOKENS if token in text],
-            "task_state": [token for token in _TASK_STATE_SIGNAL_TOKENS if token in text],
-            "project_convention": [
-                token for token in _PROJECT_CONVENTION_SIGNAL_TOKENS if token in text
+            "sensitive": [
+                token for token in _signal_tokens("kernel.nlp.signal.sensitive") if token in text
             ],
-            "tooling_environment": [token for token in _TOOLING_SIGNAL_TOKENS if token in text],
+            "stable_preference": [
+                token for token in _signal_tokens("kernel.nlp.signal.preference") if token in text
+            ],
+            "task_state": [
+                token for token in _signal_tokens("kernel.nlp.signal.task_state") if token in text
+            ],
+            "project_convention": [
+                token
+                for token in _signal_tokens("kernel.nlp.signal.project_convention")
+                if token in text
+            ],
+            "tooling_environment": [
+                token for token in _signal_tokens("kernel.nlp.signal.tooling") if token in text
+            ],
         }
         return ClaimSignals(
             sensitive=bool(matched_signals["sensitive"]),
-            stable_preference=category == "用户偏好" or bool(matched_signals["stable_preference"]),
-            task_state=category == "进行中的任务" or bool(matched_signals["task_state"]),
-            project_convention=category == "项目约定"
+            stable_preference=cat == "user_preference"
+            or bool(matched_signals["stable_preference"]),
+            task_state=cat == "active_task" or bool(matched_signals["task_state"]),
+            project_convention=cat == "project_convention"
             or bool(matched_signals["project_convention"]),
-            tooling_environment=category in {"工具与环境", "环境与工具"}
+            tooling_environment=cat == "tooling_environment"
             or bool(matched_signals["tooling_environment"]),
             subject_key=self._subject_key(text),
             topic_key=self._topic_key(text),
@@ -275,17 +230,18 @@ class MemoryGovernanceService:
         )
 
     def resolve_category(self, *, category: str, signals: ClaimSignals) -> str:
+        cat = normalize_category(category)
         if signals.stable_preference:
-            return "用户偏好"
+            return "user_preference"
         if signals.task_state and not signals.project_convention:
-            return "进行中的任务"
+            return "active_task"
         if signals.tooling_environment and not signals.project_convention:
-            return "工具与环境"
-        if signals.tooling_environment and category in {"其他", "环境与工具", "技术决策"}:
-            return "工具与环境"
+            return "tooling_environment"
+        if signals.tooling_environment and cat in {"other", "tooling_environment", "tech_decision"}:
+            return "tooling_environment"
         if signals.project_convention:
-            return "项目约定"
-        return category
+            return "project_convention"
+        return cat
 
     def filter_static_categories(
         self, categories: dict[str, list[MemoryEntry]]
@@ -486,7 +442,7 @@ class MemoryGovernanceService:
         return reasons
 
     def _subject_key(self, text: str) -> str:
-        for pattern, subject in _SUBJECT_HINT_PATTERNS:
+        for pattern, subject in _subject_hint_patterns():
             if re.search(pattern, text, re.IGNORECASE):
                 return subject
         path_match = re.search(r"/[\w./-]+", text)
@@ -501,7 +457,8 @@ class MemoryGovernanceService:
 
     def _normalized_tokens(self, text: str) -> list[str]:
         raw_tokens = re.findall(r"[A-Za-z0-9_.-]+|[\u4e00-\u9fff]{2,}", text.lower())
-        tokens = [token for token in raw_tokens if token not in _CLAIM_STOP_TOKENS]
+        stop = _claim_stop_tokens()
+        tokens = [token for token in raw_tokens if token not in stop]
         return tokens[:8]
 
     def _subject_matches(self, left_subject: str, right_subject: str) -> bool:

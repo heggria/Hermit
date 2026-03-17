@@ -1,4 +1,4 @@
-.PHONY: sync sync-macos install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-fast test-unit test-serial test-quick test-changed test-integration test-kernel test-cov coverage-diff lint format typecheck docs-build security sbom bump-version release-prep release-tag version-check lock-check build package-check install-check docker-smoke check verify verify-release precommit-install
+.PHONY: sync sync-macos install chat feishu menubar menubar-app mac-dmg env-up env-restart env-down env-status env-watch dev-up dev-restart dev-down dev-status dev-watch test test-fast test-unit test-serial test-quick test-changed test-integration test-kernel test-property test-scenario test-cov coverage-diff bench lint format typecheck docs-build security sbom changelog demo-gif bump-version release-prep release-tag version-check lock-check build package-check install-check docker-smoke check verify verify-release precommit-install
 
 UV_CACHE_DIR ?= .uv-cache
 PYTEST_PARALLEL_FLAGS ?= -n auto --dist worksteal
@@ -79,14 +79,23 @@ test-integration:
 test-kernel:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest tests/integration/kernel/ $(PYTEST_PARALLEL_FLAGS) -q --no-header
 
+test-property:
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest tests/unit/kernel/test_policy_properties.py -n0 -q --no-header
+
+test-scenario:
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest tests/scenario $(PYTEST_PARALLEL_FLAGS) -q --no-header
+
 test-serial:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -n0 -q --no-header
 
 test-quick:
-	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -n0 -q tests/unit/runtime/test_provider_input_compiler.py tests/unit/kernel/test_kernel_store_tasks_support.py tests/integration/surfaces/test_cli.py tests/unit/test_docs_alignment.py
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest -n0 -q tests/unit/runtime/test_provider_input_compiler.py tests/unit/kernel/test_kernel_store_tasks_support.py tests/integration/surfaces/test_cli_setup.py tests/unit/test_docs_alignment.py
 
 test-cov:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest $(PYTEST_PARALLEL_FLAGS) --cov=hermit --cov-report=term-missing --cov-report=xml
+
+bench:
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run pytest tests/benchmark -m benchmark --benchmark-warmup=on -o "addopts=" -q
 
 coverage-diff: test-cov
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run diff-cover coverage.xml --compare-branch $(DIFF_RANGE) --fail-under=95
@@ -110,6 +119,12 @@ security:
 sbom:
 	@mkdir -p dist
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) uv run cyclonedx-py environment --spec-version 1.6 --output-format JSON --output-file $(SBOM_PATH)
+
+changelog:
+	@git-cliff --output CHANGELOG.md
+
+demo-gif:
+	@agg docs/assets/demo.cast docs/assets/demo.gif
 
 bump-version:
 	@test -n "$(VERSION)" || (echo "Usage: make bump-version VERSION=x.y.z" && exit 1)
@@ -155,6 +170,9 @@ docker-smoke:
 	@docker build -t hermit:local .
 	@docker run --rm hermit:local --help >/dev/null
 	@docker run --rm hermit:local config --help >/dev/null
+
+docker-scan: docker-smoke
+	@docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 hermit:local
 
 check:
 	@$(MAKE) lint

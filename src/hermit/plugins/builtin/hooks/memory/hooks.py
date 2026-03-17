@@ -9,6 +9,7 @@ from typing import Any, cast
 import structlog
 
 from hermit.infra.storage import JsonStore
+from hermit.infra.system.i18n import tr, tr_list_all_locales
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.compiler.compiler import ContextCompiler
 from hermit.kernel.context.memory.governance import MemoryGovernanceService
@@ -32,53 +33,31 @@ _CHECKPOINT_MIN_MESSAGES = 6
 _CHECKPOINT_MIN_USER_MESSAGES = 2
 _GOVERNANCE = MemoryGovernanceService()
 
-_EXPLICIT_MEMORY_RE = re.compile(
-    r"(记住|牢记|以后都|今后都|统一使用|统一回复|不要再|必须|务必|偏好|约定|规则|规范|"
-    r"always|never|remember this|preference|rule|policy|convention)",
-    re.IGNORECASE,
-)
-_DECISION_SIGNAL_RE = re.compile(
-    r"(决定|改为|采用|切换到|标准化|规范为|路径|端口|分支|部署|"
-    r"decided|switch to|migrate to|branch\b|port\b|deploy)",
-    re.IGNORECASE,
-)
 
-_EXTRACTION_PROMPT = """\
-你是通用记忆提取助手。从对话中全面提取所有值得长期记忆的信息，不限于技术内容。只输出合法 JSON：
-{
-  "used_keywords": ["关键词1"],
-  "new_memories": [
-    {"category": "分类名", "content": "简洁描述"}
-  ]
-}
+def _build_memory_re(key: str) -> re.Pattern[str]:
+    keywords = tr_list_all_locales(key)
+    if not keywords:
+        return re.compile(r"(?!)")  # never matches
+    escaped = [re.escape(k) if not any(c in k for c in r".\+*?[](){}^$|") else k for k in keywords]
+    return re.compile(r"(" + "|".join(escaped) + r")", re.IGNORECASE)
 
-## 分类说明
-- 用户偏好：沟通习惯、语言偏好、工作风格、审美倾向、常用工具、个人习惯
-- 项目约定：项目结构、命名规范、分支策略、部署流程、团队分工、协作规则
-- 技术决策：技术选型及理由、架构设计、踩过的坑、性能优化、Bug 修复方案
-- 环境与工具：开发环境配置、工具链、API 地址、代理设置、服务端口、安装步骤
-- 其他：人物关系、日程习惯、知识见解、任何不属于以上分类但值得记住的信息
-- 进行中的任务：明确的待办事项、未完成工作、后续计划
 
-## 提取范围（尽量全面）
-- 用户明确表达的偏好、要求、纠正
-- 做出的决策及其理由
-- 发现的问题及解决方案
-- 项目结构、约定、流程的新增或变更
-- 具体配置（文件路径、命令、端口、参数名）
-- 人物及其职责、项目所属关系
-- 反复出现的模式或问题
-- 用户提到的日程、计划、习惯
-- 学到的经验教训
+_explicit_memory_re_cache: re.Pattern[str] | None = None
+_decision_signal_re_cache: re.Pattern[str] | None = None
 
-## 质量要求
-- used_keywords：从 <existing_memories> 中找到本次对话涉及的关键词（人名、项目名、技术名词等）
-- content 必须简洁自包含，脱离上下文也能理解
-- 保留具体细节（路径、命令、参数名），避免泛泛而谈
-- 一条记忆只记一件事，不要合并不相关的信息
-- 已有记忆中已存在的信息不要重复提取
-- 纯粹的闲聊寒暄不需要记忆
-- 如无值得记忆的信息，返回空数组"""
+
+def _get_explicit_memory_re() -> re.Pattern[str]:
+    global _explicit_memory_re_cache
+    if _explicit_memory_re_cache is None:
+        _explicit_memory_re_cache = _build_memory_re("kernel.nlp.memory_signal_re")
+    return _explicit_memory_re_cache
+
+
+def _get_decision_signal_re() -> re.Pattern[str]:
+    global _decision_signal_re_cache
+    if _decision_signal_re_cache is None:
+        _decision_signal_re_cache = _build_memory_re("kernel.nlp.decision_signal_re")
+    return _decision_signal_re_cache
 
 
 def register(ctx: PluginContext) -> None:
@@ -875,7 +854,7 @@ def _extract_memory_payload(
     provider = build_provider(settings, model=settings.model)
     service = StructuredExtractionService(provider, model=settings.model)
     data = service.extract_json(
-        system_prompt=_EXTRACTION_PROMPT,
+        system_prompt=tr("prompt.memory.extraction"),
         user_content=user_content,
         max_tokens=max_tokens,
     )
@@ -892,7 +871,7 @@ def _extract_memory_payload(
         if content:
             new_entries.append(
                 MemoryEntry(
-                    category=item.get("category", "其他"),
+                    category=item.get("category", "other"),
                     content=content,
                     confidence=_infer_confidence(content),
                 )
@@ -945,7 +924,7 @@ def _should_merge_entries(left: MemoryEntry, right: MemoryEntry) -> bool:
 
 
 def _infer_confidence(content: str) -> float:
-    strong_signal = ("必须", "务必", "统一", "默认", "固定", "不要", "采用", "改为")
+    strong_signal = tuple(tr_list_all_locales("kernel.nlp.confidence.strong_signal"))
     if any(signal in content for signal in strong_signal):
         return 0.8
     if len(content) >= 20:
@@ -962,9 +941,11 @@ def _should_checkpoint(messages: list[dict[str, Any]]) -> tuple[bool, str]:
         1 for msg in messages if msg.get("role") == "user" and _message_text(msg).strip()
     )
 
-    if _EXPLICIT_MEMORY_RE.search(user_text):
+    if _get_explicit_memory_re().search(user_text):
         return True, "explicit_memory_signal"
-    if _DECISION_SIGNAL_RE.search(user_text) or _DECISION_SIGNAL_RE.search(assistant_text):
+    if _get_decision_signal_re().search(user_text) or _get_decision_signal_re().search(
+        assistant_text
+    ):
         return True, "decision_signal"
     if len(transcript) >= _CHECKPOINT_MIN_CHARS and user_count >= _CHECKPOINT_MIN_USER_MESSAGES:
         return True, "conversation_batch"
