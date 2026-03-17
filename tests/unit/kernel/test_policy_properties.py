@@ -153,3 +153,69 @@ def test_evaluate_rules_returns_non_empty(action_class: str) -> None:
     request = _make_request(action_class)
     outcomes = evaluate_rules(request)
     assert len(outcomes) >= 1
+
+
+# ---------------------------------------------------------------------------
+# autonomous profile tests
+# ---------------------------------------------------------------------------
+
+
+def test_autonomous_read_local_allowed() -> None:
+    request = _make_request("read_local", context={"policy_profile": "autonomous"})
+    outcomes = evaluate_rules(request)
+    assert len(outcomes) == 1
+    assert outcomes[0].verdict == "allow"
+    assert outcomes[0].reasons[0].code == "autonomous_read"
+
+
+def test_autonomous_safe_actions_allowed() -> None:
+    for action_class in ("network_read", "delegate_reasoning", "ephemeral_ui_mutation"):
+        request = _make_request(action_class, context={"policy_profile": "autonomous"})
+        outcomes = evaluate_rules(request)
+        assert len(outcomes) == 1
+        assert outcomes[0].verdict == "allow"
+        assert outcomes[0].reasons[0].code == "autonomous_passthrough"
+
+
+def test_autonomous_dangerous_shell_denied() -> None:
+    request = _make_request(
+        "execute_command",
+        context={"policy_profile": "autonomous"},
+        derived={"command_flags": {"sudo": True}},
+    )
+    outcomes = evaluate_rules(request)
+    assert len(outcomes) == 1
+    assert outcomes[0].verdict == "deny"
+    assert outcomes[0].reasons[0].code == "dangerous_shell"
+
+
+def test_autonomous_curl_pipe_sh_denied() -> None:
+    request = _make_request(
+        "execute_command",
+        context={"policy_profile": "autonomous"},
+        derived={"command_flags": {"curl_pipe_sh": True}},
+    )
+    outcomes = evaluate_rules(request)
+    assert len(outcomes) == 1
+    assert outcomes[0].verdict == "deny"
+
+
+def test_autonomous_protected_path_denied() -> None:
+    request = _make_request(
+        "write_local",
+        context={"policy_profile": "autonomous"},
+        derived={"sensitive_paths": ["/etc/passwd"], "outside_workspace": True},
+    )
+    outcomes = evaluate_rules(request)
+    assert len(outcomes) == 1
+    assert outcomes[0].verdict == "deny"
+    assert outcomes[0].reasons[0].code == "protected_path"
+
+
+def test_autonomous_default_action_allowed_with_receipt() -> None:
+    request = _make_request("write_local", context={"policy_profile": "autonomous"})
+    outcomes = evaluate_rules(request)
+    assert len(outcomes) == 1
+    assert outcomes[0].verdict == "allow_with_receipt"
+    assert outcomes[0].obligations.require_receipt is True
+    assert outcomes[0].obligations.require_approval is False
