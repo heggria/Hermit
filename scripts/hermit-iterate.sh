@@ -83,37 +83,27 @@ PROOF_FILE="${PROOF_DIR}/${SPEC_ID}.json"
 echo "==> Exporting proof to ${PROOF_FILE}"
 hermit_cmd task proof-export "${TASK_ID}" --output "${PROOF_FILE}"
 
-# Extract proof summary (tolerate failures)
+# Extract proof summary using the formatter module (tolerate failures)
 PROOF_SUMMARY="$(hermit_cmd task proof "${TASK_ID}" 2>/dev/null \
-  | python3 -c "
+  | "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 python3 -c "
 import json, sys
-p = json.load(sys.stdin)
-proj = p.get('projection', {})
-chain = p.get('chain_verification', {})
-print(f\"Task: {p['task']['task_id']}\")
-print(f\"Status: {p['task']['status']}\")
-print(f\"Policy: {p['task'].get('policy_profile', 'default')}\")
-print(f\"Proof mode: {p.get('proof_mode', 'unknown')}\")
-print(f\"Events: {proj.get('events_processed', 0)}\")
-print(f\"Steps: {proj.get('step_count', 0)}\")
-print(f\"Receipts: {proj.get('receipt_count', 0)}\")
-print(f\"Decisions: {proj.get('decision_count', 0)}\")
-print(f\"Grants: {proj.get('capability_grant_count', 0)}\")
-print(f\"Chain valid: {chain.get('valid', False)}\")
-print(f\"Head hash: {chain.get('head_hash', 'none')[:16]}...\")
+from hermit.kernel.verification.proofs.formatter import format_proof_summary
+print(format_proof_summary(json.load(sys.stdin)))
 " 2>/dev/null)" || PROOF_SUMMARY="(proof summary extraction failed)"
 echo "${PROOF_SUMMARY}"
 
-# Extract receipt details for PR body (tolerate failures)
+# Generate human-readable proof markdown
+PROOF_MD="${PROOF_DIR}/${SPEC_ID}.md"
+echo "${PROOF_SUMMARY}" > "${PROOF_MD}"
+
+# Extract receipt table using the formatter module (tolerate failures)
 RECEIPT_TABLE="$(hermit_cmd task receipts --task-id "${TASK_ID}" 2>/dev/null \
-  | python3 -c "
+  | "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 python3 -c "
 import json, sys
-receipts = json.load(sys.stdin)
-for r in receipts:
-    rb = 'yes' if r['rollback_supported'] else 'no'
-    status = r.get('rollback_status', 'n/a')
-    print(f\"| \`{r['receipt_id'][:20]}\` | {r['action_type']} | {r['result_code']} | {rb} | {status} |\")
+from hermit.kernel.verification.proofs.formatter import format_receipt_table
+print(format_receipt_table(json.load(sys.stdin)))
 " 2>/dev/null)" || RECEIPT_TABLE="| (unable to extract receipts) | | | | |"
+echo "${RECEIPT_TABLE}"
 
 # ---------------------------------------------------------------------------
 # Step 6: Commit and push
@@ -142,16 +132,10 @@ Automated iteration driven by \`${SPEC_FILE}\`.
 
 Hermit read the spec, autonomously implemented changes under governed execution (policy → decision → grant → receipt), and exported a verifiable proof chain.
 
-## Proof Summary
-
-\`\`\`
 ${PROOF_SUMMARY}
-\`\`\`
 
 ## Receipts
 
-| Receipt | Action | Result | Rollback | Status |
-|---------|--------|--------|----------|--------|
 ${RECEIPT_TABLE}
 
 ## Acceptance Criteria

@@ -590,6 +590,18 @@ class AgentRuntime:
 
             if on_tool_call:
                 on_tool_call(tool_name, tool_input, serialized)
+            if exec_result.receipt_id:
+                pd = exec_result.policy_decision
+                log.info(
+                    "governed_tool_execution",
+                    tool=tool_name,
+                    receipt=exec_result.receipt_id,
+                    decision=exec_result.decision_id,
+                    grant=exec_result.capability_grant_id,
+                    action_class=pd.action_class if pd else None,
+                    verdict=pd.verdict if pd else None,
+                    risk=pd.risk_level if pd else None,
+                )
             tool_result_blocks.append(
                 self._tool_result_block(
                     tool_name=tool_name,
