@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773756086491,
+  "lastUpdate": 1773806098148,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -365,6 +365,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0002250265830901162",
             "extra": "mean: 195.9167088627597 usec\nrounds: 6059"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bshengtao@gmail.com",
+            "name": "Heggria",
+            "username": "heggria"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5aec4ab7ca4a9b4ca8773399a54fec569c577ccc",
+          "message": "feat: kernel self-modification guard — governed self-surgery (#19)\n\n* test: cover _is_kernel_path OSError branch for diff coverage\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: detect kernel paths via segment fallback for subdirectory workspaces\n\nWhen Hermit is started from a subdirectory, workspace_root may not be\nthe repository root, causing kernel writes via relative paths like\n../src/hermit/kernel/... to bypass the self-modification guard.\n\nNow _is_kernel_path falls back to checking whether the resolved path\ncontains a src/hermit/kernel/ segment, so the guard fires regardless\nof the workspace root.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* test: cover workspace_root OSError fallback in _is_kernel_path\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat: add kernel self-modification guard to policy layer\n\nHermit now detects writes targeting src/hermit/kernel/ and escalates\nthem to approval_required with critical risk level. This guard ensures\nthat modifications to governed execution internals require explicit\napproval, receipt, preview, and evidence — even when the agent itself\nis doing the modifying.\n\nAdds _is_kernel_path() derivation helper and 11 tests covering\ndetection, guard behavior, reason codes, risk levels, and obligations.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* docs: add kernel-self-mod-guard spec\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-03-18T11:54:13+08:00",
+          "tree_id": "f4d022044b951dac0bbb67e91668cd29265234c1",
+          "url": "https://github.com/heggria/Hermit/commit/5aec4ab7ca4a9b4ca8773399a54fec569c577ccc"
+        },
+        "date": 1773806097634,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.2598253218663023,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0012972276487612866",
+            "extra": "mean: 442.5120783999972 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 177.00728213827034,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000504532512064052",
+            "extra": "mean: 5.649485082872714 msec\nrounds: 181"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2530.6577610104387,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002145101314257898",
+            "extra": "mean: 395.15418299814706 usec\nrounds: 3082"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 4014.636731377875,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011638987697083158",
+            "extra": "mean: 249.0885394895461 usec\nrounds: 4115"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 5021.436209073848,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009149771664930325",
+            "extra": "mean: 199.14621203252122 usec\nrounds: 6150"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 28896.467937036105,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000036502967903646223",
+            "extra": "mean: 34.606305593436126 usec\nrounds: 30750"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 3274.6442102005476,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00014866176524146228",
+            "extra": "mean: 305.3766869954881 usec\nrounds: 3591"
           }
         ]
       }
