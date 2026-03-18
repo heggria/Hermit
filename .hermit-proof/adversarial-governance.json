@@ -1,0 +1,381 @@
+{
+  "task_id": "task_3b6cd397e5e5",
+  "exported_at": 1773755827.142833,
+  "proof_mode": "hash_only",
+  "proof_coverage": {
+    "available_modes": [
+      "hash_only",
+      "hash_chained",
+      "signed",
+      "signed_with_inclusion_proof"
+    ],
+    "current_mode": "hash_only",
+    "receipt_bundle_coverage": {
+      "bundled_receipts": 0,
+      "total_receipts": 0
+    },
+    "signature_coverage": {
+      "signed_receipts": 0,
+      "total_receipts": 0
+    },
+    "inclusion_proof_coverage": {
+      "proved_receipts": 0,
+      "total_receipts": 0
+    },
+    "missing_features": [],
+    "unsigned_receipts": [],
+    "notes": {
+      "baseline": "hash-linked events with sealed receipt bundles",
+      "missing": [
+        "signature",
+        "inclusion_proof"
+      ]
+    }
+  },
+  "status": "verified",
+  "chain_verification": {
+    "valid": true,
+    "broken_at_event_id": null,
+    "expected_prev_hash": null,
+    "observed_prev_hash": null,
+    "head_hash": "96a0aede4eebe1855cdce375e5a0d682fa880587a1d00e56240bd9f77fc9cd81",
+    "event_count": 76
+  },
+  "task_projection_summary": {
+    "events_processed": 76,
+    "last_event_seq": 5538,
+    "step_count": 1,
+    "step_attempt_count": 1,
+    "approval_count": 0,
+    "decision_count": 1,
+    "capability_grant_count": 0,
+    "workspace_lease_count": 0,
+    "receipt_count": 0,
+    "execution_contract_count": 1,
+    "evidence_case_count": 1,
+    "authorization_plan_count": 1,
+    "reconciliation_count": 0
+  },
+  "receipt_bundles": [],
+  "context_manifests": [],
+  "decision_refs": [],
+  "approval_refs": [],
+  "capability_grant_refs": [],
+  "workspace_lease_refs": [],
+  "capability_grants": [],
+  "workspace_leases": [],
+  "execution_contract_refs": [
+    "contract_e5c23151a526"
+  ],
+  "evidence_case_refs": [
+    "evidence_case_d54079540170"
+  ],
+  "authorization_plan_refs": [
+    "auth_plan_3b18cc438fac"
+  ],
+  "reconciliation_refs": [],
+  "execution_contracts": [
+    {
+      "contract_id": "contract_e5c23151a526",
+      "task_id": "task_3b6cd397e5e5",
+      "step_id": "step_3e20f3c46a9f",
+      "step_attempt_id": "attempt_0fd671cb0164",
+      "objective": "bash: execute_command",
+      "proposed_action_refs": [
+        "artifact_6acc852f4563"
+      ],
+      "expected_effects": [
+        "command:sudo cat /etc/shadow 2>&1 || true"
+      ],
+      "success_criteria": {
+        "tool_name": "bash",
+        "action_class": "execute_command",
+        "requires_receipt": true
+      },
+      "evidence_case_ref": "evidence_case_d54079540170",
+      "authorization_plan_ref": "auth_plan_3b18cc438fac",
+      "reversibility_class": "compensatable",
+      "required_receipt_classes": [
+        "execute_command"
+      ],
+      "drift_budget": {
+        "resource_scopes": [
+          "task_workspace"
+        ],
+        "outside_workspace": false,
+        "requires_witness": true
+      },
+      "expiry_at": 1773756079.432256,
+      "status": "abandoned",
+      "fallback_contract_refs": [],
+      "operator_summary": "bash intends command:sudo cat /etc/shadow 2>&1 || true; risk=critical; approval_required=False",
+      "risk_budget": {
+        "risk_level": "critical",
+        "approval_required": false
+      },
+      "expected_artifact_shape": {
+        "expected_effects": [
+          "command:sudo cat /etc/shadow 2>&1 || true"
+        ]
+      },
+      "contract_version": 1,
+      "action_contract_refs": [
+        "execute_command"
+      ],
+      "state_witness_ref": "artifact_27aa90fe6534",
+      "rollback_expectation": "manual_or_followup",
+      "selected_template_ref": null,
+      "superseded_by_contract_id": null,
+      "created_at": 1773755779.432275,
+      "updated_at": 1773755779.442622
+    }
+  ],
+  "evidence_cases": [
+    {
+      "evidence_case_id": "evidence_case_d54079540170",
+      "task_id": "task_3b6cd397e5e5",
+      "subject_kind": "contract",
+      "subject_ref": "contract_e5c23151a526",
+      "support_refs": [
+        "artifact_bb02502ea15e",
+        "artifact_6acc852f4563",
+        "artifact_7c1e03070dbc",
+        "artifact_27aa90fe6534"
+      ],
+      "contradiction_refs": [],
+      "freshness_window": {
+        "context_pack_ref": "artifact_bb02502ea15e",
+        "witness_ref": "artifact_27aa90fe6534"
+      },
+      "sufficiency_score": 1.0,
+      "drift_sensitivity": "high",
+      "unresolved_gaps": [],
+      "status": "sufficient",
+      "witness_refs": [
+        "artifact_27aa90fe6534"
+      ],
+      "invalidates_refs": [],
+      "last_checked_at": null,
+      "confidence_interval": {
+        "lower": 0.85,
+        "upper": 1.0
+      },
+      "freshness_basis": "context_pack+witness",
+      "operator_summary": "support=4 gap=none risk=critical action=execute_command",
+      "created_at": 1773755779.436265,
+      "updated_at": 1773755779.436265
+    }
+  ],
+  "authorization_plans": [
+    {
+      "authorization_plan_id": "auth_plan_3b18cc438fac",
+      "task_id": "task_3b6cd397e5e5",
+      "step_id": "step_3e20f3c46a9f",
+      "step_attempt_id": "attempt_0fd671cb0164",
+      "contract_ref": "contract_e5c23151a526",
+      "policy_profile_ref": "autonomous",
+      "requested_action_classes": [
+        "execute_command"
+      ],
+      "required_decision_refs": [],
+      "approval_route": "none",
+      "witness_requirements": [
+        "state_witness"
+      ],
+      "proposed_grant_shape": {
+        "action_class": "execute_command",
+        "resource_scope": [
+          "task_workspace"
+        ]
+      },
+      "downgrade_options": [
+        "gather_more_evidence",
+        "reduce_scope",
+        "request_authority"
+      ],
+      "current_gaps": [
+        "policy_denied"
+      ],
+      "status": "blocked",
+      "estimated_authority_cost": 0.2,
+      "expiry_constraints": {
+        "requires_revalidation": true
+      },
+      "revalidation_rules": {
+        "check_witness": true,
+        "check_approval": false,
+        "check_policy_version": true
+      },
+      "operator_packet_ref": null,
+      "required_workspace_mode": "mutable",
+      "required_secret_policy": null,
+      "proposed_lease_shape": {
+        "mode": "mutable",
+        "resource_scope": [
+          "task_workspace"
+        ]
+      },
+      "created_at": 1773755779.439889,
+      "updated_at": 1773755779.439889
+    }
+  ],
+  "reconciliations": [],
+  "artifact_hash_index": {
+    "artifact_27aa90fe6534": {
+      "kind": "state.witness",
+      "content_hash": "b141f3d704c986b065f7879fc0aa8fa2604c1549091b99f0ea70c79b2e188b39",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/b1/41/b141f3d704c986b065f7879fc0aa8fa2604c1549091b99f0ea70c79b2e188b39.json",
+      "metadata": {
+        "tool_name": "bash"
+      }
+    },
+    "artifact_2c3cdbb02a44": {
+      "kind": "action_request",
+      "content_hash": "b2eb5ebe5e7d7662feef2884c707cd55d0877b6a2e9b5dd563d9f71087529a0d",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/b2/eb/b2eb5ebe5e7d7662feef2884c707cd55d0877b6a2e9b5dd563d9f71087529a0d.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_2dfea6540906": {
+      "kind": "policy_evaluation",
+      "content_hash": "382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/38/23/382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_55993ae1b292": {
+      "kind": "policy_evaluation",
+      "content_hash": "382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/38/23/382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_677663023519": {
+      "kind": "working_state/v1",
+      "content_hash": "0beaeba65a861c858d69e8928f0d078642f1038f0a7ef837cf6a5e46fa08dc00",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/0b/ea/0beaeba65a861c858d69e8928f0d078642f1038f0a7ef837cf6a5e46fa08dc00.json",
+      "metadata": {
+        "pack_hash": "b41ad6344acc07720378797ef540032e7d23c9c99936f08e68b0fdcf632c63c8",
+        "conversation_id": "cli-oneshot"
+      }
+    },
+    "artifact_6acc852f4563": {
+      "kind": "action_request",
+      "content_hash": "b1dea7524e92d876108ebce154242f3528a40a9bb3d36da2366fa95034640de5",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/b1/de/b1dea7524e92d876108ebce154242f3528a40a9bb3d36da2366fa95034640de5.json",
+      "metadata": {
+        "tool_name": "bash"
+      }
+    },
+    "artifact_7c1e03070dbc": {
+      "kind": "policy_evaluation",
+      "content_hash": "d2ab126187e637e19a3886d22c5c514c8b4ae5fe5a4bb3463027aefbf82c9123",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/d2/ab/d2ab126187e637e19a3886d22c5c514c8b4ae5fe5a4bb3463027aefbf82c9123.json",
+      "metadata": {
+        "tool_name": "bash"
+      }
+    },
+    "artifact_8384786738d5": {
+      "kind": "action_request",
+      "content_hash": "949448953c15f39161726715e541f83d6a43cbd8083aa0326c4723a097ed4319",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/94/94/949448953c15f39161726715e541f83d6a43cbd8083aa0326c4723a097ed4319.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_8c8e35053df6": {
+      "kind": "policy_evaluation",
+      "content_hash": "382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/38/23/382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_8cfce34b4466": {
+      "kind": "policy_evaluation",
+      "content_hash": "382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/38/23/382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_9cf325d8fd80": {
+      "kind": "action_request",
+      "content_hash": "4d4a3bc2f25aafab5bb839cbc9b420b7c58a9ccdc5cd81e111ec2922279a13f6",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/4d/4a/4d4a3bc2f25aafab5bb839cbc9b420b7c58a9ccdc5cd81e111ec2922279a13f6.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_aa92b116a876": {
+      "kind": "authorization.plan",
+      "content_hash": "2b6c271b2798c7870fd419d085ab3390d8818a4951de768119da85531dddd95b",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/2b/6c/2b6c271b2798c7870fd419d085ab3390d8818a4951de768119da85531dddd95b.json",
+      "metadata": {
+        "authorization_plan_id": "auth_plan_3b18cc438fac"
+      }
+    },
+    "artifact_bb02502ea15e": {
+      "kind": "context.pack/v3",
+      "content_hash": "ba9d68f4c71c69abe8203d57a316b75be3bee15d090728a5ad64f512e30bca41",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/ba/9d/ba9d68f4c71c69abe8203d57a316b75be3bee15d090728a5ad64f512e30bca41.json",
+      "metadata": {
+        "pack_hash": "b41ad6344acc07720378797ef540032e7d23c9c99936f08e68b0fdcf632c63c8",
+        "conversation_id": "cli-oneshot"
+      }
+    },
+    "artifact_c04d79b3d74b": {
+      "kind": "evidence.case",
+      "content_hash": "00b57b76075a2c70e6af72834bb7e5d402a86c0ca96c385e6b78e747995bdccb",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/00/b5/00b57b76075a2c70e6af72834bb7e5d402a86c0ca96c385e6b78e747995bdccb.json",
+      "metadata": {
+        "evidence_case_id": "evidence_case_d54079540170"
+      }
+    },
+    "artifact_c9158a7b0a40": {
+      "kind": "action_request",
+      "content_hash": "f904268f471eb85ee7e690a4b50fdde90b105ead66a8f75a8139b397f72627bb",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/f9/04/f904268f471eb85ee7e690a4b50fdde90b105ead66a8f75a8139b397f72627bb.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_d3af7278926a": {
+      "kind": "action_request",
+      "content_hash": "04651a434f4ec13728794a05f8fb7658788fc87435e759bbdc2d96b0672152fa",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/04/65/04651a434f4ec13728794a05f8fb7658788fc87435e759bbdc2d96b0672152fa.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_d98b3f509e30": {
+      "kind": "policy_evaluation",
+      "content_hash": "382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/38/23/382309bd490f8d3a8b421c40aa5d985ccb1e75d5ab20beead97a1f04967d2597.json",
+      "metadata": {
+        "tool_name": "read_file"
+      }
+    },
+    "artifact_eb282eaee8a1": {
+      "kind": "execution.contract",
+      "content_hash": "ed123a45e159c2538d5db57aef86290406f0e3c7ab13503ffae16c20a011f307",
+      "uri": "/Users/beta/.hermit-dev/kernel/artifacts/ed/12/ed123a45e159c2538d5db57aef86290406f0e3c7ab13503ffae16c20a011f307.json",
+      "metadata": {
+        "contract_id": "contract_e5c23151a526"
+      }
+    }
+  },
+  "chain_completeness": {
+    "total_receipts": 0,
+    "complete_chains": 0,
+    "incomplete_chains": 0,
+    "completeness_percent": 100.0,
+    "chains": []
+  },
+  "receipt_merkle_root": null,
+  "receipt_inclusion_proofs": {},
+  "proof_bundle_ref": "artifact_7e1d8b40a0c0"
+}
