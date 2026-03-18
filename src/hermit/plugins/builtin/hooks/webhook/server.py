@@ -222,6 +222,7 @@ class WebhookServer:
                     "title": f"Webhook: {route.name}",
                     "webhook_route": route.name,
                     "payload_keys": list(payload.keys()),
+                    "policy_profile": str(payload.get("policy_profile", "")),
                 },
             )
         except Exception as exc:

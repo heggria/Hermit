@@ -24,8 +24,8 @@ from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
 from hermit.kernel.signals.store import SignalStoreMixin
 
-_SCHEMA_VERSION = "8"
-_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", _SCHEMA_VERSION}
+_SCHEMA_VERSION = "10"
+_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", "8", "9", _SCHEMA_VERSION}
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "conversation_projection_cache",
@@ -52,6 +52,8 @@ _KNOWN_KERNEL_TABLES = {
     "authorization_plans",
     "reconciliations",
     "evidence_signals",
+    "competitions",
+    "competition_candidates",
 }
 
 

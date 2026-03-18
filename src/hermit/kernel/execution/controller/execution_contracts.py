@@ -6,7 +6,9 @@ from typing import Any
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.controller.contracts import ActionContract, contract_for
-from hermit.kernel.execution.controller.template_learner import ContractTemplateLearner
+from hermit.kernel.execution.controller.template_learner import (
+    ContractTemplateLearner,
+)
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import ActionRequest, PolicyDecision
 from hermit.runtime.capability.registry.tools import ToolSpec
@@ -42,13 +44,46 @@ class ExecutionContractService:
             action_class=action_request.action_class,
             tool_name=action_request.tool_name,
             expected_effects=expected_effects,
+            workspace_root=attempt_ctx.workspace_root,
         )
         selected_template_ref: str | None = None
         if template is not None:
             selected_template_ref = template.source_contract_ref
-            # Inherit drift budget from the successful template
-            if template.drift_budget:
-                action_contract = action_contract  # keep the base contract
+        # ------------------------------------------------------------------
+
+        # -- Compute drift_budget, tightened by template if available -------
+        request_scopes = list(action_request.resource_scopes)
+        request_outside_workspace = bool(action_request.derived.get("outside_workspace"))
+        request_requires_witness = bool(witness_ref or action_contract.witness_required)
+
+        if template is not None and template.drift_budget:
+            tmpl_budget = template.drift_budget
+            # Intersect resource_scopes (tighter)
+            tmpl_scopes = list(tmpl_budget.get("resource_scopes", []))
+            if tmpl_scopes and request_scopes:
+                request_scopes = [s for s in request_scopes if s in tmpl_scopes]
+            elif tmpl_scopes:
+                request_scopes = tmpl_scopes
+            # Template outside_workspace=False overrides request True (stricter)
+            if not tmpl_budget.get("outside_workspace", True):
+                request_outside_workspace = False
+            # Template requires_witness=True overrides request False (stricter)
+            if tmpl_budget.get("requires_witness", False):
+                request_requires_witness = True
+
+        drift_budget = {
+            "resource_scopes": request_scopes,
+            "outside_workspace": request_outside_workspace,
+            "requires_witness": request_requires_witness,
+        }
+        # ------------------------------------------------------------------
+
+        # -- Policy suggestion (injected by PolicyEvidenceEnricher) ----------
+        policy_suggestion_ctx: dict[str, Any] | None = (
+            action_request.context.get("policy_suggestion")
+            if isinstance(action_request.context.get("policy_suggestion"), dict)
+            else None
+        )
         # ------------------------------------------------------------------
 
         contract = self.store.create_execution_contract(
@@ -65,11 +100,7 @@ class ExecutionContractService:
             },
             reversibility_class=self._reversibility_class(action_contract),
             required_receipt_classes=required_receipts,
-            drift_budget={
-                "resource_scopes": list(action_request.resource_scopes),
-                "outside_workspace": bool(action_request.derived.get("outside_workspace")),
-                "requires_witness": bool(witness_ref or action_contract.witness_required),
-            },
+            drift_budget=drift_budget,
             expiry_at=self._expiry_at(policy=policy, witness_ref=witness_ref),
             status="admissibility_pending",
             operator_summary=self._operator_summary(
@@ -93,6 +124,37 @@ class ExecutionContractService:
                 attempt_ctx.step_attempt_id,
                 selected_contract_template_ref=selected_template_ref,
             )
+            if template is not None and template.drift_budget:
+                self.store.append_event(
+                    event_type="contract_template.applied",
+                    entity_type="step_attempt",
+                    entity_id=attempt_ctx.step_attempt_id,
+                    task_id=attempt_ctx.task_id,
+                    step_id=attempt_ctx.step_id,
+                    actor="kernel",
+                    payload={
+                        "template_ref": selected_template_ref,
+                        "contract_ref": contract.contract_id,
+                        "drift_budget_applied": drift_budget,
+                    },
+                )
+            if policy_suggestion_ctx is not None:
+                self.store.append_event(
+                    event_type="policy.template_suggestion_applied",
+                    entity_type="step_attempt",
+                    entity_id=attempt_ctx.step_attempt_id,
+                    task_id=attempt_ctx.task_id,
+                    step_id=attempt_ctx.step_id,
+                    actor="kernel",
+                    payload={
+                        "template_ref": selected_template_ref,
+                        "skip_approval_eligible": policy_suggestion_ctx.get(
+                            "skip_approval_eligible", False
+                        ),
+                        "suggested_risk_level": policy_suggestion_ctx.get("suggested_risk_level"),
+                        "confidence_basis": policy_suggestion_ctx.get("confidence_basis", ""),
+                    },
+                )
         artifact_ref = self._store_artifact(
             contract.contract_id,
             kind="execution.contract",
