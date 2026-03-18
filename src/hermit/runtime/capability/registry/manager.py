@@ -345,11 +345,8 @@ class PluginManager:
         store = getattr(self._runtime, "kernel_store", None)
         if store is None:
             return
-        import uuid
-
         try:
-            store._append_event_tx(
-                event_id=str(uuid.uuid4()),
+            store.append_event(
                 event_type=event_type,
                 entity_type="subagent",
                 entity_id=principal_id,
