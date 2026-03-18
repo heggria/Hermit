@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "mcp__hermit__hermit_submit_task",
+      "mcp__hermit__hermit_task_status",
+      "mcp__hermit__hermit_list_tasks",
+      "mcp__hermit__hermit_pending_approvals",
+      "mcp__hermit__hermit_approve",
+      "mcp__hermit__hermit_deny",
+      "mcp__hermit__hermit_cancel_task",
+      "mcp__hermit__hermit_task_proof"
+    ]
+  }
+}

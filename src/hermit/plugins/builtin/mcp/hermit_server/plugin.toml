@@ -1,0 +1,23 @@
+[plugin]
+name = "hermit-mcp-server"
+version = "0.1.0"
+description = "Exposes Hermit kernel as MCP server for supervisor agents"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+
+[variables.mcp_server_enabled]
+setting = "mcp_server_enabled"
+env = ["HERMIT_MCP_SERVER_ENABLED"]
+default = false
+
+[variables.mcp_server_host]
+setting = "mcp_server_host"
+env = ["HERMIT_MCP_SERVER_HOST"]
+default = "127.0.0.1"
+
+[variables.mcp_server_port]
+setting = "mcp_server_port"
+env = ["HERMIT_MCP_SERVER_PORT"]
+default = 8322
