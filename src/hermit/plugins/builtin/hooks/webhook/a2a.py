@@ -28,9 +28,9 @@ class A2ATaskRequest:
     sender_agent_id: str
     sender_agent_url: str
     task_description: str
-    required_capabilities: list[str] = field(default_factory=list)
+    required_capabilities: list[str] = field(default_factory=list[str])
     priority: str = "normal"
-    context_artifacts: list[dict[str, Any]] = field(default_factory=list)
+    context_artifacts: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     reply_to_url: str = ""
 
 
@@ -40,15 +40,15 @@ class A2ATaskResponse:
     status: str
     result_summary: str = ""
     proof_ref: str = ""
-    receipts_summary: list[dict[str, Any]] = field(default_factory=list)
+    receipts_summary: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
 
 @dataclass
 class A2ACapabilityCard:
     agent_id: str
     agent_name: str
-    capabilities: list[str] = field(default_factory=list)
-    supported_actions: list[str] = field(default_factory=list)
+    capabilities: list[str] = field(default_factory=list[str])
+    supported_actions: list[str] = field(default_factory=list[str])
     trust_level: str = "standard"
 
 

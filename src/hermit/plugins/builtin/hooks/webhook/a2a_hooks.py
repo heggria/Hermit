@@ -17,7 +17,7 @@ def _on_serve_start(*, settings: Any, runner: Any = None, **kw: Any) -> None:
 
     from hermit.plugins.builtin.hooks.webhook import hooks as webhook_hooks
 
-    server = webhook_hooks._server
+    server = webhook_hooks._server  # pyright: ignore[reportPrivateUsage]
     if server is None:
         _log.debug("a2a_hooks: webhook server not available, skipping A2A route registration")
         return
@@ -65,7 +65,7 @@ def _register_a2a_routes(server: Any, handler: Any) -> None:
         body = await request.body()
 
         if server._config.control_secret:
-            WebhookServer._verify_signature(
+            WebhookServer._verify_signature(  # pyright: ignore[reportPrivateUsage]
                 body,
                 server._config.control_secret,
                 "X-Hermit-Signature-256",
@@ -117,7 +117,7 @@ def _register_a2a_routes(server: Any, handler: Any) -> None:
     async def task_status(task_id: str, request: Request) -> dict[str, Any]:
         if server._config.control_secret:
             body = await request.body()
-            WebhookServer._verify_signature(
+            WebhookServer._verify_signature(  # pyright: ignore[reportPrivateUsage]
                 body,
                 server._config.control_secret,
                 "X-Hermit-Signature-256",
