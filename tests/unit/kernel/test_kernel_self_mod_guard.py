@@ -68,7 +68,8 @@ def test_kernel_path_detected_from_subdirectory_workspace(tmp_path: Path) -> Non
     assert _is_kernel_path(kernel_file, subdirectory) is True
 
 
-def test_kernel_path_oserror_returns_false(monkeypatch: object) -> None:
+def test_kernel_path_oserror_on_path_resolve_returns_false(monkeypatch: object) -> None:
+    """When Path(path).resolve() raises OSError, return False."""
     import hermit.kernel.policy.evaluators.derivation as mod
 
     def _exploding_resolve(self: Path, *a: object, **kw: object) -> Path:
@@ -76,6 +77,25 @@ def test_kernel_path_oserror_returns_false(monkeypatch: object) -> None:
 
     monkeypatch.setattr(Path, "resolve", _exploding_resolve)  # type: ignore[arg-type]
     assert mod._is_kernel_path("/x/src/hermit/kernel/foo.py", "/x") is False
+
+
+def test_kernel_path_oserror_on_workspace_resolve_falls_back(monkeypatch: object) -> None:
+    """When workspace_root resolve fails, segment fallback still detects kernel paths."""
+    import hermit.kernel.policy.evaluators.derivation as mod
+
+    original_resolve = Path.resolve
+    call_count = 0
+
+    def _exploding_on_second(self: Path, *a: object, **kw: object) -> Path:
+        nonlocal call_count
+        call_count += 1
+        # First call resolves the target path; second resolves workspace_root
+        if call_count == 2:
+            raise OSError("boom")
+        return original_resolve(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "resolve", _exploding_on_second)  # type: ignore[arg-type]
+    assert mod._is_kernel_path("/x/src/hermit/kernel/foo.py", "/x") is True
 
 
 def test_derive_request_sets_kernel_paths(tmp_path: Path) -> None:
