@@ -1,0 +1,27 @@
+[plugin]
+name = "patrol"
+version = "0.1.0"
+description = "Scheduled proactive code health checks"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+tools = "tools:register"
+
+[variables.patrol_enabled]
+setting = "patrol_enabled"
+env = ["HERMIT_PATROL_ENABLED"]
+default = false
+description = "Enable patrol engine lifecycle on serve"
+
+[variables.patrol_interval_minutes]
+setting = "patrol_interval_minutes"
+env = ["HERMIT_PATROL_INTERVAL_MINUTES"]
+default = 60
+description = "Minutes between patrol runs"
+
+[variables.patrol_checks]
+setting = "patrol_checks"
+env = ["HERMIT_PATROL_CHECKS"]
+default = "lint,test,todo_scan"
+description = "Comma-separated list of checks to run"
