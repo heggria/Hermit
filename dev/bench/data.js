@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773815539398,
+  "lastUpdate": 1773818789571,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -657,6 +657,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00005640365546189135",
             "extra": "mean: 273.79936359065454 usec\nrounds: 3977"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bshengtao@gmail.com",
+            "name": "Heggria",
+            "username": "heggria"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "77e01ca5eecfada0f9fed7076ed0d776e6cde793",
+          "message": "feat(kernel): competition module, template learning, and adversarial governance (#22)\n\n* feat: 将所有硬编码中文字符串提取到 i18n 系统\n\n将 ~250 个硬编码中文字符串从 22 个 Python 源文件提取到 locale 文件中，\n通过 tr() / tr_list() / tr_list_all_locales() 加载。\n\n主要变更：\n- 新增 tr_list_all_locales() 辅助函数，合并所有 locale 的 NLP 模式\n- 内存分类从中文改为英文内部常量，添加 _LEGACY_CATEGORY_MAP 向后兼容\n- NLP 模式（问候语、续接标记、控制意图等）改为从 locale 加载\n- LLM prompt、用户界面字符串全部通过 tr() 国际化\n- SQLite schema v7→v8 迁移，更新 category 列\n- 更新所有测试文件中的分类字符串引用\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 修复 slack/telegram adapter 和 template_learner 的 pyright 错误\n\n- slack adapter: 添加 app 公开属性，标记 handler 函数为已使用\n- telegram adapter: 添加 application 公开属性\n- template_learner: 为 dataclass 字段添加显式类型注解\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* Revert \"fix: 修复 slack/telegram adapter 和 template_learner 的 pyright 错误\"\n\nThis reverts commit 608e35c8a1b3eb634605004be370a6849f2eafc7.\n\n* feat: i18n 提取、文档站优化、新增 slack/telegram adapter 及 TUI 基础\n\n- 提取 CLI/kernel/executor/approval 中剩余硬编码中文到 i18n 系统\n- 优化 docs landing page、mkdocs 配置、新增 blog/tags 支持\n- 新增 slack/telegram adapter 和 template_learner\n- 新增 CLI TUI 模块基础结构\n- 补充 e2e 测试（schedule、signed_proofs、uncertain_outcome 等）\n- CI 新增 pyright 类型检查 job\n- 更新 pyproject.toml 依赖和 uv.lock\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 修复 TUI 模块的 pyright 类型错误\n\n- App 添加泛型参数 App[None]\n- action_quit / _on_key 改为 async 以匹配基类签名\n- 补充 **kwargs / event 参数类型注解\n- parts 列表添加 list[str] 类型标注\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 补充 telegram adapter/hooks 测试覆盖并排除 TUI 模块 coverage\n\n- 新增 telegram adapter 单元测试（init、session_id、dedup、stop 等）\n- 新增 telegram hooks 单元测试（dispatch_result 各场景、register）\n- 新增 preflight 测试覆盖 telegram/slack adapter 配置检查\n- TUI 模块加入 coverage omit（UI widget 难以单元测试）\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 补充 slack adapter 测试并标记不可单元测试的 async 方法\n\n- 新增 slack adapter/hooks 单元测试\n- adapter async 方法（start/on_message/sweep）添加 pragma: no cover\n  这些方法依赖 Telegram/Slack SDK 实际网络连接，需集成测试覆盖\n- TUI 入口代码块添加 pragma: no cover\n- coverage 配置新增 exclude_also 规则\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: 为 benchmark CI step 添加 github-token 以支持 PR 评论\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(i18n): 修复 i18n 标记匹配时的大小写不一致问题\n\n- continuation.py: normalize_text 添加 .lower() 使英文 corrective markers 能正确匹配\n- actions.py: _is_accessibility_error 对 i18n marker 做 lowercase 后再比较\n\n* fix(ci): 添加 CI gate job 以匹配 branch protection 要求的 status check\n\nbranch protection 要求名为 \"CI\" 的 check，但之前没有任何 job\n产生该名称的 check run，导致 PR 永远 pending。\n\n* feat: governed self-evolution pipeline (Phase 1-3)\n\n- Add autonomous policy profile for non-interactive execution\n- Add --policy option to `hermit run` CLI command\n- Skip ingress routing for cli-oneshot sessions\n- Add iteration_summary readonly tool to core registry\n- Add hermit-iterate skill and script for spec-driven iteration\n- Add write_file tool usage guidance to iteration prompt\n- Verify rollback-capable receipts via write_file prestate capture\n- Add governed-self-evolution master spec and Phase 3/4 test specs\n\nGoverned execution chain verified end-to-end:\n  spec → parse → execute → receipt (rollback-capable) → proof-export → rollback\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* chore: add proof bundle from Phase 2 iteration\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* iterate(demo-governed-hello): Add governed iteration marker file\"\n\nTask: task_8c1a6eeffe95\nProof: .hermit-proof/demo-governed-hello.json\n\n* fix: resolve pyright type errors in runner policy_profile resolution\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* iterate(demo-governed-hello): Add governed iteration marker file\"\n\nTask: task_47196b115812\nProof: .hermit-proof/demo-governed-hello.json\n\n* feat: Phase 5 - human-readable proof formatter and governance logging\n\n- Add format_proof_summary() and format_receipt_table() to kernel verification\n- Add governed_tool_execution structured log for receipt-producing actions\n- Integrate formatter into hermit-iterate.sh for PR body and .md export\n- Add demo-add-proof-summary-util spec for showcase iteration\n- 4 new tests for proof formatter\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* iterate(demo-governed-hello): Add governed iteration marker file\"\n\nTask: task_f60e0232f028\nProof: .hermit-proof/demo-governed-hello.json\n\n* feat: Phase 5 showcase trace and governance logging\n\n- Add showcase-trace.md with curated execution trace for demo\n- Human-readable proof summary in .hermit-proof/*.md\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* docs: mark all governed-self-evolution phases as complete\n\nAll 5 phases and 7 acceptance criteria verified:\n- Phase 1: End-to-end hermit-iterate execution\n- Phase 2: Receipt and proof visibility\n- Phase 3: Rollback verification (file_restore)\n- Phase 4: PR close-loop with proof summary\n- Phase 5: Governance logging, human-readable formatter, showcase trace\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: update FakeRunner.handle() signature to accept run_opts kwarg\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* test: add coverage for autonomous policy profile and run_opts merging\n\nCover all branches of _evaluate_autonomous() in rules.py and the\nrun_opts merge path in runner.handle() to satisfy the 95% diff\ncoverage gate.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat(governance): add adversarial governance assurance report formatter\n\nAdd governance_report.py with extract_governance_events() and\nformat_governance_assurance_report() — pure functions that analyze proof\nbundles and generate human-readable governance assurance reports.\n\nThe extractor classifies governance events from receipt bundles (denied /\nsucceeded), blocked authorization plans (policy_denied gaps), and\nabandoned execution contracts. The formatter renders an executive summary,\nboundary enforcement table, authorized executions, chain integrity, and\na verdict (GOVERNANCE ENFORCED / CLEAN EXECUTION / INTEGRITY COMPROMISED).\n\nIncludes spec file, 9 tests, and proof bundle from a governed iteration\nrun where the kernel successfully denied a sudo command execution.\n\nTask: task_3b6cd397e5e5\nProof: .hermit-proof/adversarial-governance.json\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat(policy): fix template suggestion timing with PolicyEvidenceEnricher\n\nPolicySuggestion was computed in synthesize_default() (after policy\nevaluation) but consumed by _apply_policy_suggestion() in evaluate_rules()\n(during policy evaluation), making template-based approval relaxation\ndead code.\n\nFix: introduce PolicyEvidenceEnricher that injects template and pattern\nevidence into action_request.context before policy evaluation. Also wire\nTaskPatternLearner.learn_from_completed_task() into the reconciliation\ncompletion path and add _apply_task_pattern() consumer in rules.py to\nclose the task-pattern loop end-to-end.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat(kernel): contract template learner and task pattern learner\n\nAdd template outcome tracking (invocation/success/failure counts,\nauto-invalidation), policy suggestion computation from template\nconfidence, and task-level pattern learning from completed multi-step\ntasks.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat(kernel): add execution competition module\n\nCriteria evaluation, competition service, and store for comparing\ncompeting execution approaches.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* merge: resolve conflicts with main and preserve PR changes\n\nMerge main into iterate/adversarial-governance, resolving conflicts\nin competition module, rules.py, and template_learner.py. Preserves\nPolicyEvidenceEnricher, template outcome tracking, task pattern\nlearning, and policy suggestion functions. Adds delegate_execution\nrule from main and structured_assertion support in update_memory_record.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: align template learner merge with tests — tracking fields, gradual degradation, policy suggestions\n\nCompletes the merge resolution from main into iterate/adversarial-governance:\n- Add PolicySuggestion import and compute_policy_suggestion method\n- Add record_template_outcome for tracking template use success/failure\n- Implement gradual degradation (invocation_count >= 5 + success_rate < 0.3)\n- Set initial invocation_count=1, success_count=1 on template creation\n- Add tracking fields (invocation_count, failure_count, success_rate, last_failure_at) to structured assertion\n- Update reinforcement path to increment tracking counters\n- Update tests to match gradual degradation semantics\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: restore competition module and fix CI failures from merge\n\n- Restore competition module files (models, evaluator, service, store,\n  criteria, workspace) from original commit 4752fbf — the merge kept\n  truncated scaffolding from main instead of the full implementations\n- Add create_worktree/remove_worktree methods to GitWorktreeInspector\n  (needed by CompetitionWorkspaceManager)\n- Bump schema version 8 → 10 and add competitions/competition_candidates\n  to _KNOWN_KERNEL_TABLES\n- Forward webhook payload.policy_profile into ingress_metadata\n- Update schema version assertions in tests (8 → 10)\n- Add workspace_ref and scope_kind fields to ContractTemplate\n- Add workspace-scoped template learning and cross-workspace promotion\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* test: add coverage for competition module, workspace, criteria, and template learner\n\n68 new tests bringing diff coverage from 82% toward 95%:\n- Competition workspace: create, merge, cleanup, list_orphans (14 tests)\n- Competition criteria: TestPass, LintClean, TypeCheck edge cases (9 tests)\n- Template learner: workspace-scoped learning, cross-workspace promotion,\n  record_template_outcome, degradation edge cases (18 tests)\n- Competition service: spawn errors, timeout policies, promote/cancel\n  edge cases, orphan cleanup (20 tests)\n- Competition store: status update edge cases, score update (7 tests)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-03-18T15:25:45+08:00",
+          "tree_id": "86d1d74d750d0996ed9e7d9ef6f633bd3f12e06c",
+          "url": "https://github.com/heggria/Hermit/commit/77e01ca5eecfada0f9fed7076ed0d776e6cde793"
+        },
+        "date": 1773818789171,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.113810861653501,
+            "unit": "iter/sec",
+            "range": "stddev: 0.007639105719499514",
+            "extra": "mean: 473.0792230000006 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 172.5460570768033,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00042002889714971636",
+            "extra": "mean: 5.7955540505621785 msec\nrounds: 178"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2454.8772728390704,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00019830313185783283",
+            "extra": "mean: 407.35233938741794 usec\nrounds: 2808"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 3983.291664179416,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009146632292647765",
+            "extra": "mean: 251.04865129327817 usec\nrounds: 4098"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 5034.827663182376,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009822129371216031",
+            "extra": "mean: 198.616530077601 usec\nrounds: 6184"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 29169.9384199449,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000392712085226778",
+            "extra": "mean: 34.28186873772252 usec\nrounds: 30999"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 3225.382763313235,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00014258583277477829",
+            "extra": "mean: 310.04072179413595 usec\nrounds: 3634"
           }
         ]
       }
