@@ -1027,6 +1027,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         last_validated_at: float | None | object = UNSET,
         supersession_reason: str | None | object = UNSET,
         learned_from_reconciliation_ref: str | None | object = UNSET,
+        structured_assertion: dict[str, Any] | None | object = UNSET,
     ) -> None:
         record = self.get_memory_record(memory_id)
         if record is None:
@@ -1068,6 +1069,9 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             if learned_from_reconciliation_ref is UNSET
             else learned_from_reconciliation_ref
         )
+        next_structured_assertion = (
+            record.structured_assertion if structured_assertion is UNSET else structured_assertion
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 """
@@ -1075,7 +1079,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                 SET status = ?, supersedes_json = ?, supersedes_memory_ids_json = ?,
                     superseded_by_memory_id = ?, invalidation_reason = ?, invalidated_at = ?,
                     expires_at = ?, validation_basis = ?, last_validated_at = ?, supersession_reason = ?,
-                    learned_from_reconciliation_ref = ?, updated_at = ?
+                    learned_from_reconciliation_ref = ?, structured_assertion_json = ?,
+                    updated_at = ?
                 WHERE memory_id = ?
                 """,
                 (
@@ -1090,6 +1095,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     next_last_validated_at,
                     next_supersession_reason,
                     next_reconciliation_ref,
+                    json.dumps(next_structured_assertion or {}, ensure_ascii=False),
                     updated_at,
                     memory_id,
                 ),
@@ -1113,6 +1119,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     "last_validated_at": next_last_validated_at,
                     "supersession_reason": next_supersession_reason,
                     "learned_from_reconciliation_ref": next_reconciliation_ref,
+                    "structured_assertion": next_structured_assertion or {},
                     "updated_at": updated_at,
                 },
             )
