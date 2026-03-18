@@ -100,6 +100,7 @@ RESET = "\033[0m"
 import hermit.surfaces.cli._commands_autostart as _commands_autostart  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import hermit.surfaces.cli._commands_core as _commands_core  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import hermit.surfaces.cli._commands_memory as _commands_memory  # noqa: F401  # pyright: ignore[reportUnusedImport]
+import hermit.surfaces.cli._commands_overnight as _commands_overnight  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import hermit.surfaces.cli._commands_plugin as _commands_plugin  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import hermit.surfaces.cli._commands_schedule as _commands_schedule  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import hermit.surfaces.cli._commands_task as _commands_task  # noqa: F401  # pyright: ignore[reportUnusedImport]
