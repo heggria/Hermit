@@ -45,6 +45,8 @@ class ContractTemplate:
     resource_scope_pattern: list[str] = field(default_factory=lambda: list[str]())
     constraint_defaults: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
     evidence_requirements: list[str] = field(default_factory=lambda: list[str]())
+    workspace_ref: str = ""
+    scope_kind: str = "global"
 
 
 @dataclass

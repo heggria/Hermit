@@ -45,10 +45,12 @@ class PolicyEvidenceEnricher:
 
     def _enrich_template(self, action_request: ActionRequest) -> None:
         expected_effects = self._expected_effects(action_request)
+        workspace_root = str(action_request.context.get("workspace_root", "") or "")
         template = self.template_learner.find_matching_template(
             action_class=action_request.action_class,
             tool_name=action_request.tool_name,
             expected_effects=expected_effects,
+            workspace_root=workspace_root,
         )
         if template is None:
             return

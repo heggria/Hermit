@@ -44,6 +44,7 @@ class ExecutionContractService:
             action_class=action_request.action_class,
             tool_name=action_request.tool_name,
             expected_effects=expected_effects,
+            workspace_root=attempt_ctx.workspace_root,
         )
         selected_template_ref: str | None = None
         if template is not None:

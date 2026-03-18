@@ -1,1 +1,1 @@
-"""Competition — candidate-based execution with evaluation and promotion."""
+from __future__ import annotations

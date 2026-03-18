@@ -848,3 +848,234 @@ class TestLearnedTemplatesImproveDecisions:
             if r.memory_kind == "contract_template"
         ]
         assert len(templates) == 1
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: workspace-scoped template isolation
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspaceScopedTemplates:
+    def test_learn_workspace_scoped_template(self, tmp_path: Path) -> None:
+        """Template learned with workspace_root gets scope_kind='workspace'."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(store)
+        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
+
+        ws = str(tmp_path / "project-a")
+        memory = learner.learn_from_reconciliation(
+            reconciliation=reconciliation,
+            contract=contract,
+            workspace_root=ws,
+        )
+
+        assert memory is not None
+        assert memory.scope_kind == "workspace"
+        assert memory.scope_ref == str(Path(ws).resolve())
+
+    def test_workspace_isolation(self, tmp_path: Path) -> None:
+        """Template learned in workspace A is not matched in workspace B."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws_a = str(tmp_path / "project-a")
+        ws_b = str(tmp_path / "project-b")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+        # Promote in workspace A
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_a
+            )
+
+        # Should match in workspace A
+        template_a = learner.find_matching_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/other/readme.md"],
+            workspace_root=ws_a,
+        )
+        assert template_a is not None
+
+        # Should NOT match in workspace B (no workspace-scoped template there,
+        # no global template either)
+        template_b = learner.find_matching_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/other/readme.md"],
+            workspace_root=ws_b,
+        )
+        assert template_b is None
+
+    def test_global_fallback(self, tmp_path: Path) -> None:
+        """Global templates still match when no workspace template exists."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+        # Learn as global (no workspace_root)
+        _promote_template(store, learner, contract)
+
+        # Should match even from a specific workspace
+        ws = str(tmp_path / "any-project")
+        template = learner.find_matching_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/other/readme.md"],
+            workspace_root=ws,
+        )
+        assert template is not None
+
+    def test_workspace_priority(self, tmp_path: Path) -> None:
+        """Workspace template preferred over global template for same fingerprint."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws = str(tmp_path / "project-a")
+        resolved_ws = str(Path(ws).resolve())
+
+        # Create a global template
+        contract_global = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+            risk_level="medium",
+        )
+        _promote_template(store, learner, contract_global)
+
+        # Create a workspace-scoped template with different contract (different risk)
+        contract_ws = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="patch_file",
+            expected_effects=["path:/workspace/readme.md"],
+            risk_level="high",
+        )
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract_ws.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract_ws, workspace_root=ws
+            )
+
+        # Match in the workspace — should get workspace template (patch_file)
+        template = learner.find_matching_template(
+            action_class="write_local",
+            tool_name="patch_file",
+            expected_effects=["path:/other/readme.md"],
+            workspace_root=ws,
+        )
+        assert template is not None
+        assert template.workspace_ref == resolved_ws
+        assert template.scope_kind == "workspace"
+
+    def test_backward_compat_no_workspace(self, tmp_path: Path) -> None:
+        """workspace_root='' falls back to global (existing behavior preserved)."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(store)
+        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
+
+        memory = learner.learn_from_reconciliation(
+            reconciliation=reconciliation,
+            contract=contract,
+            workspace_root="",
+        )
+
+        assert memory is not None
+        assert memory.scope_kind == "global"
+
+        # Promote and verify matching works without workspace
+        _promote_template(store, learner, contract)
+        template = learner.find_matching_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["action:write_local"],
+        )
+        assert template is not None
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: cross-workspace promotion
+# ---------------------------------------------------------------------------
+
+
+class TestCrossWorkspacePromotion:
+    def test_cross_workspace_promotion(self, tmp_path: Path) -> None:
+        """Template promoted to global after appearing in 2+ workspaces with high success rate."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws_a = str(tmp_path / "project-a")
+        ws_b = str(tmp_path / "project-b")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        # Learn and promote in workspace A
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_a
+            )
+
+        # Learn and promote in workspace B — this should trigger promotion
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_b
+            )
+
+        # Check that a global template now exists
+        global_records = store.list_memory_records(status="active", scope_kind="global", limit=100)
+        global_templates = [r for r in global_records if r.memory_kind == "contract_template"]
+        assert len(global_templates) >= 1
+
+        promoted = global_templates[0]
+        sa = dict(promoted.structured_assertion or {})
+        assert sa.get("promotion_reason") == "cross_workspace_convergence"
+        assert promoted.promotion_reason == "cross_workspace_convergence"
+
+    def test_no_promotion_below_threshold(self, tmp_path: Path) -> None:
+        """Promotion blocked when only 1 workspace has the template."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws_a = str(tmp_path / "project-a")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        # Learn in only one workspace
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_a
+            )
+
+        # No global template should exist
+        global_records = store.list_memory_records(status="active", scope_kind="global", limit=100)
+        global_templates = [r for r in global_records if r.memory_kind == "contract_template"]
+        assert len(global_templates) == 0

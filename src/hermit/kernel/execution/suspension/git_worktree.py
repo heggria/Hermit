@@ -85,6 +85,26 @@ class GitWorktreeInspector:
             text=True,
         )
 
+    def create_worktree(self, *, repo_root: Path, path: Path, branch: str) -> None:
+        """Create a new git worktree with a new branch."""
+        subprocess.run(
+            ["git", "worktree", "add", "-b", branch, str(path)],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def remove_worktree(self, *, repo_root: Path, path: Path) -> None:
+        """Remove a git worktree."""
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(path)],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def _command_error(self, result: Any, *, default: str) -> str | None:
         returncode = int(getattr(result, "returncode", 0) or 0)
         if returncode == 0:

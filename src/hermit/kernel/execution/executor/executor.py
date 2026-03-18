@@ -460,7 +460,9 @@ class ToolExecutor:
         )
         result_class = str(reconciliation.result_class or "")
         if result_class == "satisfied":
-            self._learn_contract_template(reconciliation, contract_ref)
+            self._learn_contract_template(
+                reconciliation, contract_ref, workspace_root=attempt_ctx.workspace_root
+            )
         if result_class == "violated":
             self._invalidate_memories_for_reconciliation(reconciliation)
             self._degrade_templates_for_violation(reconciliation)
@@ -493,7 +495,11 @@ class ToolExecutor:
         return reconciliation, outcome
 
     def _learn_contract_template(
-        self, reconciliation: ReconciliationRecord, contract_ref: str
+        self,
+        reconciliation: ReconciliationRecord,
+        contract_ref: str,
+        *,
+        workspace_root: str = "",
     ) -> None:
         """Extract a learned template from a satisfied reconciliation."""
         contract = (
@@ -506,6 +512,7 @@ class ToolExecutor:
         self.execution_contracts.template_learner.learn_from_reconciliation(
             reconciliation=reconciliation,
             contract=contract,
+            workspace_root=workspace_root,
         )
 
     def _learn_task_pattern(self, task_id: str) -> None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -66,6 +67,13 @@ def _effects_similarity(a: list[str], b: list[str]) -> float:
     return len(intersection) / len(union)
 
 
+def _resolve_workspace(workspace_root: str) -> str:
+    """Resolve workspace_root to an absolute path string, or empty string."""
+    if not workspace_root:
+        return ""
+    return str(Path(workspace_root).resolve())
+
+
 # ---------------------------------------------------------------------------
 # Learner service
 # ---------------------------------------------------------------------------
@@ -73,6 +81,7 @@ def _effects_similarity(a: list[str], b: list[str]) -> float:
 _MINIMUM_MATCH_SIMILARITY = 0.4
 _PROMOTION_THRESHOLD = 3
 _HIGH_CONFIDENCE_THRESHOLD = 0.8
+_SCOPE_BONUS = 0.1
 
 
 class ContractTemplateLearner:
@@ -90,6 +99,7 @@ class ContractTemplateLearner:
         *,
         reconciliation: ReconciliationRecord,
         contract: ExecutionContractRecord,
+        workspace_root: str = "",
     ) -> MemoryRecord | None:
         """Extract a contract template from a *satisfied* reconciliation.
 
@@ -109,8 +119,13 @@ class ContractTemplateLearner:
         risk_level = str(contract.risk_budget.get("risk_level", "medium") or "medium")
         fingerprint = _action_fingerprint(action_class, tool_name, list(contract.expected_effects))
 
-        # Check for an existing template with the same fingerprint
-        existing = self._find_template_by_fingerprint(fingerprint)
+        # Compute scope from workspace_root
+        resolved_ws = _resolve_workspace(workspace_root)
+        scope_kind = "workspace" if resolved_ws else "global"
+        scope_ref = resolved_ws if resolved_ws else "global"
+
+        # Check for an existing template with the same fingerprint and scope
+        existing = self._find_template_by_fingerprint(fingerprint, workspace_root=workspace_root)
         if existing is not None:
             # Update tracking fields in structured assertion
             sa = dict(existing.structured_assertion or {})
@@ -144,6 +159,9 @@ class ContractTemplateLearner:
                 memory_id=existing.memory_id,
                 fingerprint=fingerprint,
             )
+            # Check for cross-workspace promotion after reinforcement
+            if scope_kind == "workspace":
+                self.promote_to_global(fingerprint=fingerprint)
             return existing
 
         structured_assertion: dict[str, Any] = {
@@ -179,8 +197,8 @@ class ContractTemplateLearner:
                 f"with effects {', '.join(contract.expected_effects[:3])}"
             ),
             structured_assertion=structured_assertion,
-            scope_kind="global",
-            scope_ref="",
+            scope_kind=scope_kind,
+            scope_ref=scope_ref,
             promotion_reason="reconciliation_satisfied",
             retention_class="durable_template",
             status="active",
@@ -206,6 +224,8 @@ class ContractTemplateLearner:
                 "fingerprint": fingerprint,
                 "action_class": action_class,
                 "tool_name": tool_name,
+                "scope_kind": scope_kind,
+                "scope_ref": scope_ref,
             },
         )
 
@@ -215,6 +235,7 @@ class ContractTemplateLearner:
             fingerprint=fingerprint,
             action_class=action_class,
             tool_name=tool_name,
+            scope_kind=scope_kind,
         )
         return memory
 
@@ -247,16 +268,19 @@ class ContractTemplateLearner:
         action_class: str,
         tool_name: str,
         expected_effects: list[str],
+        workspace_root: str = "",
     ) -> ContractTemplate | None:
         """Return the best-matching template for a similar action, or ``None``.
 
         Only templates that have been promoted (>= ``_PROMOTION_THRESHOLD``
-        successful reconciliations) are considered.
+        successful reconciliations) are considered.  Workspace-scoped templates
+        get a scoring bonus over global ones.
         """
-        templates = self._active_templates()
+        templates = self._active_templates(workspace_root=workspace_root)
         if not templates:
             return None
 
+        resolved_ws = _resolve_workspace(workspace_root)
         best: MemoryRecord | None = None
         best_score = 0.0
 
@@ -279,7 +303,15 @@ class ContractTemplateLearner:
 
             # Bonus for exact tool match
             tool_bonus = 0.3 if rec_tool == tool_name else 0.0
-            composite = similarity + tool_bonus
+            # Bonus for workspace-scoped template matching current workspace
+            scope_bonus = (
+                _SCOPE_BONUS
+                if resolved_ws
+                and record.scope_kind == "workspace"
+                and record.scope_ref == resolved_ws
+                else 0.0
+            )
+            composite = similarity + tool_bonus + scope_bonus
             if composite > best_score and similarity >= _MINIMUM_MATCH_SIMILARITY:
                 best_score = composite
                 best = record
@@ -296,15 +328,17 @@ class ContractTemplateLearner:
         action_class: str,
         tool_name: str,
         expected_effects: list[str],
+        workspace_root: str = "",
     ) -> TemplateMatch | None:
         """Return a ``TemplateMatch`` with confidence, or ``None``.
 
         This is the rich-result variant of ``find_matching_template``.
         """
-        templates = self._active_templates()
+        templates = self._active_templates(workspace_root=workspace_root)
         if not templates:
             return None
 
+        resolved_ws = _resolve_workspace(workspace_root)
         best: MemoryRecord | None = None
         best_score = 0.0
         best_reasons: list[str] = []
@@ -326,7 +360,14 @@ class ContractTemplateLearner:
             similarity = _effects_similarity(expected_effects, rec_effects)
 
             tool_bonus = 0.3 if rec_tool == tool_name else 0.0
-            composite = similarity + tool_bonus
+            scope_bonus = (
+                _SCOPE_BONUS
+                if resolved_ws
+                and record.scope_kind == "workspace"
+                and record.scope_ref == resolved_ws
+                else 0.0
+            )
+            composite = similarity + tool_bonus + scope_bonus
             if composite > best_score and similarity >= _MINIMUM_MATCH_SIMILARITY:
                 best_score = composite
                 best = record
@@ -574,18 +615,180 @@ class ContractTemplateLearner:
         return invalidated
 
     # ------------------------------------------------------------------
+    # Cross-workspace promotion
+    # ------------------------------------------------------------------
+
+    def promote_to_global(
+        self,
+        *,
+        fingerprint: str,
+        min_workspaces: int = 2,
+        min_success_rate: float = 0.8,
+    ) -> MemoryRecord | None:
+        """Promote a workspace-scoped template to global if it appears
+        in multiple workspaces with high success rates.
+
+        Returns the created global ``MemoryRecord`` or ``None``.
+        """
+        # Check if a global template with this fingerprint already exists
+        all_global = self.store.list_memory_records(status="active", scope_kind="global", limit=500)
+        for r in all_global:
+            if r.memory_kind != "contract_template":
+                continue
+            sa = dict(r.structured_assertion or {})
+            if str(sa.get("fingerprint", "")) == fingerprint:
+                return None  # Already promoted
+
+        # Gather all workspace-scoped templates with matching fingerprint
+        all_ws = self.store.list_memory_records(status="active", scope_kind="workspace", limit=500)
+        matching: list[MemoryRecord] = []
+        distinct_workspaces: set[str] = set()
+        for r in all_ws:
+            if r.memory_kind != "contract_template":
+                continue
+            sa = dict(r.structured_assertion or {})
+            if str(sa.get("fingerprint", "")) != fingerprint:
+                continue
+            rate = float(sa.get("success_rate", 0.0))
+            if rate < min_success_rate:
+                return None  # Any workspace below threshold blocks promotion
+            matching.append(r)
+            distinct_workspaces.add(r.scope_ref or "")
+
+        if len(distinct_workspaces) < min_workspaces:
+            return None
+
+        # Aggregate stats across workspace templates
+        total_invocations = 0
+        total_successes = 0
+        total_failures = 0
+        evidence_refs: list[str] = []
+        # Use first match as representative for template fields
+        rep_sa = dict(matching[0].structured_assertion or {})
+        for r in matching:
+            sa = dict(r.structured_assertion or {})
+            total_invocations += int(sa.get("invocation_count", 0))
+            total_successes += int(sa.get("success_count", 0))
+            total_failures += int(sa.get("failure_count", 0))
+            evidence_refs.append(r.memory_id)
+
+        combined_rate = total_successes / total_invocations if total_invocations > 0 else 0.0
+
+        promoted_assertion: dict[str, Any] = {
+            **rep_sa,
+            "invocation_count": total_invocations,
+            "success_count": total_successes,
+            "failure_count": total_failures,
+            "success_rate": combined_rate,
+            "last_used_at": time.time(),
+            "promotion_reason": "cross_workspace_convergence",
+        }
+
+        memory = self.store.create_memory_record(
+            task_id="",
+            conversation_id=None,
+            category="contract_template",
+            claim_text=(
+                f"Promoted global template for "
+                f"{rep_sa.get('action_class', '')}/{rep_sa.get('tool_name', '')} "
+                f"from {len(distinct_workspaces)} workspaces"
+            ),
+            structured_assertion=promoted_assertion,
+            scope_kind="global",
+            scope_ref="global",
+            promotion_reason="cross_workspace_convergence",
+            retention_class="durable_template",
+            status="active",
+            confidence=min(1.0, combined_rate),
+            trust_tier="durable",
+            evidence_refs=evidence_refs,
+            memory_kind="contract_template",
+            validation_basis=f"cross_workspace:{len(distinct_workspaces)}_workspaces",
+            last_validated_at=time.time(),
+        )
+
+        self.store.append_event(
+            event_type="contract_template.promoted_to_global",
+            entity_type="memory_record",
+            entity_id=memory.memory_id,
+            task_id="",
+            step_id="",
+            actor="kernel",
+            payload={
+                "fingerprint": fingerprint,
+                "source_workspace_count": len(distinct_workspaces),
+                "source_memory_ids": evidence_refs,
+                "combined_success_rate": combined_rate,
+            },
+        )
+
+        log.info(
+            "contract_template.promoted_to_global",
+            memory_id=memory.memory_id,
+            fingerprint=fingerprint,
+            workspace_count=len(distinct_workspaces),
+        )
+        return memory
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _active_templates(self) -> list[MemoryRecord]:
-        """Return all active ``contract_template`` memory records."""
-        all_active = self.store.list_memory_records(status="active", limit=500)
-        return [r for r in all_active if r.memory_kind == "contract_template"]
+    def _active_templates(self, workspace_root: str = "") -> list[MemoryRecord]:
+        """Return active ``contract_template`` memory records visible to the given workspace.
 
-    def _find_template_by_fingerprint(self, fingerprint: str) -> MemoryRecord | None:
-        for record in self._active_templates():
+        Returns workspace-scoped templates for the given workspace plus all global templates.
+        When ``workspace_root`` is empty, returns only global templates (backward-compatible).
+        """
+        resolved_ws = _resolve_workspace(workspace_root)
+        results: list[MemoryRecord] = []
+        seen_ids: set[str] = set()
+
+        # Workspace-scoped templates
+        if resolved_ws:
+            ws_records = self.store.list_memory_records(
+                status="active", scope_kind="workspace", scope_ref=resolved_ws, limit=500
+            )
+            for r in ws_records:
+                if r.memory_kind == "contract_template" and r.memory_id not in seen_ids:
+                    results.append(r)
+                    seen_ids.add(r.memory_id)
+
+        # Global templates
+        global_records = self.store.list_memory_records(
+            status="active", scope_kind="global", limit=500
+        )
+        for r in global_records:
+            if r.memory_kind == "contract_template" and r.memory_id not in seen_ids:
+                results.append(r)
+                seen_ids.add(r.memory_id)
+
+        # Backward compat: when no workspace, also fetch records with empty scope
+        if not resolved_ws:
+            all_active = self.store.list_memory_records(status="active", limit=500)
+            for r in all_active:
+                if r.memory_kind == "contract_template" and r.memory_id not in seen_ids:
+                    results.append(r)
+                    seen_ids.add(r.memory_id)
+
+        return results
+
+    def _find_template_by_fingerprint(
+        self, fingerprint: str, *, workspace_root: str = ""
+    ) -> MemoryRecord | None:
+        for record in self._active_templates(workspace_root=workspace_root):
             sa = dict(record.structured_assertion or {})
             if str(sa.get("fingerprint", "")) == fingerprint:
+                # When workspace-scoped, only match within same scope
+                resolved_ws = _resolve_workspace(workspace_root)
+                if resolved_ws:
+                    if record.scope_kind == "workspace" and record.scope_ref == resolved_ws:
+                        return record
+                    # Skip workspace-scoped records from other workspaces
+                    if record.scope_kind == "workspace" and record.scope_ref != resolved_ws:
+                        continue
+                    # Global record is acceptable as fallback
+                    return record
                 return record
         return None
 
@@ -618,4 +821,6 @@ class ContractTemplateLearner:
             resource_scope_pattern=list(sa.get("resource_scope_pattern", [])),
             constraint_defaults=dict(sa.get("constraint_defaults", {})),
             evidence_requirements=list(sa.get("evidence_requirements", [])),
+            workspace_ref=record.scope_ref or "",
+            scope_kind=record.scope_kind or "global",
         )
