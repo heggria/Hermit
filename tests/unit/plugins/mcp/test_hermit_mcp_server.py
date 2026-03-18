@@ -311,6 +311,35 @@ class TestHermitTaskProof:
 # ---------------------------------------------------------------------------
 
 
+class TestHermitSubmitTaskPolicyProfile:
+    def test_submit_task_with_policy_profile(
+        self, server: HermitMcpServer, runner: FakeRunner
+    ) -> None:
+        result = _call_tool(
+            server,
+            "hermit_submit_task",
+            description="Supervised task",
+            policy_profile="supervised",
+        )
+        assert result["status"] == "accepted"
+        meta = runner.ingress_calls[0]["ingress_metadata"]
+        assert meta["policy_profile"] == "supervised"
+
+
+class TestHermitApproveTaskNotFound:
+    def test_approve_task_not_found(self, server: HermitMcpServer, store: FakeStore) -> None:
+        """Approval exists but its task_id points to a missing task."""
+        store.approvals = [FakeApproval(approval_id="apr-orphan", task_id="gone")]
+        result = _call_tool(server, "hermit_approve", approval_id="apr-orphan")
+        assert result["error"] == "Task not found for approval"
+
+    def test_deny_task_not_found(self, server: HermitMcpServer, store: FakeStore) -> None:
+        """Approval exists but its task_id points to a missing task."""
+        store.approvals = [FakeApproval(approval_id="apr-orphan", task_id="gone")]
+        result = _call_tool(server, "hermit_deny", approval_id="apr-orphan")
+        assert result["error"] == "Task not found for approval"
+
+
 class TestServerLifecycle:
     def test_swap_runner(self, server: HermitMcpServer) -> None:
         new_runner = FakeRunner()
@@ -325,6 +354,52 @@ class TestServerLifecycle:
     def test_get_store_via_task_controller(self, server: HermitMcpServer, store: FakeStore) -> None:
         result = server._get_store()
         assert result is store
+
+    def test_get_store_fallback_via_agent_kernel_store(self) -> None:
+        """When task_controller is absent, fall back to runner.agent.kernel_store."""
+        fake_store = FakeStore()
+        runner = SimpleNamespace(agent=SimpleNamespace(kernel_store=fake_store))
+        srv = HermitMcpServer(host="127.0.0.1", port=0)
+        srv._runner = runner
+        assert srv._get_store() is fake_store
+
+    def test_get_store_fallback_raises_when_no_store(self) -> None:
+        """When neither task_controller nor agent.kernel_store exists, raise."""
+        runner = SimpleNamespace(agent=SimpleNamespace(kernel_store=None))
+        srv = HermitMcpServer(host="127.0.0.1", port=0)
+        srv._runner = runner
+        with pytest.raises(RuntimeError, match="Kernel store is not available"):
+            srv._get_store()
+
+    def test_start_and_stop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exercise the real start/stop lifecycle (mock uvicorn)."""
+        import uvicorn
+
+        run_calls: list[bool] = []
+
+        class FakeUvicornServer:
+            def __init__(self, config: Any) -> None:
+                self.config = config
+                self.should_exit = False
+
+            def run(self) -> None:
+                run_calls.append(True)
+
+        monkeypatch.setattr(uvicorn, "Server", FakeUvicornServer)
+
+        srv = HermitMcpServer(host="127.0.0.1", port=0)
+        fake_runner = FakeRunner()
+        srv.start(fake_runner)
+
+        assert srv._runner is fake_runner
+        assert srv._uv_server is not None
+        assert srv._thread is not None
+        # Wait for the thread to finish (it's a fake, returns immediately)
+        srv._thread.join(timeout=2)
+        assert run_calls == [True]
+
+        srv.stop()
+        assert srv._uv_server.should_exit is True
 
 
 # ---------------------------------------------------------------------------
