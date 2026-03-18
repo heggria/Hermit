@@ -52,25 +52,30 @@ def test_non_kernel_path_not_flagged(tmp_path: Path) -> None:
 
 
 def test_kernel_path_without_workspace() -> None:
-    assert _is_kernel_path("/some/path/src/hermit/kernel/foo.py", "") is False
+    """Segment-based fallback detects kernel paths even without workspace_root."""
+    assert _is_kernel_path("/some/path/src/hermit/kernel/foo.py", "") is True
 
 
-def test_kernel_path_oserror_returns_false(tmp_path: Path, monkeypatch: object) -> None:
+def test_kernel_path_without_workspace_non_kernel() -> None:
+    assert _is_kernel_path("/some/path/src/hermit/plugins/foo.py", "") is False
+
+
+def test_kernel_path_detected_from_subdirectory_workspace(tmp_path: Path) -> None:
+    """Guard fires when workspace_root is a subdirectory of the real repo root."""
+    repo_root = tmp_path / "repo"
+    kernel_file = str(repo_root / "src" / "hermit" / "kernel" / "policy" / "guards" / "rules.py")
+    subdirectory = str(repo_root / "docs")
+    assert _is_kernel_path(kernel_file, subdirectory) is True
+
+
+def test_kernel_path_oserror_returns_false(monkeypatch: object) -> None:
     import hermit.kernel.policy.evaluators.derivation as mod
 
-    original_resolve = Path.resolve
-    call_count = 0
-
     def _exploding_resolve(self: Path, *a: object, **kw: object) -> Path:
-        nonlocal call_count
-        call_count += 1
-        # First call resolves workspace_root; second call resolves the target path
-        if call_count == 2:
-            raise OSError("boom")
-        return original_resolve(self, *a, **kw)
+        raise OSError("boom")
 
     monkeypatch.setattr(Path, "resolve", _exploding_resolve)  # type: ignore[arg-type]
-    assert mod._is_kernel_path(str(tmp_path / "src/hermit/kernel/foo.py"), str(tmp_path)) is False
+    assert mod._is_kernel_path("/x/src/hermit/kernel/foo.py", "/x") is False
 
 
 def test_derive_request_sets_kernel_paths(tmp_path: Path) -> None:

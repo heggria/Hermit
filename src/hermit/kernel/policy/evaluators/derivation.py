@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from pathlib import Path
@@ -116,16 +117,28 @@ def derive_request(request: ActionRequest) -> ActionRequest:
     return request
 
 
+_KERNEL_SEGMENT = f"{os.sep}src{os.sep}hermit{os.sep}kernel{os.sep}"
+
+
 def _is_kernel_path(path: str, workspace_root: str) -> bool:
-    """Check if path falls within the kernel source tree."""
-    if not workspace_root:
-        return False
-    kernel_prefix = str(Path(workspace_root).resolve() / "src" / "hermit" / "kernel")
+    """Check if path falls within the kernel source tree.
+
+    Uses workspace_root when available, and falls back to checking whether the
+    resolved path contains a ``src/hermit/kernel/`` segment so that the guard
+    still fires when the runtime workspace is a subdirectory of the repository.
+    """
     try:
         resolved = str(Path(path).resolve())
     except OSError:
         return False
-    return resolved.startswith(kernel_prefix)
+    if workspace_root:
+        try:
+            kernel_prefix = str(Path(workspace_root).resolve() / "src" / "hermit" / "kernel")
+        except OSError:
+            kernel_prefix = ""
+        if kernel_prefix and resolved.startswith(kernel_prefix):
+            return True
+    return _KERNEL_SEGMENT in resolved
 
 
 def _resolve_target(target: str, workspace_root: str) -> str:
