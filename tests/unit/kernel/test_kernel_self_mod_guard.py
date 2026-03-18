@@ -55,6 +55,24 @@ def test_kernel_path_without_workspace() -> None:
     assert _is_kernel_path("/some/path/src/hermit/kernel/foo.py", "") is False
 
 
+def test_kernel_path_oserror_returns_false(tmp_path: Path, monkeypatch: object) -> None:
+    import hermit.kernel.policy.evaluators.derivation as mod
+
+    original_resolve = Path.resolve
+    call_count = 0
+
+    def _exploding_resolve(self: Path, *a: object, **kw: object) -> Path:
+        nonlocal call_count
+        call_count += 1
+        # First call resolves workspace_root; second call resolves the target path
+        if call_count == 2:
+            raise OSError("boom")
+        return original_resolve(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "resolve", _exploding_resolve)  # type: ignore[arg-type]
+    assert mod._is_kernel_path(str(tmp_path / "src/hermit/kernel/foo.py"), str(tmp_path)) is False
+
+
 def test_derive_request_sets_kernel_paths(tmp_path: Path) -> None:
     workspace = str(tmp_path)
     kernel_file = str(tmp_path / "src" / "hermit" / "kernel" / "task" / "models.py")
