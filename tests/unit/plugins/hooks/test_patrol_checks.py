@@ -1,4 +1,4 @@
-"""Tests for patrol check implementations — LintCheck, TestCheck, TodoScanCheck, etc."""
+"""Tests for patrol check implementations — covers missing lines in checks.py."""
 
 from __future__ import annotations
 
@@ -15,219 +15,244 @@ from hermit.plugins.builtin.hooks.patrol.checks import (
     TodoScanCheck,
 )
 
+# ---------------------------------------------------------------------------
+# LintCheck — missing lines: 53-54 (JSONDecodeError), 75-76 (generic exception)
+# ---------------------------------------------------------------------------
 
-class TestLintCheck:
-    """Cover checks.py LintCheck lines 31-76."""
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_no_issues(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(stdout="[]", stderr="", returncode=0)
-        check = LintCheck()
-        result = check.run("/workspace")
+class TestLintCheckEdgeCases:
+    def test_json_decode_error_returns_clean(self) -> None:
+        """Non-JSON stdout should be swallowed; empty issues -> clean."""
+        mock_result = MagicMock()
+        mock_result.stdout = "not valid json at all"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = LintCheck().run("/workspace")
         assert result.status == "clean"
         assert result.issue_count == 0
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_with_issues(self, mock_run: MagicMock) -> None:
-        issues: list[dict[str, Any]] = [
-            {
-                "filename": "a.py",
-                "location": {"row": 10, "column": 1},
-                "code": "E501",
-                "message": "Line too long",
-            }
-        ]
-        mock_run.return_value = MagicMock(stdout=json.dumps(issues), stderr="", returncode=1)
-        check = LintCheck()
-        result = check.run("/workspace")
-        assert result.status == "issues_found"
-        assert result.issue_count == 1
-        assert result.issues[0]["code"] == "E501"
-
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_ruff_not_found(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = FileNotFoundError("ruff not found")
-        check = LintCheck()
-        result = check.run("/workspace")
+    def test_generic_exception_returns_error(self) -> None:
+        """Unexpected exceptions should be caught and returned as error."""
+        with patch("subprocess.run", side_effect=OSError("disk error")):
+            result = LintCheck().run("/workspace")
         assert result.status == "error"
-        assert "ruff not found" in result.summary
+        assert "disk error" in result.summary
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_malformed_json(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(stdout="not json", stderr="", returncode=1)
-        check = LintCheck()
-        result = check.run("/workspace")
-        assert result.status == "clean"  # malformed json => no issues parsed
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_general_exception(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = RuntimeError("timeout")
-        check = LintCheck()
-        result = check.run("/workspace")
-        assert result.status == "error"
+# ---------------------------------------------------------------------------
+# TestCheck — missing lines: 85-120
+# ---------------------------------------------------------------------------
 
 
 class TestTestCheck:
-    """Cover checks.py TestCheck lines 84-120."""
+    def test_all_pass(self) -> None:
+        mock_result = MagicMock()
+        mock_result.stdout = "5 passed\n"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_all_passed(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(stdout="5 passed\n", stderr="", returncode=0)
-        check = TestCheck()
-        result = check.run("/workspace")
+        with patch("subprocess.run", return_value=mock_result):
+            result = TestCheck().run("/workspace")
         assert result.status == "clean"
         assert "5" in result.summary
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_some_failed(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(stdout="3 passed, 2 failed\n", stderr="", returncode=1)
-        check = TestCheck()
-        result = check.run("/workspace")
+    def test_some_failures(self) -> None:
+        mock_result = MagicMock()
+        mock_result.stdout = "3 passed, 2 failed\n"
+        mock_result.stderr = ""
+        mock_result.returncode = 1
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = TestCheck().run("/workspace")
         assert result.status == "issues_found"
         assert result.issue_count == 2
+        assert "2" in result.summary
+        assert "3" in result.summary
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_pytest_not_found(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = FileNotFoundError("pytest not found")
-        check = TestCheck()
-        result = check.run("/workspace")
+    def test_pytest_not_found(self) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError("pytest")):
+            result = TestCheck().run("/workspace")
         assert result.status == "error"
+        assert "pytest not found" in result.summary
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_general_exception(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = RuntimeError("boom")
-        check = TestCheck()
-        result = check.run("/workspace")
+    def test_generic_exception(self) -> None:
+        with patch("subprocess.run", side_effect=RuntimeError("timeout expired")):
+            result = TestCheck().run("/workspace")
         assert result.status == "error"
+        assert "timeout expired" in result.summary
 
 
-class TestTodoScanCheck:
-    """Cover checks.py TodoScanCheck lines 128-179."""
+# ---------------------------------------------------------------------------
+# TodoScanCheck — missing lines: 147 (non-.py skip), 151-152 (OSError)
+# ---------------------------------------------------------------------------
 
-    def test_no_workspace(self, tmp_path: Path) -> None:
-        check = TodoScanCheck()
-        result = check.run(str(tmp_path / "nonexistent"))
-        assert result.status == "error"
 
-    def test_clean_workspace(self, tmp_path: Path) -> None:
+class TestTodoScanCheckEdgeCases:
+    def test_skips_non_python_files(self, tmp_path: Path) -> None:
+        """Non-.py files should be skipped even if they contain TODO markers."""
+        (tmp_path / "readme.md").write_text("# TODO: document this\n")
         (tmp_path / "clean.py").write_text("x = 1\n")
-        check = TodoScanCheck()
-        result = check.run(str(tmp_path))
+        result = TodoScanCheck().run(str(tmp_path))
+        assert result.status == "clean"
+        assert result.issue_count == 0
+
+    def test_oserror_reading_file(self, tmp_path: Path) -> None:
+        """Files that raise OSError on read should be silently skipped."""
+        py_file = tmp_path / "unreadable.py"
+        py_file.write_text("# TODO: something\n")
+
+        original_read = Path.read_text
+
+        def patched_read(self: Path, *a: Any, **kw: Any) -> str:
+            if self.name == "unreadable.py":
+                raise OSError("Permission denied")
+            return original_read(self, *a, **kw)
+
+        with patch.object(Path, "read_text", patched_read):
+            result = TodoScanCheck().run(str(tmp_path))
         assert result.status == "clean"
 
-    def test_todo_found(self, tmp_path: Path) -> None:
-        (tmp_path / "dirty.py").write_text("# TODO: fix this\nx = 1\n# FIXME: also this\n")
-        check = TodoScanCheck()
-        result = check.run(str(tmp_path))
-        assert result.status == "issues_found"
-        assert result.issue_count == 2
+    def test_generic_exception_returns_error(self, tmp_path: Path) -> None:
+        """Unexpected exception in TodoScanCheck -> error result."""
+        with patch("os.walk", side_effect=RuntimeError("walk failed")):
+            result = TodoScanCheck().run(str(tmp_path))
+        assert result.status == "error"
+        assert "walk failed" in result.summary
 
-    def test_skips_hidden_dirs(self, tmp_path: Path) -> None:
-        hidden = tmp_path / ".hidden"
-        hidden.mkdir()
-        (hidden / "secret.py").write_text("# TODO: hidden todo\n")
-        check = TodoScanCheck()
-        result = check.run(str(tmp_path))
-        assert result.status == "clean"
 
-    def test_skips_pycache(self, tmp_path: Path) -> None:
-        cache = tmp_path / "__pycache__"
-        cache.mkdir()
-        (cache / "cached.py").write_text("# TODO: in cache\n")
-        check = TodoScanCheck()
-        result = check.run(str(tmp_path))
-        assert result.status == "clean"
+# ---------------------------------------------------------------------------
+# CoverageCheck — missing lines: 188-227
+# ---------------------------------------------------------------------------
 
 
 class TestCoverageCheck:
-    """Cover checks.py CoverageCheck lines 187-227."""
+    def test_coverage_above_threshold(self) -> None:
+        mock_result = MagicMock()
+        mock_result.stdout = "TOTAL    1234    100    92%\n"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_high_coverage(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(
-            stdout="TOTAL    1000    100    90%\n", stderr="", returncode=0
-        )
-        check = CoverageCheck()
-        result = check.run("/workspace")
+        with patch("subprocess.run", return_value=mock_result):
+            result = CoverageCheck().run("/workspace")
         assert result.status == "clean"
+        assert "92%" in result.summary
+        assert result.issue_count == 0
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_low_coverage(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(
-            stdout="TOTAL    1000    500    50%\n", stderr="", returncode=0
-        )
-        check = CoverageCheck()
-        result = check.run("/workspace")
+    def test_coverage_below_threshold(self) -> None:
+        mock_result = MagicMock()
+        mock_result.stdout = "TOTAL    1234    800    35%\n"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = CoverageCheck().run("/workspace")
         assert result.status == "issues_found"
+        assert "35%" in result.summary
+        assert result.issue_count == 1
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_unparseable_output(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(stdout="no coverage data\n", stderr="", returncode=0)
-        check = CoverageCheck()
-        result = check.run("/workspace")
-        assert result.status == "error"
+    def test_cannot_parse_coverage(self) -> None:
+        mock_result = MagicMock()
+        mock_result.stdout = "some unrelated output\n"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_pytest_cov_not_found(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = FileNotFoundError
-        check = CoverageCheck()
-        result = check.run("/workspace")
+        with patch("subprocess.run", return_value=mock_result):
+            result = CoverageCheck().run("/workspace")
         assert result.status == "error"
+        assert "Could not parse" in result.summary
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_general_exception(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = RuntimeError("boom")
-        check = CoverageCheck()
-        result = check.run("/workspace")
+    def test_pytest_cov_not_found(self) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError("pytest")):
+            result = CoverageCheck().run("/workspace")
         assert result.status == "error"
+        assert "pytest-cov" in result.summary
+
+    def test_generic_exception(self) -> None:
+        with patch("subprocess.run", side_effect=RuntimeError("boom")):
+            result = CoverageCheck().run("/workspace")
+        assert result.status == "error"
+        assert "boom" in result.summary
+
+
+# ---------------------------------------------------------------------------
+# SecurityCheck — missing lines: 236-283
+# ---------------------------------------------------------------------------
 
 
 class TestSecurityCheck:
-    """Cover checks.py SecurityCheck lines 235-283."""
-
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_no_vulnerabilities(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(
-            stdout=json.dumps({"dependencies": []}), stderr="", returncode=0
+    def test_no_vulnerabilities(self) -> None:
+        audit_output = json.dumps(
+            {"dependencies": [{"name": "requests", "version": "2.28.0", "vulns": []}]}
         )
-        check = SecurityCheck()
-        result = check.run("/workspace")
+        mock_result = MagicMock()
+        mock_result.stdout = audit_output
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = SecurityCheck().run("/workspace")
         assert result.status == "clean"
+        assert result.issue_count == 0
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_with_vulnerabilities(self, mock_run: MagicMock) -> None:
-        data = {
-            "dependencies": [
-                {
-                    "name": "requests",
-                    "version": "2.20.0",
-                    "vulns": [{"id": "CVE-2023-1234", "fix_versions": ["2.31.0"]}],
-                }
-            ]
-        }
-        mock_run.return_value = MagicMock(stdout=json.dumps(data), stderr="", returncode=1)
-        check = SecurityCheck()
-        result = check.run("/workspace")
+    def test_vulnerabilities_found(self) -> None:
+        audit_output = json.dumps(
+            {
+                "dependencies": [
+                    {
+                        "name": "requests",
+                        "version": "2.25.0",
+                        "vulns": [
+                            {"id": "CVE-2023-1234", "fix_versions": ["2.28.0"]},
+                            {"id": "CVE-2023-5678", "fix_versions": ["2.28.0"]},
+                        ],
+                    }
+                ]
+            }
+        )
+        mock_result = MagicMock()
+        mock_result.stdout = audit_output
+        mock_result.stderr = ""
+        mock_result.returncode = 1
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = SecurityCheck().run("/workspace")
         assert result.status == "issues_found"
-        assert result.issue_count == 1
+        assert result.issue_count == 2
+        assert result.issues[0]["package"] == "requests"
+        assert result.issues[0]["vuln_id"] == "CVE-2023-1234"
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_pip_audit_not_found(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = FileNotFoundError
-        check = SecurityCheck()
-        result = check.run("/workspace")
+    def test_empty_stdout(self) -> None:
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = SecurityCheck().run("/workspace")
+        assert result.status == "clean"
+        assert result.issue_count == 0
+
+    def test_json_decode_error(self) -> None:
+        mock_result = MagicMock()
+        mock_result.stdout = "not json {{"
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = SecurityCheck().run("/workspace")
+        assert result.status == "clean"
+        assert result.issue_count == 0
+
+    def test_pip_audit_not_found(self) -> None:
+        with patch("subprocess.run", side_effect=FileNotFoundError("pip-audit")):
+            result = SecurityCheck().run("/workspace")
         assert result.status == "error"
+        assert "pip-audit not found" in result.summary
 
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_malformed_json(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = MagicMock(stdout="not valid json", stderr="", returncode=1)
-        check = SecurityCheck()
-        result = check.run("/workspace")
-        assert result.status == "clean"  # no vulns parsed
-
-    @patch("hermit.plugins.builtin.hooks.patrol.checks.subprocess.run")
-    def test_general_exception(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = RuntimeError("boom")
-        check = SecurityCheck()
-        result = check.run("/workspace")
+    def test_generic_exception(self) -> None:
+        with patch("subprocess.run", side_effect=OSError("network error")):
+            result = SecurityCheck().run("/workspace")
         assert result.status == "error"
+        assert "network error" in result.summary

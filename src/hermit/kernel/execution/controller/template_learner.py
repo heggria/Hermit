@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
 
+from hermit.kernel.execution.controller.template_models import (
+    ContractTemplate,
+    TemplateMatch,
+)
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.models.records import (
     ExecutionContractRecord,
@@ -26,26 +29,6 @@ from hermit.kernel.task.models.records import (
 )
 
 log = structlog.get_logger()
-
-
-# ---------------------------------------------------------------------------
-# Template descriptor
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ContractTemplate:
-    """Lightweight descriptor extracted from a satisfied execution contract."""
-
-    action_class: str
-    tool_name: str
-    risk_level: str
-    reversibility_class: str
-    expected_effects: list[str] = field(default_factory=lambda: [])
-    success_criteria: dict[str, Any] = field(default_factory=lambda: {})
-    drift_budget: dict[str, Any] = field(default_factory=lambda: {})
-    source_contract_ref: str = ""
-    source_reconciliation_ref: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +70,8 @@ def _effects_similarity(a: list[str], b: list[str]) -> float:
 # ---------------------------------------------------------------------------
 
 _MINIMUM_MATCH_SIMILARITY = 0.4
+_PROMOTION_THRESHOLD = 3
+_HIGH_CONFIDENCE_THRESHOLD = 0.8
 
 
 class ContractTemplateLearner:
@@ -161,6 +146,14 @@ class ContractTemplateLearner:
             "drift_budget": dict(contract.drift_budget),
             "fingerprint": fingerprint,
             "source_contract_ref": contract.contract_id,
+            "success_count": 1,
+            "last_used_at": time.time(),
+            "resource_scope_pattern": list(contract.drift_budget.get("resource_scopes", [])),
+            "constraint_defaults": {
+                "reversibility_class": contract.reversibility_class,
+                "risk_level": risk_level,
+            },
+            "evidence_requirements": list(contract.required_receipt_classes),
         }
 
         memory = self.store.create_memory_record(
@@ -215,6 +208,21 @@ class ContractTemplateLearner:
     # Matching: find templates for a proposed action
     # ------------------------------------------------------------------
 
+    def _reinforcement_count(self, memory_id: str) -> int:
+        """Count ``contract_template.reinforced`` events for a memory record."""
+        with self.store._lock:  # pyright: ignore[reportPrivateUsage]
+            rows = self.store._rows(  # pyright: ignore[reportPrivateUsage]
+                "SELECT COUNT(*) AS cnt FROM events "
+                "WHERE entity_type = 'memory_record' AND entity_id = ? "
+                "AND event_type = 'contract_template.reinforced'",
+                (memory_id,),
+            )
+        return int(rows[0]["cnt"]) if rows else 0
+
+    def _success_count_for(self, record: MemoryRecord) -> int:
+        """Total success count = 1 (initial creation) + reinforcement events."""
+        return 1 + self._reinforcement_count(record.memory_id)
+
     def find_matching_template(
         self,
         *,
@@ -222,7 +230,11 @@ class ContractTemplateLearner:
         tool_name: str,
         expected_effects: list[str],
     ) -> ContractTemplate | None:
-        """Return the best-matching template for a similar action, or ``None``."""
+        """Return the best-matching template for a similar action, or ``None``.
+
+        Only templates that have been promoted (>= ``_PROMOTION_THRESHOLD``
+        successful reconciliations) are considered.
+        """
         templates = self._active_templates()
         if not templates:
             return None
@@ -239,6 +251,11 @@ class ContractTemplateLearner:
             if rec_action != action_class:
                 continue
 
+            # Promotion threshold: need >= _PROMOTION_THRESHOLD successes
+            success_count = self._success_count_for(record)
+            if success_count < _PROMOTION_THRESHOLD:
+                continue
+
             rec_effects = list(sa.get("expected_effects", []))
             similarity = _effects_similarity(expected_effects, rec_effects)
 
@@ -253,20 +270,108 @@ class ContractTemplateLearner:
             return None
 
         sa = dict(best.structured_assertion or {})
-        tmpl_effects: list[str] = list(sa.get("expected_effects", []))
-        tmpl_criteria: dict[str, Any] = dict(sa.get("success_criteria", {}))
-        tmpl_budget: dict[str, Any] = dict(sa.get("drift_budget", {}))
-        return ContractTemplate(
-            action_class=str(sa.get("action_class", "")),
-            tool_name=str(sa.get("tool_name", "")),
-            risk_level=str(sa.get("risk_level", "medium")),
-            reversibility_class=str(sa.get("reversibility_class", "limited")),
-            expected_effects=tmpl_effects,
-            success_criteria=tmpl_criteria,
-            drift_budget=tmpl_budget,
-            source_contract_ref=str(sa.get("source_contract_ref", "")),
-            source_reconciliation_ref=best.learned_from_reconciliation_ref or "",
+        return self._template_from_assertion(sa, best)
+
+    def match_template(
+        self,
+        *,
+        action_class: str,
+        tool_name: str,
+        expected_effects: list[str],
+    ) -> TemplateMatch | None:
+        """Return a ``TemplateMatch`` with confidence, or ``None``.
+
+        This is the rich-result variant of ``find_matching_template``.
+        """
+        templates = self._active_templates()
+        if not templates:
+            return None
+
+        best: MemoryRecord | None = None
+        best_score = 0.0
+        best_reasons: list[str] = []
+        best_similarity = 0.0
+
+        for record in templates:
+            sa = dict(record.structured_assertion or {})
+            rec_action = str(sa.get("action_class", ""))
+            rec_tool = str(sa.get("tool_name", ""))
+
+            if rec_action != action_class:
+                continue
+
+            success_count = self._success_count_for(record)
+            if success_count < _PROMOTION_THRESHOLD:
+                continue
+
+            rec_effects = list(sa.get("expected_effects", []))
+            similarity = _effects_similarity(expected_effects, rec_effects)
+
+            tool_bonus = 0.3 if rec_tool == tool_name else 0.0
+            composite = similarity + tool_bonus
+            if composite > best_score and similarity >= _MINIMUM_MATCH_SIMILARITY:
+                best_score = composite
+                best = record
+                best_similarity = similarity
+                reasons = [f"action_class={rec_action}"]
+                if rec_tool == tool_name:
+                    reasons.append(f"tool_name={rec_tool}")
+                reasons.append(f"effects_similarity={similarity:.2f}")
+                reasons.append(f"success_count={success_count}")
+                best_reasons = reasons
+
+        if best is None:
+            return None
+
+        sa = dict(best.structured_assertion or {})
+        confidence = min(1.0, best_similarity * 0.7 + 0.3)
+        template = self._template_from_assertion(sa, best)
+        return TemplateMatch(
+            template_ref=best.memory_id,
+            confidence=confidence,
+            match_reasons=best_reasons,
+            template=template,
         )
+
+    # ------------------------------------------------------------------
+    # Application: pre-fill a contract from a template
+    # ------------------------------------------------------------------
+
+    def apply_template(
+        self,
+        template: ContractTemplate,
+        *,
+        action_class: str,
+        tool_name: str,
+        expected_effects: list[str],
+        resource_scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Generate pre-filled contract parameters from a template.
+
+        Returns a dict of contract fields that can be merged into
+        ``create_execution_contract`` kwargs.
+        """
+        return {
+            "reversibility_class": template.reversibility_class,
+            "risk_budget": {
+                "risk_level": template.risk_level,
+                "approval_required": template.success_criteria.get("requires_receipt", False),
+            },
+            "drift_budget": dict(template.drift_budget)
+            if template.drift_budget
+            else {
+                "resource_scopes": list(resource_scopes or []),
+                "outside_workspace": False,
+            },
+            "required_receipt_classes": list(template.evidence_requirements),
+            "expected_effects": expected_effects,
+            "success_criteria": {
+                "tool_name": tool_name,
+                "action_class": action_class,
+                "requires_receipt": bool(template.evidence_requirements),
+            },
+            "selected_template_ref": template.source_contract_ref,
+        }
 
     # ------------------------------------------------------------------
     # Degradation: invalidate templates when reconciliation is violated
@@ -306,3 +411,23 @@ class ContractTemplateLearner:
             if str(sa.get("fingerprint", "")) == fingerprint:
                 return record
         return None
+
+    @staticmethod
+    def _template_from_assertion(sa: dict[str, Any], record: MemoryRecord) -> ContractTemplate:
+        """Build a ``ContractTemplate`` from a memory record's structured assertion."""
+        return ContractTemplate(
+            action_class=str(sa.get("action_class", "")),
+            tool_name=str(sa.get("tool_name", "")),
+            risk_level=str(sa.get("risk_level", "medium")),
+            reversibility_class=str(sa.get("reversibility_class", "limited")),
+            expected_effects=list(sa.get("expected_effects", [])),
+            success_criteria=dict(sa.get("success_criteria", {})),
+            drift_budget=dict(sa.get("drift_budget", {})),
+            source_contract_ref=str(sa.get("source_contract_ref", "")),
+            source_reconciliation_ref=record.learned_from_reconciliation_ref or "",
+            success_count=int(sa.get("success_count", 1)),
+            last_used_at=float(sa.get("last_used_at", 0.0)),
+            resource_scope_pattern=list(sa.get("resource_scope_pattern", [])),
+            constraint_defaults=dict(sa.get("constraint_defaults", {})),
+            evidence_requirements=list(sa.get("evidence_requirements", [])),
+        )
