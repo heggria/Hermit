@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from hermit.kernel.authority.identity.models import PrincipalRecord
+from hermit.kernel.execution.competition.store import CompetitionStoreMixin
 from hermit.kernel.ledger.events.store_ledger import KernelLedgerStoreMixin
 from hermit.kernel.ledger.journal.store_records import KernelStoreRecordMixin
 from hermit.kernel.ledger.journal.store_scheduler import KernelSchedulerStoreMixin
@@ -21,6 +22,7 @@ from hermit.kernel.ledger.journal.store_support import sha256_hex as _sha256_hex
 from hermit.kernel.ledger.journal.store_tasks import KernelTaskStoreMixin
 from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
+from hermit.kernel.signals.store import SignalStoreMixin
 
 _SCHEMA_VERSION = "8"
 _MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", _SCHEMA_VERSION}
@@ -49,6 +51,7 @@ _KNOWN_KERNEL_TABLES = {
     "evidence_cases",
     "authorization_plans",
     "reconciliations",
+    "evidence_signals",
 }
 
 
@@ -63,6 +66,8 @@ class KernelStore(
     KernelSchedulerStoreMixin,
     KernelStoreRecordMixin,
     KernelV2StoreMixin,
+    SignalStoreMixin,
+    CompetitionStoreMixin,
 ):
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -749,6 +754,8 @@ class KernelStore(
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue ON step_attempts(status, queue_priority DESC, started_at ASC)"
             )
+            self._init_signal_schema()
+            self._init_competition_schema()
             self._migrate_memory_schema_v4()
             self._migrate_kernel_convergence_v6()
             self._migrate_category_english_v8()
