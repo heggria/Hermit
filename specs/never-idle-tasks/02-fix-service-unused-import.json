@@ -1,0 +1,8 @@
+{
+  "description": "Remove unused 'validate_transition' import in competition/service.py (F401 violation)",
+  "file_path": "src/hermit/kernel/execution/competition/service.py",
+  "issue_type": "lint",
+  "lines": "1-12",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Remove the unused 'validate_transition' import from the models import line. It is not referenced anywhere in service.py."
+}

@@ -2,10 +2,14 @@
 
 Verifies that:
 1. Templates are learned from satisfied reconciliations
-2. Templates are matched for similar subsequent actions
+2. Templates are matched for similar subsequent actions (after promotion)
 3. Duplicate templates boost the existing score instead of creating new records
 4. Templates are degraded when their source reconciliation is violated
 5. Template-conditioned contract selection works in the synthesis path
+6. Promotion threshold prevents premature template matching
+7. Low-confidence matches are skipped
+8. apply_template produces pre-filled contract parameters
+9. TemplateMatch provides confidence and reasons
 """
 
 from __future__ import annotations
@@ -15,10 +19,15 @@ from pathlib import Path
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
 from hermit.kernel.execution.controller.template_learner import (
+    _PROMOTION_THRESHOLD,
     ContractTemplateLearner,
     _action_fingerprint,
     _effects_similarity,
     _normalise_effect,
+)
+from hermit.kernel.execution.controller.template_models import (
+    ContractTemplate,
+    TemplateMatch,
 )
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.models.records import ExecutionContractRecord, ReconciliationRecord
@@ -87,6 +96,19 @@ def _make_reconciliation(
         result_class=result_class,
         recommended_resolution="promote_learning" if result_class == "satisfied" else "park",
     )
+
+
+def _promote_template(
+    store: KernelStore,
+    learner: ContractTemplateLearner,
+    contract: ExecutionContractRecord,
+    *,
+    count: int = _PROMOTION_THRESHOLD,
+) -> None:
+    """Reinforce a template enough times to meet the promotion threshold."""
+    for _ in range(count):
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +180,9 @@ class TestLearnFromReconciliation:
         assert sa["action_class"] == "write_local"
         assert sa["tool_name"] == "write_file"
         assert sa["fingerprint"]
+        assert sa["success_count"] == 1
+        assert sa["resource_scope_pattern"] == []
+        assert sa["evidence_requirements"] == ["write_local"]
 
     def test_learn_skips_non_satisfied_reconciliation(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
@@ -200,6 +225,92 @@ class TestLearnFromReconciliation:
 
 
 # ---------------------------------------------------------------------------
+# Unit tests: promotion threshold
+# ---------------------------------------------------------------------------
+
+
+class TestPromotionThreshold:
+    def test_template_not_matched_before_promotion(self, tmp_path: Path) -> None:
+        """A template with fewer than _PROMOTION_THRESHOLD successes is not matched."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+        # Only 1 reconciliation (below threshold of 3)
+        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
+        learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
+
+        template = learner.find_matching_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/other/readme.md"],
+        )
+        assert template is None
+
+    def test_template_matched_after_promotion(self, tmp_path: Path) -> None:
+        """A template with >= _PROMOTION_THRESHOLD successes is matched."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+        _promote_template(store, learner, contract)
+
+        template = learner.find_matching_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/other/readme.md"],
+        )
+        assert template is not None
+        assert template.action_class == "write_local"
+        assert template.tool_name == "write_file"
+
+    def test_promotion_threshold_exact_boundary(self, tmp_path: Path) -> None:
+        """Template becomes available exactly at _PROMOTION_THRESHOLD."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/file.py"],
+        )
+
+        # Reinforce to threshold - 1
+        _promote_template(store, learner, contract, count=_PROMOTION_THRESHOLD - 1)
+        assert (
+            learner.find_matching_template(
+                action_class="write_local",
+                tool_name="write_file",
+                expected_effects=["path:/other/file.py"],
+            )
+            is None
+        )
+
+        # One more pushes it over
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+        assert (
+            learner.find_matching_template(
+                action_class="write_local",
+                tool_name="write_file",
+                expected_effects=["path:/other/file.py"],
+            )
+            is not None
+        )
+
+
+# ---------------------------------------------------------------------------
 # Unit tests: template matching
 # ---------------------------------------------------------------------------
 
@@ -215,8 +326,7 @@ class TestFindMatchingTemplate:
             tool_name="write_file",
             expected_effects=["path:/workspace/readme.md"],
         )
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
+        _promote_template(store, learner, contract)
 
         template = learner.find_matching_template(
             action_class="write_local",
@@ -232,8 +342,7 @@ class TestFindMatchingTemplate:
         learner = ContractTemplateLearner(store)
 
         contract = _make_contract(store, action_class="write_local")
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
+        _promote_template(store, learner, contract)
 
         template = learner.find_matching_template(
             action_class="execute_command",
@@ -252,6 +361,142 @@ class TestFindMatchingTemplate:
             expected_effects=["action:write_local"],
         )
         assert template is None
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: TemplateMatch and match_template
+# ---------------------------------------------------------------------------
+
+
+class TestMatchTemplate:
+    def test_match_template_returns_template_match(self, tmp_path: Path) -> None:
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+        _promote_template(store, learner, contract)
+
+        match = learner.match_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/other/readme.md"],
+        )
+        assert match is not None
+        assert isinstance(match, TemplateMatch)
+        assert match.confidence > 0.0
+        assert match.template_ref != ""
+        assert len(match.match_reasons) > 0
+        assert match.template is not None
+        assert match.template.action_class == "write_local"
+
+    def test_match_template_returns_none_below_threshold(self, tmp_path: Path) -> None:
+        """Low-confidence matches (below promotion threshold) are skipped."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+        # Only 1 success, below promotion threshold
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+
+        match = learner.match_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/other/readme.md"],
+        )
+        assert match is None
+
+    def test_match_template_includes_reasons(self, tmp_path: Path) -> None:
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+        _promote_template(store, learner, contract)
+
+        match = learner.match_template(
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/other/readme.md"],
+        )
+        assert match is not None
+        reasons_str = " ".join(match.match_reasons)
+        assert "action_class=write_local" in reasons_str
+        assert "tool_name=write_file" in reasons_str
+        assert "effects_similarity=" in reasons_str
+        assert "success_count=" in reasons_str
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: apply_template
+# ---------------------------------------------------------------------------
+
+
+class TestApplyTemplate:
+    def test_apply_template_produces_contract_params(self, tmp_path: Path) -> None:
+        template = ContractTemplate(
+            action_class="write_local",
+            tool_name="write_file",
+            risk_level="high",
+            reversibility_class="reversible",
+            expected_effects=["path:/workspace/readme.md"],
+            success_criteria={"tool_name": "write_file", "requires_receipt": True},
+            drift_budget={"resource_scopes": ["/workspace"], "outside_workspace": False},
+            evidence_requirements=["write_local"],
+        )
+
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+        params = learner.apply_template(
+            template,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/new/file.txt"],
+        )
+
+        assert params["reversibility_class"] == "reversible"
+        assert params["risk_budget"]["risk_level"] == "high"
+        assert params["required_receipt_classes"] == ["write_local"]
+        assert params["expected_effects"] == ["path:/new/file.txt"]
+        assert params["success_criteria"]["tool_name"] == "write_file"
+        assert params["success_criteria"]["action_class"] == "write_local"
+        assert params["selected_template_ref"] == ""
+
+    def test_apply_template_uses_resource_scopes_fallback(self, tmp_path: Path) -> None:
+        template = ContractTemplate(
+            action_class="write_local",
+            tool_name="write_file",
+            risk_level="medium",
+            reversibility_class="limited",
+            drift_budget={},
+            evidence_requirements=[],
+        )
+
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+        params = learner.apply_template(
+            template,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["action:write_local"],
+            resource_scopes=["/fallback"],
+        )
+
+        assert params["drift_budget"]["resource_scopes"] == ["/fallback"]
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +534,35 @@ class TestTemplateDegradation:
 
 
 # ---------------------------------------------------------------------------
+# Unit tests: template models
+# ---------------------------------------------------------------------------
+
+
+class TestTemplateModels:
+    def test_contract_template_defaults(self) -> None:
+        tmpl = ContractTemplate(
+            action_class="write_local",
+            tool_name="write_file",
+            risk_level="high",
+            reversibility_class="reversible",
+        )
+        assert tmpl.expected_effects == []
+        assert tmpl.success_criteria == {}
+        assert tmpl.drift_budget == {}
+        assert tmpl.source_contract_ref == ""
+        assert tmpl.success_count == 1
+        assert tmpl.last_used_at == 0.0
+        assert tmpl.resource_scope_pattern == []
+        assert tmpl.constraint_defaults == {}
+        assert tmpl.evidence_requirements == []
+
+    def test_template_match_defaults(self) -> None:
+        match = TemplateMatch(template_ref="mem-1", confidence=0.9)
+        assert match.match_reasons == []
+        assert match.template is None
+
+
+# ---------------------------------------------------------------------------
 # Integration: template improves subsequent contract selection
 # ---------------------------------------------------------------------------
 
@@ -302,7 +576,7 @@ class TestTemplateConditionedContractSelection:
         service = ExecutionContractService(store, artifacts)
         controller = TaskController(store)
 
-        # -- Phase 1: create a contract and satisfy it to learn a template --
+        # -- Phase 1: create a contract and promote it via multiple reconciliations --
         ctx1 = controller.start_task(
             conversation_id="chat-1",
             goal="write a file",
@@ -319,16 +593,7 @@ class TestTemplateConditionedContractSelection:
             tool_name="write_file",
             expected_effects=["path:/workspace/output.txt"],
         )
-        recon1 = _make_reconciliation(
-            store,
-            task_id=ctx1.task_id,
-            step_id=ctx1.step_id,
-            step_attempt_id=ctx1.step_attempt_id,
-            contract_ref=contract1.contract_id,
-        )
-        service.template_learner.learn_from_reconciliation(
-            reconciliation=recon1, contract=contract1
-        )
+        _promote_template(store, service.template_learner, contract1)
 
         # -- Phase 2: synthesize a new contract for a similar action ----------
         ctx2 = controller.start_task(
@@ -469,7 +734,7 @@ class TestLearnedTemplatesImproveDecisions:
         )
         assert template_before is None
 
-        # --- Simulate a satisfied reconciliation ---
+        # --- Simulate enough satisfied reconciliations to promote ---
         contract = _make_contract(
             store,
             action_class="write_local",
@@ -477,13 +742,9 @@ class TestLearnedTemplatesImproveDecisions:
             expected_effects=["path:/project/src/config.py"],
             risk_level="high",
         )
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        learned = learner.learn_from_reconciliation(
-            reconciliation=reconciliation, contract=contract
-        )
-        assert learned is not None
+        _promote_template(store, learner, contract)
 
-        # --- Second run: template available for same file in different directory ---
+        # --- Template now available for same file in different directory ---
         template_after = learner.find_matching_template(
             action_class="write_local",
             tool_name="write_file",
@@ -498,13 +759,9 @@ class TestLearnedTemplatesImproveDecisions:
         store = _make_store(tmp_path)
         learner = ContractTemplateLearner(store)
 
-        # Learn a template
+        # Learn and promote a template
         contract = _make_contract(store, action_class="write_local", tool_name="write_file")
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        learned = learner.learn_from_reconciliation(
-            reconciliation=reconciliation, contract=contract
-        )
-        assert learned is not None
+        _promote_template(store, learner, contract)
 
         # Verify template exists
         template = learner.find_matching_template(
@@ -514,8 +771,19 @@ class TestLearnedTemplatesImproveDecisions:
         )
         assert template is not None
 
-        # Violation invalidates the template
-        learner.degrade_templates_for_violation(reconciliation.reconciliation_id)
+        # Violation invalidates the template -- use the first reconciliation ref
+        _make_reconciliation(store, contract_ref=contract.contract_id)
+        # The learned_from_reconciliation_ref is set on the memory record from the first learn
+        templates = [
+            r
+            for r in store.list_memory_records(status="active", limit=100)
+            if r.memory_kind == "contract_template"
+        ]
+        assert len(templates) == 1
+        recon_ref = templates[0].learned_from_reconciliation_ref
+        assert recon_ref is not None
+
+        learner.degrade_templates_for_violation(recon_ref)
 
         # Template should no longer be found
         template_after = learner.find_matching_template(
@@ -536,10 +804,8 @@ class TestLearnedTemplatesImproveDecisions:
             expected_effects=["path:/project/src/main.py"],
         )
 
-        # Learn from three separate reconciliations
-        for _i in range(3):
-            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
-            learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+        # Learn from enough reconciliations to promote
+        _promote_template(store, learner, contract)
 
         # Same file in different directory matches
         template = learner.find_matching_template(

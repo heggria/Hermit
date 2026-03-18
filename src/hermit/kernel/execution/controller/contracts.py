@@ -34,6 +34,15 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         reconcile_strategy="none",
         rollback_strategy="not_needed",
     ),
+    "delegate_execution": ActionContract(
+        action_class="delegate_execution",
+        default_risk_band="medium",
+        decision_required=True,
+        witness_required=False,
+        receipt_required=True,
+        reconcile_strategy="store_observation",
+        rollback_strategy="manual_or_followup",
+    ),
     "read_local": ActionContract(
         action_class="read_local",
         default_risk_band="low",

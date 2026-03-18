@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations, PolicyReason
@@ -35,6 +36,9 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
             )
         )
         return outcomes
+
+    if profile == "autonomous":
+        return _evaluate_autonomous(request)
 
     if request.action_class == "read_local":
         outcomes.append(
@@ -72,6 +76,22 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 ],
                 obligations=PolicyObligations(require_receipt=False),
                 risk_level=request.risk_hint or "low",
+            )
+        )
+        return outcomes
+
+    if request.action_class == "delegate_execution":
+        outcomes.append(
+            RuleOutcome(
+                verdict="allow_with_receipt",
+                reasons=[
+                    PolicyReason(
+                        "delegate_execution",
+                        "Governed subagent delegation requires a decision and receipt.",
+                    )
+                ],
+                obligations=PolicyObligations(require_receipt=True),
+                risk_level=request.risk_hint or "medium",
             )
         )
         return outcomes
@@ -204,6 +224,42 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 ],
                 obligations=PolicyObligations(require_receipt=False),
                 normalized_constraints={"denied_paths": sensitive_paths},
+                risk_level="critical",
+            )
+        )
+        return outcomes
+
+    # Kernel self-modification guard
+    kernel_paths = list(request.derived.get("kernel_paths", []))
+    if request.action_class in {"write_local", "patch_file"} and kernel_paths:
+        outcomes.append(
+            RuleOutcome(
+                verdict="approval_required",
+                reasons=[
+                    PolicyReason(
+                        "kernel_self_modification",
+                        "Modifying kernel source requires elevated approval. "
+                        "This action targets governed execution internals.",
+                        "warning",
+                    )
+                ],
+                obligations=PolicyObligations(
+                    require_receipt=True,
+                    require_preview=True,
+                    require_approval=True,
+                    require_evidence=True,
+                    approval_risk_level="critical",
+                ),
+                normalized_constraints={"kernel_paths": kernel_paths},
+                approval_packet={
+                    "title": "Approve kernel self-modification",
+                    "summary": (
+                        f"Agent requests to modify kernel source: "
+                        f"{', '.join(Path(p).name for p in kernel_paths)}. "
+                        f"This changes governed execution internals."
+                    ),
+                    "risk_level": "critical",
+                },
                 risk_level="critical",
             )
         )
@@ -499,3 +555,78 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
             )
         )
     return outcomes
+
+
+def _evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
+    """Autonomous profile: receipts preserved, approvals skipped, dangerous ops denied."""
+    if request.action_class == "read_local":
+        return [
+            RuleOutcome(
+                verdict="allow",
+                reasons=[PolicyReason("autonomous_read", "Autonomous read auto-allowed.")],
+                obligations=PolicyObligations(require_receipt=False),
+                risk_level="low",
+            )
+        ]
+
+    if request.action_class in {"network_read", "delegate_reasoning", "ephemeral_ui_mutation"}:
+        return [
+            RuleOutcome(
+                verdict="allow",
+                reasons=[PolicyReason("autonomous_passthrough", "Autonomous safe action.")],
+                obligations=PolicyObligations(require_receipt=False),
+                risk_level="low",
+            )
+        ]
+
+    if request.action_class == "execute_command":
+        flags = dict(request.derived.get("command_flags", {}))
+        if flags.get("sudo") or flags.get("curl_pipe_sh"):
+            return [
+                RuleOutcome(
+                    verdict="deny",
+                    reasons=[
+                        PolicyReason(
+                            "dangerous_shell",
+                            "Dangerous shell pattern denied even in autonomous.",
+                            "error",
+                        )
+                    ],
+                    risk_level="critical",
+                )
+            ]
+
+    sensitive_paths = list(request.derived.get("sensitive_paths", []))
+    outside_workspace = bool(request.derived.get("outside_workspace"))
+    if (
+        request.action_class in {"write_local", "patch_file"}
+        and sensitive_paths
+        and outside_workspace
+    ):
+        return [
+            RuleOutcome(
+                verdict="deny",
+                reasons=[
+                    PolicyReason(
+                        "protected_path",
+                        "Protected paths denied even in autonomous mode.",
+                        "error",
+                    )
+                ],
+                risk_level="critical",
+            )
+        ]
+
+    return [
+        RuleOutcome(
+            verdict="allow_with_receipt",
+            reasons=[
+                PolicyReason(
+                    "autonomous_auto_approve",
+                    "Autonomous profile: action allowed with receipt, no approval required.",
+                )
+            ],
+            obligations=PolicyObligations(require_receipt=True, require_approval=False),
+            risk_level=request.risk_hint or "medium",
+        )
+    ]

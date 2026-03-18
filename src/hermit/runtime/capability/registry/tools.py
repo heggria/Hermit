@@ -356,6 +356,60 @@ def create_builtin_tool_registry(
                 locale=resolved_locale,
             )
         )
+
+    def iteration_summary(payload: dict[str, Any]) -> str:
+        task_id = payload.get("task_id", "")
+        status = payload.get("status", "unknown")
+        changed_files = payload.get("changed_files", [])
+        acceptance_results = payload.get("acceptance_results", [])
+        summary = {
+            "task_id": task_id,
+            "status": status,
+            "changed_files": changed_files,
+            "acceptance_results": acceptance_results,
+        }
+        return json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
+
+    registry.register(
+        localize_tool_spec(
+            ToolSpec(
+                name="iteration_summary",
+                description="Output a structured JSON summary of an iteration result, including task_id, status, changed_files, and acceptance_results. Intended for use in hermit-iterate Phase 4 (PR close loop) to produce a machine-readable summary embeddable in a PR body.",
+                description_key="tools.core.iteration_summary.description",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description_key": "tools.core.iteration_summary.task_id",
+                        },
+                        "status": {
+                            "type": "string",
+                            "description_key": "tools.core.iteration_summary.status",
+                        },
+                        "changed_files": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description_key": "tools.core.iteration_summary.changed_files",
+                        },
+                        "acceptance_results": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                            "description_key": "tools.core.iteration_summary.acceptance_results",
+                        },
+                    },
+                    "required": ["task_id", "status"],
+                },
+                handler=iteration_summary,
+                readonly=True,
+                action_class="read_local",
+                idempotent=True,
+                risk_hint="low",
+                requires_receipt=False,
+            ),
+            locale=resolved_locale,
+        )
+    )
     return registry
 
 

@@ -1,0 +1,8 @@
+{
+  "description": "Fix unsorted imports in competition/store.py (ruff I001 violation)",
+  "file_path": "src/hermit/kernel/execution/competition/store.py",
+  "issue_type": "lint",
+  "lines": "1-14",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Run 'ruff check --select I001 --fix' on the file, or manually sort imports alphabetically within each block."
+}

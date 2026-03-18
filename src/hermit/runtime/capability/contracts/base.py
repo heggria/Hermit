@@ -35,6 +35,8 @@ class SubagentSpec:
     system_prompt: str
     tools: list[str] = field(default_factory=list[str])
     model: str = ""
+    policy_profile: str = "readonly"
+    governed: bool = False
 
 
 @dataclass(frozen=True)

@@ -264,3 +264,64 @@ def test_command_sandbox_followup_poll_quickly_reaches_completion(tmp_path) -> N
     )
     assert completed is not None
     assert completed["result"]["returncode"] == 0
+
+
+# ──────────────────────────────────────────────────────────────────
+# Tests for iteration_summary core tool
+# ──────────────────────────────────────────────────────────────────
+
+
+def test_iteration_summary_returns_valid_json(tmp_path) -> None:
+    """iteration_summary should return a JSON string with all expected fields."""
+    import json
+
+    registry = create_builtin_tool_registry(tmp_path, CommandSandbox(mode="l0", cwd=tmp_path))
+
+    result_str = registry.call(
+        "iteration_summary",
+        {
+            "task_id": "demo-123",
+            "status": "success",
+            "changed_files": ["src/foo.py", "tests/test_foo.py"],
+            "acceptance_results": [{"criterion": "pytest passes", "passed": True}],
+        },
+    )
+
+    data = json.loads(result_str)
+    assert data["task_id"] == "demo-123"
+    assert data["status"] == "success"
+    assert data["changed_files"] == ["src/foo.py", "tests/test_foo.py"]
+    assert data["acceptance_results"][0]["criterion"] == "pytest passes"
+    assert data["acceptance_results"][0]["passed"] is True
+
+
+def test_iteration_summary_minimal_payload(tmp_path) -> None:
+    """iteration_summary only requires task_id and status; optional fields default to empty."""
+    import json
+
+    registry = create_builtin_tool_registry(tmp_path, CommandSandbox(mode="l0", cwd=tmp_path))
+
+    result_str = registry.call(
+        "iteration_summary",
+        {
+            "task_id": "task-min",
+            "status": "failure",
+        },
+    )
+
+    data = json.loads(result_str)
+    assert data["task_id"] == "task-min"
+    assert data["status"] == "failure"
+    assert data["changed_files"] == []
+    assert data["acceptance_results"] == []
+
+
+def test_iteration_summary_is_registered_as_readonly(tmp_path) -> None:
+    """iteration_summary must be readonly with action_class=read_local."""
+    registry = create_builtin_tool_registry(tmp_path, CommandSandbox(mode="l0", cwd=tmp_path))
+
+    spec = registry._tools.get("iteration_summary")
+    assert spec is not None, "iteration_summary not registered"
+    assert spec.readonly is True
+    assert spec.action_class == "read_local"
+    assert spec.requires_receipt is False

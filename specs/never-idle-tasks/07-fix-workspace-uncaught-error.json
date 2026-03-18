@@ -1,0 +1,8 @@
+{
+  "description": "Add error handling for CalledProcessError in competition/workspace.py merge_winner method (lines 42-65)",
+  "file_path": "src/hermit/kernel/execution/competition/workspace.py",
+  "issue_type": "bug",
+  "lines": "42-65",
+  "policy_profile": "default",
+  "fix_instructions": "Wrap the two subprocess.run(check=True) calls in merge_winner() with try/except subprocess.CalledProcessError. Log the error with structlog and re-raise as a RuntimeError with context about which competition merge failed."
+}

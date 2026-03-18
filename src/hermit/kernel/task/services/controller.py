@@ -811,6 +811,9 @@ class TaskController:
                     task_id=task_id,
                 )
             )
+        self._try_upgrade_to_steering(
+            task_id=task_id, raw_text=raw_text, source_channel=source_channel
+        )
         self._mark_attempt_input_dirty(
             task_id=task_id, ingress_id=ingress_id, note_event_seq=None, emit_event=True
         )
@@ -860,6 +863,43 @@ class TaskController:
         )
         return 0
 
+    def _try_upgrade_to_steering(self, *, task_id: str, raw_text: str, source_channel: str) -> None:
+        """If raw_text starts with /steer, create a SteeringDirective."""
+        stripped = raw_text.strip()
+        if not stripped.startswith("/steer"):
+            return
+        body = stripped[len("/steer") :].strip()
+        steering_type = "scope"
+        if body.startswith("--type "):
+            parts = body[len("--type ") :].split(None, 1)
+            if len(parts) == 2:
+                steering_type, body = parts[0], parts[1]
+            elif len(parts) == 1:
+                steering_type = parts[0]
+                body = ""
+        from hermit.kernel.signals.models import SteeringDirective
+        from hermit.kernel.signals.steering import SteeringProtocol
+
+        directive = SteeringDirective(
+            task_id=task_id,
+            steering_type=steering_type,
+            directive=body,
+            issued_by="user" if source_channel != "cli" else "operator",
+        )
+        protocol = SteeringProtocol(self.store)
+        protocol.issue(directive)
+
+    def _apply_acknowledged_steerings(self, task_id: str) -> None:
+        """Auto-apply acknowledged steerings when task is finalized."""
+        if not hasattr(self.store, "active_steerings_for_task"):
+            return
+        directives = self.store.active_steerings_for_task(task_id)
+        for d in directives:
+            if d.disposition == "acknowledged":
+                self.store.update_steering_disposition(
+                    d.directive_id, "applied", applied_at=time.time()
+                )
+
     def finalize_result(
         self,
         ctx: TaskExecutionContext,
@@ -879,6 +919,7 @@ class TaskController:
                 payload["result_preview"] = result_preview
             if result_text:
                 payload["result_text"] = result_text
+        self._apply_acknowledged_steerings(ctx.task_id)
         self.store.update_task_status(
             ctx.task_id,
             "completed" if status == "succeeded" else status,
