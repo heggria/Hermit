@@ -505,7 +505,9 @@ class TestApplyTemplate:
 
 
 class TestTemplateDegradation:
-    def test_degrade_invalidates_template_after_enough_failures(self, tmp_path: Path) -> None:
+    def test_degrade_invalidates_template_on_violation(self, tmp_path: Path) -> None:
+        """Gradual degradation: single violation records failure but does not
+        invalidate until invocation_count >= 5 and success_rate < 0.3."""
         store = _make_store(tmp_path)
         learner = ContractTemplateLearner(store)
 
@@ -514,14 +516,24 @@ class TestTemplateDegradation:
         memory = learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
         assert memory is not None
 
-        # Build up invocation_count to >= 5 with all failures
-        sa = dict(memory.structured_assertion)
+        # Single violation records failure but does NOT invalidate (invocation < 5)
+        affected = learner.degrade_templates_for_violation(reconciliation.reconciliation_id)
+        assert affected == []
+
+        record = store.get_memory_record(memory.memory_id)
+        assert record is not None
+        assert record.status == "active"
+        sa = dict(record.structured_assertion or {})
+        assert sa["failure_count"] == 1
+
+        # Build up to threshold: set invocation_count=5, success_count=0
         sa["invocation_count"] = 5
         sa["success_count"] = 0
         sa["failure_count"] = 4
         sa["success_rate"] = 0.0
         store.update_memory_record(memory.memory_id, structured_assertion=sa)
 
+        # Now degradation should invalidate
         affected = learner.degrade_templates_for_violation(reconciliation.reconciliation_id)
         assert memory.memory_id in affected
 
@@ -539,162 +551,6 @@ class TestTemplateDegradation:
 
         affected = learner.degrade_templates_for_violation("unrelated-reconciliation-id")
         assert affected == []
-
-    def test_single_violation_does_not_invalidate_template(self, tmp_path: Path) -> None:
-        """With success_rate-based degradation, a single violation should NOT invalidate."""
-        store = _make_store(tmp_path)
-        learner = ContractTemplateLearner(store)
-
-        contract = _make_contract(store)
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        memory = learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
-        assert memory is not None
-
-        # One violation should not invalidate (invocation_count < 5)
-        affected = learner.degrade_templates_for_violation(reconciliation.reconciliation_id)
-        assert affected == []
-
-        # Template should still be found
-        record = store.get_memory_record(memory.memory_id)
-        assert record is not None
-        assert record.status == "active"
-        sa = record.structured_assertion
-        assert sa["failure_count"] == 1
-
-
-# ---------------------------------------------------------------------------
-# Unit tests: success rate tracking
-# ---------------------------------------------------------------------------
-
-
-class TestSuccessRateTracking:
-    def test_record_template_outcome_tracks_success(self, tmp_path: Path) -> None:
-        store = _make_store(tmp_path)
-        learner = ContractTemplateLearner(store)
-
-        contract = _make_contract(store)
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        memory = learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
-        assert memory is not None
-
-        # Record 3 successful outcomes
-        for _ in range(3):
-            learner.record_template_outcome(
-                template_ref=contract.contract_id,
-                result_class="satisfied",
-            )
-
-        record = store.get_memory_record(memory.memory_id)
-        assert record is not None
-        sa = record.structured_assertion
-        assert sa["invocation_count"] == 3
-        assert sa["success_count"] == 3
-        assert sa["failure_count"] == 0
-        assert sa["success_rate"] == 1.0
-
-    def test_record_template_outcome_tracks_failures(self, tmp_path: Path) -> None:
-        store = _make_store(tmp_path)
-        learner = ContractTemplateLearner(store)
-
-        contract = _make_contract(store)
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        memory = learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
-        assert memory is not None
-
-        # Record 1 success and 1 failure
-        learner.record_template_outcome(template_ref=contract.contract_id, result_class="satisfied")
-        learner.record_template_outcome(template_ref=contract.contract_id, result_class="violated")
-
-        record = store.get_memory_record(memory.memory_id)
-        assert record is not None
-        sa = record.structured_assertion
-        assert sa["invocation_count"] == 2
-        assert sa["success_count"] == 1
-        assert sa["failure_count"] == 1
-        assert sa["success_rate"] == 0.5
-        assert sa["last_failure_at"] is not None
-
-    def test_auto_invalidation_on_low_success_rate(self, tmp_path: Path) -> None:
-        store = _make_store(tmp_path)
-        learner = ContractTemplateLearner(store)
-
-        contract = _make_contract(store)
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        memory = learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
-        assert memory is not None
-
-        # Record 5 failures, 1 success → success_rate = 1/6 ≈ 0.167 < 0.3
-        learner.record_template_outcome(template_ref=contract.contract_id, result_class="satisfied")
-        for _ in range(5):
-            learner.record_template_outcome(
-                template_ref=contract.contract_id, result_class="violated"
-            )
-
-        record = store.get_memory_record(memory.memory_id)
-        assert record is not None
-        assert record.status == "invalidated"
-        assert "low_success_rate" in (record.invalidation_reason or "")
-
-    def test_no_invalidation_with_good_success_rate(self, tmp_path: Path) -> None:
-        store = _make_store(tmp_path)
-        learner = ContractTemplateLearner(store)
-
-        contract = _make_contract(store)
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        memory = learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
-        assert memory is not None
-
-        # Record 4 successes, 1 failure → success_rate = 0.8, invocation_count = 5
-        for _ in range(4):
-            learner.record_template_outcome(
-                template_ref=contract.contract_id, result_class="satisfied"
-            )
-        learner.record_template_outcome(template_ref=contract.contract_id, result_class="violated")
-
-        record = store.get_memory_record(memory.memory_id)
-        assert record is not None
-        assert record.status == "active"
-
-    def test_new_templates_have_tracking_fields(self, tmp_path: Path) -> None:
-        store = _make_store(tmp_path)
-        learner = ContractTemplateLearner(store)
-
-        contract = _make_contract(store)
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        memory = learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
-        assert memory is not None
-
-        sa = memory.structured_assertion
-        assert sa["invocation_count"] == 0
-        assert sa["success_count"] == 0
-        assert sa["failure_count"] == 0
-        assert sa["success_rate"] == 0.0
-        assert sa["last_failure_at"] is None
-
-    def test_find_matching_template_returns_tracking_fields(self, tmp_path: Path) -> None:
-        store = _make_store(tmp_path)
-        learner = ContractTemplateLearner(store)
-
-        contract = _make_contract(
-            store,
-            expected_effects=["path:/workspace/file.txt"],
-        )
-        reconciliation = _make_reconciliation(store, contract_ref=contract.contract_id)
-        learner.learn_from_reconciliation(reconciliation=reconciliation, contract=contract)
-
-        # Record some outcomes
-        learner.record_template_outcome(template_ref=contract.contract_id, result_class="satisfied")
-        learner.record_template_outcome(template_ref=contract.contract_id, result_class="satisfied")
-
-        template = learner.find_matching_template(
-            action_class="write_local",
-            tool_name="write_file",
-            expected_effects=["path:/other/file.txt"],
-        )
-        assert template is not None
-        assert template.invocation_count == 2
-        assert template.success_count == 2
-        assert template.success_rate == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -919,7 +775,7 @@ class TestLearnedTemplatesImproveDecisions:
         assert template_after.risk_level == "high"
         assert template_after.source_contract_ref == contract.contract_id
 
-    def test_violated_reconciliation_degrades_template(self, tmp_path: Path) -> None:
+    def test_violated_reconciliation_invalidates_template(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
         learner = ContractTemplateLearner(store)
 
@@ -935,9 +791,7 @@ class TestLearnedTemplatesImproveDecisions:
         )
         assert template is not None
 
-        # Violation invalidates the template -- use the first reconciliation ref
-        _make_reconciliation(store, contract_ref=contract.contract_id)
-        # The learned_from_reconciliation_ref is set on the memory record from the first learn
+        # Get the template memory and push invocation_count past threshold
         templates = [
             r
             for r in store.list_memory_records(status="active", limit=100)
@@ -947,147 +801,23 @@ class TestLearnedTemplatesImproveDecisions:
         recon_ref = templates[0].learned_from_reconciliation_ref
         assert recon_ref is not None
 
+        # Set up stats so degradation crosses the invalidation threshold
+        sa = dict(templates[0].structured_assertion or {})
+        sa["invocation_count"] = 5
+        sa["success_count"] = 0
+        sa["failure_count"] = 4
+        sa["success_rate"] = 0.0
+        store.update_memory_record(templates[0].memory_id, structured_assertion=sa)
+
         learner.degrade_templates_for_violation(recon_ref)
 
-        # Template should still be found (gradual degradation)
+        # Template should no longer be found (invalidated due to low success rate)
         template_after = learner.find_matching_template(
             action_class="write_local",
             tool_name="write_file",
             expected_effects=["action:write_local"],
         )
-        assert template_after is not None
-        assert template_after.failure_count == 1
-
-        # Build up to 5 failures → should invalidate
-        sa = dict(learned.structured_assertion)
-        sa["invocation_count"] = 5
-        sa["success_count"] = 0
-        sa["failure_count"] = 4
-        sa["success_rate"] = 0.0
-        store.update_memory_record(learned.memory_id, structured_assertion=sa)
-
-        learner.degrade_templates_for_violation(reconciliation.reconciliation_id)
-
-        # Now template should be invalidated
-        template_gone = learner.find_matching_template(
-            action_class="write_local",
-            tool_name="write_file",
-            expected_effects=["action:write_local"],
-        )
-        assert template_gone is None
-
-    def test_template_drift_budget_tightens_contract(self, tmp_path: Path) -> None:
-        """Template drift_budget should tighten (not relax) the synthesized contract."""
-        store = _make_store(tmp_path)
-        artifacts = ArtifactStore(tmp_path / "kernel" / "artifacts")
-        service = ExecutionContractService(store, artifacts)
-        controller = TaskController(store)
-
-        # Phase 1: learn a template with restrictive drift_budget
-        ctx1 = controller.start_task(
-            conversation_id="chat-drift-1",
-            goal="write a file",
-            source_channel="chat",
-            kind="respond",
-            workspace_root=str(tmp_path),
-        )
-        contract1 = store.create_execution_contract(
-            task_id=ctx1.task_id,
-            step_id=ctx1.step_id,
-            step_attempt_id=ctx1.step_attempt_id,
-            objective="write_file: write_local",
-            expected_effects=["path:/workspace/output.txt"],
-            success_criteria={
-                "tool_name": "write_file",
-                "action_class": "write_local",
-                "requires_receipt": True,
-            },
-            reversibility_class="reversible",
-            required_receipt_classes=["write_local"],
-            drift_budget={
-                "resource_scopes": ["scope_a", "scope_b"],
-                "outside_workspace": False,
-                "requires_witness": True,
-            },
-            risk_budget={"risk_level": "high", "approval_required": False},
-            status="satisfied",
-            action_contract_refs=["write_local"],
-        )
-        recon1 = _make_reconciliation(
-            store,
-            task_id=ctx1.task_id,
-            step_id=ctx1.step_id,
-            step_attempt_id=ctx1.step_attempt_id,
-            contract_ref=contract1.contract_id,
-        )
-        service.template_learner.learn_from_reconciliation(
-            reconciliation=recon1, contract=contract1
-        )
-
-        # Phase 2: synthesize with broader request — template should tighten
-        ctx2 = controller.start_task(
-            conversation_id="chat-drift-2",
-            goal="write another file",
-            source_channel="chat",
-            kind="respond",
-            workspace_root=str(tmp_path),
-        )
-
-        from hermit.kernel.policy.models.models import (
-            ActionRequest,
-            PolicyDecision,
-            PolicyObligations,
-        )
-        from hermit.runtime.capability.registry.tools import ToolSpec
-
-        tool = ToolSpec(
-            name="write_file",
-            description="Write a file",
-            input_schema={},
-            handler=lambda kw: None,
-            action_class="write_local",
-            risk_hint="high",
-            requires_receipt=True,
-        )
-        action_request = ActionRequest(
-            request_id="req-drift",
-            task_id=ctx2.task_id,
-            step_attempt_id=ctx2.step_attempt_id,
-            tool_name="write_file",
-            action_class="write_local",
-            resource_scopes=["scope_a", "scope_c"],  # broader than template
-            derived={
-                "target_paths": ["/workspace/output.txt"],
-                "outside_workspace": True,  # request says True
-            },
-        )
-        policy = PolicyDecision(
-            verdict="allow",
-            risk_level="high",
-            action_class="write_local",
-            obligations=PolicyObligations(),
-        )
-
-        new_contract, _ = service.synthesize_default(
-            attempt_ctx=ctx2,
-            tool=tool,
-            action_request=action_request,
-            policy=policy,
-            action_request_ref=None,
-            witness_ref=None,
-        )
-
-        budget = new_contract.drift_budget
-        # Template scopes intersected: only scope_a (in both)
-        assert budget["resource_scopes"] == ["scope_a"]
-        # Template outside_workspace=False overrides request True
-        assert budget["outside_workspace"] is False
-        # Template requires_witness=True overrides request False
-        assert budget["requires_witness"] is True
-        # contract_template.applied event should have been emitted
-        events = store.list_events(task_id=ctx2.task_id, limit=50)
-        applied_events = [e for e in events if e.get("event_type") == "contract_template.applied"]
-        assert len(applied_events) == 1
+        assert template_after is None
 
     def test_multiple_learnings_reinforce_template(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)

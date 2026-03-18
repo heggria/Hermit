@@ -19,6 +19,7 @@ import structlog
 
 from hermit.kernel.execution.controller.template_models import (
     ContractTemplate,
+    PolicySuggestion,
     TemplateMatch,
 )
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -111,9 +112,18 @@ class ContractTemplateLearner:
         # Check for an existing template with the same fingerprint
         existing = self._find_template_by_fingerprint(fingerprint)
         if existing is not None:
+            # Update tracking fields in structured assertion
+            sa = dict(existing.structured_assertion or {})
+            inv = int(sa.get("invocation_count", 0)) + 1
+            succ = int(sa.get("success_count", 0)) + 1
+            sa["invocation_count"] = inv
+            sa["success_count"] = succ
+            sa["success_rate"] = succ / inv if inv > 0 else 0.0
+            sa["last_used_at"] = time.time()
             # Record the additional reconciliation as validation
             self.store.update_memory_record(
                 existing.memory_id,
+                structured_assertion=sa,
                 validation_basis=f"reconciliation:{reconciliation.reconciliation_id}",
                 last_validated_at=time.time(),
             )
@@ -146,10 +156,10 @@ class ContractTemplateLearner:
             "drift_budget": dict(contract.drift_budget),
             "fingerprint": fingerprint,
             "source_contract_ref": contract.contract_id,
-            "invocation_count": 0,
-            "success_count": 0,
+            "invocation_count": 1,
+            "success_count": 1,
             "failure_count": 0,
-            "success_rate": 0.0,
+            "success_rate": 1.0,
             "last_failure_at": None,
             "last_used_at": time.time(),
             "resource_scope_pattern": list(contract.drift_budget.get("resource_scopes", [])),
@@ -224,7 +234,11 @@ class ContractTemplateLearner:
         return int(rows[0]["cnt"]) if rows else 0
 
     def _success_count_for(self, record: MemoryRecord) -> int:
-        """Total success count = 1 (initial creation) + reinforcement events."""
+        """Total success count from structured assertion, falling back to event counting."""
+        sa = dict(record.structured_assertion or {})
+        sa_count = int(sa.get("success_count", 0))
+        if sa_count > 0:
+            return sa_count
         return 1 + self._reinforcement_count(record.memory_id)
 
     def find_matching_template(
@@ -378,6 +392,138 @@ class ContractTemplateLearner:
         }
 
     # ------------------------------------------------------------------
+    # Policy suggestion: compute approval relaxation from template confidence
+    # ------------------------------------------------------------------
+
+    def compute_policy_suggestion(
+        self,
+        template: ContractTemplate,
+        *,
+        risk_level: str = "high",
+    ) -> PolicySuggestion | None:
+        """Compute a policy suggestion based on template confidence.
+
+        Returns ``None`` if the template has insufficient history.
+
+        Thresholds:
+        - invocation_count >= 5 and success_rate >= 0.95 -> skip_approval_eligible
+        - invocation_count >= 5 and success_rate >= 0.80 -> suggest lower risk_level
+        - critical risk_level -> never skip approval
+        """
+        if template.invocation_count < 5:
+            return None
+
+        basis = f"{template.invocation_count} invocations, {template.success_rate:.0%} success"
+
+        if template.success_rate >= 0.95:
+            return PolicySuggestion(
+                template_ref=template.source_contract_ref,
+                suggested_risk_level="medium" if risk_level in {"high", "critical"} else None,
+                skip_approval_eligible=risk_level != "critical",
+                confidence_basis=basis,
+                reason=(
+                    "High-confidence template eligible for approval skip"
+                    if risk_level != "critical"
+                    else "High-confidence template but critical risk prevents approval skip"
+                ),
+            )
+
+        if template.success_rate >= 0.80:
+            suggested = None
+            if risk_level == "high":
+                suggested = "medium"
+            elif risk_level == "critical":
+                suggested = "high"
+            return PolicySuggestion(
+                template_ref=template.source_contract_ref,
+                suggested_risk_level=suggested,
+                skip_approval_eligible=False,
+                confidence_basis=basis,
+                reason="Moderate-confidence template suggests lower risk level",
+            )
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Outcome tracking: record success/failure after template use
+    # ------------------------------------------------------------------
+
+    def record_template_outcome(
+        self,
+        *,
+        template_ref: str,
+        result_class: str,
+        task_id: str | None = None,
+        step_id: str | None = None,
+    ) -> None:
+        """Record the outcome of using a template-conditioned contract.
+
+        Called after reconciliation when the step had a ``selected_template_ref``.
+        Updates invocation_count, success/failure counts, and success_rate.
+        Auto-invalidates when invocation_count >= 5 and success_rate < 0.3.
+        """
+        record = self._find_template_by_source_contract_ref(template_ref)
+        if record is None:
+            return
+
+        sa = dict(record.structured_assertion or {})
+        invocation_count = int(sa.get("invocation_count", 0)) + 1
+        success_count = int(sa.get("success_count", 0))
+        failure_count = int(sa.get("failure_count", 0))
+        last_failure_at = sa.get("last_failure_at")
+
+        if result_class == "satisfied":
+            success_count += 1
+        elif result_class in {"violated", "ambiguous", "unauthorized"}:
+            failure_count += 1
+            last_failure_at = time.time()
+
+        success_rate = success_count / invocation_count if invocation_count > 0 else 0.0
+
+        sa["invocation_count"] = invocation_count
+        sa["success_count"] = success_count
+        sa["failure_count"] = failure_count
+        sa["success_rate"] = success_rate
+        sa["last_failure_at"] = last_failure_at
+
+        self.store.update_memory_record(
+            record.memory_id,
+            structured_assertion=sa,
+        )
+
+        self.store.append_event(
+            event_type="contract_template.outcome_recorded",
+            entity_type="memory_record",
+            entity_id=record.memory_id,
+            task_id=task_id or "",
+            step_id=step_id or "",
+            actor="kernel",
+            payload={
+                "template_ref": template_ref,
+                "result_class": result_class,
+                "invocation_count": invocation_count,
+                "success_rate": success_rate,
+            },
+        )
+
+        # Auto-invalidate unreliable templates
+        if invocation_count >= 5 and success_rate < 0.3:
+            self.store.update_memory_record(
+                record.memory_id,
+                status="invalidated",
+                invalidation_reason=(
+                    f"low_success_rate:{success_rate:.2f} after {invocation_count} invocations"
+                ),
+                invalidated_at=time.time(),
+            )
+            log.info(
+                "contract_template.auto_invalidated",
+                memory_id=record.memory_id,
+                success_rate=success_rate,
+                invocation_count=invocation_count,
+            )
+
+    # ------------------------------------------------------------------
     # Degradation: invalidate templates when reconciliation is violated
     # ------------------------------------------------------------------
 
@@ -443,6 +589,13 @@ class ContractTemplateLearner:
                 return record
         return None
 
+    def _find_template_by_source_contract_ref(self, ref: str) -> MemoryRecord | None:
+        for record in self._active_templates():
+            sa = dict(record.structured_assertion or {})
+            if str(sa.get("source_contract_ref", "")) == ref:
+                return record
+        return None
+
     @staticmethod
     def _template_from_assertion(sa: dict[str, Any], record: MemoryRecord) -> ContractTemplate:
         """Build a ``ContractTemplate`` from a memory record's structured assertion."""
@@ -456,7 +609,11 @@ class ContractTemplateLearner:
             drift_budget=dict(sa.get("drift_budget", {})),
             source_contract_ref=str(sa.get("source_contract_ref", "")),
             source_reconciliation_ref=record.learned_from_reconciliation_ref or "",
-            success_count=int(sa.get("success_count", 1)),
+            invocation_count=int(sa.get("invocation_count", 0)),
+            success_count=int(sa.get("success_count", 0)),
+            failure_count=int(sa.get("failure_count", 0)),
+            success_rate=float(sa.get("success_rate", 0.0)),
+            last_failure_at=sa.get("last_failure_at"),
             last_used_at=float(sa.get("last_used_at", 0.0)),
             resource_scope_pattern=list(sa.get("resource_scope_pattern", [])),
             constraint_defaults=dict(sa.get("constraint_defaults", {})),
