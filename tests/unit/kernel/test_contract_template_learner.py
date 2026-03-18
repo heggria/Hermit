@@ -1079,3 +1079,542 @@ class TestCrossWorkspacePromotion:
         global_records = store.list_memory_records(status="active", scope_kind="global", limit=100)
         global_templates = [r for r in global_records if r.memory_kind == "contract_template"]
         assert len(global_templates) == 0
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: compute_policy_suggestion edge cases (lines 476-477)
+# ---------------------------------------------------------------------------
+
+
+class TestPolicySuggestionEdgeCases:
+    def test_policy_suggestion_critical_risk_at_080_rate(self, tmp_path: Path) -> None:
+        """0.80 <= success_rate < 0.95 with risk_level='critical' -> suggested='high'."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        template = ContractTemplate(
+            action_class="execute_command",
+            tool_name="bash",
+            risk_level="critical",
+            reversibility_class="irreversible",
+            invocation_count=10,
+            success_count=9,
+            success_rate=0.90,
+        )
+
+        suggestion = learner.compute_policy_suggestion(template, risk_level="critical")
+        assert suggestion is not None
+        assert suggestion.suggested_risk_level == "high"
+        assert suggestion.skip_approval_eligible is False
+        assert "Moderate-confidence" in suggestion.reason
+
+    def test_policy_suggestion_high_risk_at_080_rate(self, tmp_path: Path) -> None:
+        """0.80 <= success_rate < 0.95 with risk_level='high' -> suggested='medium'."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        template = ContractTemplate(
+            action_class="write_local",
+            tool_name="write_file",
+            risk_level="high",
+            reversibility_class="reversible",
+            invocation_count=10,
+            success_count=9,
+            success_rate=0.90,
+        )
+
+        suggestion = learner.compute_policy_suggestion(template, risk_level="high")
+        assert suggestion is not None
+        assert suggestion.suggested_risk_level == "medium"
+        assert suggestion.skip_approval_eligible is False
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: record_template_outcome (lines 506-560)
+# ---------------------------------------------------------------------------
+
+
+class TestRecordTemplateOutcome:
+    def test_record_outcome_not_found(self, tmp_path: Path) -> None:
+        """record_template_outcome returns early when template ref not found."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        # Should not raise — just returns None
+        learner.record_template_outcome(
+            template_ref="nonexistent-contract-ref",
+            result_class="satisfied",
+            task_id="task-1",
+            step_id="step-1",
+        )
+
+    def test_record_outcome_satisfied(self, tmp_path: Path) -> None:
+        """Satisfied outcome increments success_count and invocation_count."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(store)
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        memory = learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+        assert memory is not None
+
+        # Record satisfied outcome using the source_contract_ref
+        learner.record_template_outcome(
+            template_ref=contract.contract_id,
+            result_class="satisfied",
+            task_id="task-1",
+            step_id="step-1",
+        )
+
+        updated = store.get_memory_record(memory.memory_id)
+        assert updated is not None
+        sa = dict(updated.structured_assertion or {})
+        assert sa["invocation_count"] == 2
+        assert sa["success_count"] == 2
+        assert sa["failure_count"] == 0
+        assert sa["success_rate"] == 1.0
+
+    def test_record_outcome_violated(self, tmp_path: Path) -> None:
+        """Violated outcome increments failure_count and sets last_failure_at."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(store)
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        memory = learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+        assert memory is not None
+
+        learner.record_template_outcome(
+            template_ref=contract.contract_id,
+            result_class="violated",
+            task_id="task-1",
+            step_id="step-1",
+        )
+
+        updated = store.get_memory_record(memory.memory_id)
+        assert updated is not None
+        sa = dict(updated.structured_assertion or {})
+        assert sa["invocation_count"] == 2
+        assert sa["success_count"] == 1
+        assert sa["failure_count"] == 1
+        assert sa["last_failure_at"] is not None
+        assert sa["success_rate"] == 0.5
+
+    def test_record_outcome_ambiguous(self, tmp_path: Path) -> None:
+        """Ambiguous outcome also counts as failure."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(store)
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        memory = learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+        assert memory is not None
+
+        learner.record_template_outcome(
+            template_ref=contract.contract_id,
+            result_class="ambiguous",
+        )
+
+        updated = store.get_memory_record(memory.memory_id)
+        assert updated is not None
+        sa = dict(updated.structured_assertion or {})
+        assert sa["failure_count"] == 1
+
+    def test_record_outcome_auto_invalidation(self, tmp_path: Path) -> None:
+        """Template auto-invalidated when invocation_count >= 5 and success_rate < 0.3."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(store)
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        memory = learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+        assert memory is not None
+
+        # Set up stats near invalidation threshold
+        sa = dict(memory.structured_assertion or {})
+        sa["invocation_count"] = 4
+        sa["success_count"] = 1
+        sa["failure_count"] = 3
+        sa["success_rate"] = 0.25
+        store.update_memory_record(memory.memory_id, structured_assertion=sa)
+
+        # One more violated outcome pushes to invocation_count=5, success_rate < 0.3
+        learner.record_template_outcome(
+            template_ref=contract.contract_id,
+            result_class="violated",
+            task_id="task-1",
+            step_id="step-1",
+        )
+
+        updated = store.get_memory_record(memory.memory_id)
+        assert updated is not None
+        assert updated.status == "invalidated"
+        assert "low_success_rate" in (updated.invalidation_reason or "")
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: degrade_templates_for_violation edge case (line 591)
+# ---------------------------------------------------------------------------
+
+
+class TestDegradationEdgeCases:
+    def test_degrade_with_zero_invocation_count(self, tmp_path: Path) -> None:
+        """When invocation_count is 0, it gets set to 1 during degradation."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(store)
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        memory = learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+        assert memory is not None
+
+        # Force invocation_count to 0
+        sa = dict(memory.structured_assertion or {})
+        sa["invocation_count"] = 0
+        sa["success_count"] = 0
+        store.update_memory_record(memory.memory_id, structured_assertion=sa)
+
+        learner.degrade_templates_for_violation(recon.reconciliation_id)
+
+        updated = store.get_memory_record(memory.memory_id)
+        assert updated is not None
+        sa_updated = dict(updated.structured_assertion or {})
+        # invocation_count should be set to 1 (the fallback)
+        assert sa_updated["invocation_count"] == 1
+        assert sa_updated["failure_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: promote_to_global filtering (lines 637, 648, 651, 654)
+# ---------------------------------------------------------------------------
+
+
+class TestPromoteToGlobalFiltering:
+    def test_promote_skips_non_template_memory_kinds(self, tmp_path: Path) -> None:
+        """Non-contract_template records with global/workspace scope are ignored."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws_a = str(tmp_path / "project-a")
+        ws_b = str(tmp_path / "project-b")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        # Create a non-template memory record with global scope to test filtering
+        store.create_memory_record(
+            task_id="task-1",
+            conversation_id=None,
+            category="observation",
+            claim_text="Not a template",
+            structured_assertion={"fingerprint": "fake"},
+            scope_kind="global",
+            scope_ref="global",
+            status="active",
+            memory_kind="observation",
+        )
+
+        # Create workspace-scoped non-template record
+        store.create_memory_record(
+            task_id="task-1",
+            conversation_id=None,
+            category="observation",
+            claim_text="Not a template either",
+            structured_assertion={"fingerprint": "fake"},
+            scope_kind="workspace",
+            scope_ref=str(Path(ws_a).resolve()),
+            status="active",
+            memory_kind="observation",
+        )
+
+        # Learn in two workspaces to trigger promotion
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_a
+            )
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_b
+            )
+
+        # Global template should exist (non-template records were filtered out)
+        global_records = store.list_memory_records(status="active", scope_kind="global", limit=100)
+        global_templates = [r for r in global_records if r.memory_kind == "contract_template"]
+        assert len(global_templates) >= 1
+
+    def test_promote_blocked_by_low_success_rate(self, tmp_path: Path) -> None:
+        """Promotion blocked when any workspace template has success_rate < min_success_rate."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws_a = str(tmp_path / "project-a")
+        ws_b = str(tmp_path / "project-b")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        # Learn in workspace A with good stats
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_a
+            )
+
+        # Learn in workspace B
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_b
+            )
+
+        # Degrade workspace B's template success rate below threshold
+        ws_records = store.list_memory_records(
+            status="active",
+            scope_kind="workspace",
+            scope_ref=str(Path(ws_b).resolve()),
+            limit=100,
+        )
+        ws_templates = [r for r in ws_records if r.memory_kind == "contract_template"]
+        if ws_templates:
+            sa = dict(ws_templates[0].structured_assertion or {})
+            sa["success_rate"] = 0.5  # Below default min_success_rate of 0.8
+            store.update_memory_record(ws_templates[0].memory_id, structured_assertion=sa)
+
+        # Remove any existing global promoted template
+        global_records = store.list_memory_records(status="active", scope_kind="global", limit=100)
+        for r in global_records:
+            if r.memory_kind == "contract_template":
+                store.update_memory_record(r.memory_id, status="invalidated")
+
+        fp = _action_fingerprint("write_local", "write_file", ["path:/workspace/readme.md"])
+        result = learner.promote_to_global(fingerprint=fp)
+        assert result is None
+
+    def test_promote_already_exists_returns_none(self, tmp_path: Path) -> None:
+        """If a global template with same fingerprint exists, promote returns None."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws_a = str(tmp_path / "project-a")
+        ws_b = str(tmp_path / "project-b")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        # Learn in two workspaces to trigger promotion
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_a
+            )
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_b
+            )
+
+        # First promotion should have happened automatically. Try again — should return None.
+        fp = _action_fingerprint("write_local", "write_file", ["path:/workspace/readme.md"])
+        result = learner.promote_to_global(fingerprint=fp)
+        assert result is None
+
+    def test_promote_fingerprint_mismatch_skipped(self, tmp_path: Path) -> None:
+        """Workspace templates with different fingerprints are not matched for promotion."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws_a = str(tmp_path / "project-a")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_a
+            )
+
+        # Try to promote with a different fingerprint
+        result = learner.promote_to_global(fingerprint="nonexistent_fingerprint_abc")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: _active_templates backward compat (lines 771-772)
+# ---------------------------------------------------------------------------
+
+
+class TestActiveTemplatesBackwardCompat:
+    def test_active_templates_empty_scope_fallback(self, tmp_path: Path) -> None:
+        """Templates with empty/None scope are still returned when workspace_root is empty."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        # Create a template with empty scope (simulating old records)
+        store.create_memory_record(
+            task_id="task-1",
+            conversation_id=None,
+            category="contract_template",
+            claim_text="Legacy template",
+            structured_assertion={
+                "action_class": "write_local",
+                "tool_name": "write_file",
+                "fingerprint": "legacy_fp",
+                "invocation_count": 5,
+                "success_count": 5,
+                "success_rate": 1.0,
+                "expected_effects": ["action:write_local"],
+            },
+            scope_kind="",
+            scope_ref="",
+            status="active",
+            memory_kind="contract_template",
+        )
+
+        # Without workspace_root, should find the legacy template
+        templates = learner._active_templates(workspace_root="")
+        template_fps = [dict(r.structured_assertion or {}).get("fingerprint") for r in templates]
+        assert "legacy_fp" in template_fps
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: _find_template_by_fingerprint workspace filtering (lines 788-791)
+# ---------------------------------------------------------------------------
+
+
+class TestFindTemplateByFingerprintWorkspaceFiltering:
+    def test_skip_other_workspace_return_global(self, tmp_path: Path) -> None:
+        """When searching with workspace_root, skip templates from other workspaces
+        but accept global templates as fallback."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws_a = str(tmp_path / "project-a")
+        ws_b = str(tmp_path / "project-b")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        fp = _action_fingerprint("write_local", "write_file", ["path:/workspace/readme.md"])
+
+        # Create a workspace-scoped template in workspace A
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws_a
+            )
+
+        # Searching from workspace B should NOT find workspace A's template
+        result = learner._find_template_by_fingerprint(fp, workspace_root=ws_b)
+        # Should be None since ws_a's template is not visible from ws_b
+        # (no global template exists either)
+        assert result is None
+
+    def test_find_global_fallback_when_workspace_specified(self, tmp_path: Path) -> None:
+        """When workspace is specified and no workspace-scoped match exists,
+        a global template with matching fingerprint is returned."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws = str(tmp_path / "project-a")
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        fp = _action_fingerprint("write_local", "write_file", ["path:/workspace/readme.md"])
+
+        # Create a global template (no workspace_root)
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=""
+            )
+
+        # Searching from a workspace should find the global template
+        result = learner._find_template_by_fingerprint(fp, workspace_root=ws)
+        assert result is not None
+        assert result.scope_kind == "global"
+
+    def test_workspace_scoped_match_preferred(self, tmp_path: Path) -> None:
+        """When a workspace-scoped template matches, it is returned over global."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        ws = str(tmp_path / "project-a")
+        resolved_ws = str(Path(ws).resolve())
+
+        contract = _make_contract(
+            store,
+            action_class="write_local",
+            tool_name="write_file",
+            expected_effects=["path:/workspace/readme.md"],
+        )
+
+        fp = _action_fingerprint("write_local", "write_file", ["path:/workspace/readme.md"])
+
+        # Create workspace-scoped template
+        for _ in range(_PROMOTION_THRESHOLD):
+            recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+            learner.learn_from_reconciliation(
+                reconciliation=recon, contract=contract, workspace_root=ws
+            )
+
+        result = learner._find_template_by_fingerprint(fp, workspace_root=ws)
+        assert result is not None
+        assert result.scope_kind == "workspace"
+        assert result.scope_ref == resolved_ws
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: _find_template_by_source_contract_ref (lines 796-798)
+# ---------------------------------------------------------------------------
+
+
+class TestFindTemplateBySourceContractRef:
+    def test_find_by_source_contract_ref(self, tmp_path: Path) -> None:
+        """_find_template_by_source_contract_ref returns record with matching ref."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        contract = _make_contract(store)
+        recon = _make_reconciliation(store, contract_ref=contract.contract_id)
+        memory = learner.learn_from_reconciliation(reconciliation=recon, contract=contract)
+        assert memory is not None
+
+        result = learner._find_template_by_source_contract_ref(contract.contract_id)
+        assert result is not None
+        assert result.memory_id == memory.memory_id
+
+    def test_find_by_source_contract_ref_not_found(self, tmp_path: Path) -> None:
+        """Returns None when no template matches the source_contract_ref."""
+        store = _make_store(tmp_path)
+        learner = ContractTemplateLearner(store)
+
+        result = learner._find_template_by_source_contract_ref("nonexistent-ref")
+        assert result is None
