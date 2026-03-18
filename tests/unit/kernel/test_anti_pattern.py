@@ -117,3 +117,43 @@ def test_detect_pitfalls_empty_when_no_links(tmp_path: Path) -> None:
         assert candidates == []
     finally:
         store.close()
+
+
+def test_detect_pitfalls_logs_when_candidates_found(tmp_path: Path) -> None:
+    """detect_pitfalls should return candidates when stale influencers exist (covers line 65)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        from hermit.kernel.context.memory.lineage import MemoryLineageService
+
+        lineage_svc = MemoryLineageService()
+        svc = AntiPatternService(lineage_service=lineage_svc)
+
+        mid = _create_memory(store, confidence=0.2, claim_text="bad advice pattern")
+
+        # Create 6 failed decisions to trigger stale influencer detection
+        decision_ids = []
+        for i in range(6):
+            d = store.create_decision(
+                task_id=f"t-pit-{i}",
+                step_id=f"s-{i}",
+                step_attempt_id=f"sa-{i}",
+                decision_type="policy",
+                verdict="denied",
+                reason="failed",
+            )
+            decision_ids.append(d.decision_id)
+
+        lineage_svc.record_influence(
+            context_pack_id="cp-pit",
+            decision_ids=decision_ids,
+            memory_ids=[mid],
+            store=store,
+            task_id="t-pit",
+        )
+
+        # Line 65: candidates are detected and logged
+        candidates = svc.detect_pitfalls(store, min_decisions=5, failure_rate_threshold=0.5)
+        assert len(candidates) >= 1
+        assert any(c.memory_id == mid for c in candidates)
+    finally:
+        store.close()

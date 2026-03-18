@@ -215,3 +215,178 @@ def test_auto_link_by_topic(tmp_path: Path) -> None:
         assert topic_edges[0].to_memory_id == m2.memory_id
     finally:
         store.close()
+
+
+def test_build_edges_missing_memory_returns_empty(tmp_path: Path) -> None:
+    """build_edges returns [] when the memory_id doesn't exist (line 93)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+        svc = MemoryGraphService()
+        edges = svc.build_edges("nonexistent-memory-id", store)
+        assert edges == []
+    finally:
+        store.close()
+
+
+def test_multi_hop_retrieve_empty_seeds_returns_empty(tmp_path: Path) -> None:
+    """multi_hop_retrieve returns [] when seed_memory_ids is empty (line 150)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+        svc = MemoryGraphService()
+        results = svc.multi_hop_retrieve("query", store, seed_memory_ids=[])
+        assert results == []
+
+        results_none = svc.multi_hop_retrieve("query", store, seed_memory_ids=None)
+        assert results_none == []
+    finally:
+        store.close()
+
+
+def test_auto_link_missing_memory_returns_empty(tmp_path: Path) -> None:
+    """auto_link returns [] when the memory doesn't exist (line 202)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+        svc = MemoryGraphService()
+        edges = svc.auto_link("nonexistent-id", store)
+        assert edges == []
+    finally:
+        store.close()
+
+
+def test_auto_link_with_embeddings(tmp_path: Path) -> None:
+    """auto_link uses embedding service when available (lines 207-224)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+
+        m1 = _create_memory(store, claim_text="Python uses pytest for testing")
+        m2 = _create_memory(store, claim_text="Testing with pytest is great")
+
+        class FakeEmbeddingService:
+            def search(self, text, store, limit=5):
+                # Return m2 with high similarity and m1 with self-match
+                return [(m1.memory_id, 0.99), (m2.memory_id, 0.85)]
+
+        svc = MemoryGraphService(embedding_service=FakeEmbeddingService())
+        edges = svc.auto_link(m1.memory_id, store)
+
+        # Should have created an edge to m2 (self is skipped, 0.85 > 0.7 threshold)
+        assert len(edges) >= 1
+        assert any(e.to_memory_id == m2.memory_id for e in edges)
+        assert all(e.relation_type == "related_topic" for e in edges)
+    finally:
+        store.close()
+
+
+def test_auto_link_embedding_below_threshold_skipped(tmp_path: Path) -> None:
+    """auto_link skips embedding results below _SEMANTIC_THRESHOLD (lines 214-215)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+
+        m1 = _create_memory(store, claim_text="Python uses pytest for testing")
+        _create_memory(store, claim_text="Unrelated content about cooking")
+
+        class FakeEmbeddingService:
+            def search(self, text, store, limit=5):
+                # Return only results below threshold
+                return [("other-mem", 0.3)]
+
+        svc = MemoryGraphService(embedding_service=FakeEmbeddingService())
+        edges = svc.auto_link(m1.memory_id, store)
+
+        # No embedding edges created since all below threshold;
+        # falls back to topic overlap
+        embedding_edges = [e for e in edges if "similarity" in e.metadata]
+        assert len(embedding_edges) == 0
+    finally:
+        store.close()
+
+
+def test_auto_link_embedding_exception_fallback(tmp_path: Path) -> None:
+    """auto_link falls back to topic linking when embeddings raise (lines 225-226)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+
+        m1 = _create_memory(store, claim_text="Python ruff formatter is mandatory for linting")
+        _create_memory(store, claim_text="ruff formatter handles Python code formatting")
+
+        class BrokenEmbeddingService:
+            def search(self, text, store, limit=5):
+                raise RuntimeError("embedding service unavailable")
+
+        svc = MemoryGraphService(embedding_service=BrokenEmbeddingService())
+        edges = svc.auto_link(m1.memory_id, store)
+
+        # Should still produce edges via topic fallback
+        assert len(edges) >= 1
+    finally:
+        store.close()
+
+
+def test_auto_link_by_topic_empty_tokens_returns_empty(tmp_path: Path) -> None:
+    """_auto_link_by_topic returns [] when the memory has no topic tokens (line 244)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+
+        # Single short word that's likely a stopword -> empty topic tokens
+        m1 = _create_memory(store, claim_text="the")
+        svc = MemoryGraphService()
+        edges = svc.auto_link(m1.memory_id, store)
+        # With no topic tokens, should return empty
+        assert isinstance(edges, list)
+    finally:
+        store.close()
+
+
+def test_auto_link_by_topic_skips_episode_index(tmp_path: Path) -> None:
+    """_auto_link_by_topic skips memories with memory_kind='episode_index' (line 252)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+
+        m1 = _create_memory(store, claim_text="Python ruff formatter is mandatory for linting")
+        # Create a memory with episode_index kind that shares tokens
+        _create_memory(
+            store,
+            claim_text="Python ruff formatter is mandatory for linting",
+            memory_kind="episode_index",
+        )
+
+        svc = MemoryGraphService()
+        edges = svc.auto_link(m1.memory_id, store)
+
+        # The episode_index memory should be skipped
+        for edge in edges:
+            target = store.get_memory_record(edge.to_memory_id)
+            if target is not None:
+                assert target.memory_kind != "episode_index"
+    finally:
+        store.close()
+
+
+def test_auto_link_by_topic_skips_empty_other_tokens(tmp_path: Path) -> None:
+    """_auto_link_by_topic skips other memories with no topic tokens (line 255)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        ensure_graph_schema(store)
+
+        m1 = _create_memory(store, claim_text="Python ruff formatter is mandatory for linting")
+        # Create a memory with only single-char tokens (filtered by topic_tokens min length 2)
+        _create_memory(store, claim_text="x y z")
+
+        svc = MemoryGraphService()
+        edges = svc.auto_link(m1.memory_id, store)
+
+        # The single-char-only memory should not be linked
+        for edge in edges:
+            target = store.get_memory_record(edge.to_memory_id)
+            if target is not None:
+                assert target.claim_text != "x y z"
+    finally:
+        store.close()

@@ -142,6 +142,63 @@ def test_insight_types_pattern(tmp_path: Path, monkeypatch) -> None:
         store.close()
 
 
+def test_reflect_skips_small_clusters(tmp_path: Path, monkeypatch) -> None:
+    """Clusters smaller than _MIN_CLUSTER_SIZE (3) are skipped in reflect loop."""
+    _patch_topic_tokens(monkeypatch)
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ReflectionService()
+        # Create 2 memories with one topic and 2 with another — neither reaches 3
+        _create_memory(store, claim_text="alpha beta gamma zzz_one")
+        _create_memory(store, claim_text="alpha beta gamma zzz_two")
+
+        # Line 60: cluster size < _MIN_CLUSTER_SIZE → continue
+        insights = svc.reflect(store)
+        assert insights == []
+    finally:
+        store.close()
+
+
+def test_synthesize_cluster_returns_none_below_min(tmp_path: Path) -> None:
+    """_synthesize_cluster returns None when cluster has fewer than 3 memories."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ReflectionService()
+        m1 = _create_memory(store, claim_text="claim one")
+        m2 = _create_memory(store, claim_text="claim two")
+
+        records = [store.get_memory_record(m.memory_id) for m in [m1, m2]]
+        records = [r for r in records if r is not None]
+
+        # Line 141: len(cluster) < _MIN_CLUSTER_SIZE → return None
+        result = svc._synthesize_cluster(records)
+        assert result is None
+    finally:
+        store.close()
+
+
+def test_insight_type_contradiction_resolution(tmp_path: Path, monkeypatch) -> None:
+    """A cluster containing a pitfall_warning should produce 'contradiction_resolution' type."""
+    _patch_topic_tokens(monkeypatch)
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ReflectionService()
+        _create_memory(store, claim_text="ruff formatter mandatory tool zzz_linting")
+        _create_memory(store, claim_text="ruff formatter mandatory tool zzz_checks")
+        # Lines 149-150: pitfall_warning in cluster → contradiction_resolution
+        _create_memory(
+            store,
+            claim_text="ruff formatter mandatory tool zzz_warn",
+            memory_kind="pitfall_warning",
+        )
+
+        insights = svc.reflect(store)
+        assert len(insights) >= 1
+        assert insights[0].insight_type == "contradiction_resolution"
+    finally:
+        store.close()
+
+
 def test_insight_includes_source_ids(tmp_path: Path, monkeypatch) -> None:
     """Synthesized insight includes source_memory_ids from the cluster."""
     _patch_topic_tokens(monkeypatch)

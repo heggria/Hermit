@@ -150,3 +150,98 @@ def test_embed_batch_uses_fallback() -> None:
     # Each vector should be deterministic
     assert vecs[0] == svc._fallback_embed("first text")
     assert vecs[1] == svc._fallback_embed("second text")
+
+
+def test_is_available_returns_true_when_transformers_installed() -> None:
+    """Returns True and caches result when sentence-transformers is importable."""
+    import types
+
+    fake_module = types.ModuleType("sentence_transformers")
+    svc = EmbeddingService()
+    svc._available = None
+
+    with patch.dict("sys.modules", {"sentence_transformers": fake_module}):
+        result = svc.is_available()
+
+    assert result is True
+    # Cached — second call returns same without re-checking
+    assert svc._available is True
+
+
+def test_ensure_model_returns_cached_model() -> None:
+    """_ensure_model returns the cached model if already loaded."""
+    svc = EmbeddingService()
+    sentinel = object()
+    svc._model = sentinel
+
+    result = svc._ensure_model()
+
+    assert result is sentinel
+
+
+def test_ensure_model_loads_and_returns_model() -> None:
+    """_ensure_model loads the SentenceTransformer model when available."""
+    import types
+
+    fake_st_module = types.ModuleType("sentence_transformers")
+    fake_model_instance = type("FakeModel", (), {})()
+    fake_st_module.SentenceTransformer = lambda name: fake_model_instance  # type: ignore[attr-defined]
+
+    svc = EmbeddingService()
+    svc._available = True
+    svc._model = None
+
+    with patch.dict("sys.modules", {"sentence_transformers": fake_st_module}):
+        result = svc._ensure_model()
+
+    assert result is not None
+    assert svc._model is not None
+
+
+class _FakeVector:
+    """Mimics a numpy array with .tolist() for testing without numpy."""
+
+    def __init__(self, data: list[float]) -> None:
+        self._data = data
+
+    def tolist(self) -> list[float]:
+        return self._data
+
+
+class _FakeMatrix:
+    """Mimics a 2D numpy array that is iterable and each row has .tolist()."""
+
+    def __init__(self, rows: list[list[float]]) -> None:
+        self._rows = [_FakeVector(r) for r in rows]
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+def test_embed_uses_model_when_available() -> None:
+    """embed() uses the real model.encode() when sentence-transformers is available."""
+    svc = EmbeddingService()
+    fake_vec = _FakeVector([0.1, 0.2, 0.3])
+    fake_model = type("FakeModel", (), {"encode": lambda self, text, **kw: fake_vec})()
+    svc._model = fake_model
+    svc._available = True
+
+    result = svc.embed("hello")
+
+    assert result == [0.1, 0.2, 0.3]
+
+
+def test_embed_batch_uses_model_when_available() -> None:
+    """embed_batch() uses the real model.encode() for batch encoding."""
+    svc = EmbeddingService()
+    fake_vecs = _FakeMatrix([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
+    fake_model = type("FakeModel", (), {"encode": lambda self, texts, **kw: fake_vecs})()
+    svc._model = fake_model
+    svc._available = True
+
+    result = svc.embed_batch(["a", "b", "c"])
+
+    assert len(result) == 3
+    assert result[0] == [0.1, 0.2]
+    assert result[1] == [0.3, 0.4]
+    assert result[2] == [0.5, 0.6]

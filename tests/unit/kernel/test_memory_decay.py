@@ -241,3 +241,108 @@ def test_sweep_collects_quarantine_candidates(tmp_path: Path) -> None:
         assert report.total_evaluated >= 1
     finally:
         store.close()
+
+
+def test_evaluate_freshness_with_last_accessed_at(tmp_path: Path) -> None:
+    """When structured_assertion has last_accessed_at, it should be reported in the assessment."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryDecayService()
+        now = time.time()
+        accessed_at = now - 2 * 86400  # 2 days ago
+        record = _create_memory(
+            store,
+            retention_class="user_preference",
+            structured_assertion={"last_accessed_at": accessed_at},
+        )
+
+        refreshed = store.get_memory_record(record.memory_id)
+        assert refreshed is not None
+        assessment = service.evaluate_freshness(refreshed, now=now)
+
+        # Line 67: last_accessed_days_ago should be approximately 2.0
+        assert assessment.last_accessed_days_ago is not None
+        assert abs(assessment.last_accessed_days_ago - 2.0) < 0.1
+    finally:
+        store.close()
+
+
+def test_quarantine_returns_false_for_nonexistent(tmp_path: Path) -> None:
+    """quarantine() returns False when memory does not exist or is not active."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryDecayService()
+
+        # Non-existent memory (line 147: record is None)
+        result = service.quarantine(store, "nonexistent-id", reason="test")
+        assert result is False
+    finally:
+        store.close()
+
+
+def test_quarantine_returns_false_for_non_active(tmp_path: Path) -> None:
+    """quarantine() returns False when memory is not in active status."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryDecayService()
+        record = _create_memory(store)
+        store.update_memory_record(record.memory_id, status="invalidated")
+
+        # Line 147: record.status != "active"
+        result = service.quarantine(store, record.memory_id, reason="test")
+        assert result is False
+    finally:
+        store.close()
+
+
+def test_revive_returns_false_for_nonexistent(tmp_path: Path) -> None:
+    """revive() returns False when memory does not exist."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryDecayService()
+
+        # Line 166: record is None
+        result = service.revive(store, "nonexistent-id", new_evidence_refs=["ev-1"])
+        assert result is False
+    finally:
+        store.close()
+
+
+def test_revive_returns_false_for_active_memory(tmp_path: Path) -> None:
+    """revive() returns False when memory is active (not quarantined)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryDecayService()
+        record = _create_memory(store)
+
+        # Line 166: record.status != "quarantined"
+        result = service.revive(store, record.memory_id, new_evidence_refs=["ev-1"])
+        assert result is False
+    finally:
+        store.close()
+
+
+def test_effective_ttl_uses_explicit_expires_at(tmp_path: Path) -> None:
+    """When memory has both created_at and expires_at, TTL is computed from them."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryDecayService()
+        now = time.time()
+        expires = now + 7200  # 2 hours from now
+        record = _create_memory(store, retention_class="volatile_fact")
+
+        # Set expires_at via SQL to trigger line 197
+        store._conn.execute(
+            "UPDATE memory_records SET expires_at = ? WHERE memory_id = ?",
+            (expires, record.memory_id),
+        )
+        store._conn.commit()
+
+        refreshed = store.get_memory_record(record.memory_id)
+        assert refreshed is not None
+        assessment = service.evaluate_freshness(refreshed, now=now)
+
+        # With expires_at set, the TTL should be based on expires_at - created_at
+        assert assessment.freshness_state == FreshnessState.FRESH
+    finally:
+        store.close()

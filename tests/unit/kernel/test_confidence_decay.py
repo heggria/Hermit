@@ -191,6 +191,55 @@ def test_batch_recompute_updates_effective_confidence(tmp_path: Path) -> None:
         store.close()
 
 
+def test_compute_confidence_uses_last_validated_at(tmp_path: Path) -> None:
+    """When no last_accessed_at in assertion, falls back to last_validated_at."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ConfidenceDecayService()
+        mid = _create_memory(store, confidence=0.8, retention_class="volatile_fact")
+        now = time.time()
+        # Set created_at to 20 days ago
+        past = now - 20.0 * 86400.0
+        _set_created_at(store, mid, past)
+
+        # Set last_validated_at to 2 days ago (line 61)
+        validated_at = now - 2.0 * 86400.0
+        store.update_memory_record(mid, last_validated_at=validated_at)
+
+        record = store.get_memory_record(mid)
+        assert record is not None
+        effective = svc.compute_confidence(record, now=now)
+
+        # Decay from last_validated_at (2 days), not created_at (20 days)
+        expected = 0.8 * math.pow(0.5, 2.0 / 14.0)
+        assert abs(effective - round(expected, 4)) < 0.01
+    finally:
+        store.close()
+
+
+def test_refresh_on_reference_skips_non_active(tmp_path: Path) -> None:
+    """refresh_on_reference does nothing for non-active or non-existent memories."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ConfidenceDecayService()
+        mid = _create_memory(store, confidence=0.8, retention_class="volatile_fact")
+        store.update_memory_record(mid, status="invalidated")
+
+        # Line 83: record.status != "active" → return
+        svc.refresh_on_reference(mid, store)
+
+        # Also test with non-existent memory
+        svc.refresh_on_reference("nonexistent-id", store)
+
+        # Neither should raise; update should not be called for non-active
+        record = store.get_memory_record(mid)
+        assert record is not None
+        assertion = dict(record.structured_assertion or {})
+        assert "last_accessed_at" not in assertion
+    finally:
+        store.close()
+
+
 def test_batch_recompute_counts_below_threshold(tmp_path: Path) -> None:
     """batch_recompute should count memories with effective confidence below threshold."""
     store = KernelStore(tmp_path / "state.db")

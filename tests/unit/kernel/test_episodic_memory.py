@@ -239,3 +239,138 @@ def test_index_episode_returns_none_for_no_memories() -> None:
 
     assert result is None
     store.create_memory_record.assert_not_called()
+
+
+def test_index_episode_handles_receipt_exception() -> None:
+    """index_episode should still succeed when list_receipts raises an exception."""
+    m1 = _mem(memory_id="mem-rx-1", task_id="task-rx", claim_text="Receipt error test")
+    store = _mock_store(memories=[m1])
+    # Force list_receipts to raise (lines 52-53)
+    store.list_receipts.side_effect = Exception("receipts unavailable")
+
+    service = EpisodicMemoryService()
+    result = service.index_episode("task-rx", store, conversation_id="conv-1")
+
+    assert result is not None
+    assert isinstance(result, EpisodeIndex)
+    assert result.task_id == "task-rx"
+    # artifact_ids and tool_names should be empty due to the exception
+    assert result.artifact_ids == ()
+    assert result.tool_names == ()
+
+
+def test_query_by_episode_falls_back_when_no_episode_records() -> None:
+    """query_by_episode falls back to list_memory_records when no episode index exists."""
+    m1 = _mem(memory_id="mem-fb-1", task_id="task-fb", claim_text="Fallback memory")
+    store = _mock_store(memories=[m1])
+
+    service = EpisodicMemoryService()
+    # Line 108: no episode_index records, falls back to direct listing
+    results = service.query_by_episode("task-fb", store)
+
+    assert len(results) == 1
+    assert results[0].memory_id == "mem-fb-1"
+
+
+def test_query_by_artifact_skips_non_matching_episodes() -> None:
+    """query_by_artifact skips episodes whose artifacts don't match the pattern."""
+    m1 = _mem(memory_id="mem-skip-1", task_id="task-skip", claim_text="Should not match")
+    episode = _mem(
+        memory_id="mem-ep-skip",
+        task_id="task-skip",
+        memory_kind="episode_index",
+        structured_assertion={
+            "episode_id": "ep-skip",
+            "task_id": "task-skip",
+            "memory_ids": ["mem-skip-1"],
+            "artifact_ids": ["artifact-other"],
+            "tool_names": [],
+        },
+    )
+    store = _mock_store(memories=[m1, episode])
+
+    service = EpisodicMemoryService()
+    # Line 137: artifact_pattern not in any aid → continue
+    results = service.query_by_artifact("nonexistent-pattern", store)
+    assert results == []
+
+
+def test_query_by_artifact_respects_limit() -> None:
+    """query_by_artifact stops collecting when limit is reached."""
+    memories = []
+    episodes = []
+    for i in range(5):
+        m = _mem(memory_id=f"mem-lim-{i}", task_id=f"task-lim-{i}", claim_text=f"Mem {i}")
+        memories.append(m)
+        ep = _mem(
+            memory_id=f"mem-ep-lim-{i}",
+            task_id=f"task-lim-{i}",
+            memory_kind="episode_index",
+            structured_assertion={
+                "episode_id": f"ep-lim-{i}",
+                "task_id": f"task-lim-{i}",
+                "memory_ids": [f"mem-lim-{i}"],
+                "artifact_ids": [f"artifact-match-{i}"],
+                "tool_names": [],
+            },
+        )
+        episodes.append(ep)
+
+    store = _mock_store(memories=memories + episodes)
+
+    service = EpisodicMemoryService()
+    # Line 153: limit=2 should truncate results
+    results = service.query_by_artifact("match", store, limit=2)
+    assert len(results) == 2
+
+
+def test_query_by_tool_skips_non_matching_episodes() -> None:
+    """query_by_tool skips episodes that don't use the requested tool."""
+    m1 = _mem(memory_id="mem-notool-1", task_id="task-nt", claim_text="No tool match")
+    episode = _mem(
+        memory_id="mem-ep-nt",
+        task_id="task-nt",
+        memory_kind="episode_index",
+        structured_assertion={
+            "episode_id": "ep-nt",
+            "task_id": "task-nt",
+            "memory_ids": ["mem-notool-1"],
+            "artifact_ids": [],
+            "tool_names": ["write_file"],
+        },
+    )
+    store = _mock_store(memories=[m1, episode])
+
+    service = EpisodicMemoryService()
+    # Line 172: tool_name not in tool_names → continue
+    results = service.query_by_tool("read_file", store)
+    assert results == []
+
+
+def test_query_by_tool_respects_limit() -> None:
+    """query_by_tool stops collecting when limit is reached."""
+    memories = []
+    episodes = []
+    for i in range(5):
+        m = _mem(memory_id=f"mem-tl-{i}", task_id=f"task-tl-{i}", claim_text=f"Tool mem {i}")
+        memories.append(m)
+        ep = _mem(
+            memory_id=f"mem-ep-tl-{i}",
+            task_id=f"task-tl-{i}",
+            memory_kind="episode_index",
+            structured_assertion={
+                "episode_id": f"ep-tl-{i}",
+                "task_id": f"task-tl-{i}",
+                "memory_ids": [f"mem-tl-{i}"],
+                "artifact_ids": [],
+                "tool_names": ["bash"],
+            },
+        )
+        episodes.append(ep)
+
+    store = _mock_store(memories=memories + episodes)
+
+    service = EpisodicMemoryService()
+    # Line 188: limit=2 should truncate results
+    results = service.query_by_tool("bash", store, limit=2)
+    assert len(results) == 2

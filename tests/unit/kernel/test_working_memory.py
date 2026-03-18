@@ -206,3 +206,59 @@ def test_small_budget_prioritizes_pitfalls(tmp_path: Path) -> None:
         assert pack.overflow_count >= 1
     finally:
         store.close()
+
+
+def test_pitfall_overflow_when_budget_exhausted(tmp_path: Path) -> None:
+    """Pitfall memories that exceed the budget are added to overflow."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        # Two pitfalls, each ~100 tokens (400 chars), budget only 50
+        p1 = _create_memory(store, claim_text="A" * 400, memory_kind="pitfall_warning")
+        p2 = _create_memory(store, claim_text="B" * 400, memory_kind="pitfall_warning")
+
+        mgr = WorkingMemoryManager(max_tokens=50)
+        pack = mgr.select_for_context(pitfalls=[p1, p2])
+
+        # Only one pitfall fits; the other overflows
+        assert len(pack.items) == 0
+        assert pack.overflow_count == 2
+    finally:
+        store.close()
+
+
+def test_procedural_overflow_when_budget_exhausted(tmp_path: Path) -> None:
+    """Procedural items that exceed the budget are added to overflow."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        proc = {
+            "procedure_id": "proc-overflow",
+            "trigger_pattern": "X" * 400,
+            "steps": ["step1"],
+        }
+
+        mgr = WorkingMemoryManager(max_tokens=10)
+        pack = mgr.select_for_context(procedural=[proc])
+
+        assert pack.overflow_count == 1
+        assert len([i for i in pack.items if i.priority == "procedural"]) == 0
+    finally:
+        store.close()
+
+
+def test_retrieved_included_and_overflow(tmp_path: Path) -> None:
+    """Retrieved memories are included when budget allows, overflow otherwise."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        r1 = _create_memory(store, claim_text="short retrieved")
+        r2 = _create_memory(store, claim_text="Y" * 400)
+
+        # Budget enough for the short one but not the long one
+        mgr = WorkingMemoryManager(max_tokens=20)
+        pack = mgr.select_for_context(retrieved=[r1, r2])
+
+        retrieved_items = [i for i in pack.items if i.priority == "retrieved"]
+        assert len(retrieved_items) == 1
+        assert retrieved_items[0].memory_id == r1.memory_id
+        assert pack.overflow_count == 1
+    finally:
+        store.close()

@@ -255,6 +255,129 @@ def test_record_influence_empty_lists(tmp_path: Path) -> None:
         store.close()
 
 
+def test_trace_memory_skips_none_decisions(tmp_path: Path) -> None:
+    """trace_memory skips decisions that return None from store.get_decision."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryLineageService()
+
+        mem = _create_memory(store, claim_text="Decision skip test")
+
+        # Create influence links referencing a non-existent decision
+        # by creating a link record manually
+        store.create_memory_record(
+            task_id="t-skip",
+            conversation_id="conv-1",
+            category="other",
+            claim_text="Memory mem-skip influenced decision fake-decision",
+            structured_assertion={
+                "link_id": "infl-fake",
+                "context_pack_id": "cp-skip",
+                "decision_id": "fake-decision",
+                "memory_id": mem.memory_id,
+            },
+            scope_kind="workspace",
+            scope_ref="workspace:default",
+            promotion_reason="lineage_tracking",
+            retention_class="volatile_fact",
+            memory_kind="influence_link",
+            confidence=0.9,
+            trust_tier="observed",
+        )
+
+        # Line 133: decision is None → continue
+        impact = service.trace_memory(mem.memory_id, store)
+        assert impact.memory_id == mem.memory_id
+        assert impact.success_count == 0
+        assert impact.failure_count == 0
+    finally:
+        store.close()
+
+
+def test_find_stale_influencers_skips_below_failure_threshold(tmp_path: Path) -> None:
+    """Memories with failure_rate below threshold are skipped."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryLineageService()
+
+        mem = _create_memory(store, claim_text="Good advice memory")
+
+        # Create 6 decisions: 5 succeeded, 1 failed → failure_rate = 1/6 ≈ 0.167
+        decision_ids = []
+        for i in range(5):
+            d = store.create_decision(
+                task_id=f"t-ok-{i}",
+                step_id=f"s-{i}",
+                step_attempt_id=f"sa-{i}",
+                decision_type="policy",
+                verdict="approved",
+                reason="ok",
+            )
+            decision_ids.append(d.decision_id)
+
+        d_fail = store.create_decision(
+            task_id="t-fail",
+            step_id="s-fail",
+            step_attempt_id="sa-fail",
+            decision_type="policy",
+            verdict="denied",
+            reason="failed",
+        )
+        decision_ids.append(d_fail.decision_id)
+
+        service.record_influence(
+            context_pack_id="cp-good",
+            decision_ids=decision_ids,
+            memory_ids=[mem.memory_id],
+            store=store,
+            task_id="t-good",
+        )
+
+        # Line 175: failure_rate < threshold → continue
+        stale = service.find_stale_influencers(store, min_decisions=5, failure_rate_threshold=0.5)
+        assert not any(s.memory_id == mem.memory_id for s in stale)
+    finally:
+        store.close()
+
+
+def test_find_stale_influencers_skips_non_active_records(tmp_path: Path) -> None:
+    """Memories that are not active should be skipped by find_stale_influencers."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        service = MemoryLineageService()
+
+        mem = _create_memory(store, claim_text="Will be invalidated")
+
+        # Create 6 failed decisions
+        decision_ids = []
+        for i in range(6):
+            d = store.create_decision(
+                task_id=f"t-inv-{i}",
+                step_id=f"s-{i}",
+                step_attempt_id=f"sa-{i}",
+                decision_type="policy",
+                verdict="denied",
+                reason="failed",
+            )
+            decision_ids.append(d.decision_id)
+
+        service.record_influence(
+            context_pack_id="cp-inv",
+            decision_ids=decision_ids,
+            memory_ids=[mem.memory_id],
+            store=store,
+            task_id="t-inv",
+        )
+
+        # Invalidate the memory so it's skipped (line 179)
+        store.update_memory_record(mem.memory_id, status="invalidated")
+
+        stale = service.find_stale_influencers(store, min_decisions=5, failure_rate_threshold=0.5)
+        assert not any(s.memory_id == mem.memory_id for s in stale)
+    finally:
+        store.close()
+
+
 def test_trace_decision_empty_result(tmp_path: Path) -> None:
     """trace_decision should return empty lineage for an unknown decision."""
     store = KernelStore(tmp_path / "state.db")
@@ -266,5 +389,24 @@ def test_trace_decision_empty_result(tmp_path: Path) -> None:
         assert lineage.decision_id == "decision-nonexistent"
         assert lineage.influencing_memories == []
         assert lineage.link_count == 0
+    finally:
+        store.close()
+
+
+def test_list_memory_records_filters_by_task_id(tmp_path: Path) -> None:
+    """list_memory_records with task_id should only return records for that task."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        _create_memory(store, task_id="task-A", claim_text="Memory A")
+        _create_memory(store, task_id="task-B", claim_text="Memory B")
+
+        # Lines 993-994 in store_ledger.py: task_id filter
+        result_a = store.list_memory_records(task_id="task-A", status="active", limit=100)
+        result_b = store.list_memory_records(task_id="task-B", status="active", limit=100)
+
+        assert all(r.task_id == "task-A" for r in result_a)
+        assert all(r.task_id == "task-B" for r in result_b)
+        assert len(result_a) >= 1
+        assert len(result_b) >= 1
     finally:
         store.close()

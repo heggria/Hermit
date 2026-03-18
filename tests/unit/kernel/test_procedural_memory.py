@@ -183,3 +183,117 @@ def test_save_and_load_procedure(tmp_path: Path) -> None:
         assert loaded.status == "active"
     finally:
         store.close()
+
+
+def test_extract_procedure_no_trigger_returns_none(tmp_path: Path, monkeypatch) -> None:
+    """extract_procedure returns None when steps exist but trigger is empty (line 62)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ProceduralMemoryService()
+        record = _create_memory(
+            store,
+            claim_text="Step 1: do something. Step 2: do another thing.",
+        )
+
+        # Patch _extract_trigger to return empty string to hit the guard
+        monkeypatch.setattr(
+            ProceduralMemoryService, "_extract_trigger", staticmethod(lambda text: "")
+        )
+        proc = svc.extract_procedure(record)
+        assert proc is None
+    finally:
+        store.close()
+
+
+def test_match_procedures_skips_inactive(tmp_path: Path) -> None:
+    """match_procedures skips procedures with status != 'active' (line 88)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ProceduralMemoryService()
+        proc = ProceduralRecord(
+            procedure_id="proc-inactive",
+            trigger_pattern="deploy the application",
+            steps=["build", "push"],
+            confidence=0.8,
+            source_memory_ids=["mem-1"],
+            status="review",
+            created_at=1000.0,
+            updated_at=1000.0,
+        )
+        svc.save_procedure(proc, store)
+
+        matches = svc.match_procedures("how to deploy the application", store)
+        assert len(matches) == 0
+    finally:
+        store.close()
+
+
+def test_reinforce_missing_procedure_noop(tmp_path: Path) -> None:
+    """reinforce does nothing when procedure_id doesn't exist (line 105)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ProceduralMemoryService()
+        # Should not raise
+        svc.reinforce("nonexistent-proc-id", success=True, store=store)
+    finally:
+        store.close()
+
+
+def test_extract_steps_numbered_list_pattern(tmp_path: Path) -> None:
+    """_extract_steps extracts from numbered list '1. X 2. Y' (line 161)."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        svc = ProceduralMemoryService()
+        record = _create_memory(
+            store,
+            claim_text="When setting up CI: 1) install deps 2) run lint 3) run tests",
+        )
+
+        proc = svc.extract_procedure(record)
+
+        assert proc is not None
+        assert len(proc.steps) >= 2
+    finally:
+        store.close()
+
+
+def test_extract_trigger_fallback_first_words() -> None:
+    """_extract_trigger falls back to first 8 words when no pattern matches (lines 183-184)."""
+    # _extract_trigger is a staticmethod
+    # Text with no "To/When/For/If ... ," trigger pattern
+    trigger = ProceduralMemoryService._extract_trigger(
+        "simply run the command and check output carefully please"
+    )
+    assert trigger != ""
+    # Should be first 8 words lowercased
+    assert "simply" in trigger
+    assert "run" in trigger
+
+
+def test_trigger_match_score_empty_inputs() -> None:
+    """_trigger_match_score returns 0.0 for empty query or trigger (line 190)."""
+    score = ProceduralMemoryService._trigger_match_score
+    assert score("", "deploy app") == 0.0
+    assert score("deploy app", "") == 0.0
+    assert score("", "") == 0.0
+
+
+def test_trigger_match_score_partial_overlap() -> None:
+    """_trigger_match_score calculates token overlap ratio (lines 194-199)."""
+    score = ProceduralMemoryService._trigger_match_score
+    # Exact substring match
+    assert score("how to deploy the app", "deploy the app") == 1.0
+
+    # Token overlap with >= 2 shared tokens
+    result = score("deploy service now", "deploy service later")
+    assert result > 0.0
+
+    # Only 1 shared token -> returns 0.0
+    result = score("deploy something", "deploy otherthing")
+    assert result == 0.0
+
+
+def test_trigger_match_score_empty_trigger_tokens() -> None:
+    """_trigger_match_score returns 0.0 when trigger has no tokens (line 196-197)."""
+    # Trigger with only whitespace
+    assert ProceduralMemoryService._trigger_match_score("query text", "   ") == 0.0
