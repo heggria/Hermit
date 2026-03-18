@@ -146,7 +146,11 @@ class ContractTemplateLearner:
             "drift_budget": dict(contract.drift_budget),
             "fingerprint": fingerprint,
             "source_contract_ref": contract.contract_id,
-            "success_count": 1,
+            "invocation_count": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "success_rate": 0.0,
+            "last_failure_at": None,
             "last_used_at": time.time(),
             "resource_scope_pattern": list(contract.drift_budget.get("resource_scopes", [])),
             "constraint_defaults": {
