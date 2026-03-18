@@ -14,7 +14,7 @@ class DependentReceipt:
     rollback_supported: bool
     rollback_strategy: str | None
     manual_review_required: bool = False
-    dependent_ids: list[str] = field(default_factory=list)
+    dependent_ids: list[str] = field(default_factory=list[str])
 
 
 @dataclass
@@ -26,9 +26,9 @@ class RollbackPlan:
     """
 
     root_receipt_id: str
-    execution_order: list[str] = field(default_factory=list)
-    nodes: dict[str, DependentReceipt] = field(default_factory=dict)
-    manual_review_ids: list[str] = field(default_factory=list)
+    execution_order: list[str] = field(default_factory=list[str])
+    nodes: dict[str, DependentReceipt] = field(default_factory=dict[str, DependentReceipt])
+    manual_review_ids: list[str] = field(default_factory=list[str])
     cycle_detected: bool = False
 
 
@@ -37,8 +37,8 @@ class RollbackPlanExecution:
     """Result of executing a recursive rollback plan."""
 
     plan: RollbackPlan
-    succeeded_ids: list[str] = field(default_factory=list)
-    failed_ids: list[str] = field(default_factory=list)
-    skipped_ids: list[str] = field(default_factory=list)
-    results: dict[str, dict[str, object]] = field(default_factory=dict)
+    succeeded_ids: list[str] = field(default_factory=list[str])
+    failed_ids: list[str] = field(default_factory=list[str])
+    skipped_ids: list[str] = field(default_factory=list[str])
+    results: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
     status: str = "pending"

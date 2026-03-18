@@ -54,7 +54,7 @@ class RemediationEngine:
         if signal.metadata:
             paths = signal.metadata.get("affected_paths")
             if isinstance(paths, list):
-                affected_paths = [str(p) for p in paths]
+                affected_paths = [str(p) for p in paths]  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
 
         context_parts: list[str] = [strategy]
         if signal.summary:

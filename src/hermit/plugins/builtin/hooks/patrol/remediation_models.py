@@ -14,7 +14,7 @@ class RemediationPlan:
     goal_prompt: str
     policy_profile: str = "default"
     priority: str = "normal"
-    affected_paths: list[str] = field(default_factory=list)
+    affected_paths: list[str] = field(default_factory=list[str])
 
 
 @dataclass

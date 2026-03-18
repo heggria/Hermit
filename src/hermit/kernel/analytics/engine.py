@@ -83,8 +83,7 @@ class AnalyticsEngine:
         tasks = [
             t
             for t in tasks
-            if t.created_at is not None
-            and window_start <= t.created_at <= window_end
+            if window_start <= t.created_at <= window_end
             and (task_id is None or t.task_id == task_id)
         ]
         task_throughput = len(tasks)

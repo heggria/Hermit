@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 class DelegationScope:
     """Defines the authority boundaries for a delegated child task."""
 
-    allowed_action_classes: list[str] = field(default_factory=list)
-    allowed_resource_scopes: list[str] = field(default_factory=list)
+    allowed_action_classes: list[str] = field(default_factory=list[str])
+    allowed_resource_scopes: list[str] = field(default_factory=list[str])
     max_steps: int = 0
     budget_tokens: int = 0
 

@@ -36,4 +36,4 @@ class RiskAdjustment:
     suggested_risk_band: str
     reason: str
     trust_score_ref: float  # composite_score at time of adjustment
-    evidence_refs: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list[str])
