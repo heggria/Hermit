@@ -984,10 +984,14 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         conversation_id: str | None = None,
         scope_kind: str | None = None,
         scope_ref: str | None = None,
+        task_id: str | None = None,
         limit: int = 200,
     ) -> list[MemoryRecord]:
         clauses: list[str] = []
         params: list[Any] = []
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
         if status:
             if status == "active":
                 clauses.append("status = 'active' AND (expires_at IS NULL OR expires_at > ?)")
@@ -1028,6 +1032,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         supersession_reason: str | None | object = UNSET,
         learned_from_reconciliation_ref: str | None | object = UNSET,
         structured_assertion: dict[str, Any] | None | object = UNSET,
+        freshness_class: str | None | object = UNSET,
+        last_accessed_at: float | None | object = UNSET,
     ) -> None:
         record = self.get_memory_record(memory_id)
         if record is None:
@@ -1072,6 +1078,12 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         next_structured_assertion = (
             record.structured_assertion if structured_assertion is UNSET else structured_assertion
         )
+        next_freshness_class = (
+            record.freshness_class if freshness_class is UNSET else freshness_class
+        )
+        next_last_accessed_at = (
+            record.last_accessed_at if last_accessed_at is UNSET else last_accessed_at
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 """
@@ -1080,6 +1092,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     superseded_by_memory_id = ?, invalidation_reason = ?, invalidated_at = ?,
                     expires_at = ?, validation_basis = ?, last_validated_at = ?, supersession_reason = ?,
                     learned_from_reconciliation_ref = ?, structured_assertion_json = ?,
+                    freshness_class = ?, last_accessed_at = ?,
                     updated_at = ?
                 WHERE memory_id = ?
                 """,
@@ -1096,6 +1109,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     next_supersession_reason,
                     next_reconciliation_ref,
                     json.dumps(next_structured_assertion or {}, ensure_ascii=False),
+                    next_freshness_class,
+                    next_last_accessed_at,
                     updated_at,
                     memory_id,
                 ),
@@ -1120,6 +1135,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     "supersession_reason": next_supersession_reason,
                     "learned_from_reconciliation_ref": next_reconciliation_ref,
                     "structured_assertion": next_structured_assertion or {},
+                    "freshness_class": next_freshness_class,
+                    "last_accessed_at": next_last_accessed_at,
                     "updated_at": updated_at,
                 },
             )

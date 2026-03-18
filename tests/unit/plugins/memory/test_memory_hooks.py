@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from hermit.kernel.ledger.journal.store import KernelStore
-from hermit.plugins.builtin.hooks.memory import hooks
+from hermit.plugins.builtin.hooks.memory import hooks, hooks_extraction, hooks_injection
 from hermit.plugins.builtin.hooks.memory.engine import MemoryEngine
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
 from hermit.runtime.capability.contracts.base import HookEvent, PluginContext
@@ -62,7 +62,7 @@ def test_inject_memory_returns_empty_when_no_entries(tmp_path) -> None:
 
     with (
         patch.object(engine, "summary_prompt", return_value=""),
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_injection.log, "info") as log_mock,
     ):
         assert hooks._inject_memory(engine) == ""
     log_mock.assert_called_once()
@@ -122,7 +122,7 @@ def test_inject_memory_logs_counts_when_entries_exist(tmp_path) -> None:
         }
     )
 
-    with patch.object(hooks.log, "info") as log_mock:
+    with patch.object(hooks_injection.log, "info") as log_mock:
         content = hooks._inject_memory(engine)
 
     assert content == ""
@@ -267,8 +267,8 @@ def test_save_memories_returns_early_without_messages(tmp_path) -> None:
     engine = MemoryEngine(settings.memory_file)
 
     with (
-        patch.object(hooks, "_extract_and_save") as extract_mock,
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction, "_extract_and_save") as extract_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
     ):
         hooks._save_memories(engine, settings, "s1", [])
 
@@ -281,8 +281,8 @@ def test_save_memories_returns_early_without_auth(tmp_path) -> None:
     engine = MemoryEngine(settings.memory_file)
 
     with (
-        patch.object(hooks, "_extract_and_save") as extract_mock,
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction, "_extract_and_save") as extract_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
     ):
         hooks._save_memories(engine, settings, "s1", [{"role": "user", "content": "hello"}])
 
@@ -295,9 +295,9 @@ def test_save_memories_logs_exception_and_clears_progress(tmp_path) -> None:
     engine = MemoryEngine(settings.memory_file)
 
     with (
-        patch.object(hooks, "_extract_and_save", side_effect=RuntimeError("boom")),
-        patch.object(hooks.log, "exception") as log_mock,
-        patch.object(hooks, "_clear_session_progress") as clear_mock,
+        patch.object(hooks_extraction, "_extract_and_save", side_effect=RuntimeError("boom")),
+        patch.object(hooks_extraction.log, "exception") as log_mock,
+        patch.object(hooks_extraction, "_clear_session_progress") as clear_mock,
     ):
         hooks._save_memories(engine, settings, "s1", [{"role": "user", "content": "hello"}])
 
@@ -311,8 +311,8 @@ def test_checkpoint_memories_returns_early_for_skipped_conditions(tmp_path) -> N
     messages = [{"role": "user", "content": "记住这个约定"}]
 
     with (
-        patch.object(hooks, "_pending_messages") as pending_mock,
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction, "_pending_messages") as pending_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
     ):
         hooks._checkpoint_memories(engine, settings, "", messages)
         hooks._checkpoint_memories(engine, settings, "cli-oneshot", messages)
@@ -330,9 +330,9 @@ def test_checkpoint_memories_returns_when_no_pending_delta(tmp_path) -> None:
     engine = MemoryEngine(settings.memory_file)
 
     with (
-        patch.object(hooks, "_pending_messages", return_value=([], 3)),
-        patch.object(hooks, "_extract_memory_payload") as extract_mock,
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction, "_pending_messages", return_value=([], 3)),
+        patch.object(hooks_extraction, "extract_memory_payload") as extract_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
     ):
         hooks._checkpoint_memories(
             engine, settings, "s1", [{"role": "user", "content": "记住这个约定"}]
@@ -348,10 +348,12 @@ def test_checkpoint_memories_returns_when_below_threshold(tmp_path) -> None:
     delta = [{"role": "user", "content": "短句"}]
 
     with (
-        patch.object(hooks, "_pending_messages", return_value=(delta, 0)),
-        patch.object(hooks, "_should_checkpoint", return_value=(False, "below_threshold")),
-        patch.object(hooks, "_extract_memory_payload") as extract_mock,
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction, "_pending_messages", return_value=(delta, 0)),
+        patch.object(
+            hooks_extraction, "should_checkpoint", return_value=(False, "below_threshold")
+        ),
+        patch.object(hooks_extraction, "extract_memory_payload") as extract_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
     ):
         hooks._checkpoint_memories(engine, settings, "s1", delta)
 
@@ -365,10 +367,12 @@ def test_checkpoint_memories_logs_exception_on_extract_failure(tmp_path) -> None
     delta = [{"role": "user", "content": "记住这个约定"}]
 
     with (
-        patch.object(hooks, "_pending_messages", return_value=(delta, 0)),
-        patch.object(hooks, "_should_checkpoint", return_value=(True, "explicit_memory_signal")),
-        patch.object(hooks, "_extract_memory_payload", side_effect=RuntimeError("boom")),
-        patch.object(hooks.log, "exception") as log_mock,
+        patch.object(hooks_extraction, "_pending_messages", return_value=(delta, 0)),
+        patch.object(
+            hooks_extraction, "should_checkpoint", return_value=(True, "explicit_memory_signal")
+        ),
+        patch.object(hooks_extraction, "extract_memory_payload", side_effect=RuntimeError("boom")),
+        patch.object(hooks_extraction.log, "exception") as log_mock,
     ):
         hooks._checkpoint_memories(engine, settings, "s1", delta)
 
@@ -384,15 +388,17 @@ def test_checkpoint_memories_logs_when_no_new_entries(tmp_path) -> None:
     ]
 
     with (
-        patch.object(hooks, "_pending_messages", return_value=(messages, 1)),
-        patch.object(hooks, "_should_checkpoint", return_value=(True, "explicit_memory_signal")),
+        patch.object(hooks_extraction, "_pending_messages", return_value=(messages, 1)),
         patch.object(
-            hooks,
-            "_extract_memory_payload",
+            hooks_extraction, "should_checkpoint", return_value=(True, "explicit_memory_signal")
+        ),
+        patch.object(
+            hooks_extraction,
+            "extract_memory_payload",
             return_value={"used_keywords": set(), "new_entries": []},
         ),
-        patch.object(hooks.log, "info") as log_mock,
-        patch.object(hooks, "_mark_messages_processed") as mark_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
+        patch.object(hooks_extraction, "_mark_messages_processed") as mark_mock,
     ):
         hooks._checkpoint_memories(engine, settings, "s1", messages)
 
@@ -410,15 +416,17 @@ def test_checkpoint_memories_appends_and_marks_processed(tmp_path) -> None:
     new_entries = [MemoryEntry(category="tooling_environment", content="服务端口改为 8080")]
 
     with (
-        patch.object(hooks, "_pending_messages", return_value=(messages, 0)),
-        patch.object(hooks, "_should_checkpoint", return_value=(True, "explicit_memory_signal")),
+        patch.object(hooks_extraction, "_pending_messages", return_value=(messages, 0)),
         patch.object(
-            hooks,
-            "_extract_memory_payload",
+            hooks_extraction, "should_checkpoint", return_value=(True, "explicit_memory_signal")
+        ),
+        patch.object(
+            hooks_extraction,
+            "extract_memory_payload",
             return_value={"used_keywords": set(), "new_entries": new_entries},
         ),
-        patch.object(hooks, "_mark_messages_processed") as mark_mock,
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction, "_mark_messages_processed") as mark_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
         patch.object(engine, "append_entries") as append_mock,
     ):
         hooks._checkpoint_memories(engine, settings, "s1", messages)
@@ -438,11 +446,13 @@ def test_checkpoint_memories_promotes_durable_memory_via_kernel(tmp_path) -> Non
     new_entries = [MemoryEntry(category="project_convention", content="默认工作目录固定到 /repo")]
 
     with (
-        patch.object(hooks, "_pending_messages", return_value=(messages, 0)),
-        patch.object(hooks, "_should_checkpoint", return_value=(True, "explicit_memory_signal")),
+        patch.object(hooks_extraction, "_pending_messages", return_value=(messages, 0)),
         patch.object(
-            hooks,
-            "_extract_memory_payload",
+            hooks_extraction, "should_checkpoint", return_value=(True, "explicit_memory_signal")
+        ),
+        patch.object(
+            hooks_extraction,
+            "extract_memory_payload",
             return_value={"used_keywords": {"repo"}, "new_entries": new_entries},
         ),
     ):
@@ -468,11 +478,11 @@ def test_extract_and_save_returns_when_nothing_extracted(tmp_path) -> None:
 
     with (
         patch.object(
-            hooks,
-            "_extract_memory_payload",
+            hooks_extraction,
+            "extract_memory_payload",
             return_value={"used_keywords": set(), "new_entries": []},
         ),
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
         patch.object(engine, "record_session") as record_mock,
     ):
         hooks._extract_and_save(
@@ -496,13 +506,13 @@ def test_extract_and_save_records_session_when_payload_present(tmp_path) -> None
     }
     with (
         patch.object(
-            hooks,
-            "_extract_memory_payload",
+            hooks_extraction,
+            "extract_memory_payload",
             return_value={"used_keywords": {"repo"}, "new_entries": entries},
         ),
         patch.object(engine, "record_session") as record_mock,
         patch.object(engine, "load", side_effect=[before, after]),
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction.log, "info") as log_mock,
         patch.object(hooks, "_bump_session_index") as bump_mock,
     ):
         hooks._extract_and_save(
@@ -518,7 +528,7 @@ def test_extract_memory_payload_returns_empty_for_short_transcript(tmp_path) -> 
     settings = _settings(tmp_path)
     engine = MemoryEngine(settings.memory_file)
 
-    with patch.object(hooks.log, "info") as log_mock:
+    with patch.object(hooks_extraction.log, "info") as log_mock:
         payload = hooks._extract_memory_payload(
             engine, settings, [{"role": "user", "content": "x"}], max_tokens=100
         )
@@ -534,9 +544,11 @@ def test_extract_memory_payload_returns_empty_when_service_returns_none(tmp_path
     service = MagicMock()
     service.extract_json.return_value = None
     with (
-        patch.object(hooks, "build_provider", return_value=object()) as provider_mock,
-        patch.object(hooks, "StructuredExtractionService", return_value=service) as service_cls,
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction, "build_provider", return_value=object()) as provider_mock,
+        patch.object(
+            hooks_extraction, "StructuredExtractionService", return_value=service
+        ) as service_cls,
+        patch.object(hooks_extraction.log, "info") as log_mock,
     ):
         payload = hooks._extract_memory_payload(
             engine,
@@ -568,9 +580,9 @@ def test_extract_memory_payload_builds_entries_and_skips_empty_content(tmp_path)
         ],
     }
     with (
-        patch.object(hooks, "build_provider", return_value=object()),
-        patch.object(hooks, "StructuredExtractionService", return_value=service),
-        patch.object(hooks.log, "info") as log_mock,
+        patch.object(hooks_extraction, "build_provider", return_value=object()),
+        patch.object(hooks_extraction, "StructuredExtractionService", return_value=service),
+        patch.object(hooks_extraction.log, "info") as log_mock,
     ):
         payload = hooks._extract_memory_payload(
             engine,
@@ -677,7 +689,7 @@ def test_message_text_handles_non_string_and_skips_invalid_blocks() -> None:
 
 
 def test_format_transcript_skips_blank_messages() -> None:
-    transcript = hooks._format_transcript(
+    transcript = hooks._local_format_transcript(
         [
             {"role": "user", "content": "   "},
             {"role": "assistant", "content": [{"type": "text", "text": "kept"}]},
@@ -696,7 +708,7 @@ def test_parse_json_logs_warning_for_garbage() -> None:
 
 
 def test_should_checkpoint_message_batch_and_below_threshold() -> None:
-    should_checkpoint, reason = hooks._should_checkpoint(
+    should_checkpoint, reason = hooks._local_should_checkpoint(
         [
             {"role": "user", "content": "a"},
             {"role": "assistant", "content": "b"},
@@ -709,7 +721,7 @@ def test_should_checkpoint_message_batch_and_below_threshold() -> None:
     assert should_checkpoint is True
     assert reason == "message_batch"
 
-    should_checkpoint, reason = hooks._should_checkpoint(
+    should_checkpoint, reason = hooks._local_should_checkpoint(
         [
             {"role": "user", "content": "短"},
             {"role": "assistant", "content": "答"},
@@ -723,7 +735,7 @@ def test_should_checkpoint_conversation_batch() -> None:
     long_text = (
         "这里是一段很长的背景材料，用于测试批量对话长度阈值，内容仅描述一般情况和上下文信息。" * 6
     )
-    should_checkpoint, reason = hooks._should_checkpoint(
+    should_checkpoint, reason = hooks._local_should_checkpoint(
         [
             {"role": "user", "content": long_text},
             {"role": "assistant", "content": "我理解这段背景，会继续参考。"},

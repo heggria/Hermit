@@ -38,6 +38,8 @@ class ContextPack:
     step_summary: dict[str, Any] = field(default_factory=dict[str, Any])
     policy_summary: dict[str, Any] = field(default_factory=dict[str, Any])
     planning_state: dict[str, Any] = field(default_factory=dict[str, Any])
+    episodic_context: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    procedural_context: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     carry_forward: dict[str, Any] | None = None
     continuation_guidance: dict[str, Any] | None = None
     recent_notes: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -56,6 +58,8 @@ class ContextPack:
             "retrieval_memory": self.retrieval_memory,
             "selected_beliefs": self.selected_beliefs,
             "working_state": self.working_state,
+            "episodic_context": self.episodic_context,
+            "procedural_context": self.procedural_context,
             "task_summary": self.task_summary,
             "step_summary": self.step_summary,
             "policy_summary": self.policy_summary,
@@ -115,6 +119,9 @@ class ContextCompiler:
         suppress_contextual_retrieval = self._is_smalltalk_query(query_text)
 
         for memory in memories:
+            if memory.status == "quarantined":
+                excluded_reasons[memory.memory_id] = "quarantined"
+                continue
             if memory.status != "active":
                 excluded_reasons[memory.memory_id] = f"status:{memory.status}"
                 continue
@@ -264,6 +271,7 @@ class ContextCompiler:
             "supersedes": list(memory.supersedes),
             "expires_at": memory.expires_at,
             "updated_at": memory.updated_at,
+            "freshness_class": memory.freshness_class,
         }
 
     @staticmethod

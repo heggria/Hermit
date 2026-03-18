@@ -54,6 +54,10 @@ _KNOWN_KERNEL_TABLES = {
     "evidence_signals",
     "competitions",
     "competition_candidates",
+    "memory_embeddings",
+    "memory_graph_edges",
+    "memory_entity_triples",
+    "procedural_memories",
 }
 
 
@@ -755,6 +759,60 @@ class KernelStore(
             self._ensure_column("memory_records", "learned_from_reconciliation_ref", "TEXT")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue ON step_attempts(status, queue_priority DESC, started_at ASC)"
+            )
+            self._ensure_column("memory_records", "freshness_class", "TEXT")
+            self._ensure_column("memory_records", "last_accessed_at", "REAL")
+            self._conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS memory_embeddings (
+                    memory_id TEXT PRIMARY KEY,
+                    embedding BLOB NOT NULL,
+                    model_name TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS memory_graph_edges (
+                    edge_id TEXT PRIMARY KEY,
+                    from_memory_id TEXT NOT NULL,
+                    to_memory_id TEXT NOT NULL,
+                    relation_type TEXT NOT NULL,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_from
+                    ON memory_graph_edges(from_memory_id);
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_to
+                    ON memory_graph_edges(to_memory_id);
+                CREATE TABLE IF NOT EXISTS memory_entity_triples (
+                    triple_id TEXT PRIMARY KEY,
+                    source_memory_id TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    valid_from REAL NOT NULL,
+                    valid_until REAL,
+                    created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_triples_subject
+                    ON memory_entity_triples(subject);
+                CREATE INDEX IF NOT EXISTS idx_triples_object
+                    ON memory_entity_triples(object);
+                CREATE INDEX IF NOT EXISTS idx_triples_source
+                    ON memory_entity_triples(source_memory_id);
+                CREATE TABLE IF NOT EXISTS procedural_memories (
+                    procedure_id TEXT PRIMARY KEY,
+                    trigger_pattern TEXT NOT NULL,
+                    steps_json TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """
             )
             self._init_signal_schema()
             self._init_competition_schema()
