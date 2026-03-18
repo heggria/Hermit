@@ -1,90 +1,46 @@
+"""Data models for competition-based execution."""
+
 from __future__ import annotations
 
+import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-# -- State machine transitions ------------------------------------------------
 
-COMPETITION_TRANSITIONS: dict[str, set[str]] = {
-    "draft": {"spawning", "cancelled"},
-    "spawning": {"running", "cancelled"},
-    "running": {"evaluating", "cancelled"},
-    "evaluating": {"decided", "cancelled"},
-    "decided": set(),
-    "cancelled": set(),
-}
-
-CANDIDATE_TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"running", "disqualified"},
-    "running": {"completed", "failed", "disqualified"},
-    "completed": {"disqualified"},
-    "failed": set(),
-    "disqualified": set(),
-}
+def _comp_id() -> str:
+    return f"comp_{uuid.uuid4().hex[:12]}"
 
 
-def validate_transition(
-    current: str,
-    target: str,
-    transitions: dict[str, set[str]],
-    *,
-    label: str = "state",
-) -> None:
-    allowed = transitions.get(current)
-    if allowed is None:
-        raise ValueError(f"Unknown {label} state: {current!r}")
-    if target not in allowed:
-        raise ValueError(
-            f"Invalid {label} transition: {current!r} -> {target!r} "
-            f"(allowed: {sorted(allowed) or 'none'})"
-        )
-
-
-# -- Records ------------------------------------------------------------------
+def _cand_id() -> str:
+    return f"cand_{uuid.uuid4().hex[:12]}"
 
 
 @dataclass
 class CompetitionRecord:
-    competition_id: str
-    parent_task_id: str
-    goal: str
-    strategy: str
-    candidate_count: int
-    min_candidates: int
-    evaluation_criteria: dict[str, Any] = field(default_factory=dict[str, Any])
-    scoring_weights: dict[str, float] = field(default_factory=dict[str, float])
+    """A competition groups candidate tasks that race to solve a goal."""
+
+    competition_id: str = field(default_factory=_comp_id)
+    parent_task_id: str = ""
+    conversation_id: str = ""
+    goal: str = ""
+    candidate_count: int = 2
     status: str = "draft"
-    timeout_policy: str = "evaluate_completed"
     winner_task_id: str | None = None
-    winner_score: float | None = None
-    decision_ref: str | None = None
-    evaluation_artifact_ref: str | None = None
-    timeout_seconds: float | None = None
-    created_at: float = 0.0
-    updated_at: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    created_at: float = field(default_factory=time.time)
+    decided_at: float | None = None
 
 
 @dataclass
-class CompetitionCandidateRecord:
-    candidate_id: str
-    competition_id: str
-    task_id: str
-    label: str
-    workspace_ref: str | None = None
+class CandidateRecord:
+    """A single candidate in a competition."""
+
+    candidate_id: str = field(default_factory=_cand_id)
+    competition_id: str = ""
+    task_id: str = ""
+    worktree_path: str | None = None
     status: str = "pending"
     score: float | None = None
-    score_breakdown: dict[str, float] = field(default_factory=dict[str, float])
-    evaluation_receipt_ref: str | None = None
-    promoted: bool = False
-    discard_reason: str | None = None
-    created_at: float = 0.0
-    finished_at: float | None = None
-
-
-@dataclass
-class CandidateScore:
-    candidate_id: str
-    task_id: str
-    total: float
-    breakdown: dict[str, float] = field(default_factory=dict[str, float])
-    passed: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    created_at: float = field(default_factory=time.time)

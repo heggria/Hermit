@@ -216,9 +216,20 @@ class ProviderInputCompiler:
             working_state_ref=working_state_ref,
             executor_mode="compiled_provider_input",
         )
+        pack_payload = pack.to_payload()
+        pack_payload["active_steerings"] = self._active_steerings(task_context.task_id)
+        # Clear input_dirty now that steerings have been compiled into context
+        _attempt = self.store.get_step_attempt(task_context.step_attempt_id)
+        self.store.update_step_attempt(
+            task_context.step_attempt_id,
+            context={
+                **(_attempt.context or {} if _attempt else {}),
+                "input_dirty": False,
+            },
+        )
         compiled_text = self._render_message(
             projection_payload=projection_payload,
-            context_pack=pack.to_payload(),
+            context_pack=pack_payload,
             current_request=normalized["inline_excerpt"],
             normalized_prompt=normalized["normalized_prompt"],
             ingress_artifact_refs=normalized["ingress_artifact_refs"],
@@ -541,7 +552,41 @@ class ProviderInputCompiler:
             lines.extend(
                 ["", "<normalized_prompt>", _trim(normalized_prompt, 1600), "</normalized_prompt>"]
             )
+        active_steerings: list[dict[str, Any]] = context_pack.get("active_steerings", [])
+        if active_steerings:
+            lines.extend(["", "<steering_directives>"])
+            lines.append(
+                "You MUST incorporate these operator steering directives into your response:"
+            )
+            for s in active_steerings:
+                lines.append(
+                    f"- [{s.get('directive_id', '?')}] type={s.get('steering_type', '?')}: "
+                    f"{s.get('directive', '')}"
+                )
+            lines.append("</steering_directives>")
         return "\n".join(str(line) for line in lines if line is not None)
+
+    def _active_steerings(self, task_id: str) -> list[dict[str, Any]]:
+        """Fetch active steerings for task, auto-acknowledge pending ones."""
+        if not hasattr(self.store, "active_steerings_for_task"):
+            return []
+        directives = self.store.active_steerings_for_task(task_id)
+        items: list[dict[str, Any]] = []
+        for d in directives:
+            if d.disposition == "pending":
+                self.store.update_steering_disposition(d.directive_id, "acknowledged")
+                d.disposition = "acknowledged"
+            items.append(
+                {
+                    "directive_id": d.directive_id,
+                    "steering_type": d.steering_type,
+                    "directive": d.directive,
+                    "disposition": d.disposition,
+                    "issued_by": d.issued_by,
+                    "created_at": d.created_at,
+                }
+            )
+        return items
 
     def _render_continuation_guidance(self, guidance: dict[str, Any]) -> str:
         if not guidance or not guidance.get("has_anchor"):

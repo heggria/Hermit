@@ -273,6 +273,17 @@ class PluginManager:
         def handler(payload: dict[str, Any]) -> str:
             return self._run_subagent(spec, str(payload.get("task", "")))
 
+        if getattr(spec, "governed", False):
+            action_class = "delegate_execution"
+            readonly = False
+            risk_hint = "medium"
+            requires_receipt = True
+        else:
+            action_class = "delegate_reasoning"
+            readonly = True
+            risk_hint = "low"
+            requires_receipt = False
+
         return localize_tool_spec(
             ToolSpec(
                 name=f"delegate_{spec.name}",
@@ -294,14 +305,61 @@ class PluginManager:
                     "required": ["task"],
                 },
                 handler=handler,
-                readonly=True,
-                action_class="delegate_reasoning",
+                readonly=readonly,
+                action_class=action_class,
                 idempotent=True,
-                risk_hint="low",
-                requires_receipt=False,
+                risk_hint=risk_hint,
+                requires_receipt=requires_receipt,
             ),
             locale=locale,
         )
+
+    def _register_subagent_principal(self, spec: SubagentSpec) -> str | None:
+        """Register a principal for a governed subagent, returning the principal_id."""
+        if not spec.governed:
+            return None
+        store = getattr(self._runtime, "kernel_store", None)
+        if store is None:
+            return None
+        principal_id = f"principal_subagent_{spec.name}"
+        try:
+            store.ensure_principal(
+                principal_id=principal_id,
+                principal_type="subagent",
+                display_name=spec.name,
+                metadata={"parent_principal": "principal_user", "tools": spec.tools},
+            )
+        except Exception:
+            log.warning("subagent_principal_registration_failed", subagent=spec.name)
+            return None
+        return principal_id
+
+    def _emit_subagent_event(
+        self,
+        event_type: str,
+        spec: SubagentSpec,
+        principal_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit a ledger event for subagent lifecycle."""
+        store = getattr(self._runtime, "kernel_store", None)
+        if store is None:
+            return
+        try:
+            store.append_event(
+                event_type=event_type,
+                entity_type="subagent",
+                entity_id=principal_id,
+                task_id=None,
+                actor=principal_id,
+                payload=payload or {},
+            )
+        except Exception:
+            log.warning(
+                "subagent_event_failed",
+                event_type=event_type,
+                subagent=spec.name,
+            )
 
     def _run_subagent(self, spec: SubagentSpec, task: str) -> str:
         if not self._runtime or not self._registry:
@@ -320,6 +378,8 @@ class PluginManager:
         GREEN = "\033[32m"
         RED = "\033[31m"
         RESET = "\033[0m"
+
+        principal_id = self._register_subagent_principal(spec)
 
         sub_registry = ToolRegistry()
         available: list[str] = []
@@ -346,6 +406,14 @@ class PluginManager:
         )
         sys.stderr.flush()
 
+        if principal_id:
+            self._emit_subagent_event(
+                "subagent_spawned",
+                spec,
+                principal_id,
+                {"task_preview": task_preview, "tools": available},
+            )
+
         def _sub_tool_call(name: str, inputs: dict[str, Any], result: object) -> None:
             compact = ", ".join(f"{k}={repr(v)[:50]}" for k, v in inputs.items())
             text = result if isinstance(result, str) else str(result)
@@ -365,10 +433,24 @@ class PluginManager:
                 f"{DIM}({result.turns} turns, {result.tool_calls} tool calls){RESET}\n\n"
             )
             sys.stderr.flush()
+            if principal_id:
+                self._emit_subagent_event(
+                    "subagent_completed",
+                    spec,
+                    principal_id,
+                    {"turns": result.turns, "tool_calls": result.tool_calls},
+                )
             return result.text
         except Exception as exc:
             sys.stderr.write(f"{MAGENTA}  └─{RESET} {RED}error: {exc}{RESET}\n\n")
             sys.stderr.flush()
+            if principal_id:
+                self._emit_subagent_event(
+                    "subagent_failed",
+                    spec,
+                    principal_id,
+                    {"error": str(exc)},
+                )
             return f"[Subagent '{spec.name}' error: {exc}]"
 
     # ── MCP lifecycle ──────────────────────────────────────────────

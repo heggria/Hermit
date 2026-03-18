@@ -1,0 +1,8 @@
+{
+  "description": "Address unused 'criteria_config' parameter in competition/evaluator.py score_candidate method (line 46)",
+  "file_path": "src/hermit/kernel/execution/competition/evaluator.py",
+  "issue_type": "code_quality",
+  "lines": "46-52",
+  "policy_profile": "default",
+  "fix_instructions": "The 'criteria_config' parameter in score_candidate() is passed but never used inside the method. Either remove it from the signature and update the single call site in evaluate(), or document why it is reserved for future use."
+}

@@ -73,6 +73,7 @@ class WebhookServer:
         self._config = config
         self._hooks = hooks
         self._runner: AgentRunner | None = None
+        self._runner_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="webhook")
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -160,8 +161,16 @@ class WebhookServer:
     # Dispatch
     # ------------------------------------------------------------------
 
+    def swap_runner(self, new_runner: AgentRunner) -> None:
+        """Atomically swap the runner reference. In-flight requests drain on old runner."""
+        with self._runner_lock:
+            self._runner = new_runner
+        _log.info("webhook_runner_swapped")  # type: ignore[call-arg]
+
     def _process(self, route: WebhookRoute, payload: dict[str, Any]) -> None:
-        if self._runner is None:
+        with self._runner_lock:
+            runner = self._runner
+        if runner is None:
             _log.error("webhook_no_runner", route=route.name)  # type: ignore[call-arg]
             return
 
@@ -171,12 +180,12 @@ class WebhookServer:
 
         from hermit.runtime.control.runner.runner import AgentRunner
 
-        if not isinstance(self._runner, AgentRunner):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if not isinstance(runner, AgentRunner):  # pyright: ignore[reportUnnecessaryIsInstance]
             result_text = ""
             success = True
             error: str | None = None
             try:
-                result = self._runner.dispatch(session_id, prompt)
+                result = runner.dispatch(session_id, prompt)
                 result_text = result.text or ""
             except Exception as exc:
                 success = False
@@ -184,7 +193,7 @@ class WebhookServer:
                 _log.exception("webhook_dispatch_error", route=route.name, error=error)  # type: ignore[call-arg]
             finally:
                 try:
-                    self._runner.close_session(session_id)
+                    runner.close_session(session_id)
                 except Exception:
                     _log.exception(
                         "webhook_close_session_error", route=route.name, session_id=session_id
@@ -203,7 +212,7 @@ class WebhookServer:
             return
 
         try:
-            self._runner.enqueue_ingress(
+            runner.enqueue_ingress(
                 session_id,
                 prompt,
                 source_channel="webhook",
@@ -219,12 +228,14 @@ class WebhookServer:
             _log.exception("webhook_dispatch_error", route=route.name, error=str(exc))  # type: ignore[call-arg]
 
     def _kernel_store(self) -> Any:
-        if self._runner is None:
+        with self._runner_lock:
+            runner = self._runner
+        if runner is None:
             raise HTTPException(status_code=503, detail="Runner is not attached")
-        task_controller = getattr(self._runner, "task_controller", None)
+        task_controller = getattr(runner, "task_controller", None)
         if task_controller is not None:
             return task_controller.store
-        store = getattr(getattr(self._runner, "agent", None), "kernel_store", None)
+        store = getattr(getattr(runner, "agent", None), "kernel_store", None)
         if store is None:
             raise HTTPException(status_code=503, detail="Task kernel is not available")
         return store
@@ -323,7 +334,9 @@ class WebhookServer:
             except Exception:
                 resolution = {}
 
-        if self._runner is None:
+        with self._runner_lock:
+            runner = self._runner
+        if runner is None:
             raise HTTPException(status_code=503, detail="Runner is not attached")
         store = self._kernel_store()
         approval = store.get_approval(approval_id)
@@ -332,7 +345,7 @@ class WebhookServer:
         task = store.get_task(approval.task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        result = self._runner._resolve_approval(  # type: ignore[attr-defined]
+        result = runner._resolve_approval(  # type: ignore[attr-defined]
             task.conversation_id,
             action="approve",
             approval_id=approval_id,
@@ -356,7 +369,9 @@ class WebhookServer:
             except Exception:
                 reason = ""
 
-        if self._runner is None:
+        with self._runner_lock:
+            runner = self._runner
+        if runner is None:
             raise HTTPException(status_code=503, detail="Runner is not attached")
         store = self._kernel_store()
         approval = store.get_approval(approval_id)
@@ -365,7 +380,7 @@ class WebhookServer:
         task = store.get_task(approval.task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        result = self._runner._resolve_approval(  # type: ignore[attr-defined]
+        result = runner._resolve_approval(  # type: ignore[attr-defined]
             task.conversation_id,
             action="deny",
             approval_id=approval_id,
@@ -393,7 +408,8 @@ class WebhookServer:
     # ------------------------------------------------------------------
 
     def start(self, runner: AgentRunner) -> None:
-        self._runner = runner
+        with self._runner_lock:
+            self._runner = runner
         uv_config = uvicorn.Config(
             self._app,
             host=self._config.host,

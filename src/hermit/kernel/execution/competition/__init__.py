@@ -1,1 +1,1 @@
-from __future__ import annotations
+"""Competition — candidate-based execution with evaluation and promotion."""
