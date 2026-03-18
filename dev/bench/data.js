@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773823844033,
+  "lastUpdate": 1773825967748,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -803,6 +803,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0002963834852160672",
             "extra": "mean: 308.47833762052477 usec\nrounds: 3732"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bshengtao@gmail.com",
+            "name": "Heggria",
+            "username": "heggria"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cc7767f7494a878d35d0fd317ad0c32a8f8c7a48",
+          "message": "feat(mcp): Hermit MCP server plugin with supervisor mode (#25)\n\n* feat(mcp): add Hermit MCP server plugin with supervisor mode\n\nExpose 8 governed MCP tools (submit, status, list, approve, deny,\ncancel, proof, pending_approvals) via Streamable HTTP on port 8322.\nIncludes plugin lifecycle hooks, supervisor mode config templates,\n23 unit tests and 6 integration tests.\n\n* test(mcp): add coverage for store fallback, lifecycle, and edge cases\n\nCover _get_store fallback path, start/stop lifecycle, policy_profile\nbranch, and approve/deny with missing task — raises diff coverage to\nmeet 95% threshold.",
+          "timestamp": "2026-03-18T17:25:17+08:00",
+          "tree_id": "47ba28a27a42a5f2c64ed81073af5976ecc301d1",
+          "url": "https://github.com/heggria/Hermit/commit/cc7767f7494a878d35d0fd317ad0c32a8f8c7a48"
+        },
+        "date": 1773825967093,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.153783957469473,
+            "unit": "iter/sec",
+            "range": "stddev: 0.014910350560538225",
+            "extra": "mean: 464.29912179999775 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 175.71674574308236,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001303099675291738",
+            "extra": "mean: 5.690977235955147 msec\nrounds: 178"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2197.930492921567,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00028254767786867993",
+            "extra": "mean: 454.97344125326026 usec\nrounds: 3064"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 3926.4456766282915,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012964022349790275",
+            "extra": "mean: 254.68326378545947 usec\nrounds: 4026"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 4698.134188377576,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012077128244527778",
+            "extra": "mean: 212.85045507508883 usec\nrounds: 6522"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 28732.537089706533,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003554653236162909",
+            "extra": "mean: 34.80374868665013 usec\nrounds: 30647"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 3255.6772534719576,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011146154336294146",
+            "extra": "mean: 307.1557535175111 usec\nrounds: 3980"
           }
         ]
       }
