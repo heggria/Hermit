@@ -1,0 +1,8 @@
+{
+  "description": "Improve inefficient string parsing in criteria.py TestPassCriterion.score() (lines 40-52)",
+  "file_path": "src/hermit/kernel/execution/competition/criteria.py",
+  "issue_type": "code_quality",
+  "lines": "40-52",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Replace the manual token-splitting logic for parsing pytest output with a regex like r'(\\d+) passed' and r'(\\d+) failed'. Use re.search() for cleaner, more reliable extraction. Import re at top of file."
+}

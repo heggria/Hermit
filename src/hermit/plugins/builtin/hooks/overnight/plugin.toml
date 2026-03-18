@@ -1,0 +1,15 @@
+[plugin]
+name = "overnight"
+version = "0.1.0"
+description = "Overnight dashboard and morning report aggregation"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+
+[variables.overnight_enabled]
+default = true
+[variables.overnight_report_hour]
+default = 8
+[variables.overnight_lookback_hours]
+default = 12

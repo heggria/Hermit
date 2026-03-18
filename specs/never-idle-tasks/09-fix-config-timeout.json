@@ -1,0 +1,8 @@
+{
+  "description": "Extract repeated hardcoded 600.0 timeout values into a module-level constant in runtime config",
+  "file_path": "src/hermit/runtime/assembly/config.py",
+  "issue_type": "code_quality",
+  "lines": "427-435",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Find all occurrences of the hardcoded 600.0 (or 600) timeout value in config.py. Define a module-level constant like _DEFAULT_TIMEOUT_SECONDS = 600.0 near the top of the file and replace all occurrences."
+}

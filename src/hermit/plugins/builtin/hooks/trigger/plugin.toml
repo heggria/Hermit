@@ -1,0 +1,15 @@
+[plugin]
+name = "trigger"
+version = "0.1.0"
+description = "Evidence-backed task generation from execution results"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+
+[variables.trigger_enabled]
+default = true
+[variables.trigger_cooldown_seconds]
+default = 86400
+[variables.trigger_max_tasks_per_run]
+default = 3

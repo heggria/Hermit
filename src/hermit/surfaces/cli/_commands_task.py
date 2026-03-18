@@ -528,3 +528,52 @@ def task_capability_revoke(
 ) -> None:
     """Revoke a capability grant."""
     _task_capability_revoke(grant_id)
+
+
+@task_app.command("steer")
+def task_steer(
+    task_id: str = typer.Argument(..., help="Task ID to steer."),
+    directive: str = typer.Argument(..., help="Steering directive text."),
+    steering_type: str = typer.Option(
+        "scope", "--type", "-t", help="Steering type: scope, constraint, priority, strategy, policy"
+    ),
+    evidence: list[str] | None = typer.Option(None, "--evidence", "-e", help="Evidence refs."),
+) -> None:
+    """Issue a mid-execution steering directive for a task."""
+    from hermit.kernel.signals.models import SteeringDirective
+    from hermit.kernel.signals.steering import SteeringProtocol
+
+    store = get_kernel_store()
+    task = store.get_task(task_id)
+    if task is None:
+        typer.echo(f"Task not found: {task_id}")
+        raise typer.Exit(1)
+
+    sd = SteeringDirective(
+        task_id=task_id,
+        steering_type=steering_type,
+        directive=directive,
+        evidence_refs=list(evidence or []),
+        issued_by="operator",
+    )
+    protocol = SteeringProtocol(store)
+    protocol.issue(sd)
+    typer.echo(f"Steering directive issued: {sd.directive_id}")
+
+
+@task_app.command("steerings")
+def task_steerings(
+    task_id: str = typer.Argument(..., help="Task ID to show steerings for."),
+) -> None:
+    """List active steering directives for a task."""
+    store = get_kernel_store()
+    directives = store.active_steerings_for_task(task_id)
+    if not directives:
+        typer.echo("No active steering directives.")
+        return
+    for d in directives:
+        typer.echo(
+            f"[{d.directive_id}] type={d.steering_type} "
+            f"disposition={d.disposition} by={d.issued_by}\n"
+            f"  {d.directive}"
+        )

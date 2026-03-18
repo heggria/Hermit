@@ -1,0 +1,8 @@
+{
+  "description": "Narrow overly broad 'except Exception' in competition/evaluator.py score_candidate method (line 63)",
+  "file_path": "src/hermit/kernel/execution/competition/evaluator.py",
+  "issue_type": "code_quality",
+  "lines": "58-71",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Replace 'except Exception:' with 'except (ValueError, OSError, subprocess.SubprocessError):' to catch only expected criterion failures. Import subprocess at top if needed."
+}
