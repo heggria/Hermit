@@ -176,9 +176,12 @@ class Settings(BaseSettings):
         base_dir_raw = str(base_dir_raw_v) if base_dir_raw_v is not None else None
         base_dir = Path(base_dir_raw).expanduser() if base_dir_raw else Path.home() / ".hermit"
         env_file_raw_v = values.get("_env_file")
-        env_file_raw = str(env_file_raw_v) if env_file_raw_v is not None else None
-        env_file = Path(env_file_raw).expanduser() if env_file_raw else base_dir / ".env"
-        env_file_values = _read_env_file_values(env_file)
+        if "_env_file" in values and env_file_raw_v is None:
+            env_file_values: dict[str, str] = {}
+        else:
+            env_file_raw = str(env_file_raw_v) if env_file_raw_v is not None else None
+            env_file = Path(env_file_raw).expanduser() if env_file_raw else base_dir / ".env"
+            env_file_values = _read_env_file_values(env_file)
         profile_name = values.get("profile") or os.environ.get("HERMIT_PROFILE")
         resolved_profile = resolve_profile(
             base_dir, str(profile_name) if profile_name is not None else None

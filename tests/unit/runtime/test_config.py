@@ -84,9 +84,13 @@ def test_build_provider_client_kwargs_keeps_api_key_when_present(monkeypatch) ->
     assert timeout.read == 600.0
 
 
-def test_custom_headers_requires_colon_separator(monkeypatch) -> None:
+def test_custom_headers_requires_colon_separator(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("HERMIT_CUSTOM_HEADERS", raising=False)
     monkeypatch.delenv("HERMIT_CLAUDE_HEADERS", raising=False)
+    # Use empty base_dir to prevent profile/config.toml from overriding custom_headers
+    base_dir = tmp_path / ".hermit"
+    base_dir.mkdir(parents=True)
+    monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
     settings = Settings(custom_headers="broken-header", _env_file=None)
 
     try:
