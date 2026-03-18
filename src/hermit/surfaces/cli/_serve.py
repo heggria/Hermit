@@ -255,12 +255,21 @@ def serve(adapter: str = "feishu") -> None:
 
 
 def _serve_loop(adapter: str, pid_file: Path) -> None:
-    """Inner restart loop — each iteration rebuilds everything from scratch."""
+    """Inner restart loop — rebuilds runner on each reload cycle.
+
+    On the first iteration the webhook HTTP server is started normally.
+    On subsequent (reload) iterations the webhook server is kept alive and
+    only the runner reference is hot-swapped, achieving zero-downtime reload.
+    """
     from hermit.runtime.capability.contracts.base import HookEvent
 
     from ._commands_core import build_runner  # lazy to avoid circular import
 
+    is_first_cycle = True
+    prev_runner: Any = None
+
     while True:
+        reload_mode = not is_first_cycle
         get_settings.cache_clear()
         settings = get_settings()
         configure_logging(settings.log_level)
@@ -278,12 +287,25 @@ def _serve_loop(adapter: str, pid_file: Path) -> None:
 
         preloaded = getattr(adapter_instance, "required_skills", [])
         runner, _ = build_runner(settings, preloaded_skills=preloaded, pm=pm, serve_mode=True)
-        pm.hooks.fire(HookEvent.SERVE_START, runner=runner, settings=settings)
+
+        # Start new background services before swapping (overlap window for zero loss)
+        pm.hooks.fire(
+            HookEvent.SERVE_START,
+            runner=runner,
+            settings=settings,
+            reload_mode=reload_mode,
+        )
+
+        # After SERVE_START fires, stop old runner's background services
+        if prev_runner is not None:
+            stop_runner_background_services(prev_runner)
+            prev_runner = None
+
         write_serve_status(
             settings,
             adapter,
             phase="running",
-            reason="startup",
+            reason="reload" if reload_mode else "startup",
             detail=f"Adapter '{adapter}' is running and waiting for events.",
             run_started_at=cycle_started_at,
         )
@@ -314,11 +336,19 @@ def _serve_loop(adapter: str, pid_file: Path) -> None:
                     signal_name="SIGINT",
                 )
             finally:
-                pm.hooks.fire(HookEvent.SERVE_STOP)
-                stop_runner_background_services(runner)
-                pm.stop_mcp_servers()
+                if run_result.reload_requested:
+                    # Reload: stop adapter/MCP but keep webhook server alive
+                    pm.hooks.fire(HookEvent.SERVE_STOP, reload_mode=True)
+                    prev_runner = runner
+                    pm.stop_mcp_servers()
+                else:
+                    # Full shutdown: tear everything down
+                    pm.hooks.fire(HookEvent.SERVE_STOP, reload_mode=False)
+                    stop_runner_background_services(runner)
+                    pm.stop_mcp_servers()
 
         if run_result.reload_requested:
+            is_first_cycle = False
             _serve_log.info("Reloading Hermit...")
             typer.echo(
                 t(

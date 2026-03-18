@@ -80,6 +80,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not launch the macOS menubar companion.",
     )
+    parser.add_argument(
+        "--hard",
+        action="store_true",
+        help="Use kill+respawn instead of SIGHUP for reload (fallback mode).",
+    )
     return parser.parse_args()
 
 
@@ -289,16 +294,25 @@ def main() -> int:
         ):
             if stopping:
                 break
+            print(f"\nChange detected: {_format_paths(changes)}", flush=True)
+
             if current is not None and current.poll() is not None:
                 print(
-                    f"Serve process exited with code {current.returncode}; waiting for the next change.",
+                    f"Serve process exited with code {current.returncode}; respawning.",
                     flush=True,
                 )
-            print(f"\nChange detected: {_format_paths(changes)}", flush=True)
-            _stop(current)
-            time.sleep(0.2)
-            print("Restarting Hermit dev service...", flush=True)
-            current = _spawn(args.env, args.adapter)
+                current = _spawn(args.env, args.adapter)
+                continue
+
+            if args.hard:
+                _stop(current)
+                time.sleep(0.2)
+                print("Hard-restarting Hermit dev service...", flush=True)
+                current = _spawn(args.env, args.adapter)
+            else:
+                print("Sending SIGHUP for graceful reload...", flush=True)
+                assert current is not None
+                os.kill(current.pid, signal.SIGHUP)
     finally:
         _stop(current)
 
