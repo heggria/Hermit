@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773818789571,
+  "lastUpdate": 1773823844033,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -730,6 +730,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00014258583277477829",
             "extra": "mean: 310.04072179413595 usec\nrounds: 3634"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "61471de1f23e951982dba646bab680e0aba2637e",
+          "message": "chore: bump python from 3.13-slim-bookworm to 3.14-slim-bookworm (#13)\n\nBumps python from 3.13-slim-bookworm to 3.14-slim-bookworm.\n\n---\nupdated-dependencies:\n- dependency-name: python\n  dependency-version: 3.14-slim-bookworm\n  dependency-type: direct:production\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\nCo-authored-by: Heggria <bshengtao@gmail.com>",
+          "timestamp": "2026-03-18T16:49:56+08:00",
+          "tree_id": "6ede76879588304bfcdf6654d160bc8a22c7214f",
+          "url": "https://github.com/heggria/Hermit/commit/61471de1f23e951982dba646bab680e0aba2637e"
+        },
+        "date": 1773823843389,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.118797021598884,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006222161073967623",
+            "extra": "mean: 471.9659268000015 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 171.78350359909587,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008752678101762766",
+            "extra": "mean: 5.821280734463162 msec\nrounds: 177"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2296.693423833382,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00033701153508249363",
+            "extra": "mean: 435.40857026137724 usec\nrounds: 3060"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 3976.688960901318,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008953407166012917",
+            "extra": "mean: 251.4654804114601 usec\nrounds: 4084"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 4940.358904134524,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002698128662891977",
+            "extra": "mean: 202.41444385004348 usec\nrounds: 6358"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 29368.412828871926,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000035906390365291454",
+            "extra": "mean: 34.05018874622007 usec\nrounds: 30941"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 3241.7187142331913,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002963834852160672",
+            "extra": "mean: 308.47833762052477 usec\nrounds: 3732"
           }
         ]
       }
