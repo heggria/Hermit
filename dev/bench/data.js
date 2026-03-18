@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773825967748,
+  "lastUpdate": 1773826837866,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -876,6 +876,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00011146154336294146",
             "extra": "mean: 307.1557535175111 usec\nrounds: 3980"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bshengtao@gmail.com",
+            "name": "Heggria",
+            "username": "heggria"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d204b3588fee87ae75004a60928659909aa2af30",
+          "message": "feat(memory): top-tier memory system upgrade — 6 phases, 22 modules, 14 test files (#24)\n\n* feat(memory): top-tier memory system upgrade — 6 phases, 22 modules, 14 test files\n\nImplements the complete memory system upgrade plan across 6 phases:\n\nPhase 1: Foundation — decay governance (4-state freshness model),\nepisodic memory index (task→memory linking), memory lineage graph\n(memory→decision causal tracking).\n\nPhase 2: Confidence decay with half-life model per retention class,\nanti-pattern learning with pitfall inversion for high-failure memories.\n\nPhase 3: Hybrid retrieval engine with 4-path fusion (token overlap,\nsemantic embedding, graph traversal, temporal filtering) using\nReciprocal Rank Fusion. Optional sentence-transformers with graceful\ndegradation.\n\nPhase 4: Memory relationship graph with entity triple extraction,\ngraph edges (same_entity/related_topic/causal/temporal/contradicts/\nelaborates), and BFS multi-hop retrieval.\n\nPhase 5: Reflection service for synthesizing higher-order insights\nfrom memory clusters, Dream Cycle consolidation (dedup, strengthen,\ndecay, reflect, anti-pattern passes).\n\nPhase 6: Procedural memory extraction from how-to patterns, bounded\nworking memory manager with priority-based context packing, and\n4-type memory taxonomy (episodic/semantic/procedural/working).\n\nAlso splits hooks.py (1092→410 lines) into focused submodules:\nhooks_injection.py, hooks_extraction.py, hooks_promotion.py with\nbackward-compatible re-exports.\n\n1810 tests passing, 0 pyright errors, lint clean.\n\n* test: boost diff coverage to 95%+ for memory system upgrade\n\nAdd 114 new tests across 15 test files to cover previously uncovered\nlines. Key areas: consolidation dream cycle passes, hybrid retrieval\ndeep paths, graph auto-linking with embeddings, procedural trigger\nmatching edge cases, hooks backward-compat wrappers, and promotion\ngovernance deny paths.\n\n1924 tests passing, lint + pyright clean.",
+          "timestamp": "2026-03-18T17:39:54+08:00",
+          "tree_id": "d3d9eacd0af1d70cd0e22e2f7e9a2d60ed632e08",
+          "url": "https://github.com/heggria/Hermit/commit/d204b3588fee87ae75004a60928659909aa2af30"
+        },
+        "date": 1773826837597,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.1749682255303404,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0038129339279651298",
+            "extra": "mean: 459.77683179999644 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 166.8741221030622,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00024130502342714478",
+            "extra": "mean: 5.992540888888664 msec\nrounds: 171"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2525.4056838380134,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00016842905121695355",
+            "extra": "mean: 395.9759837398635 usec\nrounds: 2952"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 4012.956990865625,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008405678536329029",
+            "extra": "mean: 249.19280278264148 usec\nrounds: 4097"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 5139.22190287522,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000052870115660801907",
+            "extra": "mean: 194.58198515236987 usec\nrounds: 6129"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 29718.967900968022,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004119973159361399",
+            "extra": "mean: 33.64854403195568 usec\nrounds: 31250"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 3212.745461796984,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009368774699550858",
+            "extra": "mean: 311.2602638120825 usec\nrounds: 3620"
           }
         ]
       }
