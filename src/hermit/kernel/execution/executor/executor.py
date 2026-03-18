@@ -16,6 +16,7 @@ from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.errors import ContractError
 from hermit.kernel.execution.controller.contracts import contract_for
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
+from hermit.kernel.execution.controller.pattern_learner import TaskPatternLearner
 from hermit.kernel.execution.coordination.observation import (
     ObservationPollResult,
     ObservationProgress,
@@ -39,6 +40,7 @@ from hermit.kernel.policy import (
 from hermit.kernel.policy.approvals.approval_copy import ApprovalCopyService
 from hermit.kernel.policy.approvals.approvals import ApprovalService
 from hermit.kernel.policy.approvals.decisions import DecisionService
+from hermit.kernel.policy.evaluators.enrichment import PolicyEvidenceEnricher
 from hermit.kernel.policy.permits.authorization_plans import AuthorizationPlanService
 from hermit.kernel.task.models.records import ReconciliationRecord
 from hermit.kernel.task.projections.progress_summary import (
@@ -254,6 +256,8 @@ class ToolExecutor:
             store=store, artifact_store=artifact_store, git_worktree=self.git_worktree
         )
         self._snapshot = RuntimeSnapshotManager(store=store, artifact_store=artifact_store)
+        self._evidence_enricher = PolicyEvidenceEnricher(store)
+        self._pattern_learner = TaskPatternLearner(store)
         self.progress_summarizer = progress_summarizer
         self.progress_summary_keepalive_seconds = max(
             float(progress_summary_keepalive_seconds or 0.0), 0.0
@@ -460,6 +464,7 @@ class ToolExecutor:
         if result_class == "violated":
             self._invalidate_memories_for_reconciliation(reconciliation)
             self._degrade_templates_for_violation(reconciliation)
+        self._record_template_outcome(attempt_ctx, result_class)
         if resume_execution:
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="running")
             self._set_attempt_phase(attempt_ctx, "executing", reason="reconciliation_complete")
@@ -468,6 +473,7 @@ class ToolExecutor:
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="succeeded")
             self.store.update_step(attempt_ctx.step_id, status="succeeded")
             self.store.update_task_status(attempt_ctx.task_id, "completed")
+            self._learn_task_pattern(attempt_ctx.task_id)
             self._set_attempt_phase(attempt_ctx, "reconciled", reason="reconciliation_satisfied")
             return reconciliation, outcome
         if result_class in {"partial", "satisfied_with_downgrade"}:
@@ -500,6 +506,27 @@ class ToolExecutor:
         self.execution_contracts.template_learner.learn_from_reconciliation(
             reconciliation=reconciliation,
             contract=contract,
+        )
+
+    def _learn_task_pattern(self, task_id: str) -> None:
+        """Extract a task-level execution pattern from a completed task."""
+        self._pattern_learner.learn_from_completed_task(task_id)
+
+    def _record_template_outcome(
+        self, attempt_ctx: TaskExecutionContext, result_class: str
+    ) -> None:
+        """Record outcome for template-conditioned contracts."""
+        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
+        if attempt is None:
+            return
+        template_ref = str(getattr(attempt, "selected_contract_template_ref", "") or "").strip()
+        if not template_ref:
+            return
+        self.execution_contracts.template_learner.record_template_outcome(
+            template_ref=template_ref,
+            result_class=result_class,
+            task_id=attempt_ctx.task_id,
+            step_id=attempt_ctx.step_id,
         )
 
     def _degrade_templates_for_violation(self, reconciliation: Any) -> None:
@@ -576,6 +603,7 @@ class ToolExecutor:
         if request_overrides:
             action_request = self._apply_request_overrides(action_request, request_overrides)
         action_ref = self._record_action_request(action_request, attempt_ctx)
+        action_request = self._evidence_enricher.enrich(action_request)
         self._set_attempt_phase(attempt_ctx, "policy_pending", reason="policy_evaluation_started")
         policy = self.policy_engine.evaluate(action_request)
         policy_ref = self._record_policy_evaluation(action_request, policy, attempt_ctx)
