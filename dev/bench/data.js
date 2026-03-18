@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773807798169,
+  "lastUpdate": 1773814112136,
   "repoUrl": "https://github.com/heggria/Hermit",
   "entries": {
     "Benchmark": [
@@ -511,6 +511,79 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00012125163290520586",
             "extra": "mean: 295.0200815530367 usec\nrounds: 3838"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bshengtao@gmail.com",
+            "name": "Heggria",
+            "username": "heggria"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3d8fbfc478cf6c8fa1a0517e366ce9e953da06ac",
+          "message": "iterate(governed-subagent-identity): 给 subagent 安装 kernel 身份和治理基线 (#21)\n\n* feat: governed subagent identity — kernel 身份和治理基线\n\n给 subagent 安装 kernel 可见的一等身份：\n- SubagentSpec 新增 governed 和 policy_profile 字段\n- governed=True 的 delegation 工具使用 delegate_execution action_class\n- 新增 delegate_execution 的 policy rule（allow_with_receipt）和 action contract\n- governed subagent 注册 PrincipalRecord 并发射 ledger 生命周期事件\n- 现有 subagent 默认 governed=False，行为完全不变\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat(kernel): mid-execution steering spec and tests\n\nSteering directive lifecycle for in-flight task adjustments.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat(kernel): auto-park and task prioritizer\n\nAuto-park unfocused tasks and prioritize based on risk, age, and\nblocked status for never-idle execution.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat(plugins): overnight report, patrol engine, and trigger hooks\n\nBuiltin hook plugins for overnight reporting, patrol checks, and\nevent-driven trigger execution.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat: kernel self-mod guard, never-idle specs, and CI dep-freshness\n\nAdd kernel self-modification guard spec/tests, never-idle task specs,\nhelper scripts, and dependency freshness CI workflow.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: use public store.append_event instead of private _append_event_tx\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* test: extend subagent identity tests with governance coverage\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat(signals): add kernel signals module with evidence signals and steering directives\n\nImplements the full signals subsystem:\n- EvidenceSignal and SteeringDirective data models\n- SignalStoreMixin with evidence_signals table (integrated into KernelStore)\n- SignalProtocol for signal lifecycle (emit, consume, suppress)\n- SteeringProtocol for directive lifecycle (issue, acknowledge, apply, reject, supersede)\n- SignalConsumer for actionable signal → task creation\n- /steer prefix detection in TaskController.append_note\n- Auto-apply acknowledged steerings on TaskController.finalize_result\n- Active steerings rendering in ProviderInputCompiler context\n- CLI commands: hermit task steer, hermit task steerings\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: resolve import sorting lint failures in test files\n\nReorder imports to satisfy Ruff I001 (isort) rules in test_steering,\ntest_self_iteration_loop, and test_steering_e2e.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* feat: competition module, typecheck fixes, and test reliability improvements\n\n- Add competition execution module (models, evaluator, service, store mixin)\n  with CompetitionStoreMixin integrated into KernelStore for candidate-based\n  task execution\n- Fix Settings._env_file=None handling to properly skip env file reading\n  when explicitly set, preventing profile/config.toml header values from\n  overriding test kwargs\n- Fix pyright type error in logging setup.py with TextIO cast\n- Fix test_custom_headers_requires_colon_separator to use isolated tmp_path\n  base_dir, preventing ~/.hermit/config.toml from leaking into test\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* chore: exclude .claude/worktrees/ from ruff linting\n\nWorktree directories may contain in-progress code that should not\nbe linted alongside the main codebase.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: avoid eager stderr capture in structlog factory under pytest-xdist\n\nOnly set PrintLoggerFactory with an explicit file when a custom stream\nis provided. When using the default (sys.stderr), let structlog's\nbuilt-in factory resolve it lazily, preventing \"I/O operation on closed\nfile\" errors when xdist workers close stderr early.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* test: add coverage for overnight, patrol, trigger, and signal modules\n\nRegister _commands_overnight in CLI main.py and add comprehensive tests\nfor patrol tools/hooks/checks, trigger hooks/followup, overnight\ncommand/dashboard, and evidence signals to fix CI coverage gate (82% → 95%+).\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-03-18T14:07:49+08:00",
+          "tree_id": "c8c40becd46c1ecb34d652ff78a64802d9f69940",
+          "url": "https://github.com/heggria/Hermit/commit/3d8fbfc478cf6c8fa1a0517e366ce9e953da06ac"
+        },
+        "date": 1773814111849,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bench_io.py::TestCLIStartupBenchmarks::test_hermit_help_startup",
+            "value": 2.150285843797533,
+            "unit": "iter/sec",
+            "range": "stddev: 0.01128250442869428",
+            "extra": "mean: 465.0544498000045 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_init",
+            "value": 174.6339630203609,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005634615621737279",
+            "extra": "mean: 5.726262994348975 msec\nrounds: 177"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_append_event",
+            "value": 2390.633861305951,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00018750039587026095",
+            "extra": "mean: 418.2991030896391 usec\nrounds: 2978"
+          },
+          {
+            "name": "tests/benchmark/test_bench_kernel.py::TestKernelStoreBenchmarks::test_store_list_tasks",
+            "value": 3899.453937079285,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012399924831274132",
+            "extra": "mean: 256.44616301045636 usec\nrounds: 4012"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_write",
+            "value": 4897.552179419792,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008376303628909605",
+            "extra": "mean: 204.18363365318322 usec\nrounds: 5836"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_read",
+            "value": 28798.160729365274,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003902128108684698",
+            "extra": "mean: 34.72443984869865 usec\nrounds: 30656"
+          },
+          {
+            "name": "tests/benchmark/test_bench_runtime.py::TestJsonStoreBenchmarks::test_json_store_update",
+            "value": 3271.282100019411,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011786021550391884",
+            "extra": "mean: 305.6905425533513 usec\nrounds: 3666"
           }
         ]
       }
