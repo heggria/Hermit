@@ -1,0 +1,8 @@
+{
+  "description": "Replace bare assert statements with proper exceptions in competition/store.py (lines 71, 171)",
+  "file_path": "src/hermit/kernel/execution/competition/store.py",
+  "issue_type": "code_quality",
+  "lines": "71,171",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Replace 'assert row is not None' with 'if row is None: raise RuntimeError(\"Expected row after INSERT\")' at both locations (after create_competition and create_candidate INSERTs)."
+}

@@ -1,0 +1,8 @@
+{
+  "description": "Extract hardcoded port 8321 into a module-level constant in runtime config",
+  "file_path": "src/hermit/runtime/assembly/config.py",
+  "issue_type": "code_quality",
+  "lines": "518",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Find the hardcoded port number 8321 in config.py. Define a module-level constant like _DEFAULT_WEBHOOK_PORT = 8321 near the top of the file and replace the occurrence."
+}

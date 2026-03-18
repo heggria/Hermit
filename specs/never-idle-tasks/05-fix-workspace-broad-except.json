@@ -1,0 +1,8 @@
+{
+  "description": "Narrow overly broad 'except Exception' in competition/workspace.py cleanup_all method (line 76)",
+  "file_path": "src/hermit/kernel/execution/competition/workspace.py",
+  "issue_type": "code_quality",
+  "lines": "72-81",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Replace 'except Exception:' with 'except (OSError, subprocess.CalledProcessError):' to catch only expected worktree removal failures."
+}

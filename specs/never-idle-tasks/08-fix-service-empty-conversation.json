@@ -1,0 +1,8 @@
+{
+  "description": "Return empty string fallback in _get_conversation_id should raise an error instead (competition/service.py line 398-405)",
+  "file_path": "src/hermit/kernel/execution/competition/service.py",
+  "issue_type": "bug",
+  "lines": "401-405",
+  "policy_profile": "default",
+  "fix_instructions": "In _get_conversation_id(), instead of returning empty string when parent_task is None, raise ValueError('Parent task not found: {competition.parent_task_id}'). An empty conversation_id will cause downstream failures that are harder to debug."
+}

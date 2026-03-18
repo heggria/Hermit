@@ -1,0 +1,8 @@
+{
+  "description": "Extract 6 hardcoded subprocess timeout values into constants in competition/criteria.py",
+  "file_path": "src/hermit/kernel/execution/competition/criteria.py",
+  "issue_type": "code_quality",
+  "lines": "1-141",
+  "policy_profile": "autonomous",
+  "fix_instructions": "Define module-level constants for the subprocess timeouts: _PYTEST_TIMEOUT = 300, _RUFF_TIMEOUT = 120, _PYRIGHT_TIMEOUT = 180. Replace all 6 hardcoded timeout=N values with the corresponding constant."
+}
