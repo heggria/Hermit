@@ -14,8 +14,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from hermit.kernel.signals.models import SteeringDirective
-from hermit.kernel.signals.steering import SteeringProtocol
 from typer.testing import CliRunner
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
@@ -24,6 +22,8 @@ from hermit.kernel.execution.executor.executor import ToolExecutor
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import PolicyEngine
 from hermit.kernel.policy.approvals.approvals import ApprovalService
+from hermit.kernel.signals.models import SteeringDirective
+from hermit.kernel.signals.steering import SteeringProtocol
 from hermit.kernel.task.services.controller import TaskController
 from hermit.kernel.verification.receipts.receipts import ReceiptService
 from hermit.runtime.capability.contracts.hooks import HooksEngine

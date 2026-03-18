@@ -9,13 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from hermit.kernel.execution.competition.evaluator import CompetitionEvaluator
 from hermit.kernel.execution.competition.service import CompetitionService
+from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.signals.consumer import SignalConsumer
 from hermit.kernel.signals.models import EvidenceSignal
 from hermit.kernel.signals.protocol import SignalProtocol
-
-from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.services.controller import TaskController
 
 

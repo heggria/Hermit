@@ -6,10 +6,10 @@ import time
 from pathlib import Path
 
 import pytest
-from hermit.kernel.signals.models import EvidenceSignal, SteeringDirective
-from hermit.kernel.signals.steering import SteeringProtocol
 
 from hermit.kernel.ledger.journal.store import KernelStore
+from hermit.kernel.signals.models import EvidenceSignal, SteeringDirective
+from hermit.kernel.signals.steering import SteeringProtocol
 
 
 @pytest.fixture()
