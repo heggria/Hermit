@@ -374,7 +374,7 @@ jobs:
 
       - name: Store benchmark result (main)
         if: github.ref == 'refs/heads/main'
-        uses: benchmark-action/github-action-benchmark@d48d326b4ca9ba73ca0cd0d59f108f9e02a381c7
+        uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073
         with:
           tool: 'pytest'
           output-file-path: benchmark-result.json
@@ -388,7 +388,7 @@ jobs:
 
       - name: Compare benchmark result (PR)
         if: github.event_name == 'pull_request'
-        uses: benchmark-action/github-action-benchmark@d48d326b4ca9ba73ca0cd0d59f108f9e02a381c7
+        uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073
         with:
           tool: 'pytest'
           output-file-path: benchmark-result.json
