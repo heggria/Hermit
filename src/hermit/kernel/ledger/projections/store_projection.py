@@ -90,8 +90,7 @@ class KernelProjectionStoreMixin(KernelStoreTypingBase):
         return projection
 
     def get_projection_cache(self, task_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            row = self._row("SELECT * FROM projection_cache WHERE task_id = ?", (task_id,))
+        row = self._row("SELECT * FROM projection_cache WHERE task_id = ?", (task_id,))
         if row is None:
             return None
         return {
@@ -104,11 +103,10 @@ class KernelProjectionStoreMixin(KernelStoreTypingBase):
         }
 
     def get_conversation_projection_cache(self, conversation_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM conversation_projection_cache WHERE conversation_id = ?",
-                (conversation_id,),
-            )
+        row = self._row(
+            "SELECT * FROM conversation_projection_cache WHERE conversation_id = ?",
+            (conversation_id,),
+        )
         if row is None:
             return None
         return {
@@ -129,8 +127,8 @@ class KernelProjectionStoreMixin(KernelStoreTypingBase):
         payload: dict[str, Any],
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO projection_cache (task_id, schema_version, event_head_hash, payload_json, built_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -159,8 +157,8 @@ class KernelProjectionStoreMixin(KernelStoreTypingBase):
         payload: dict[str, Any],
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO conversation_projection_cache (
                     conversation_id, schema_version, event_head_hash, payload_json, built_at, updated_at
@@ -183,13 +181,11 @@ class KernelProjectionStoreMixin(KernelStoreTypingBase):
             )
 
     def list_projection_cache_tasks(self) -> list[str]:
-        with self._lock:
-            rows = self._rows("SELECT task_id FROM projection_cache ORDER BY updated_at DESC")
+        rows = self._rows("SELECT task_id FROM projection_cache ORDER BY updated_at DESC")
         return [str(row["task_id"]) for row in rows]
 
     def list_conversation_projection_cache(self) -> list[str]:
-        with self._lock:
-            rows = self._rows(
-                "SELECT conversation_id FROM conversation_projection_cache ORDER BY updated_at DESC"
-            )
+        rows = self._rows(
+            "SELECT conversation_id FROM conversation_projection_cache ORDER BY updated_at DESC"
+        )
         return [str(row["conversation_id"]) for row in rows]

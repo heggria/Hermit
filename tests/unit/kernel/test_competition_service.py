@@ -280,8 +280,8 @@ def test_on_candidate_task_completed_task_not_found(tmp_path: Path) -> None:
     candidates = store.list_candidates(comp.competition_id)
     cand = candidates[0]
     # Delete the task so get_task returns None
-    store._conn.execute("DELETE FROM tasks WHERE task_id = ?", (cand.task_id,))
-    store._conn.commit()
+    store._get_conn().execute("DELETE FROM tasks WHERE task_id = ?", (cand.task_id,))
+    store._get_conn().commit()
 
     # Should return early without error
     svc.on_candidate_task_completed(cand.task_id)
@@ -596,8 +596,8 @@ def test_get_conversation_id_parent_task_not_found(tmp_path: Path) -> None:
     comp = svc.create_competition(conversation_id="conv-1", goal="g", candidate_count=1)
 
     # Delete the parent task
-    store._conn.execute("DELETE FROM tasks WHERE task_id = ?", (comp.parent_task_id,))
-    store._conn.commit()
+    store._get_conn().execute("DELETE FROM tasks WHERE task_id = ?", (comp.parent_task_id,))
+    store._get_conn().commit()
 
     result = svc._get_conversation_id(comp)
     assert result == ""

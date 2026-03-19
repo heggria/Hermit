@@ -8,8 +8,8 @@ from hermit.plugins.builtin.hooks.scheduler.models import JobExecutionRecord, Sc
 
 class KernelSchedulerStoreMixin(KernelStoreTypingBase):
     def create_schedule(self, job: ScheduledJob) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT OR REPLACE INTO schedule_specs (
                     id, name, prompt, schedule_type, cron_expr, once_at, interval_seconds,
@@ -44,23 +44,21 @@ class KernelSchedulerStoreMixin(KernelStoreTypingBase):
         return job
 
     def delete_schedule(self, job_id: str) -> bool:
-        with self._lock, self._conn:
-            cursor = self._conn.execute("DELETE FROM schedule_specs WHERE id = ?", (job_id,))
+        with self._get_conn():
+            cursor = self._get_conn().execute("DELETE FROM schedule_specs WHERE id = ?", (job_id,))
         return cursor.rowcount > 0
 
     def get_schedule(self, job_id: str) -> ScheduledJob | None:
-        with self._lock:
-            row = self._row("SELECT * FROM schedule_specs WHERE id = ?", (job_id,))
+        row = self._row("SELECT * FROM schedule_specs WHERE id = ?", (job_id,))
         return self._schedule_from_row(row) if row is not None else None
 
     def list_schedules(self) -> list[ScheduledJob]:
-        with self._lock:
-            rows = self._rows("SELECT * FROM schedule_specs ORDER BY created_at DESC")
+        rows = self._rows("SELECT * FROM schedule_specs ORDER BY created_at DESC")
         return [self._schedule_from_row(row) for row in rows]
 
     def append_schedule_history(self, record: JobExecutionRecord) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO schedule_history (
                     job_id, job_name, started_at, finished_at, success, result_text, error,
@@ -105,8 +103,7 @@ class KernelSchedulerStoreMixin(KernelStoreTypingBase):
                 FROM schedule_history ORDER BY started_at DESC LIMIT ?
             """
             params = (limit,)
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [
             JobExecutionRecord(
                 job_id=str(row["job_id"]),

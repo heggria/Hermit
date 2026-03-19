@@ -26,7 +26,7 @@ def test_public_docs_state_v0_1_is_target_not_completion_claim() -> None:
     readme = _read("README.md")
     architecture = _read("docs/architecture.md")
 
-    assert "`v0.1` kernel spec" in readme
+    assert "Kernel spec v0.1" in readme
     assert "target architecture" in readme
     assert "does not treat the `v0.1` kernel spec as fully shipped" in architecture
 
@@ -35,8 +35,8 @@ def test_public_docs_call_out_governance_hard_cut_and_proof_boundary() -> None:
     readme = _read("README.md")
     architecture = _read("docs/architecture.md")
 
-    assert "tool governance" in readme
-    assert "Approval resolution" in readme
+    assert "governed execution" in readme
+    assert "approvals" in readme
     assert "fail closed" in architecture
     assert "missing proof coverage" in architecture
 

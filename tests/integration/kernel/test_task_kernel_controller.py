@@ -24,12 +24,12 @@ def test_enqueue_task_creates_ready_queue_records_and_claims_fifo(tmp_path: Path
     )
     # Explicitly set started_at to guarantee FIFO ordering without relying on wall-clock time.
     # claim_next_ready_step_attempt orders by started_at ASC, so ctx1 must have an earlier value.
-    with store._conn:
-        store._conn.execute(
+    with store._get_conn():
+        store._get_conn().execute(
             "UPDATE step_attempts SET started_at = 1000.0 WHERE step_attempt_id = ?",
             (ctx1.step_attempt_id,),
         )
-        store._conn.execute(
+        store._get_conn().execute(
             "UPDATE step_attempts SET started_at = 2000.0 WHERE step_attempt_id = ?",
             (ctx2.step_attempt_id,),
         )

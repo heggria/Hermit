@@ -165,6 +165,10 @@ class Settings(BaseSettings):
     progress_summary_model: str | None = None
     progress_summary_max_tokens: int = 160
     progress_summary_keepalive_seconds: float = 15.0
+    mcp_server_enabled: bool = False
+    mcp_server_host: str = "127.0.0.1"
+    mcp_server_port: int = 8322
+    max_session_messages: int = 100
 
     @model_validator(mode="before")
     @classmethod

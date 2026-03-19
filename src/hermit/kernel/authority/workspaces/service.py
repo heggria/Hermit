@@ -19,6 +19,10 @@ def capture_execution_environment(*, cwd: Path) -> dict[str, object]:
     }
 
 
+class WorkspaceLeaseConflict(RuntimeError):
+    """Raised when a mutable workspace lease conflicts with an existing one."""
+
+
 class WorkspaceLeaseService:
     def __init__(
         self, store: KernelStore, artifact_store: ArtifactStore, *, default_ttl_seconds: int = 300
@@ -39,6 +43,16 @@ class WorkspaceLeaseService:
         resource_scope: list[str],
         ttl_seconds: int | None = None,
     ) -> WorkspaceLeaseRecord:
+        if mode == "mutable":
+            active_leases = self.store.list_workspace_leases(
+                workspace_id=workspace_id, status="active", limit=100
+            )
+            for lease in active_leases:
+                if lease.mode == "mutable":
+                    raise WorkspaceLeaseConflict(
+                        f"Workspace {workspace_id} already has an active mutable lease: "
+                        f"{lease.lease_id}"
+                    )
         expires_at = time.time() + (
             self.default_ttl_seconds if ttl_seconds is None else ttl_seconds
         )

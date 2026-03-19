@@ -7,8 +7,15 @@ Instructions for Codex and other agentic tooling working in the Hermit repositor
 - Service redeploy skill: [`.agents/skills/hermit-service-redeploy/SKILL.md`](.agents/skills/hermit-service-redeploy/SKILL.md)
 - README Excalidraw assets skill: [`.agents/skills/hermit-readme-excalidraw-assets/SKILL.md`](.agents/skills/hermit-readme-excalidraw-assets/SKILL.md)
 - Self-iteration skill: [`.agents/skills/hermit-iterate/SKILL.md`](.agents/skills/hermit-iterate/SKILL.md)
+- Hermit delegation skill: [`.agents/skills/hermit-delegate/SKILL.md`](.agents/skills/hermit-delegate/SKILL.md)
 
-Use it when:
+Use the delegation skill when:
+
+- submitting governed tasks to Hermit (multi-step, needs approvals, needs receipts/proof)
+- the user says "delegate", "let Hermit do it", or "submit to Hermit"
+- you need durable execution records, rollback capability, or policy enforcement
+
+Use the service redeploy skill when:
 
 - modifying code in the `hermit serve` execution path
 - changing builtin plugins, adapters, scheduler, webhook, or Feishu integration

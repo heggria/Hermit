@@ -82,9 +82,13 @@ class ContextCompiler:
         self,
         governance: MemoryGovernanceService | None = None,
         artifact_store: ArtifactStore | None = None,
+        retrieval_service: Any | None = None,
+        store: Any | None = None,
     ) -> None:
         self.governance = governance or MemoryGovernanceService()
         self.artifact_store = artifact_store
+        self._retrieval_service = retrieval_service
+        self._store = store
 
     def compile(
         self,
@@ -139,19 +143,41 @@ class ContextCompiler:
                 (memory, self._retrieval_score(memory, context=context, query=query_text))
             )
 
-        retrieval_candidates.sort(
-            key=lambda item: (
-                item[1],
-                item[0].confidence,
-                item[0].updated_at or 0.0,
-            ),
-            reverse=True,
-        )
-        retrieval_memory = [self._memory_payload(memory) for memory, _ in retrieval_candidates[:5]]
-        for memory, _score in retrieval_candidates[:5]:
-            selection_reasons[memory.memory_id] = "retrieval_rank"
-        for memory, _score in retrieval_candidates[5:]:
-            excluded_reasons[memory.memory_id] = "rank_cutoff"
+        # Hybrid retrieval path: use HybridRetrievalService when available
+        used_hybrid = False
+        if self._retrieval_service is not None and self._store is not None and retrieval_candidates:
+            try:
+                eligible = [m for m, _ in retrieval_candidates]
+                report = self._retrieval_service.retrieve(
+                    query_text, eligible, self._store, context=context, limit=5
+                )
+                retrieval_memory = [self._memory_payload(r.memory) for r in report.results]
+                result_ids = {r.memory_id for r in report.results}
+                for r in report.results:
+                    selection_reasons[r.memory_id] = f"hybrid:{','.join(r.sources)}"
+                for m, _ in retrieval_candidates:
+                    if m.memory_id not in result_ids:
+                        excluded_reasons[m.memory_id] = "hybrid_rank_cutoff"
+                used_hybrid = True
+            except Exception:
+                pass  # Fall through to legacy scoring
+
+        if not used_hybrid:
+            retrieval_candidates.sort(
+                key=lambda item: (
+                    item[1],
+                    item[0].confidence,
+                    item[0].updated_at or 0.0,
+                ),
+                reverse=True,
+            )
+            retrieval_memory = [
+                self._memory_payload(memory) for memory, _ in retrieval_candidates[:5]
+            ]
+            for memory, _score in retrieval_candidates[:5]:
+                selection_reasons[memory.memory_id] = "retrieval_rank"
+            for memory, _score in retrieval_candidates[5:]:
+                excluded_reasons[memory.memory_id] = "rank_cutoff"
 
         selected_beliefs: list[dict[str, Any]] = []
         for belief in beliefs[:10]:

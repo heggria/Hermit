@@ -83,8 +83,29 @@ class KernelDispatchService:
                 attempt_id = self._futures.pop(future, "")
             try:
                 future.result()
+                self._on_attempt_completed(attempt_id)
             except Exception:
                 log.exception("kernel_dispatch_attempt_failed", step_attempt_id=attempt_id)
+
+    def _on_attempt_completed(self, step_attempt_id: str) -> None:
+        """After a step completes, activate waiting dependents and wake the loop."""
+        if not step_attempt_id:
+            return
+        try:
+            attempt = self._runner.task_controller.store.get_step_attempt(step_attempt_id)
+            if attempt is None:
+                return
+            if attempt.status in ("succeeded", "completed", "skipped"):
+                activated = self._runner.task_controller.store.activate_waiting_dependents(
+                    attempt.task_id, attempt.step_id
+                )
+                if activated:
+                    self._wake.set()
+        except Exception:
+            log.exception(
+                "kernel_dispatch_dag_activation_failed",
+                step_attempt_id=step_attempt_id,
+            )
 
     def _recover_interrupted_attempts(self) -> None:
         store = self._runner.task_controller.store

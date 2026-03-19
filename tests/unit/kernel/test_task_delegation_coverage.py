@@ -102,8 +102,8 @@ class TestListChildrenWithMissingTask:
             delegated_principal_id="subagent_c",
         )
         # Forcefully remove the child task from the store to simulate missing task
-        store._conn.execute("DELETE FROM tasks WHERE task_id = ?", (child_id,))
-        store._conn.commit()
+        store._get_conn().execute("DELETE FROM tasks WHERE task_id = ?", (child_id,))
+        store._get_conn().commit()
 
         children = service.list_children(parent_task.task_id)
         assert len(children) == 1

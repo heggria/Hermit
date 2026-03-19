@@ -67,6 +67,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
         )
 
     def _step_from_row(self, row: sqlite3.Row) -> StepRecord:
+        keys = row.keys() if hasattr(row, "keys") else []
         return StepRecord(
             step_id=str(row["step_id"]),
             task_id=str(row["task_id"]),
@@ -78,6 +79,10 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             title=row["title"],
             contract_ref=row["contract_ref"],
             depends_on=list(json_loads(row["depends_on_json"])),
+            join_strategy=str(row["join_strategy"]) if "join_strategy" in keys else "all_required",
+            input_bindings=dict(json_loads(row["input_bindings_json"]))
+            if "input_bindings_json" in keys
+            else {},
             max_attempts=int(row["max_attempts"] or 1),
             started_at=row["started_at"],
             finished_at=row["finished_at"],

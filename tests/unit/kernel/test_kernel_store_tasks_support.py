@@ -302,8 +302,8 @@ def test_kernel_store_backfills_event_hash_chain_when_missing(tmp_path: Path) ->
     )
     step = store.create_step(task_id=task.task_id, kind="respond")
     store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
-    with store._lock, store._conn:  # type: ignore[attr-defined]
-        store._conn.execute(  # type: ignore[attr-defined]
+    with store._get_conn():
+        store._get_conn().execute(
             "UPDATE events SET event_hash = NULL, prev_event_hash = NULL, hash_chain_algo = NULL"
         )
     store.close()
@@ -323,8 +323,8 @@ def test_kernel_store_accepts_schema_version_5_for_additive_migration(tmp_path: 
     db_path = tmp_path / "state.db"
     store = KernelStore(db_path)
     try:
-        with store._lock, store._conn:  # type: ignore[attr-defined]
-            store._conn.execute(  # type: ignore[attr-defined]
+        with store._get_conn():
+            store._get_conn().execute(
                 "UPDATE kernel_meta SET value = '5' WHERE key = 'schema_version'"
             )
     finally:
@@ -332,13 +332,13 @@ def test_kernel_store_accepts_schema_version_5_for_additive_migration(tmp_path: 
 
     reopened = KernelStore(db_path)
     try:
-        assert reopened.schema_version() == "10"
+        assert reopened.schema_version() == "11"
         with sqlite3.connect(db_path) as conn:
             row = conn.execute(
                 "SELECT value FROM kernel_meta WHERE key = 'schema_version'"
             ).fetchone()
         assert row is not None
-        assert row[0] == "10"
+        assert row[0] == "11"
     finally:
         reopened.close()
 
@@ -488,8 +488,8 @@ def test_proof_service_detects_tampered_event_chain(tmp_path: Path) -> None:
     events = store.list_events(task_id=task.task_id, limit=20)
     assert events
     tampered_event_id = events[-1]["event_id"]
-    with store._lock, store._conn:  # type: ignore[attr-defined]
-        store._conn.execute(  # type: ignore[attr-defined]
+    with store._get_conn():
+        store._get_conn().execute(
             "UPDATE events SET payload_json = ? WHERE event_id = ?",
             ('{"tampered":true}', tampered_event_id),
         )

@@ -24,8 +24,8 @@ from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
 from hermit.kernel.signals.store import SignalStoreMixin
 
-_SCHEMA_VERSION = "10"
-_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", "8", "9", _SCHEMA_VERSION}
+_SCHEMA_VERSION = "11"
+_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", "8", "9", "10", _SCHEMA_VERSION}
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "conversation_projection_cache",
@@ -76,33 +76,67 @@ class KernelStore(
         self._in_memory = str(db_path) == ":memory:"
         if not self._in_memory:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        connect_target: str | Path = ":memory:" if self._in_memory else self.db_path
-        self._conn = sqlite3.connect(connect_target, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._connect_target: str | Path = ":memory:" if self._in_memory else self.db_path
+        self._local = threading.local()
+        self._event_chain_lock = threading.Lock()
+        # For :memory: databases (tests), all threads must share one connection
+        # since each new connection gets a separate empty database.
+        if self._in_memory:
+            self._shared_conn = self._make_conn()
+        else:
+            self._shared_conn = None
         self._validate_existing_schema()
         self._init_schema()
 
+    def _make_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._connect_target, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    def _get_conn(self) -> sqlite3.Connection:
+        """Return a per-thread SQLite connection.
+
+        For file-backed databases, each thread lazily creates its own connection.
+        SQLite WAL mode handles read/write concurrency at the database level.
+        For :memory: databases (used in tests), all threads share one connection.
+        """
+        if self._shared_conn is not None:
+            return self._shared_conn
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._make_conn()
+            self._local.conn = conn
+        return conn
+
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        if self._shared_conn is not None:
+            self._shared_conn.close()
+        else:
+            conn = getattr(self._local, "conn", None)
+            if conn is not None:
+                conn.close()
+                self._local.conn = None
 
     def __del__(self) -> None:
         try:
-            self._conn.close()
+            if self._shared_conn is not None:
+                self._shared_conn.close()
+            else:
+                conn = getattr(self._local, "conn", None)
+                if conn is not None:
+                    conn.close()
         except Exception:
             pass
 
     def schema_version(self) -> str:
-        with self._lock:
-            row = self._row("SELECT value FROM kernel_meta WHERE key = 'schema_version'")
+        row = self._row("SELECT value FROM kernel_meta WHERE key = 'schema_version'")
         return str(row["value"]) if row is not None else ""
 
     def _existing_tables(self) -> set[str]:
-        cursor = self._conn.execute(
+        cursor = self._get_conn().execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         )
         return {str(row[0]) for row in cursor.fetchall()}
@@ -118,9 +152,11 @@ class KernelStore(
                     "This is a hard cut release: archive or delete kernel/state.db before restarting Hermit."
                 )
             return
-        row = self._conn.execute(
-            "SELECT value FROM kernel_meta WHERE key = 'schema_version'"
-        ).fetchone()
+        row = (
+            self._get_conn()
+            .execute("SELECT value FROM kernel_meta WHERE key = 'schema_version'")
+            .fetchone()
+        )
         version = str(row[0]) if row is not None else ""
         if version not in _MIGRATABLE_SCHEMA_VERSIONS:
             raise KernelSchemaError(
@@ -130,8 +166,9 @@ class KernelStore(
             )
 
     def _init_schema(self) -> None:
-        with self._lock, self._conn:
-            self._conn.executescript(
+        conn = self._get_conn()
+        with conn:
+            conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS kernel_meta (
                     key TEXT PRIMARY KEY,
@@ -222,6 +259,8 @@ class KernelStore(
                     title TEXT,
                     contract_ref TEXT,
                     depends_on_json TEXT NOT NULL DEFAULT '[]',
+                    join_strategy TEXT NOT NULL DEFAULT 'all_required',
+                    input_bindings_json TEXT NOT NULL DEFAULT '{}',
                     max_attempts INTEGER NOT NULL DEFAULT 1,
                     started_at REAL,
                     finished_at REAL,
@@ -277,6 +316,7 @@ class KernelStore(
                     payload_json TEXT NOT NULL,
                     occurred_at REAL NOT NULL,
                     causation_id TEXT,
+                    causation_ids_json TEXT NOT NULL DEFAULT '[]',
                     correlation_id TEXT,
                     event_hash TEXT,
                     prev_event_hash TEXT,
@@ -753,16 +793,71 @@ class KernelStore(
             self._ensure_column("memory_records", "last_validated_at", "REAL")
             self._ensure_column("memory_records", "supersession_reason", "TEXT")
             self._ensure_column("memory_records", "learned_from_reconciliation_ref", "TEXT")
-            self._conn.execute(
+            self._get_conn().execute(
                 "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue ON step_attempts(status, queue_priority DESC, started_at ASC)"
+            )
+            self._ensure_column("memory_records", "freshness_class", "TEXT")
+            self._ensure_column("memory_records", "last_accessed_at", "REAL")
+            self._get_conn().executescript(
+                """
+                CREATE TABLE IF NOT EXISTS memory_embeddings (
+                    memory_id TEXT PRIMARY KEY,
+                    embedding BLOB NOT NULL,
+                    model_name TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS memory_graph_edges (
+                    edge_id TEXT PRIMARY KEY,
+                    from_memory_id TEXT NOT NULL,
+                    to_memory_id TEXT NOT NULL,
+                    relation_type TEXT NOT NULL,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_from
+                    ON memory_graph_edges(from_memory_id);
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_to
+                    ON memory_graph_edges(to_memory_id);
+                CREATE TABLE IF NOT EXISTS memory_entity_triples (
+                    triple_id TEXT PRIMARY KEY,
+                    source_memory_id TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    valid_from REAL NOT NULL,
+                    valid_until REAL,
+                    created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_triples_subject
+                    ON memory_entity_triples(subject);
+                CREATE INDEX IF NOT EXISTS idx_triples_object
+                    ON memory_entity_triples(object);
+                CREATE INDEX IF NOT EXISTS idx_triples_source
+                    ON memory_entity_triples(source_memory_id);
+                CREATE TABLE IF NOT EXISTS procedural_memories (
+                    procedure_id TEXT PRIMARY KEY,
+                    trigger_pattern TEXT NOT NULL,
+                    steps_json TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """
             )
             self._init_signal_schema()
             self._init_competition_schema()
             self._migrate_memory_schema_v4()
+            self._migrate_dag_schema_v11()
             self._migrate_kernel_convergence_v6()
             self._migrate_category_english_v8()
             self._backfill_event_hash_chain()
-            self._conn.execute(
+            self._get_conn().execute(
                 """
                 INSERT INTO kernel_meta(key, value) VALUES ('schema_version', ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -772,28 +867,29 @@ class KernelStore(
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
-            str(row["name"]) for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            str(row["name"])
+            for row in self._get_conn().execute(f"PRAGMA table_info({table})").fetchall()
         }
         if column in existing:
             return
-        self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        self._get_conn().execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _migrate_memory_schema_v4(self) -> None:
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE beliefs
             SET claim_text = COALESCE(NULLIF(claim_text, ''), content)
             WHERE claim_text IS NULL OR claim_text = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE memory_records
             SET claim_text = COALESCE(NULLIF(claim_text, ''), content)
             WHERE claim_text IS NULL OR claim_text = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE memory_records
             SET scope_kind = CASE
@@ -804,7 +900,7 @@ class KernelStore(
             WHERE scope_kind IS NULL OR scope_kind = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE memory_records
             SET scope_ref = CASE
@@ -815,7 +911,7 @@ class KernelStore(
             WHERE scope_ref IS NULL OR scope_ref = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE memory_records
             SET retention_class = CASE
@@ -828,14 +924,14 @@ class KernelStore(
             WHERE retention_class IS NULL OR retention_class = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE memory_records
             SET promotion_reason = COALESCE(NULLIF(promotion_reason, ''), 'legacy_memory_migration')
             WHERE promotion_reason IS NULL OR promotion_reason = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE memory_records
             SET status = 'invalidated',
@@ -846,9 +942,14 @@ class KernelStore(
             (time.time(),),
         )
 
+    def _migrate_dag_schema_v11(self) -> None:
+        self._ensure_column("steps", "join_strategy", "TEXT NOT NULL DEFAULT 'all_required'")
+        self._ensure_column("steps", "input_bindings_json", "TEXT NOT NULL DEFAULT '{}'")
+        self._ensure_column("events", "causation_ids_json", "TEXT NOT NULL DEFAULT '[]'")
+
     def _migrate_kernel_convergence_v6(self) -> None:
         now = time.time()
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE steps
             SET title = COALESCE(NULLIF(title, ''), kind),
@@ -864,7 +965,7 @@ class KernelStore(
             """,
             (now, now),
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE decisions
             SET summary = COALESCE(NULLIF(summary, ''), reason),
@@ -875,14 +976,14 @@ class KernelStore(
                OR rationale = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE approvals
             SET approval_packet_ref = COALESCE(NULLIF(approval_packet_ref, ''), request_packet_ref)
             WHERE approval_packet_ref IS NULL OR approval_packet_ref = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE receipts
             SET receipt_class = COALESCE(NULLIF(receipt_class, ''), action_type),
@@ -916,15 +1017,15 @@ class KernelStore(
             ("进行中的任务", "active_task"),
         ]
         for chinese, english in mapping:
-            self._conn.execute(
+            self._get_conn().execute(
                 "UPDATE memory_records SET category = ? WHERE category = ?",
                 (english, chinese),
             )
-            self._conn.execute(
+            self._get_conn().execute(
                 "UPDATE beliefs SET category = ? WHERE category = ?",
                 (english, chinese),
             )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE memory_records
             SET scope_kind = CASE
@@ -935,7 +1036,7 @@ class KernelStore(
             WHERE scope_kind IS NULL OR scope_kind = ''
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             UPDATE memory_records
             SET retention_class = CASE
@@ -956,11 +1057,11 @@ class KernelStore(
         return self.generate_id(prefix)
 
     def _row(self, query: str, params: Iterable[Any] = ()) -> sqlite3.Row | None:
-        cursor = self._conn.execute(query, tuple(params))
+        cursor = self._get_conn().execute(query, tuple(params))
         return cursor.fetchone()
 
     def _rows(self, query: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
-        cursor = self._conn.execute(query, tuple(params))
+        cursor = self._get_conn().execute(query, tuple(params))
         return list(cursor.fetchall())
 
     def _infer_principal_type(self, value: str) -> str:
@@ -990,8 +1091,8 @@ class KernelStore(
     ) -> PrincipalRecord:
         now = time.time()
         resolved_id = principal_id or f"principal_{self._principal_slug(display_name)}"
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO principals (
                     principal_id, principal_type, display_name, source_channel, external_ref,
@@ -1050,8 +1151,8 @@ class KernelStore(
         return principal_id
 
     def update_task_priority(self, task_id: str, *, priority: str) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 "UPDATE tasks SET priority = ?, updated_at = ? WHERE task_id = ?",
                 (priority, time.time(), task_id),
             )
@@ -1082,46 +1183,52 @@ class KernelStore(
         actor_principal_id = self._ensure_principal_id(actor)
         payload_json = _canonical_json(payload or {})
         occurred_at = time.time()
-        prev_event_hash = self._latest_task_event_hash(task_id)
-        event_hash = self._compute_event_hash(
-            event_id=event_id,
-            task_id=task_id,
-            step_id=step_id,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            event_type=event_type,
-            actor=actor_principal_id,
-            payload_json=payload_json,
-            occurred_at=occurred_at,
-            causation_id=causation_id,
-            correlation_id=correlation_id,
-            prev_event_hash=prev_event_hash,
-        )
-        self._conn.execute(
-            """
-            INSERT INTO events (
-                event_id, task_id, step_id, entity_type, entity_id, event_type,
-                actor_principal_id, payload_json, occurred_at, causation_id, correlation_id,
-                event_hash, prev_event_hash, hash_chain_algo
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event_id,
-                task_id,
-                step_id,
-                entity_type,
-                entity_id,
-                event_type,
-                actor_principal_id,
-                payload_json,
-                occurred_at,
-                causation_id,
-                correlation_id,
-                event_hash,
-                prev_event_hash,
-                "sha256-v1",
-            ),
-        )
+        with self._event_chain_lock:
+            prev_event_hash = self._latest_task_event_hash(task_id)
+            event_hash = self._compute_event_hash(
+                event_id=event_id,
+                task_id=task_id,
+                step_id=step_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                event_type=event_type,
+                actor=actor_principal_id,
+                payload_json=payload_json,
+                occurred_at=occurred_at,
+                causation_id=causation_id,
+                correlation_id=correlation_id,
+                prev_event_hash=prev_event_hash,
+            )
+            conn = self._get_conn()
+            conn.execute(
+                """
+                INSERT INTO events (
+                    event_id, task_id, step_id, entity_type, entity_id, event_type,
+                    actor_principal_id, payload_json, occurred_at, causation_id, correlation_id,
+                    event_hash, prev_event_hash, hash_chain_algo
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    task_id,
+                    step_id,
+                    entity_type,
+                    entity_id,
+                    event_type,
+                    actor_principal_id,
+                    payload_json,
+                    occurred_at,
+                    causation_id,
+                    correlation_id,
+                    event_hash,
+                    prev_event_hash,
+                    "sha256-v1",
+                ),
+            )
+            # Commit inside the lock so the next thread's SELECT sees this INSERT.
+            # Per-thread connections in file-backed mode have independent transaction
+            # snapshots; without this commit, the chain would fork.
+            conn.commit()
         return event_id
 
     def _latest_task_event_hash(self, task_id: str | None) -> str | None:
@@ -1195,7 +1302,7 @@ class KernelStore(
                     correlation_id=row["correlation_id"],
                     prev_event_hash=prev_event_hash,
                 )
-                self._conn.execute(
+                self._get_conn().execute(
                     """
                     UPDATE events
                     SET event_hash = ?, prev_event_hash = ?, hash_chain_algo = ?

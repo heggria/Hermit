@@ -197,6 +197,57 @@ class TaskController:
             ingress_metadata=metadata,
         )
 
+    def start_dag_task(
+        self,
+        *,
+        conversation_id: str,
+        goal: str,
+        source_channel: str,
+        nodes: list[Any],
+        policy_profile: str = "default",
+        workspace_root: str = "",
+        requested_by: str | None = None,
+        ingress_metadata: dict[str, Any] | None = None,
+    ) -> tuple[TaskExecutionContext, Any, dict[str, str]]:
+        """Create a task with a DAG of steps.
+
+        Returns (ctx_for_first_root, DAGDefinition, key→step_id mapping).
+        """
+        from hermit.kernel.task.services.dag_builder import StepDAGBuilder
+
+        self.ensure_conversation(conversation_id, source_channel=source_channel)
+        metadata = dict(ingress_metadata or {})
+        task = self.store.create_task(
+            conversation_id=conversation_id,
+            title=(goal.strip() or "DAG task")[:120],
+            goal=goal,
+            source_channel=source_channel,
+            policy_profile=policy_profile,
+            requested_by=requested_by,
+        )
+        builder = StepDAGBuilder(self.store)
+        dag, key_to_step_id = builder.build_and_materialize(task.task_id, nodes)
+        self.store.update_task_status(task.task_id, "queued")
+
+        first_root_key = dag.roots[0]
+        first_root_step_id = key_to_step_id[first_root_key]
+        attempts = self.store.list_step_attempts(step_id=first_root_step_id, limit=1)
+        first_attempt = attempts[0] if attempts else None
+        ctx = TaskExecutionContext(
+            conversation_id=conversation_id,
+            task_id=task.task_id,
+            step_id=first_root_step_id,
+            step_attempt_id=first_attempt.step_attempt_id if first_attempt else "",
+            source_channel=source_channel,
+            policy_profile=policy_profile,
+            workspace_root=workspace_root,
+            ingress_metadata=metadata,
+        )
+        self._set_focus(
+            conversation_id=conversation_id, task_id=task.task_id, reason="dag_task_started"
+        )
+        return ctx, dag, key_to_step_id
+
     def enqueue_task(
         self,
         *,
@@ -920,11 +971,17 @@ class TaskController:
             if result_text:
                 payload["result_text"] = result_text
         self._apply_acknowledged_steerings(ctx.task_id)
-        self.store.update_task_status(
-            ctx.task_id,
-            "completed" if status == "succeeded" else status,
-            payload=payload,
-        )
+
+        if status in ("succeeded", "completed", "skipped"):
+            self.store.activate_waiting_dependents(ctx.task_id, ctx.step_id)
+        elif status == "failed":
+            self.store.propagate_step_failure(ctx.task_id, ctx.step_id)
+
+        if self.store.has_non_terminal_steps(ctx.task_id):
+            task_status = "running"
+        else:
+            task_status = "completed" if status == "succeeded" else status
+        self.store.update_task_status(ctx.task_id, task_status, payload=payload)
         self._refresh_focus_after_task_status(ctx.conversation_id, ctx.task_id)
 
     def mark_planning_ready(

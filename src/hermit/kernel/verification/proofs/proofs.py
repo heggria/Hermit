@@ -230,12 +230,27 @@ class ProofService:
         )
         return receipt_bundle_ref
 
-    def export_task_proof(self, task_id: str) -> dict[str, Any]:
+    def export_task_proof(self, task_id: str, *, detail: str = "full") -> dict[str, Any]:
+        """Export proof bundle with configurable verbosity.
+
+        Args:
+            task_id: The task to export proof for.
+            detail: Verbosity level —
+                "summary": core verification + refs only (~5-20 KB).
+                "standard": summary + full governance records (~50-200 KB).
+                "full": everything including receipt bundles, manifests,
+                    artifact index, and Merkle proofs (current behavior).
+        """
+        if detail not in ("summary", "standard", "full"):
+            detail = "full"
+
         task = self.store.get_task(task_id)
         if task is None:
             raise KeyError(f"Task not found: {task_id}")
 
         receipts = self.store.list_receipts(task_id=task_id, limit=500)
+
+        # Receipt bundles are always computed (needed for Merkle root)
         receipt_bundle_refs = [
             self.ensure_receipt_bundle(receipt.receipt_id) for receipt in receipts
         ]
@@ -247,9 +262,7 @@ class ProofService:
                 if str(bundle.get("context_manifest_ref", "")).strip()
             }
         )
-        context_manifests = [
-            self._load_artifact_payload(ref_id) for ref_id in context_manifest_refs
-        ]
+
         contracts = (
             self.store.list_execution_contracts(task_id=task_id, limit=500)
             if hasattr(self.store, "list_execution_contracts")
@@ -270,81 +283,103 @@ class ProofService:
             if hasattr(self.store, "list_reconciliations")
             else []
         )
+
         verification = self.verify_task_chain(task_id)
-        proof_payload = {
+        inclusion = self._receipt_inclusion_proofs(receipt_bundles)
+
+        # --- Core payload (always included) ---
+        proof_payload: dict[str, Any] = {
             "task_id": task_id,
             "exported_at": time.time(),
-            "proof_mode": _PROOF_MODE_HASH_CHAINED,
+            "detail": detail,
+            "proof_mode": self._export_proof_mode(
+                receipts, inclusion_enabled=bool(inclusion["proofs"])
+            ),
             "proof_coverage": self._proof_coverage(receipts),
             "status": "verified" if verification["valid"] else "invalid_chain",
             "chain_verification": verification,
             "task_projection_summary": self.build_proof_summary(task_id)["projection"],
-            "receipt_bundles": receipt_bundles,
-            "context_manifests": context_manifests,
-            "decision_refs": sorted(
-                {receipt.decision_ref for receipt in receipts if receipt.decision_ref}
-            ),
-            "approval_refs": sorted(
-                {receipt.approval_ref for receipt in receipts if receipt.approval_ref}
-            ),
+            "receipt_merkle_root": inclusion["root"],
+            "receipt_count": len(receipts),
+            "decision_refs": sorted({r.decision_ref for r in receipts if r.decision_ref}),
+            "approval_refs": sorted({r.approval_ref for r in receipts if r.approval_ref}),
             "capability_grant_refs": sorted(
-                {
-                    receipt.capability_grant_ref
-                    for receipt in receipts
-                    if receipt.capability_grant_ref
-                }
+                {r.capability_grant_ref for r in receipts if r.capability_grant_ref}
             ),
             "workspace_lease_refs": sorted(
-                {receipt.workspace_lease_ref for receipt in receipts if receipt.workspace_lease_ref}
+                {r.workspace_lease_ref for r in receipts if r.workspace_lease_ref}
             ),
-            "capability_grants": [
-                grant.__dict__ for grant in self._capability_grants_for_receipts(receipts)
-            ],
-            "workspace_leases": [
-                lease.__dict__ for lease in self._workspace_leases_for_receipts(receipts)
-            ],
             "execution_contract_refs": [record.contract_id for record in contracts],
             "evidence_case_refs": [record.evidence_case_id for record in evidence_cases],
             "authorization_plan_refs": [
                 record.authorization_plan_id for record in authorization_plans
             ],
             "reconciliation_refs": [record.reconciliation_id for record in reconciliations],
-            "execution_contracts": [record.__dict__ for record in contracts],
-            "evidence_cases": [record.__dict__ for record in evidence_cases],
-            "authorization_plans": [record.__dict__ for record in authorization_plans],
-            "reconciliations": [record.__dict__ for record in reconciliations],
-            "artifact_hash_index": self._artifact_hash_index(
-                task_id, receipts, receipt_bundle_refs, context_manifest_refs
-            ),
         }
-        proof_payload["chain_completeness"] = self._chain_completeness(
+
+        # --- Chain completeness ---
+        completeness = self._chain_completeness(
             receipts, contracts, evidence_cases, authorization_plans, reconciliations
         )
-        inclusion = self._receipt_inclusion_proofs(receipt_bundles)
-        proof_payload["receipt_merkle_root"] = inclusion["root"]
-        proof_payload["receipt_inclusion_proofs"] = inclusion["proofs"]
-        proof_payload["proof_mode"] = self._export_proof_mode(
-            receipts, inclusion_enabled=bool(inclusion["proofs"])
-        )
-        if proof_payload["proof_mode"] == _PROOF_MODE_SIGNED_WITH_INCLUSION_PROOF:
-            for receipt in receipts:
-                self.store.update_receipt_proof_fields(
-                    receipt.receipt_id,
-                    proof_mode=_PROOF_MODE_SIGNED_WITH_INCLUSION_PROOF,
-                    verifiability="strong_signed_with_inclusion_proof",
-                    signer_ref=self.signing_key_id if self.signing_secret else receipt.signer_ref,
-                )
-        signature_meta = self._signature_metadata(proof_payload, artifact_kind="proof.bundle")
-        if signature_meta is not None:
-            proof_payload["signature"] = signature_meta
-        proof_bundle_ref = self._store_sealed_artifact(
-            task_id=task_id,
-            step_id=receipts[0].step_id if receipts else None,
-            kind="proof.bundle",
-            payload=proof_payload,
-            producer="proof_service",
-        )
-        proof_payload["proof_bundle_ref"] = proof_bundle_ref
+        if detail == "summary":
+            proof_payload["chain_completeness"] = {
+                "total_receipts": completeness["total_receipts"],
+                "complete_chains": completeness["complete_chains"],
+                "incomplete_chains": completeness["incomplete_chains"],
+                "completeness_percent": completeness["completeness_percent"],
+            }
+        else:
+            proof_payload["chain_completeness"] = completeness
+
+        # --- Standard: add full governance records ---
+        if detail in ("standard", "full"):
+            proof_payload["capability_grants"] = [
+                grant.__dict__ for grant in self._capability_grants_for_receipts(receipts)
+            ]
+            proof_payload["workspace_leases"] = [
+                lease.__dict__ for lease in self._workspace_leases_for_receipts(receipts)
+            ]
+            proof_payload["execution_contracts"] = [record.__dict__ for record in contracts]
+            proof_payload["evidence_cases"] = [record.__dict__ for record in evidence_cases]
+            proof_payload["authorization_plans"] = [
+                record.__dict__ for record in authorization_plans
+            ]
+            proof_payload["reconciliations"] = [record.__dict__ for record in reconciliations]
+
+        # --- Full: add heavy payload sections ---
+        if detail == "full":
+            context_manifests = [
+                self._load_artifact_payload(ref_id) for ref_id in context_manifest_refs
+            ]
+            proof_payload["receipt_bundles"] = receipt_bundles
+            proof_payload["context_manifests"] = context_manifests
+            proof_payload["artifact_hash_index"] = self._artifact_hash_index(
+                task_id, receipts, receipt_bundle_refs, context_manifest_refs
+            )
+            proof_payload["receipt_inclusion_proofs"] = inclusion["proofs"]
+
+            if proof_payload["proof_mode"] == (_PROOF_MODE_SIGNED_WITH_INCLUSION_PROOF):
+                for receipt in receipts:
+                    self.store.update_receipt_proof_fields(
+                        receipt.receipt_id,
+                        proof_mode=_PROOF_MODE_SIGNED_WITH_INCLUSION_PROOF,
+                        verifiability="strong_signed_with_inclusion_proof",
+                        signer_ref=(
+                            self.signing_key_id if self.signing_secret else receipt.signer_ref
+                        ),
+                    )
+            signature_meta = self._signature_metadata(proof_payload, artifact_kind="proof.bundle")
+            if signature_meta is not None:
+                proof_payload["signature"] = signature_meta
+            proof_bundle_ref = self._store_sealed_artifact(
+                task_id=task_id,
+                step_id=receipts[0].step_id if receipts else None,
+                kind="proof.bundle",
+                payload=proof_payload,
+                producer="proof_service",
+            )
+            proof_payload["proof_bundle_ref"] = proof_bundle_ref
+
         return proof_payload
 
     def _create_context_manifest(self, receipt: ReceiptRecord) -> str:

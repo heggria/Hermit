@@ -29,8 +29,7 @@ from hermit.plugins.builtin.hooks.scheduler.models import ScheduledJob
 
 
 class KernelStoreTypingBase:
-    _lock: Any
-    _conn: sqlite3.Connection
+    def _get_conn(self) -> sqlite3.Connection: ...
 
     def _id(self, prefix: str) -> str: ...
 

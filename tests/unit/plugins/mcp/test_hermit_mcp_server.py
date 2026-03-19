@@ -326,6 +326,129 @@ class TestHermitSubmitTaskPolicyProfile:
         assert meta["policy_profile"] == "supervised"
 
 
+class TestHermitSubmitDagTask:
+    """Tests for the hermit_submit_dag_task MCP tool."""
+
+    def test_submit_diamond_dag(self, server: HermitMcpServer, runner: FakeRunner) -> None:
+        """Diamond DAG: A → {B, C} → D creates correct topology."""
+        from dataclasses import dataclass
+        from typing import Any as _Any
+
+        # Build a fake TaskController with start_dag_task
+        @dataclass
+        class FakeDAGDef:
+            roots: list[str]
+            leaves: list[str]
+            topological_order: list[str]
+
+        call_log: list[dict[str, _Any]] = []
+
+        def fake_start_dag_task(
+            *, conversation_id, goal, source_channel, nodes, policy_profile, requested_by, **kw
+        ):
+            call_log.append(
+                {
+                    "goal": goal,
+                    "nodes": nodes,
+                    "policy_profile": policy_profile,
+                    "source_channel": source_channel,
+                }
+            )
+            ctx = SimpleNamespace(task_id="dag-task-1")
+            dag = FakeDAGDef(
+                roots=["research"],
+                leaves=["review"],
+                topological_order=["research", "frontend", "backend", "review"],
+            )
+            key_map = {
+                "research": "step-1",
+                "frontend": "step-2",
+                "backend": "step-3",
+                "review": "step-4",
+            }
+            return ctx, dag, key_map
+
+        runner.task_controller.start_dag_task = fake_start_dag_task
+
+        result = _call_tool(
+            server,
+            "hermit_submit_dag_task",
+            goal="Build full-stack feature",
+            nodes=[
+                {"key": "research", "kind": "research", "title": "Research"},
+                {
+                    "key": "frontend",
+                    "kind": "code",
+                    "title": "Frontend",
+                    "depends_on": ["research"],
+                },
+                {"key": "backend", "kind": "code", "title": "Backend", "depends_on": ["research"]},
+                {
+                    "key": "review",
+                    "kind": "review",
+                    "title": "Review",
+                    "depends_on": ["frontend", "backend"],
+                },
+            ],
+        )
+
+        assert result["status"] == "queued"
+        assert result["task_id"] == "dag-task-1"
+        assert result["dag_topology"]["roots"] == ["research"]
+        assert result["dag_topology"]["leaves"] == ["review"]
+        assert result["dag_topology"]["total_steps"] == 4
+        assert result["step_ids"]["frontend"] == "step-2"
+        assert len(call_log) == 1
+        assert call_log[0]["policy_profile"] == "autonomous"
+
+    def test_submit_dag_missing_node_field(self, server: HermitMcpServer) -> None:
+        """Node missing required 'kind' field returns error."""
+        result = _call_tool(
+            server,
+            "hermit_submit_dag_task",
+            goal="Bad DAG",
+            nodes=[{"key": "a", "title": "Only key and title"}],
+        )
+        assert "error" in result
+        assert "missing required field" in result["error"]
+
+    def test_submit_dag_validation_error(self, server: HermitMcpServer, runner: FakeRunner) -> None:
+        """Cycle in DAG returns validation error."""
+
+        def fake_start_dag_task(**kw):
+            raise ValueError("Cycle detected in step DAG")
+
+        runner.task_controller.start_dag_task = fake_start_dag_task
+
+        result = _call_tool(
+            server,
+            "hermit_submit_dag_task",
+            goal="Cyclic DAG",
+            nodes=[
+                {"key": "a", "kind": "execute", "title": "A", "depends_on": ["b"]},
+                {"key": "b", "kind": "execute", "title": "B", "depends_on": ["a"]},
+            ],
+        )
+        assert "error" in result
+        assert "Cycle" in result["error"]
+
+    def test_submit_dag_no_task_controller(self) -> None:
+        """When runner has no task_controller, returns error."""
+        srv = HermitMcpServer(host="127.0.0.1", port=0)
+        srv._runner = SimpleNamespace(
+            task_controller=None, agent=SimpleNamespace(kernel_store=None)
+        )
+
+        result = _call_tool(
+            srv,
+            "hermit_submit_dag_task",
+            goal="No controller",
+            nodes=[{"key": "a", "kind": "execute", "title": "A"}],
+        )
+        assert "error" in result
+        assert "TaskController" in result["error"]
+
+
 class TestHermitApproveTaskNotFound:
     def test_approve_task_not_found(self, server: HermitMcpServer, store: FakeStore) -> None:
         """Approval exists but its task_id points to a missing task."""
@@ -338,6 +461,126 @@ class TestHermitApproveTaskNotFound:
         store.approvals = [FakeApproval(approval_id="apr-orphan", task_id="gone")]
         result = _call_tool(server, "hermit_deny", approval_id="apr-orphan")
         assert result["error"] == "Task not found for approval"
+
+
+class TestHermitAwaitCompletion:
+    """Tests for the hermit_await_completion long-poll tool."""
+
+    def test_await_already_completed_returns_immediately(
+        self, server: HermitMcpServer, store: FakeStore
+    ) -> None:
+        store.tasks["task-1"].status = "completed"
+        result = _call_tool(server, "hermit_await_completion", task_ids=["task-1"], timeout=5)
+        assert result["timed_out"] is False
+        assert result["pending"] == []
+        assert "task-1" in result["completed"]
+        assert result["completed"]["task-1"]["status"] == "completed"
+
+    def test_await_not_found_task(self, server: HermitMcpServer) -> None:
+        result = _call_tool(server, "hermit_await_completion", task_ids=["nonexistent"], timeout=5)
+        assert result["timed_out"] is False
+        assert result["completed"]["nonexistent"]["status"] == "not_found"
+
+    def test_await_mixed_terminal_and_not_found(
+        self, server: HermitMcpServer, store: FakeStore
+    ) -> None:
+        store.tasks["task-1"].status = "failed"
+        result = _call_tool(
+            server,
+            "hermit_await_completion",
+            task_ids=["task-1", "nonexistent"],
+            timeout=5,
+        )
+        assert result["timed_out"] is False
+        assert result["completed"]["task-1"]["status"] == "failed"
+        assert result["completed"]["nonexistent"]["status"] == "not_found"
+
+    def test_await_running_task_becomes_completed(
+        self, server: HermitMcpServer, store: FakeStore
+    ) -> None:
+        """Simulate a task completing after a short delay."""
+        import threading
+
+        store.tasks["task-1"].status = "running"
+
+        def complete_after_delay():
+            import time
+
+            time.sleep(0.3)
+            store.tasks["task-1"].status = "completed"
+
+        t = threading.Thread(target=complete_after_delay)
+        t.start()
+        try:
+            result = _call_tool(server, "hermit_await_completion", task_ids=["task-1"], timeout=10)
+            assert result["timed_out"] is False
+            assert "task-1" in result["completed"]
+            assert result["completed"]["task-1"]["status"] == "completed"
+        finally:
+            t.join(timeout=5)
+
+    def test_await_timeout_returns_pending(self, server: HermitMcpServer, store: FakeStore) -> None:
+        store.tasks["task-1"].status = "running"
+        result = _call_tool(server, "hermit_await_completion", task_ids=["task-1"], timeout=1)
+        assert result["timed_out"] is True
+        assert len(result["pending"]) == 1
+        assert result["pending"][0]["task_id"] == "task-1"
+        assert result["pending"][0]["status"] == "running"
+
+    def test_await_blocked_task_reports_approvals(
+        self, server: HermitMcpServer, store: FakeStore
+    ) -> None:
+        store.tasks["task-1"].status = "blocked"
+        result = _call_tool(server, "hermit_await_completion", task_ids=["task-1"], timeout=2)
+        assert "task-1" in result["completed"]
+        assert result["completed"]["task-1"]["status"] == "blocked"
+        assert "pending_approvals" in result["completed"]["task-1"]
+
+    def test_await_multiple_tasks_returns_on_first_completion(
+        self, server: HermitMcpServer, store: FakeStore
+    ) -> None:
+        """With multiple running tasks, returns as soon as any one finishes."""
+        import threading
+
+        store.tasks["task-1"].status = "running"
+        store.tasks["task-2"] = FakeTask(task_id="task-2", status="running")
+
+        def complete_one():
+            import time
+
+            time.sleep(0.3)
+            store.tasks["task-2"].status = "completed"
+
+        t = threading.Thread(target=complete_one)
+        t.start()
+        try:
+            result = _call_tool(
+                server,
+                "hermit_await_completion",
+                task_ids=["task-1", "task-2"],
+                timeout=10,
+            )
+            assert result["timed_out"] is False
+            assert "task-2" in result["completed"]
+            assert result["completed"]["task-2"]["status"] == "completed"
+            # task-1 still pending
+            pending_ids = [p["task_id"] for p in result["pending"]]
+            assert "task-1" in pending_ids
+        finally:
+            t.join(timeout=5)
+
+    def test_await_timeout_clamped(self, server: HermitMcpServer, store: FakeStore) -> None:
+        """Timeout values are clamped to [1, 300]."""
+        store.tasks["task-1"].status = "completed"
+        # Negative timeout clamped to 1
+        result = _call_tool(server, "hermit_await_completion", task_ids=["task-1"], timeout=-5)
+        assert result["timed_out"] is False
+
+    def test_await_empty_task_ids(self, server: HermitMcpServer) -> None:
+        result = _call_tool(server, "hermit_await_completion", task_ids=[], timeout=5)
+        assert result["timed_out"] is False
+        assert result["completed"] == {}
+        assert result["pending"] == []
 
 
 class TestServerLifecycle:

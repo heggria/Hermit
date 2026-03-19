@@ -354,14 +354,14 @@ def test_executor_and_rollback_localize_core_copy(monkeypatch, tmp_path: Path) -
     store, artifacts, _controller, executor, ctx = _kernel_runtime(tmp_path)
     ctx.workspace_root = str(workspace)
 
-    preview = executor._preview_text(  # type: ignore[attr-defined]
+    preview = executor._request.preview_text(
         executor.registry.get("write_file"),
         {"path": "localized.txt", "content": "after\n"},
     )
-    auth_reason = executor._authorization_reason(  # type: ignore[attr-defined]
+    auth_reason = executor._authorization.authorization_reason(
         policy=SimpleNamespace(reason=""), approval_mode="once"
     )
-    success_summary = executor._successful_result_summary(  # type: ignore[attr-defined]
+    success_summary = executor._authorization.successful_result_summary(
         tool_name="write_file", approval_mode="once"
     )
 
@@ -400,7 +400,7 @@ def test_controller_and_executor_localize_core_errors(monkeypatch, tmp_path: Pat
         executor.load_suspended_state("attempt-missing")
 
     with pytest.raises(RuntimeError, match="不支持的 runtime snapshot schema version"):
-        executor._runtime_snapshot_payload(  # type: ignore[attr-defined]
+        executor._persistence._runtime_snapshot_payload(
             {
                 "schema_version": 99,
                 "kind": "runtime_snapshot",
@@ -410,7 +410,7 @@ def test_controller_and_executor_localize_core_errors(monkeypatch, tmp_path: Pat
         )
 
     with pytest.raises(RuntimeError, match="未找到 resume messages artifact：artifact-missing"):
-        executor._load_resume_messages("artifact-missing")  # type: ignore[attr-defined]
+        executor._persistence._load_resume_messages("artifact-missing")
 
     with pytest.raises(RuntimeError, match="request_overrides.actor 必须是 dict"):
         executor._apply_request_overrides(  # type: ignore[attr-defined]

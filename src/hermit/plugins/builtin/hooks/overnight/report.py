@@ -35,16 +35,12 @@ class OvernightReportService:
         self._store = store
 
     def _query(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
-        lock = self._store._lock  # pyright: ignore[reportPrivateUsage]
-        conn = self._store._conn  # pyright: ignore[reportPrivateUsage]
-        with lock:
-            return conn.execute(sql, params).fetchall()
+        conn = self._store._get_conn()
+        return conn.execute(sql, params).fetchall()
 
     def _query_one(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
-        lock = self._store._lock  # pyright: ignore[reportPrivateUsage]
-        conn = self._store._conn  # pyright: ignore[reportPrivateUsage]
-        with lock:
-            return conn.execute(sql, params).fetchone()
+        conn = self._store._get_conn()
+        return conn.execute(sql, params).fetchone()
 
     def generate(self, *, lookback_hours: int = 12) -> OvernightSummary:
         now = time.time()

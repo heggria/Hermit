@@ -165,9 +165,9 @@ def test_find_competition_by_candidate_task(tmp_path: Path) -> None:
     assert store.find_competition_by_candidate_task("unknown") is None
 
 
-def test_schema_version_bumped_to_10(tmp_path: Path) -> None:
+def test_schema_version_bumped_to_11(tmp_path: Path) -> None:
     store = KernelStore(tmp_path / "state.db")
-    assert store.schema_version() == "10"
+    assert store.schema_version() == "11"
 
 
 def test_update_competition_status_not_found(tmp_path: Path) -> None:

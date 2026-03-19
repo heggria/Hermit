@@ -382,8 +382,8 @@ def test_task_controller_surfaces_missing_task_rows_for_attempt_context(tmp_path
     controller = TaskController(store)
     ctx = _start_task(controller, conversation_id="conv-missing-task")
 
-    with store._lock, store._conn:  # type: ignore[attr-defined]
-        store._conn.execute("DELETE FROM tasks WHERE task_id = ?", (ctx.task_id,))  # type: ignore[attr-defined]
+    with store._get_conn():
+        store._get_conn().execute("DELETE FROM tasks WHERE task_id = ?", (ctx.task_id,))
 
     with pytest.raises(KeyError):
         controller.context_for_attempt(ctx.step_attempt_id)

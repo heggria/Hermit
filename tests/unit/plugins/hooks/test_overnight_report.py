@@ -27,8 +27,8 @@ def _insert_task(
     updated_at: float | None = None,
 ) -> None:
     now = updated_at or time.time()
-    with store._lock, store._conn:
-        store._conn.execute(
+    with store._get_conn():
+        store._get_conn().execute(
             """
             INSERT INTO tasks (
                 task_id, conversation_id, title, goal, status, priority,
@@ -46,8 +46,8 @@ def _insert_receipt(
     created_at: float | None = None,
 ) -> None:
     now = created_at or time.time()
-    with store._lock, store._conn:
-        store._conn.execute(
+    with store._get_conn():
+        store._get_conn().execute(
             """
             INSERT INTO receipts (
                 receipt_id, task_id, step_id, step_attempt_id, action_type,
@@ -67,8 +67,8 @@ def _insert_approval(
     requested_at: float | None = None,
 ) -> None:
     now = requested_at or time.time()
-    with store._lock, store._conn:
-        store._conn.execute(
+    with store._get_conn():
+        store._get_conn().execute(
             """
             INSERT INTO approvals (
                 approval_id, task_id, step_id, step_attempt_id, status,

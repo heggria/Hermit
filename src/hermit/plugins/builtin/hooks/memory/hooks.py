@@ -17,6 +17,7 @@ from hermit.kernel.context.memory.text import is_duplicate, shares_topic
 from hermit.kernel.context.models.context import TaskExecutionContext, WorkingStateSnapshot
 from hermit.kernel.task.services.planning import PlanningService
 from hermit.plugins.builtin.hooks.memory.engine import MemoryEngine
+from hermit.plugins.builtin.hooks.memory.hooks_injection import inject_memory as _inject_memory_impl
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
 from hermit.runtime.capability.contracts.base import HookEvent, PluginContext
 from hermit.runtime.provider_host.execution.services import (
@@ -68,7 +69,7 @@ def register(ctx: PluginContext) -> None:
     engine = MemoryEngine(settings.memory_file)
 
     def _hook_system_prompt(**_: Any) -> str:
-        return _inject_memory(engine, settings)
+        return _inject_memory_impl(engine, settings)
 
     def _hook_pre_run(
         prompt: str = "",
@@ -95,6 +96,7 @@ def register(ctx: PluginContext) -> None:
 
     def _hook_session_end(session_id: str, messages: list[dict[str, Any]]) -> None:
         _save_memories(engine, settings, session_id, messages)
+        _maybe_consolidate(settings)
 
     ctx.add_hook(HookEvent.SYSTEM_PROMPT, _hook_system_prompt, priority=20)
     ctx.add_hook(HookEvent.PRE_RUN, _hook_pre_run, priority=20)
@@ -102,29 +104,53 @@ def register(ctx: PluginContext) -> None:
     ctx.add_hook(HookEvent.SESSION_END, _hook_session_end, priority=90)
 
 
-def _inject_memory(engine: MemoryEngine, settings: Any | None = None) -> str:
-    compiler_result = _compile_context_pack(
-        engine,
-        settings,
-        query="",
-        conversation_id=None,
-        runner=None,
-    )
-    if compiler_result is None:
-        categories = _knowledge_categories(engine, settings)
-        static_categories = _GOVERNANCE.filter_static_categories(categories)
-        prompt = engine.summary_prompt(static_categories, limit_per_category=3)
-        entry_count = sum(min(3, len(entries)) for entries in static_categories.values() if entries)
-        category_count = sum(1 for entries in static_categories.values() if entries)
-    else:
-        prompt = compiler_result["static_prompt"]
-        entry_count = len(compiler_result["pack"].static_memory)
-        category_count = len({item["category"] for item in compiler_result["pack"].static_memory})
-    if not prompt:
-        log.info("memory_injected", categories=0, entries=0)
-        return ""
-    log.info("memory_injected", categories=category_count, entries=entry_count)
-    return f"<memory_context>\n{prompt}\n</memory_context>"
+_CONSOLIDATION_THROTTLE_SECONDS = 86400  # 24 hours
+
+
+def _maybe_consolidate(settings: Any) -> None:
+    """Run memory consolidation if enough time has passed since last run.
+
+    Throttled to at most once per 24 hours via a timestamp file.
+    Never raises — consolidation failure must not block session end.
+    """
+    try:
+        kernel_db_path = getattr(settings, "kernel_db_path", None)
+        if not kernel_db_path:
+            return
+
+        import time
+
+        throttle_file = Path(settings.memory_file).parent / ".last_consolidation"
+        if throttle_file.exists():
+            try:
+                last_run = float(throttle_file.read_text().strip())
+                if time.time() - last_run < _CONSOLIDATION_THROTTLE_SECONDS:
+                    return
+            except (ValueError, OSError):
+                pass  # Corrupted throttle file — proceed with consolidation
+
+        from hermit.kernel.ledger.journal.store import KernelStore
+        from hermit.plugins.builtin.hooks.memory.services import get_services
+
+        store = KernelStore(Path(kernel_db_path))
+        try:
+            services = get_services(store)
+            report = services.consolidation.run_consolidation(store)
+            log.info(
+                "consolidation_completed",
+                merged=report.merged_count,
+                strengthened=report.strengthened_count,
+                decayed=report.decayed_count,
+                insights=report.new_insights_count,
+                pitfalls=report.new_pitfalls_count,
+            )
+        finally:
+            store.close()
+
+        throttle_file.parent.mkdir(parents=True, exist_ok=True)
+        throttle_file.write_text(str(time.time()))
+    except Exception:
+        log.warning("consolidation_failed", exc_info=True)
 
 
 def _inject_relevant_memory(
@@ -1089,3 +1115,15 @@ def _bump_session_index(state_file: Path) -> int:  # pyright: ignore[reportUnuse
     except Exception:
         log.warning("session_state_update_failed")
         return 1
+
+
+# --- Public aliases ---
+inject_memory = _inject_memory_impl
+inject_relevant_memory = _inject_relevant_memory
+checkpoint_memories = _checkpoint_memories
+save_memories = _save_memories
+should_checkpoint = _should_checkpoint
+format_transcript = _format_transcript
+memory_entry_payload = _memory_entry_payload
+extract_memory_payload = _extract_memory_payload
+promote_memories_via_kernel = _promote_memories_via_kernel

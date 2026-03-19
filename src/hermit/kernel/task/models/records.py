@@ -42,6 +42,8 @@ class StepRecord:
     title: str | None = None
     contract_ref: str | None = None
     depends_on: list[str] = field(default_factory=list[str])
+    join_strategy: str = "all_required"
+    input_bindings: dict[str, str] = field(default_factory=dict[str, str])
     max_attempts: int = 1
     started_at: float | None = None
     finished_at: float | None = None

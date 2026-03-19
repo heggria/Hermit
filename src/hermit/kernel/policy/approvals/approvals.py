@@ -282,3 +282,49 @@ class ApprovalService:
         if reason:
             return f"Approval denied: {reason}"
         return "Approval denied."
+
+    def request_batch(
+        self,
+        *,
+        task_id: str,
+        approval_requests: list[dict[str, Any]],
+        batch_reason: str = "",
+    ) -> list[str]:
+        """Create correlated approvals for multiple parallel steps.
+
+        Each request dict should contain: step_id, step_attempt_id, approval_type,
+        requested_action, request_packet_ref.
+        All share a batch_id stored in the resolution dict.
+        """
+        import uuid
+
+        batch_id = f"batch_{uuid.uuid4().hex[:12]}"
+        ids: list[str] = []
+        for req in approval_requests:
+            aid = self.request(
+                task_id=task_id,
+                step_id=req["step_id"],
+                step_attempt_id=req["step_attempt_id"],
+                approval_type=req.get("approval_type", "tool_use"),
+                requested_action=req.get("requested_action", {}),
+                request_packet_ref=req.get("request_packet_ref"),
+            )
+            self.store.resolve_approval(
+                aid,
+                status="pending",
+                resolved_by="system",
+                resolution={"batch_id": batch_id, "batch_reason": batch_reason},
+            )
+            ids.append(aid)
+        return ids
+
+    def approve_batch(self, batch_id: str, *, resolved_by: str = "user") -> list[str]:
+        """Approve all pending approvals sharing a batch_id."""
+        approved: list[str] = []
+        approvals = self.store.list_approvals(status="pending", limit=1000)
+        for a in approvals:
+            resolution = dict(a.resolution or {})
+            if resolution.get("batch_id") == batch_id:
+                self.approve(a.approval_id, resolved_by=resolved_by)
+                approved.append(a.approval_id)
+        return approved

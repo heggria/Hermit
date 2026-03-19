@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import resolve_locale
 from hermit.runtime.capability.contracts.base import (
     AdapterProtocol,
     AdapterSpec,
@@ -20,6 +20,9 @@ from hermit.runtime.capability.contracts.hooks import HooksEngine
 from hermit.runtime.capability.contracts.rules import load_rules_text
 from hermit.runtime.capability.contracts.skills import SkillDefinition, load_skills
 from hermit.runtime.capability.loader.loader import discover_plugins, load_plugin_entries
+from hermit.runtime.capability.registry.skill_loader import SkillLoader
+from hermit.runtime.capability.registry.subagent_executor import SubagentExecutor
+from hermit.runtime.capability.registry.system_prompt_builder import SystemPromptBuilder
 from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec, localize_tool_spec
 
 log = structlog.get_logger()
@@ -47,12 +50,19 @@ class PluginManager:
         self._all_mcp: list[McpServerSpec] = []
         self._all_commands: list[CommandSpec] = []
         self._mcp_manager: Any = None
-        self._runtime: Any = None
         self._registry: ToolRegistry | None = None
-        self._model: str = ""
-        self._max_tokens: int = 2048
-        self._tool_output_limit: int = 4000
-        self._on_tool_call: Any = None
+
+        # Extracted delegates
+        self._subagent_executor = SubagentExecutor(
+            hooks=self.hooks,
+            runtime=None,
+            settings=settings,
+            registry=None,
+            model="",
+            max_tokens=2048,
+            tool_output_limit=4000,
+            on_tool_call=None,
+        )
 
     def discover_and_load(self, *search_dirs: Path) -> None:
         manifests = discover_plugins(*search_dirs)
@@ -106,114 +116,48 @@ class PluginManager:
                 log.warning("duplicate_tool", name=tool.name)
 
         for spec in self._all_subagents:
-            tool = self._build_delegation_tool(spec)
+            tool = self._subagent_executor.build_delegation_tool(spec)
             try:
                 registry.register(tool)
             except ValueError:
                 log.warning("duplicate_delegation_tool", name=tool.name)
 
-        if self._all_skills:
-            skill_names = [s.name for s in self._all_skills]
-            registry.register(
-                localize_tool_spec(
-                    ToolSpec(
-                        name="read_skill",
-                        description=(
-                            "Load a skill's full instructions into context. "
-                            "Use when a task matches a skill's description from the catalog."
-                        ),
-                        description_key="prompt.available_skills.read_skill.description",
-                        input_schema={
-                            "type": "object",
-                            "properties": {
-                                "name": {
-                                    "type": "string",
-                                    "description_key": "prompt.available_skills.read_skill.name",
-                                    "enum": skill_names,
-                                },
-                            },
-                            "required": ["name"],
-                        },
-                        handler=self._read_skill_handler,
-                        readonly=True,
-                        action_class="read_local",
-                        idempotent=True,
-                        risk_hint="low",
-                        requires_receipt=False,
-                        result_is_internal_context=True,
-                    ),
-                    locale=locale,
-                )
-            )
+        skill_loader = SkillLoader(all_skills=self._all_skills, settings=self.settings)
+        skill_loader.register_skill_tool(registry)
 
         self.hooks.fire(HookEvent.REGISTER_TOOLS, registry=registry)
+
+    def _read_skill_handler(self, payload: dict[str, Any]) -> str:
+        """Backward-compatible delegate to SkillLoader."""
+        loader = SkillLoader(all_skills=self._all_skills, settings=self.settings)
+        return loader._read_skill_handler(payload)
 
     @property
     def all_commands(self) -> list[CommandSpec]:
         return list(self._all_commands)
 
-    def _read_skill_handler(self, payload: dict[str, Any]) -> str:
-        name = str(payload.get("name", ""))
-        locale = resolve_locale(getattr(self.settings, "locale", None))
-        for skill in self._all_skills:
-            if skill.name == name:
-                return f'<skill_content name="{name}">\n{skill.content}\n</skill_content>'
-        available = ", ".join(s.name for s in self._all_skills)
-        return tr(
-            "prompt.available_skills.read_skill.not_found",
-            locale=locale,
-            default=f"Skill '{name}' not found. Available: {available}",
-            name=name,
-            available=available,
-        )
-
     def configure_subagent_runtime(
         self, runtime: AgentRuntime, on_tool_call: ToolCallback | None = None
     ) -> None:
-        self._runtime = runtime
-        self._model = runtime.model
-        self._max_tokens = runtime.max_tokens
-        self._tool_output_limit = runtime.tool_output_limit
-        self._on_tool_call = on_tool_call
+        self._subagent_executor._runtime = runtime
+        self._subagent_executor._registry = self._registry
+        self._subagent_executor._model = runtime.model
+        self._subagent_executor._max_tokens = runtime.max_tokens
+        self._subagent_executor._tool_output_limit = runtime.tool_output_limit
+        self._subagent_executor._on_tool_call = on_tool_call
 
     def build_system_prompt(
         self,
         base_prompt: str,
         preloaded_skills: list[str] | None = None,
     ) -> str:
-        locale = resolve_locale(getattr(self.settings, "locale", None))
-        parts: list[str] = [base_prompt]
-
-        if self._all_rules_parts:
-            combined = "\n\n".join(self._all_rules_parts)
-            parts.append(f"<rules_context>\n{combined}\n</rules_context>")
-
-        preloaded = set(preloaded_skills or [])
-        catalog_skills = [s for s in self._all_skills if s.name not in preloaded]
-
-        for skill in self._all_skills:
-            if skill.name in preloaded:
-                parts.append(
-                    f'<skill_content name="{skill.name}">\n{skill.content}\n</skill_content>'
-                )
-
-        if catalog_skills:
-            lines = [
-                "<available_skills>",
-                tr("prompt.available_skills.intro", locale=locale),
-                tr("prompt.available_skills.guidance", locale=locale),
-                "",
-            ]
-            for skill in catalog_skills:
-                lines.append(f'  <skill name="{skill.name}">{skill.description}</skill>')
-            lines.append("</available_skills>")
-            parts.append("\n".join(lines))
-
-        for fragment in self.hooks.fire(HookEvent.SYSTEM_PROMPT):
-            if fragment:
-                parts.append(str(fragment))
-
-        return "\n\n".join(p for p in parts if p)
+        builder = SystemPromptBuilder(
+            all_skills=self._all_skills,
+            all_rules_parts=self._all_rules_parts,
+            hooks=self.hooks,
+            settings=self.settings,
+        )
+        return builder.build_system_prompt(base_prompt, preloaded_skills=preloaded_skills)
 
     def on_session_start(self, session_id: str) -> None:
         self.hooks.fire(HookEvent.SESSION_START, session_id=session_id)
@@ -266,192 +210,6 @@ class PluginManager:
     @property
     def manifests(self) -> list[PluginManifest]:
         return list(self._manifests)
-
-    def _build_delegation_tool(self, spec: SubagentSpec) -> ToolSpec:
-        locale = resolve_locale(getattr(self.settings, "locale", None))
-
-        def handler(payload: dict[str, Any]) -> str:
-            return self._run_subagent(spec, str(payload.get("task", "")))
-
-        if getattr(spec, "governed", False):
-            action_class = "delegate_execution"
-            readonly = False
-            risk_hint = "medium"
-            requires_receipt = True
-        else:
-            action_class = "delegate_reasoning"
-            readonly = True
-            risk_hint = "low"
-            requires_receipt = False
-
-        return localize_tool_spec(
-            ToolSpec(
-                name=f"delegate_{spec.name}",
-                description=tr(
-                    "prompt.delegation.description",
-                    locale=locale,
-                    default=f"Delegate a task to the {spec.name} subagent. {spec.description}",
-                    name=spec.name,
-                    description=spec.description,
-                ),
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description_key": "prompt.delegation.task",
-                        }
-                    },
-                    "required": ["task"],
-                },
-                handler=handler,
-                readonly=readonly,
-                action_class=action_class,
-                idempotent=True,
-                risk_hint=risk_hint,
-                requires_receipt=requires_receipt,
-            ),
-            locale=locale,
-        )
-
-    def _register_subagent_principal(self, spec: SubagentSpec) -> str | None:
-        """Register a principal for a governed subagent, returning the principal_id."""
-        if not spec.governed:
-            return None
-        store = getattr(self._runtime, "kernel_store", None)
-        if store is None:
-            return None
-        principal_id = f"principal_subagent_{spec.name}"
-        try:
-            store.ensure_principal(
-                principal_id=principal_id,
-                principal_type="subagent",
-                display_name=spec.name,
-                metadata={"parent_principal": "principal_user", "tools": spec.tools},
-            )
-        except Exception:
-            log.warning("subagent_principal_registration_failed", subagent=spec.name)
-            return None
-        return principal_id
-
-    def _emit_subagent_event(
-        self,
-        event_type: str,
-        spec: SubagentSpec,
-        principal_id: str,
-        payload: dict[str, Any] | None = None,
-    ) -> None:
-        """Emit a ledger event for subagent lifecycle."""
-        store = getattr(self._runtime, "kernel_store", None)
-        if store is None:
-            return
-        try:
-            store.append_event(
-                event_type=event_type,
-                entity_type="subagent",
-                entity_id=principal_id,
-                task_id=None,
-                actor=principal_id,
-                payload=payload or {},
-            )
-        except Exception:
-            log.warning(
-                "subagent_event_failed",
-                event_type=event_type,
-                subagent=spec.name,
-            )
-
-    def _run_subagent(self, spec: SubagentSpec, task: str) -> str:
-        if not self._runtime or not self._registry:
-            locale = resolve_locale(getattr(self.settings, "locale", None))
-            return tr(
-                "prompt.delegation.unavailable",
-                locale=locale,
-                default=f"[Subagent '{spec.name}' unavailable: agent runner not configured]",
-                name=spec.name,
-            )
-
-        import sys
-
-        DIM = "\033[2m"
-        MAGENTA = "\033[35m"
-        GREEN = "\033[32m"
-        RED = "\033[31m"
-        RESET = "\033[0m"
-
-        principal_id = self._register_subagent_principal(spec)
-
-        sub_registry = ToolRegistry()
-        available: list[str] = []
-        for tool_name in spec.tools:
-            try:
-                sub_registry.register(self._registry.get(tool_name))
-                available.append(tool_name)
-            except KeyError:
-                log.warning("subagent_tool_not_found", subagent=spec.name, tool=tool_name)
-
-        sub_agent = self._runtime.clone(
-            registry=sub_registry,
-            model=spec.model or self._model,
-            max_turns=15,
-            system_prompt=spec.system_prompt,
-        )
-
-        task_preview = task[:80] + ("..." if len(task) > 80 else "")
-        tools_str = ", ".join(available)
-        sys.stderr.write(
-            f"\n{MAGENTA}  ┌─ subagent:{spec.name} "
-            f"{DIM}[tools: {tools_str}]{RESET}\n"
-            f"{MAGENTA}  │{RESET} {DIM}{task_preview}{RESET}\n"
-        )
-        sys.stderr.flush()
-
-        if principal_id:
-            self._emit_subagent_event(
-                "subagent_spawned",
-                spec,
-                principal_id,
-                {"task_preview": task_preview, "tools": available},
-            )
-
-        def _sub_tool_call(name: str, inputs: dict[str, Any], result: object) -> None:
-            compact = ", ".join(f"{k}={repr(v)[:50]}" for k, v in inputs.items())
-            text = result if isinstance(result, str) else str(result)
-            preview = text[:150].replace("\n", " ")
-            if len(text) > 150:
-                preview += "..."
-            sys.stderr.write(f"{MAGENTA}  │{RESET}   ▸ {name}({compact})\n")
-            sys.stderr.write(f"{MAGENTA}  │{RESET}   {DIM}→ {preview}{RESET}\n")
-            sys.stderr.flush()
-
-        callback: ToolCallback = self._on_tool_call or _sub_tool_call
-
-        try:
-            result = sub_agent.run(task, on_tool_call=callback, readonly_only=True)
-            sys.stderr.write(
-                f"{MAGENTA}  └─{RESET} {GREEN}done{RESET} "
-                f"{DIM}({result.turns} turns, {result.tool_calls} tool calls){RESET}\n\n"
-            )
-            sys.stderr.flush()
-            if principal_id:
-                self._emit_subagent_event(
-                    "subagent_completed",
-                    spec,
-                    principal_id,
-                    {"turns": result.turns, "tool_calls": result.tool_calls},
-                )
-            return result.text
-        except Exception as exc:
-            sys.stderr.write(f"{MAGENTA}  └─{RESET} {RED}error: {exc}{RESET}\n\n")
-            sys.stderr.flush()
-            if principal_id:
-                self._emit_subagent_event(
-                    "subagent_failed",
-                    spec,
-                    principal_id,
-                    {"error": str(exc)},
-                )
-            return f"[Subagent '{spec.name}' error: {exc}]"
 
     # ── MCP lifecycle ──────────────────────────────────────────────
 

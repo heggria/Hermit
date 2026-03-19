@@ -245,13 +245,12 @@ class ContractTemplateLearner:
 
     def _reinforcement_count(self, memory_id: str) -> int:
         """Count ``contract_template.reinforced`` events for a memory record."""
-        with self.store._lock:  # pyright: ignore[reportPrivateUsage]
-            rows = self.store._rows(  # pyright: ignore[reportPrivateUsage]
-                "SELECT COUNT(*) AS cnt FROM events "
-                "WHERE entity_type = 'memory_record' AND entity_id = ? "
-                "AND event_type = 'contract_template.reinforced'",
-                (memory_id,),
-            )
+        rows = self.store._rows(
+            "SELECT COUNT(*) AS cnt FROM events "
+            "WHERE entity_type = 'memory_record' AND entity_id = ? "
+            "AND event_type = 'contract_template.reinforced'",
+            (memory_id,),
+        )
         return int(rows[0]["cnt"]) if rows else 0
 
     def _success_count_for(self, record: MemoryRecord) -> int:

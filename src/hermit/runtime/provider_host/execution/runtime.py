@@ -30,6 +30,7 @@ ToolCallback = Callable[[str, dict[str, Any], Any], None]
 ToolStartCallback = Callable[[str, dict[str, Any]], None]
 
 _TOOL_RESULT_BLOCK_TYPES = {"text", "image"}
+_CONTEXT_TOO_LONG_MARKERS = ("prompt is too long", "context window", "maximum context length")
 
 
 def _message_list() -> list[dict[str, Any]]:
@@ -315,6 +316,37 @@ class AgentRuntime:
             tool_calls=tool_calls,
         )
 
+    @staticmethod
+    def _is_context_too_long(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return any(marker in msg for marker in _CONTEXT_TOO_LONG_MARKERS)
+
+    def _trim_messages_for_retry(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        half_limit = max(self.tool_output_limit // 2, 256)
+        trimmed = []
+        for msg in messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                trimmed.append(msg)
+                continue
+            new_blocks = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    inner = block.get("content", "")
+                    if isinstance(inner, str) and len(inner) > half_limit:
+                        block = {**block, "content": truncate_middle_text(inner, half_limit)}
+                new_blocks.append(block)
+            trimmed.append({**msg, "content": new_blocks})
+        if len(trimmed) > 6:
+            kept_head = []
+            kept_tail = trimmed[-4:]
+            for m in trimmed[:-4]:
+                if m.get("role") == "system":
+                    kept_head.append(m)
+                    break
+            trimmed = kept_head + kept_tail
+        return trimmed
+
     def _run_from_messages(
         self,
         messages: list[dict[str, Any]],
@@ -342,20 +374,60 @@ class AgentRuntime:
                     )
                 )
             except Exception as exc:
-                log.error(
-                    "provider_call_error", provider=self.provider.name, turn=turn, error=str(exc)
-                )
-                return self._usage_to_result(
-                    usage,
-                    text=f"[API Error] {exc}",
-                    turns=turn,
-                    tool_calls=tool_calls,
-                    messages=messages,
-                    task_id=task_context.task_id if task_context else None,
-                    step_id=task_context.step_id if task_context else None,
-                    step_attempt_id=task_context.step_attempt_id if task_context else None,
-                    execution_status="failed",
-                )
+                if self._is_context_too_long(exc):
+                    log.warning(
+                        "context_too_long_retry",
+                        provider=self.provider.name,
+                        turn=turn,
+                        error=str(exc),
+                    )
+                    try:
+                        trimmed = self._trim_messages_for_retry(messages)
+                        response = self.provider.generate(
+                            self._request(
+                                trimmed,
+                                disable_tools=disable_tools,
+                                readonly_only=readonly_only,
+                                stream=False,
+                            )
+                        )
+                        messages = trimmed
+                    except Exception as retry_exc:
+                        log.error(
+                            "context_too_long_retry_failed",
+                            provider=self.provider.name,
+                            turn=turn,
+                            error=str(retry_exc),
+                        )
+                        return self._usage_to_result(
+                            usage,
+                            text=f"[API Error] {exc}",
+                            turns=turn,
+                            tool_calls=tool_calls,
+                            messages=messages,
+                            task_id=task_context.task_id if task_context else None,
+                            step_id=task_context.step_id if task_context else None,
+                            step_attempt_id=task_context.step_attempt_id if task_context else None,
+                            execution_status="failed",
+                        )
+                else:
+                    log.error(
+                        "provider_call_error",
+                        provider=self.provider.name,
+                        turn=turn,
+                        error=str(exc),
+                    )
+                    return self._usage_to_result(
+                        usage,
+                        text=f"[API Error] {exc}",
+                        turns=turn,
+                        tool_calls=tool_calls,
+                        messages=messages,
+                        task_id=task_context.task_id if task_context else None,
+                        step_id=task_context.step_id if task_context else None,
+                        step_attempt_id=task_context.step_attempt_id if task_context else None,
+                        execution_status="failed",
+                    )
 
             usage.input_tokens += response.usage.input_tokens
             usage.output_tokens += response.usage.output_tokens
@@ -721,6 +793,18 @@ class AgentRuntime:
                             usage.cache_read_tokens += event.usage.cache_read_tokens
                             usage.cache_creation_tokens += event.usage.cache_creation_tokens
             except Exception as exc:
+                if self._is_context_too_long(exc):
+                    log.warning(
+                        "stream_context_too_long_retry",
+                        provider=self.provider.name,
+                        turn=turn,
+                        error=str(exc),
+                    )
+                    try:
+                        messages = self._trim_messages_for_retry(messages)
+                        continue
+                    except Exception:
+                        pass
                 log.error("stream_error", provider=self.provider.name, turn=turn, error=str(exc))
                 return self._usage_to_result(
                     usage,

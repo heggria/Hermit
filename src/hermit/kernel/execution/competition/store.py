@@ -21,7 +21,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
 
     def _init_competition_schema(self) -> None:
         """Create competition tables if they don't exist."""
-        self._conn.execute(
+        self._get_conn().execute(
             """
             CREATE TABLE IF NOT EXISTS competitions (
                 competition_id TEXT PRIMARY KEY,
@@ -44,7 +44,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
             )
             """
         )
-        self._conn.execute(
+        self._get_conn().execute(
             """
             CREATE TABLE IF NOT EXISTS competition_candidates (
                 candidate_id TEXT PRIMARY KEY,
@@ -84,8 +84,8 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         now = time.time()
         criteria_json = json.dumps(evaluation_criteria or {}, ensure_ascii=False)
         weights_json = json.dumps(scoring_weights or {}, ensure_ascii=False)
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO competitions (
                     competition_id, parent_task_id, goal, strategy,
@@ -118,31 +118,28 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         return self._competition_from_row(row)
 
     def get_competition(self, competition_id: str) -> CompetitionRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM competitions WHERE competition_id = ?",
-                (competition_id,),
-            )
+        row = self._row(
+            "SELECT * FROM competitions WHERE competition_id = ?",
+            (competition_id,),
+        )
         return self._competition_from_row(row) if row is not None else None
 
     def find_competition_by_parent_task(self, task_id: str) -> CompetitionRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM competitions WHERE parent_task_id = ? ORDER BY created_at DESC",
-                (task_id,),
-            )
+        row = self._row(
+            "SELECT * FROM competitions WHERE parent_task_id = ? ORDER BY created_at DESC",
+            (task_id,),
+        )
         return self._competition_from_row(row) if row is not None else None
 
     def find_competition_by_candidate_task(self, task_id: str) -> CompetitionRecord | None:
-        with self._lock:
-            row = self._row(
-                """
-                SELECT c.* FROM competitions c
-                JOIN competition_candidates cc ON cc.competition_id = c.competition_id
-                WHERE cc.task_id = ?
-                """,
-                (task_id,),
-            )
+        row = self._row(
+            """
+            SELECT c.* FROM competitions c
+            JOIN competition_candidates cc ON cc.competition_id = c.competition_id
+            WHERE cc.task_id = ?
+            """,
+            (task_id,),
+        )
         return self._competition_from_row(row) if row is not None else None
 
     def update_competition_status(
@@ -156,7 +153,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         evaluation_artifact_ref: str | None = None,
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._get_conn():
             row = self._row(
                 "SELECT status FROM competitions WHERE competition_id = ?",
                 (competition_id,),
@@ -180,7 +177,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 sets.append("evaluation_artifact_ref = ?")
                 params.append(evaluation_artifact_ref)
             params.append(competition_id)
-            self._conn.execute(
+            self._get_conn().execute(
                 f"UPDATE competitions SET {', '.join(sets)} WHERE competition_id = ?",
                 tuple(params),
             )
@@ -197,8 +194,8 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
     ) -> CompetitionCandidateRecord:
         candidate_id = self._id("cand")
         now = time.time()
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO competition_candidates (
                     candidate_id, competition_id, task_id, label,
@@ -227,16 +224,14 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
             query += " AND status = ?"
             params.append(status)
         query += " ORDER BY created_at ASC"
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._candidate_from_row(r) for r in rows]
 
     def find_candidate_by_task(self, task_id: str) -> CompetitionCandidateRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM competition_candidates WHERE task_id = ?",
-                (task_id,),
-            )
+        row = self._row(
+            "SELECT * FROM competition_candidates WHERE task_id = ?",
+            (task_id,),
+        )
         return self._candidate_from_row(row) if row is not None else None
 
     def update_candidate_status(
@@ -251,7 +246,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         discard_reason: str | None = None,
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._get_conn():
             row = self._row(
                 "SELECT status FROM competition_candidates WHERE candidate_id = ?",
                 (candidate_id,),
@@ -281,7 +276,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 sets.append("discard_reason = ?")
                 params.append(discard_reason)
             params.append(candidate_id)
-            self._conn.execute(
+            self._get_conn().execute(
                 f"UPDATE competition_candidates SET {', '.join(sets)} WHERE candidate_id = ?",
                 tuple(params),
             )
@@ -296,7 +291,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         promoted: bool | None = None,
     ) -> None:
         """Update scoring fields without changing candidate status."""
-        with self._lock, self._conn:
+        with self._get_conn():
             row = self._row(
                 "SELECT candidate_id FROM competition_candidates WHERE candidate_id = ?",
                 (candidate_id,),
@@ -315,7 +310,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 sets.append("promoted = ?")
                 params.append(1 if promoted else 0)
             params.append(candidate_id)
-            self._conn.execute(
+            self._get_conn().execute(
                 f"UPDATE competition_candidates SET {', '.join(sets)} WHERE candidate_id = ?",
                 tuple(params),
             )
