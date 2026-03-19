@@ -416,6 +416,28 @@ class TestRecordReconciliation:
         contract_call = mock_store.update_execution_contract.call_args
         assert contract_call[1].get("status") == "partially_satisfied"
 
+    def test_contract_status_mapping_satisfied_sets_closed(
+        self,
+        executor: ReconciliationExecutor,
+        mock_store: MagicMock,
+        mock_deps: dict[str, MagicMock],
+    ) -> None:
+        """Satisfied reconciliation must transition the contract to the closed terminal state."""
+        self._setup_reconcile(mock_store, mock_deps, result_class="satisfied")
+        ctx = _make_attempt_ctx()
+        executor.record_reconciliation(
+            attempt_ctx=ctx,
+            receipt_id="rcpt-1",
+            action_type="write_local",
+            tool_input={},
+            observables=None,
+            witness_ref=None,
+            result_code_hint="succeeded",
+            authorized_effect_summary="test",
+        )
+        contract_call = mock_store.update_execution_contract.call_args
+        assert contract_call[1].get("status") == "closed"
+
 
 # ---------------------------------------------------------------------------
 # learn_contract_template

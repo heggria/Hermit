@@ -1228,6 +1228,37 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 },
             )
 
+    def try_supersede_step_attempt(
+        self,
+        step_attempt_id: str,
+        *,
+        finished_at: float,
+    ) -> bool:
+        """Atomically transition a step attempt to *superseded*.
+
+        This is a compare-and-swap (CAS) guard: the UPDATE is conditioned on
+        the attempt being in an active (non-terminal) status, so at most one
+        concurrent caller can win.  Both ``running`` and ``awaiting_approval``
+        are valid supersedable states — a drift detected while the attempt is
+        blocked waiting for approval must also trigger supersession so that a
+        fresh successor is created with the correct evidence.
+
+        Returns ``True`` if the transition succeeded (rowcount == 1) and
+        ``False`` if the attempt was already in a terminal/superseded state
+        (e.g. another thread beat us to it).
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE step_attempts
+                SET status = 'superseded', finished_at = ?
+                WHERE step_attempt_id = ?
+                  AND status IN ('running', 'awaiting_approval')
+                """,
+                (finished_at, step_attempt_id),
+            )
+            return cursor.rowcount == 1
+
     def create_ingress(
         self,
         *,

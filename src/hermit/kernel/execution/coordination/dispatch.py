@@ -99,19 +99,22 @@ class KernelDispatchService:
                 log.exception("kernel_dispatch_attempt_failed", step_attempt_id=attempt_id)
 
     def _on_attempt_completed(self, step_attempt_id: str) -> None:
-        """After a step completes, activate waiting dependents and wake the loop."""
+        """After a step completes, activate waiting dependents or cascade failure."""
         if not step_attempt_id:
             return
         try:
             attempt = self._runner.task_controller.store.get_step_attempt(step_attempt_id)
             if attempt is None:
                 return
+            store = self._runner.task_controller.store
             if attempt.status in ("succeeded", "completed", "skipped"):
-                activated = self._runner.task_controller.store.activate_waiting_dependents(
-                    attempt.task_id, attempt.step_id
-                )
+                activated = store.activate_waiting_dependents(attempt.task_id, attempt.step_id)
                 if activated:
                     self._wake.set()
+            elif attempt.status == "failed":
+                # Cascade failure to downstream steps and activate best_effort barriers.
+                store.propagate_step_failure(attempt.task_id, attempt.step_id)
+                self._wake.set()
         except Exception:
             log.exception(
                 "kernel_dispatch_dag_activation_failed",

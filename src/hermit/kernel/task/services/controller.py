@@ -230,7 +230,11 @@ class TaskController:
             requested_by=requested_by,
         )
         builder = StepDAGBuilder(self.store)
-        dag, key_to_step_id = builder.build_and_materialize(task.task_id, nodes)
+        dag, key_to_step_id = builder.build_and_materialize(
+            task.task_id,
+            nodes,
+            ingress_metadata=metadata,
+        )
         self.store.update_task_status(task.task_id, "queued")
 
         # Fix 6: build contexts for ALL roots, not just the first one.

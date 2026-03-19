@@ -44,7 +44,9 @@ class StepDAGBuilder:
         - No duplicate keys
         - All depends_on references exist
         - No cycles (Kahn's algorithm)
-        - Weakly connected
+
+        Disconnected subgraphs are allowed — independent parallel steps
+        do not need to be connected.
 
         Returns a DAGDefinition with topological ordering.
         """
@@ -84,24 +86,6 @@ class StepDAGBuilder:
         if len(topo_order) != len(node_map):
             raise ValueError("Cycle detected in step DAG")
 
-        if len(node_map) > 1:
-            undirected: dict[str, set[str]] = {k: set() for k in node_map}
-            for node in nodes:
-                for dep in node.depends_on:
-                    undirected[node.key].add(dep)
-                    undirected[dep].add(node.key)
-            visited: set[str] = set()
-            bfs_queue: deque[str] = deque([topo_order[0]])
-            visited.add(topo_order[0])
-            while bfs_queue:
-                current = bfs_queue.popleft()
-                for neighbor in undirected[current]:
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        bfs_queue.append(neighbor)
-            if len(visited) != len(node_map):
-                raise ValueError("Step DAG is not weakly connected")
-
         roots = [k for k in topo_order if not node_map[k].depends_on]
         out_degree = {k: len(adj[k]) for k in node_map}
         leaves = [k for k in topo_order if out_degree[k] == 0]
@@ -119,12 +103,22 @@ class StepDAGBuilder:
         dag: DAGDefinition,
         *,
         queue_priority: int = 0,
+        ingress_metadata: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         """Create steps and step_attempts in the store from a DAGDefinition.
 
         Root nodes get status='ready', others get status='waiting'.
         Returns a mapping of key → step_id.
+
+        Args:
+            ingress_metadata: Base metadata merged into each step attempt's
+                context.  The step title is used as ``entry_prompt`` so that
+                the dispatch service can send a meaningful prompt to the LLM.
         """
+        base_meta: dict[str, Any] = dict(ingress_metadata or {})
+        base_meta.setdefault("dispatch_mode", "async")
+        base_meta.setdefault("source", "dag")
+
         key_to_step_id: dict[str, str] = {}
 
         for key in dag.topological_order:
@@ -143,11 +137,22 @@ class StepDAGBuilder:
                 node_key=key,
             )
             key_to_step_id[key] = step.step_id
+
+            # Build per-step context with entry_prompt derived from the node.
+            step_meta = dict(base_meta)
+            step_meta["entry_prompt"] = node.title
+            step_meta["raw_text"] = node.title
+            step_meta["dag_node_key"] = key
+            step_meta["dag_node_kind"] = node.kind
+            if node.metadata:
+                step_meta["dag_node_metadata"] = node.metadata
+
             self._store.create_step_attempt(
                 task_id=task_id,
                 step_id=step.step_id,
                 status=status,
                 queue_priority=queue_priority,
+                context={"ingress_metadata": step_meta},
             )
 
         return key_to_step_id

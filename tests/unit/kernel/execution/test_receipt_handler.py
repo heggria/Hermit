@@ -601,3 +601,118 @@ class TestPolicyRefFallback:
 
         receipt = store.get_receipt(receipt_id)
         assert receipt.policy_result_ref == "explicit-result-ref"
+
+
+class TestContractTerminalState:
+    """Verify that issue_receipt closes the contract when reconciliation is not required."""
+
+    def test_contract_closed_when_reconciliation_not_required(self, tmp_path: Path) -> None:
+        """Contract must transition to 'closed' after receipt issuance with no reconciliation."""
+        handler, store, _ = _make_handler(tmp_path)
+        ctx = _start_task(store, tmp_path)
+        tool = _make_tool()
+        policy = _make_policy()
+
+        contract = store.create_execution_contract(
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            step_attempt_id=ctx.step_attempt_id,
+            objective="write file",
+            status="executing",
+        )
+        store.update_step_attempt(
+            ctx.step_attempt_id,
+            execution_contract_ref=contract.contract_id,
+        )
+
+        handler.issue_receipt(
+            tool=tool,
+            tool_name="write_file",
+            tool_input={"path": "/tmp/closed.txt"},
+            raw_result="ok",
+            attempt_ctx=ctx,
+            approval_ref=None,
+            policy=policy,
+            policy_ref=None,
+            decision_ref=None,
+            capability_grant_ref=None,
+            workspace_lease_ref=None,
+            witness_ref=None,
+            result_code="succeeded",
+            idempotency_key=None,
+            reconciliation_required=False,
+        )
+
+        updated = store.get_execution_contract(contract.contract_id)
+        assert updated is not None
+        assert updated.status == "closed"
+
+    def test_contract_not_closed_when_reconciliation_required(self, tmp_path: Path) -> None:
+        """Contract must NOT be closed when reconciliation is still pending."""
+        handler, store, _ = _make_handler(tmp_path)
+        ctx = _start_task(store, tmp_path)
+        tool = _make_tool()
+        policy = _make_policy()
+
+        contract = store.create_execution_contract(
+            task_id=ctx.task_id,
+            step_id=ctx.step_id,
+            step_attempt_id=ctx.step_attempt_id,
+            objective="write file",
+            status="executing",
+        )
+        store.update_step_attempt(
+            ctx.step_attempt_id,
+            execution_contract_ref=contract.contract_id,
+        )
+
+        handler.issue_receipt(
+            tool=tool,
+            tool_name="write_file",
+            tool_input={"path": "/tmp/still_open.txt"},
+            raw_result="ok",
+            attempt_ctx=ctx,
+            approval_ref=None,
+            policy=policy,
+            policy_ref=None,
+            decision_ref=None,
+            capability_grant_ref=None,
+            workspace_lease_ref=None,
+            witness_ref=None,
+            result_code="succeeded",
+            idempotency_key=None,
+            reconciliation_required=True,
+        )
+
+        updated = store.get_execution_contract(contract.contract_id)
+        assert updated is not None
+        # Status should still be "executing"; reconciliation will close it later.
+        assert updated.status == "executing"
+
+    def test_no_error_when_no_contract_ref(self, tmp_path: Path) -> None:
+        """issue_receipt must succeed gracefully when there is no associated contract."""
+        handler, store, _ = _make_handler(tmp_path)
+        ctx = _start_task(store, tmp_path)
+        tool = _make_tool()
+        policy = _make_policy()
+
+        # No contract attached to the attempt
+        receipt_id = handler.issue_receipt(
+            tool=tool,
+            tool_name="write_file",
+            tool_input={"path": "/tmp/no_contract.txt"},
+            raw_result="ok",
+            attempt_ctx=ctx,
+            approval_ref=None,
+            policy=policy,
+            policy_ref=None,
+            decision_ref=None,
+            capability_grant_ref=None,
+            workspace_lease_ref=None,
+            witness_ref=None,
+            result_code="succeeded",
+            idempotency_key=None,
+            reconciliation_required=False,
+        )
+
+        assert receipt_id is not None

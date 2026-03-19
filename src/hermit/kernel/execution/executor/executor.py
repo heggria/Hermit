@@ -1056,7 +1056,7 @@ class ToolExecutor:
                 )
             resolution = self._admissibility_resolution(evidence_case, authorization_plan)
             if resolution is not None and policy.verdict != "deny":
-                decision_id = self.decision_service.record(
+                decision_id: str | None = self.decision_service.record(
                     task_id=attempt_ctx.task_id,
                     step_id=attempt_ctx.step_id,
                     step_attempt_id=attempt_ctx.step_attempt_id,

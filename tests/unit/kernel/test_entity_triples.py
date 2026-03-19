@@ -125,10 +125,10 @@ def test_triples_indexed_by_subject(tmp_path: Path) -> None:
         _store_triple(t2, store)
         _store_triple(t3, store)
 
-        with store._lock:
-            rows = store._conn.execute(
-                "SELECT * FROM memory_entity_triples WHERE subject = ?", ("ruff",)
-            ).fetchall()
+        conn = store._get_conn()  # type: ignore[attr-defined]
+        rows = conn.execute(
+            "SELECT * FROM memory_entity_triples WHERE subject = ?", ("ruff",)
+        ).fetchall()
 
         assert len(rows) == 2
     finally:

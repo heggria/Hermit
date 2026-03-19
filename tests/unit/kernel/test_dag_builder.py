@@ -92,13 +92,15 @@ class TestValidate:
         with pytest.raises(ValueError, match="at least one"):
             builder.validate([])
 
-    def test_disconnected_graph(self, builder: StepDAGBuilder) -> None:
+    def test_disconnected_graph_allowed(self, builder: StepDAGBuilder) -> None:
         nodes = [
             StepNode(key="a", kind="execute", title="A"),
             StepNode(key="b", kind="execute", title="B"),
         ]
-        with pytest.raises(ValueError, match="not weakly connected"):
-            builder.validate(nodes)
+        dag = builder.validate(nodes)
+        assert set(dag.roots) == {"a", "b"}
+        assert set(dag.leaves) == {"a", "b"}
+        assert set(dag.topological_order) == {"a", "b"}
 
     def test_wide_fan_out(self, builder: StepDAGBuilder) -> None:
         nodes = [
@@ -187,3 +189,26 @@ class TestMaterialize:
         _dag, key_map = builder.build_and_materialize(task_id, nodes)
         step_b = store.get_step(key_map["b"])
         assert step_b.join_strategy == "any_sufficient"
+
+    def test_step_attempts_have_dispatch_context(
+        self, builder: StepDAGBuilder, store: KernelStore
+    ) -> None:
+        """Step attempts must carry ingress_metadata with dispatch_mode and entry_prompt
+        so that the dispatch service can execute them like normal tasks."""
+        store.ensure_conversation("conv_1", source_channel="test")
+        task_id = _make_task(store)
+        nodes = [
+            StepNode(key="research", kind="research", title="Investigate the bug"),
+            StepNode(key="fix", kind="code", title="Apply the fix", depends_on=["research"]),
+        ]
+        dag = builder.validate(nodes)
+        key_map = builder.materialize(task_id, dag)
+
+        for key, title in [("research", "Investigate the bug"), ("fix", "Apply the fix")]:
+            attempts = store.list_step_attempts(step_id=key_map[key], limit=1)
+            assert len(attempts) == 1
+            ctx = attempts[0].context or {}
+            meta = ctx.get("ingress_metadata", {})
+            assert meta.get("dispatch_mode") == "async"
+            assert meta.get("entry_prompt") == title
+            assert meta.get("dag_node_key") == key

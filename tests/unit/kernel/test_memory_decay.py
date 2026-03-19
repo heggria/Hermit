@@ -28,11 +28,12 @@ def _create_memory(store: KernelStore, *, task_id: str = "task-1", **kwargs):
 
 def _age_memory(store: KernelStore, memory_id: str, created_at: float) -> None:
     """Backdate a memory's created_at via direct SQL."""
-    store._conn.execute(
+    conn = store._get_conn()  # type: ignore[attr-defined]
+    conn.execute(
         "UPDATE memory_records SET created_at = ? WHERE memory_id = ?",
         (created_at, memory_id),
     )
-    store._conn.commit()
+    conn.commit()
 
 
 def test_fresh_memory_within_half_ttl(tmp_path: Path) -> None:
@@ -332,11 +333,12 @@ def test_effective_ttl_uses_explicit_expires_at(tmp_path: Path) -> None:
         record = _create_memory(store, retention_class="volatile_fact")
 
         # Set expires_at via SQL to trigger line 197
-        store._conn.execute(
+        conn = store._get_conn()  # type: ignore[attr-defined]
+        conn.execute(
             "UPDATE memory_records SET expires_at = ? WHERE memory_id = ?",
             (expires, record.memory_id),
         )
-        store._conn.commit()
+        conn.commit()
 
         refreshed = store.get_memory_record(record.memory_id)
         assert refreshed is not None

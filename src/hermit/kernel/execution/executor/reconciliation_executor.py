@@ -130,7 +130,7 @@ class ReconciliationExecutor:
             authorized_effect_summary=authorized_effect_summary,
         )
         contract_status = {
-            "satisfied": "satisfied",
+            "satisfied": "closed",
             "partial": "partially_satisfied",
             "satisfied_with_downgrade": "partially_satisfied",
             "violated": "violated",

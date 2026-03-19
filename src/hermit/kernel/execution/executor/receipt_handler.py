@@ -118,7 +118,7 @@ class ReceiptHandler:
             attempt_ctx.step_attempt_id,
             environment_ref=effective_environment_ref,
         )
-        return self.receipt_service.issue(
+        receipt_id = self.receipt_service.issue(
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
             step_attempt_id=attempt_ctx.step_attempt_id,
@@ -148,3 +148,8 @@ class ReceiptHandler:
             observed_effect_summary=observed_effect_summary,
             reconciliation_required=reconciliation_required,
         )
+        # Close the contract when reconciliation is not needed — the receipt itself
+        # is the terminal event for this contract lifecycle.
+        if not reconciliation_required and effective_contract_ref:
+            self.store.update_execution_contract(effective_contract_ref, status="closed")
+        return receipt_id

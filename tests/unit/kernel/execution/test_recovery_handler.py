@@ -98,7 +98,7 @@ def _uncertain_call_kwargs(
         summary=outcome_summary,
         observed_refs=["ref-1"],
     )
-    handler.reconciliations._reconcile_service.reconcile.return_value = outcome
+    handler.reconciliations.reconcile_service.reconcile.return_value = outcome
 
     issue_receipt = MagicMock(return_value=receipt_id)
     contract_refs_fn = MagicMock(return_value=("contract-1", "bundle-1", "plan-1"))

@@ -4,6 +4,8 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Protocol
 
+import structlog
+
 from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
@@ -13,6 +15,10 @@ from hermit.kernel.policy.permits.authorization_plans import AuthorizationPlanSe
 
 if TYPE_CHECKING:
     from hermit.kernel.execution.executor.executor import ToolExecutionResult
+
+log = structlog.get_logger()
+
+_MAX_DRIFT_REENTRIES = 3
 
 
 class ExecuteFn(Protocol):
@@ -103,10 +109,61 @@ class DriftHandler:
            authorization plan as appropriate.
         2. Creating a successor step attempt with reentry metadata.
         3. Delegating execution of the successor to *execute_fn*.
+
+        If the same drift reason has triggered more than ``_MAX_DRIFT_REENTRIES``
+        consecutive reentries, the attempt is failed instead of looping forever.
         """
         current = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
         if current is None:
             raise KeyError(f"Unknown step attempt: {attempt_ctx.step_attempt_id}")
+
+        # --- loop detection: count consecutive reentries for same drift reason ---
+        ctx = dict(current.context or {})
+        consecutive = ctx.get("drift_reentry_count", 0)
+        if ctx.get("reentered_via") == drift_reason:
+            consecutive += 1
+        else:
+            consecutive = 1
+
+        if consecutive > _MAX_DRIFT_REENTRIES:
+            log.warning(
+                "drift_reentry_limit_exceeded",
+                step_attempt_id=current.step_attempt_id,
+                drift_reason=drift_reason,
+                consecutive=consecutive,
+            )
+            now = time.time()
+            self.store.update_step_attempt(
+                current.step_attempt_id,
+                status="failed",
+                finished_at=now,
+                context={
+                    **ctx,
+                    "failure_reason": f"drift_reentry_limit_exceeded:{drift_reason}",
+                    "drift_reentry_count": consecutive,
+                },
+                waiting_reason=f"drift_reentry_limit_exceeded_{drift_reason}",
+            )
+            self.store.update_step(attempt_ctx.step_id, status="failed", finished_at=now)
+            self.store.update_task_status(
+                attempt_ctx.task_id,
+                "failed",
+                payload={
+                    "result_preview": f"drift_reentry_limit_exceeded:{drift_reason}",
+                    "result_text": (
+                        f"Step failed after {consecutive} consecutive {drift_reason} "
+                        f"reentries (limit: {_MAX_DRIFT_REENTRIES})."
+                    ),
+                },
+            )
+            from hermit.kernel.execution.executor.executor import ToolExecutionResult
+
+            return ToolExecutionResult(
+                model_content=f"Step failed: exceeded {_MAX_DRIFT_REENTRIES} consecutive "
+                f"{drift_reason} reentries.",
+                result_code="failed",
+                execution_status="failed",
+            )
 
         now = time.time()
         reason_key = _REASON_KEYS.get(drift_reason, "contract_drift_reenter_policy")
@@ -182,13 +239,30 @@ class DriftHandler:
                 },
             )
 
-        # --- supersede current attempt and create successor ---
-        self.store.update_step_attempt(
+        # --- supersede current attempt and create successor (compare-and-swap) ---
+        # try_supersede_step_attempt performs an atomic UPDATE ... WHERE status = 'running'.
+        # If another thread already superseded this attempt, rowcount == 0 and we bail out
+        # early to prevent duplicate successor creation.
+        claimed = self.store.try_supersede_step_attempt(
             current.step_attempt_id,
-            status="superseded",
-            superseded_by_step_attempt_id=None,
             finished_at=now,
         )
+        if not claimed:
+            log.warning(
+                "drift_supersession_race_lost",
+                step_attempt_id=current.step_attempt_id,
+                drift_reason=drift_reason,
+            )
+            from hermit.kernel.execution.executor.executor import ToolExecutionResult
+
+            return ToolExecutionResult(
+                model_content=(
+                    f"Drift supersession skipped: attempt {current.step_attempt_id!r} "
+                    f"was already superseded by a concurrent caller."
+                ),
+                result_code="skipped",
+                execution_status="superseded",
+            )
         self.store.update_step(attempt_ctx.step_id, status="awaiting_approval")
         self.store.update_task_status(attempt_ctx.task_id, "blocked")
 
@@ -207,6 +281,7 @@ class DriftHandler:
                 "reentry_reason": drift_reason,
                 "reentry_requested_at": now,
                 "supersedes_step_attempt_id": current.step_attempt_id,
+                "drift_reentry_count": consecutive,
             },
             queue_priority=current.queue_priority,
             contract_version=int(current.contract_version or 0) + 1,

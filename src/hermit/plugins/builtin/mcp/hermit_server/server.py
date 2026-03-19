@@ -198,9 +198,17 @@ class HermitMcpServer:
                     policy_profile=policy_profile,
                     requested_by="supervisor",
                     workspace_root=workspace_root,
+                    ingress_metadata={
+                        "source": "mcp-supervisor",
+                        "dispatch_mode": "async",
+                        "policy_profile": policy_profile,
+                    },
                 )
             except ValueError as exc:
                 return {"error": str(exc)}
+
+            # Wake the dispatch service so root steps are claimed immediately.
+            runner.wake_dispatcher()
 
             return {
                 "task_id": ctx.task_id,

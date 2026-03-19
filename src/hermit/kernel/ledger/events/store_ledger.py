@@ -1072,8 +1072,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         next_last_accessed_at = (
             record.last_accessed_at if last_accessed_at is UNSET else last_accessed_at
         )
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 UPDATE memory_records
                 SET status = ?, supersedes_json = ?, supersedes_memory_ids_json = ?,

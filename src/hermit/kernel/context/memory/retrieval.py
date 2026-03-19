@@ -12,6 +12,7 @@ from hermit.kernel.context.memory.text import shares_topic, topic_tokens
 
 if TYPE_CHECKING:
     from hermit.kernel.context.memory.lineage import MemoryLineageService
+    from hermit.kernel.context.memory.reranker import CrossEncoderReranker
     from hermit.kernel.context.models.context import TaskExecutionContext
     from hermit.kernel.ledger.journal.store import KernelStore
     from hermit.kernel.task.models.records import MemoryRecord
@@ -42,6 +43,7 @@ class RetrievalReport:
     total_candidates: int
     results: list[RetrievalResult] = field(default_factory=lambda: list[RetrievalResult]())
     retrieval_time_ms: float = 0.0
+    reranked: bool = False
 
 
 class HybridRetrievalService:
@@ -64,10 +66,12 @@ class HybridRetrievalService:
         embedding_service: EmbeddingService | None = None,
         confidence_service: ConfidenceDecayService | None = None,
         lineage_service: MemoryLineageService | None = None,
+        reranker: CrossEncoderReranker | None = None,
     ) -> None:
         self._embeddings = embedding_service or EmbeddingService()
         self._confidence = confidence_service or ConfidenceDecayService()
         self._lineage = lineage_service
+        self._reranker = reranker
 
     def retrieve(
         self,
@@ -114,6 +118,18 @@ class HybridRetrievalService:
         # RRF fusion
         fused = self._reciprocal_rank_fusion(ranked_lists)
 
+        # Apply cross-encoder reranking if available (deep path only)
+        reranked = False
+        if use_deep and self._reranker is not None and self._reranker.is_available():
+            memory_map_pre = {m.memory_id: m for m in memories}
+            candidates = [
+                (mid, memory_map_pre[mid].claim_text if mid in memory_map_pre else "", score)
+                for mid, score in fused[:limit]
+            ]
+            fused_reranked = self._reranker.rerank(query, candidates, limit=limit)
+            fused = [(mid, score) for mid, _, score in fused_reranked]
+            reranked = True
+
         # Build result
         memory_map = {m.memory_id: m for m in memories}
         results: list[RetrievalResult] = []
@@ -137,6 +153,7 @@ class HybridRetrievalService:
             total_candidates=len(memories),
             results=results,
             retrieval_time_ms=round(elapsed, 2),
+            reranked=reranked,
         )
         log.debug(
             "hybrid_retrieval",

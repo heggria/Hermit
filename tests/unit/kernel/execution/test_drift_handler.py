@@ -13,6 +13,7 @@ from hermit.kernel.execution.executor.drift_handler import (
     _AUTH_STATUS_OVERRIDES,
     _AUTHORIZATION_SUMMARIES,
     _EVIDENCE_SUMMARIES,
+    _MAX_DRIFT_REENTRIES,
     _REASON_KEYS,
     _REENTRY_BOUNDARIES,
     DriftHandler,
@@ -144,6 +145,8 @@ class TestDriftHandlerSupersession:
         successor = _make_attempt(step_attempt_id="sa-2", attempt=2)
         deps["store"].get_step_attempt.return_value = current
         deps["store"].create_step_attempt.return_value = successor
+        # CAS returns True so supersession proceeds
+        deps["store"].try_supersede_step_attempt.return_value = True
 
         handler.supersede_attempt_for_drift(
             attempt_ctx=_make_ctx(),
@@ -153,14 +156,10 @@ class TestDriftHandlerSupersession:
             execute_fn=MagicMock(return_value=None),
         )
 
-        # First update_step_attempt call supersedes the current attempt
-        first_call = deps["store"].update_step_attempt.call_args_list[0]
-        assert first_call == call(
-            "sa-1",
-            status="superseded",
-            superseded_by_step_attempt_id=None,
-            finished_at=first_call.kwargs.get("finished_at", first_call[1].get("finished_at")),
-        )
+        # try_supersede_step_attempt is called with the attempt id and finished_at
+        cas_call = deps["store"].try_supersede_step_attempt.call_args
+        assert cas_call.args[0] == "sa-1"
+        assert "finished_at" in cas_call.kwargs
 
     def test_step_set_to_awaiting_approval(self) -> None:
         handler, deps = _make_handler()
@@ -273,6 +272,8 @@ class TestDriftHandlerSupersession:
         deps["store"].create_step_attempt.return_value = _make_attempt(
             step_attempt_id="sa-2", attempt=2
         )
+        # CAS returns True so supersession proceeds
+        deps["store"].try_supersede_step_attempt.return_value = True
 
         handler.supersede_attempt_for_drift(
             attempt_ctx=_make_ctx(),
@@ -282,9 +283,10 @@ class TestDriftHandlerSupersession:
             execute_fn=MagicMock(return_value=None),
         )
 
-        # Second update_step_attempt sets the back-link
-        second_call = deps["store"].update_step_attempt.call_args_list[1]
-        assert second_call == call("sa-1", superseded_by_step_attempt_id="sa-2")
+        # The sole update_step_attempt call sets the back-link to the successor
+        # (status="superseded" is now handled atomically by try_supersede_step_attempt)
+        backlink_call = deps["store"].update_step_attempt.call_args_list[0]
+        assert backlink_call == call("sa-1", superseded_by_step_attempt_id="sa-2")
 
 
 class TestContractSupersession:
@@ -586,6 +588,230 @@ class TestUnknownDriftReason:
         # Authorization plan uses default "invalidated" status
         auth_call = deps["authorization_plans"].invalidate.call_args
         assert auth_call.kwargs["status"] == "invalidated"
+
+
+class TestDriftReentryLimit:
+    """Verify the reentry loop breaker works."""
+
+    def test_exceeding_limit_fails_attempt(self) -> None:
+        handler, deps = _make_handler()
+        # Simulate an attempt that has already been reentered _MAX_DRIFT_REENTRIES times
+        current = _make_attempt(
+            context={
+                "reentered_via": "contract_expiry",
+                "drift_reentry_count": _MAX_DRIFT_REENTRIES,
+            },
+        )
+        deps["store"].get_step_attempt.return_value = current
+        execute_fn = MagicMock()
+
+        result = handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="contract_expiry",
+            execute_fn=execute_fn,
+        )
+
+        # Should NOT re-enter — execute_fn never called
+        execute_fn.assert_not_called()
+        # Should fail the attempt
+        deps["store"].update_step_attempt.assert_called_once()
+        fail_call = deps["store"].update_step_attempt.call_args
+        assert fail_call.kwargs["status"] == "failed"
+        assert "drift_reentry_limit_exceeded" in fail_call.kwargs["waiting_reason"]
+        # Should fail the step and task
+        deps["store"].update_step.assert_called_once()
+        assert deps["store"].update_step.call_args.kwargs["status"] == "failed"
+        deps["store"].update_task_status.assert_called_once_with(
+            "task-1",
+            "failed",
+            payload=deps["store"].update_task_status.call_args.kwargs["payload"],
+        )
+        # Result should indicate failure
+        assert result.result_code == "failed"
+        assert result.execution_status == "failed"
+
+    def test_within_limit_proceeds_normally(self) -> None:
+        handler, deps = _make_handler()
+        # count=2, limit=3 → still under limit, should proceed
+        current = _make_attempt(
+            context={
+                "reentered_via": "contract_expiry",
+                "drift_reentry_count": 2,
+            },
+        )
+        successor = _make_attempt(step_attempt_id="sa-2", attempt=2)
+        deps["store"].get_step_attempt.return_value = current
+        deps["store"].create_step_attempt.return_value = successor
+
+        sentinel = object()
+        execute_fn = MagicMock(return_value=sentinel)
+
+        result = handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="contract_expiry",
+            execute_fn=execute_fn,
+        )
+
+        assert result is sentinel
+        execute_fn.assert_called_once()
+
+    def test_different_drift_reason_resets_count(self) -> None:
+        handler, deps = _make_handler()
+        # Previous reason was contract_expiry with high count,
+        # but new reason is witness_drift → count resets to 1
+        current = _make_attempt(
+            context={
+                "reentered_via": "contract_expiry",
+                "drift_reentry_count": _MAX_DRIFT_REENTRIES,
+            },
+        )
+        successor = _make_attempt(step_attempt_id="sa-2", attempt=2)
+        deps["store"].get_step_attempt.return_value = current
+        deps["store"].create_step_attempt.return_value = successor
+
+        sentinel = object()
+        execute_fn = MagicMock(return_value=sentinel)
+
+        result = handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="witness_drift",  # different reason
+            execute_fn=execute_fn,
+        )
+
+        assert result is sentinel
+        execute_fn.assert_called_once()
+        # Successor context should have count=1
+        ctx_arg = deps["store"].create_step_attempt.call_args.kwargs["context"]
+        assert ctx_arg["drift_reentry_count"] == 1
+
+    def test_successor_carries_drift_count(self) -> None:
+        handler, deps = _make_handler()
+        current = _make_attempt(
+            context={
+                "reentered_via": "contract_expiry",
+                "drift_reentry_count": 1,
+            },
+        )
+        successor = _make_attempt(step_attempt_id="sa-2", attempt=2)
+        deps["store"].get_step_attempt.return_value = current
+        deps["store"].create_step_attempt.return_value = successor
+
+        handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="contract_expiry",
+            execute_fn=MagicMock(return_value=None),
+        )
+
+        ctx_arg = deps["store"].create_step_attempt.call_args.kwargs["context"]
+        assert ctx_arg["drift_reentry_count"] == 2
+
+
+class TestConcurrentSupersessionRace:
+    """CAS guard prevents duplicate successor creation on concurrent drift signals."""
+
+    def test_race_lost_returns_skipped_result(self) -> None:
+        """When try_supersede_step_attempt returns False, return skipped without successor."""
+        handler, deps = _make_handler()
+        current = _make_attempt()
+        deps["store"].get_step_attempt.return_value = current
+        # Simulate losing the CAS race (another thread already superseded)
+        deps["store"].try_supersede_step_attempt.return_value = False
+
+        result = handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="witness_drift",
+            execute_fn=MagicMock(),
+        )
+
+        assert result.result_code == "skipped"
+        assert result.execution_status == "superseded"
+        assert "sa-1" in result.model_content
+
+    def test_race_lost_does_not_create_successor(self) -> None:
+        """When CAS fails, create_step_attempt must NOT be called."""
+        handler, deps = _make_handler()
+        deps["store"].get_step_attempt.return_value = _make_attempt()
+        deps["store"].try_supersede_step_attempt.return_value = False
+
+        handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="approval_drift",
+            execute_fn=MagicMock(),
+        )
+
+        deps["store"].create_step_attempt.assert_not_called()
+
+    def test_race_lost_does_not_invoke_execute_fn(self) -> None:
+        """When CAS fails, execute_fn must NOT be called."""
+        handler, deps = _make_handler()
+        deps["store"].get_step_attempt.return_value = _make_attempt()
+        deps["store"].try_supersede_step_attempt.return_value = False
+        execute_fn = MagicMock()
+
+        handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="evidence_drift",
+            execute_fn=execute_fn,
+        )
+
+        execute_fn.assert_not_called()
+
+    def test_race_won_proceeds_to_create_successor(self) -> None:
+        """When CAS succeeds (True), the normal supersession path runs."""
+        handler, deps = _make_handler()
+        current = _make_attempt()
+        successor = _make_attempt(step_attempt_id="sa-2", attempt=2)
+        deps["store"].get_step_attempt.return_value = current
+        deps["store"].create_step_attempt.return_value = successor
+        deps["store"].try_supersede_step_attempt.return_value = True
+
+        sentinel = object()
+        execute_fn = MagicMock(return_value=sentinel)
+
+        result = handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="contract_expiry",
+            execute_fn=execute_fn,
+        )
+
+        assert result is sentinel
+        deps["store"].create_step_attempt.assert_called_once()
+        execute_fn.assert_called_once()
+
+    def test_cas_called_with_correct_attempt_id(self) -> None:
+        """try_supersede_step_attempt receives the current attempt's ID."""
+        handler, deps = _make_handler()
+        current = _make_attempt(step_attempt_id="sa-unique-42")
+        deps["store"].get_step_attempt.return_value = current
+        deps["store"].try_supersede_step_attempt.return_value = False
+
+        handler.supersede_attempt_for_drift(
+            attempt_ctx=_make_ctx(step_attempt_id="sa-unique-42"),
+            tool_name="bash",
+            tool_input={},
+            drift_reason="witness_drift",
+            execute_fn=MagicMock(),
+        )
+
+        cas_call = deps["store"].try_supersede_step_attempt.call_args
+        assert cas_call.args[0] == "sa-unique-42"
+        assert "finished_at" in cas_call.kwargs
 
 
 class TestLookupTableConsistency:

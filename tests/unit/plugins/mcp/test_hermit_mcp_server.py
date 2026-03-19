@@ -107,6 +107,10 @@ class FakeRunner:
         self.ingress_calls: list[dict[str, Any]] = []
         self.approval_calls: list[dict[str, Any]] = []
 
+    def wake_dispatcher(self) -> None:
+        """No-op stub: async dispatch is not exercised in unit tests."""
+        pass
+
     def enqueue_ingress(
         self,
         session_id: str,

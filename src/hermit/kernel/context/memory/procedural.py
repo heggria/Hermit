@@ -201,16 +201,18 @@ class ProceduralMemoryService:
     def _load_all_procedures(self, store: KernelStore) -> list[ProceduralRecord]:
         """Load all procedures from the store."""
         _ensure_procedural_schema(store)
-        with store._lock:  # pyright: ignore[reportPrivateUsage]
-            rows = store._conn.execute(  # pyright: ignore[reportPrivateUsage]
+        conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
+        with store._event_chain_lock:  # pyright: ignore[reportPrivateUsage]
+            rows = conn.execute(
                 "SELECT * FROM procedural_memories WHERE status != 'deleted'"
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     def _load_procedure(self, procedure_id: str, store: KernelStore) -> ProceduralRecord | None:
         _ensure_procedural_schema(store)
-        with store._lock:  # pyright: ignore[reportPrivateUsage]
-            row = store._conn.execute(  # pyright: ignore[reportPrivateUsage]
+        conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
+        with store._event_chain_lock:  # pyright: ignore[reportPrivateUsage]
+            row = conn.execute(
                 "SELECT * FROM procedural_memories WHERE procedure_id = ?",
                 (procedure_id,),
             ).fetchone()
@@ -225,8 +227,9 @@ class ProceduralMemoryService:
     ) -> None:
         _ensure_procedural_schema(store)
         now = time.time()
-        with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
-            store._conn.execute(  # pyright: ignore[reportPrivateUsage]
+        conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
+        with store._event_chain_lock, conn:  # pyright: ignore[reportPrivateUsage]
+            conn.execute(
                 """
                 INSERT INTO procedural_memories
                     (procedure_id, trigger_pattern, steps_json, confidence,
@@ -278,8 +281,9 @@ class ProceduralMemoryService:
 
 def _ensure_procedural_schema(store: KernelStore) -> None:
     """Create procedural_memories table if it doesn't exist."""
-    with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
-        store._conn.execute(  # pyright: ignore[reportPrivateUsage]
+    conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
+    with store._event_chain_lock, conn:  # pyright: ignore[reportPrivateUsage]
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS procedural_memories (
                 procedure_id TEXT PRIMARY KEY,

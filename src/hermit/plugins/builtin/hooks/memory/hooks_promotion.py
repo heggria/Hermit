@@ -372,6 +372,25 @@ def promote_memories_via_kernel(
                 promoted_memories.append(memory.memory_id)
         if promoted_memories:
             memory_service.export_mirror(Path(settings.memory_file))
+            # Index embeddings for newly promoted memories so retrieval can use them
+            try:
+                from hermit.kernel.context.memory.embeddings import (
+                    EmbeddingService,
+                    ensure_embedding_schema,
+                )
+
+                ensure_embedding_schema(store)
+                embedding_svc = EmbeddingService()
+                for mem_id in promoted_memories:
+                    mem_record = store.get_memory_record(mem_id)
+                    if mem_record is not None:
+                        embedding_svc.index_memory(mem_id, mem_record.claim_text, store)
+            except Exception:
+                import structlog as _log
+
+                _log.get_logger().warning(
+                    "embedding_index_failed_non_critical", memory_ids=promoted_memories
+                )
 
         rollback_ref = _store_memory_artifact(
             store,

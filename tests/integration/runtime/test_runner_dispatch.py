@@ -90,6 +90,15 @@ class _FakeStore:
     def get_approval(self, approval_id: str):
         return self.approval if self.approval and approval_id == self.approval.approval_id else None
 
+    def get_step_attempt(self, step_attempt_id: str):
+        """Return a minimal stub; approval tests don't need real attempt data."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            step_attempt_id=step_attempt_id,
+            context={"ingress_metadata": {}},
+        )
+
     def resolve_approval(self, approval_id: str, **kwargs) -> None:
         self.resolved.append({"approval_id": approval_id, **kwargs})
 

@@ -75,7 +75,7 @@ class RecoveryHandler:
         The caller is responsible for building the actual result object.
         """
         action_type = tool.action_class or self.policy_engine.infer_action_class(tool)
-        outcome = self.reconciliations._reconcile_service.reconcile(
+        outcome = self.reconciliations.reconcile_service.reconcile(
             action_type=action_type,
             tool_input=tool_input,
             workspace_root=attempt_ctx.workspace_root,

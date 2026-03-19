@@ -109,11 +109,12 @@ def test_static_sorted_by_freshness(tmp_path: Path) -> None:
     try:
         old = _create_memory(store, claim_text="old memory content here")
         # Backdate old memory
-        store._conn.execute(
+        conn = store._get_conn()  # type: ignore[attr-defined]
+        conn.execute(
             "UPDATE memory_records SET created_at = ?, updated_at = ? WHERE memory_id = ?",
             (1000.0, 1000.0, old.memory_id),
         )
-        store._conn.commit()
+        conn.commit()
 
         new = _create_memory(store, claim_text="new memory content here")
 

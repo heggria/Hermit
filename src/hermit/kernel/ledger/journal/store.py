@@ -85,6 +85,7 @@ class KernelStore(
         self._event_chain_lock = threading.Lock()
         # For :memory: databases (tests), all threads must share one connection
         # since each new connection gets a separate empty database.
+        self._shared_conn: sqlite3.Connection | None
         if self._in_memory:
             self._shared_conn = self._make_conn()
         else:
