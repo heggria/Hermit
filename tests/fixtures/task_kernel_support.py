@@ -125,6 +125,7 @@ def _write_registry(root: Path) -> ToolRegistry:
 
     def write_file(payload: dict[str, Any]) -> str:
         path = root / str(payload["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(payload["content"]), encoding="utf-8")
         return "ok"
 

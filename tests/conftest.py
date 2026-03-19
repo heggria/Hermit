@@ -106,7 +106,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 # ---------------------------------------------------------------------------
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
-        path = str(item.fspath)
+        path = str(item.path)
         if "/integration/" in path:
             item.add_marker(pytest.mark.integration)
         elif "/e2e/" in path:
