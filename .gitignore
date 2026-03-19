@@ -36,6 +36,9 @@ reports/
 .DS_Store
 .env
 
+# Claude Code
+.claude/scheduled_tasks.lock
+
 # Cache
 .cache/
 
