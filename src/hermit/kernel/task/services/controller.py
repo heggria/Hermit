@@ -11,6 +11,7 @@ from hermit.infra.system.i18n import resolve_locale, tr, tr_list_all_locales
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.coordination.data_flow import StepDataFlowService
 from hermit.kernel.ledger.journal.store import KernelStore
+from hermit.kernel.task.models.records import TaskRecord
 from hermit.kernel.task.services.ingress_router import BindingDecision, IngressRouter
 from hermit.kernel.task.services.planning import PlanningService
 from hermit.kernel.task.state.continuation import (
@@ -105,10 +106,10 @@ class TaskController:
             source_channel=source_channel or self.source_from_session(conversation_id),
         )
 
-    def latest_task(self, conversation_id: str) -> object | None:
+    def latest_task(self, conversation_id: str) -> TaskRecord | None:
         return self.store.get_last_task_for_conversation(conversation_id)
 
-    def active_task_for_conversation(self, conversation_id: str):
+    def active_task_for_conversation(self, conversation_id: str) -> TaskRecord | None:
         focus_task_id = self.store.ensure_valid_focus(conversation_id)
         task = self.store.get_task(focus_task_id) if focus_task_id else None
         if task is None:
@@ -1027,7 +1028,7 @@ class TaskController:
         if self.store.has_non_terminal_steps(ctx.task_id):
             task_status = "running"
         else:
-            task_status = "completed" if status == "succeeded" else status
+            task_status = "completed" if status in ("succeeded", "completed", "skipped") else status
         self.store.update_task_status(ctx.task_id, task_status, payload=payload)
         self._refresh_focus_after_task_status(ctx.conversation_id, ctx.task_id)
 

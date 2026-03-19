@@ -351,6 +351,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
         )
 
     def _memory_record_from_row(self, row: sqlite3.Row) -> MemoryRecord:
+        keys = row.keys() if hasattr(row, "keys") else []
         return MemoryRecord(
             memory_id=str(row["memory_id"]),
             task_id=str(row["task_id"]),
@@ -378,8 +379,8 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             invalidation_reason=row["invalidation_reason"],
             invalidated_at=row["invalidated_at"],
             expires_at=row["expires_at"],
-            freshness_class=row["freshness_class"] if "freshness_class" in dict(row) else None,
-            last_accessed_at=row["last_accessed_at"] if "last_accessed_at" in dict(row) else None,
+            freshness_class=row["freshness_class"] if "freshness_class" in keys else None,
+            last_accessed_at=row["last_accessed_at"] if "last_accessed_at" in keys else None,
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
         )
