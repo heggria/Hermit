@@ -22,6 +22,7 @@ from hermit.kernel.task.models.records import (
     StepRecord,
     TaskRecord,
 )
+from hermit.kernel.task.state.transitions import validate_task_transition
 
 
 class KernelTaskStoreMixin(KernelStoreTypingBase):
@@ -292,10 +293,24 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         )
         return [self._task_from_row(row) for row in rows]
 
+    _CASCADE_CANCEL_STATUSES = frozenset({"failed", "cancelled"})
+    _TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
     def update_task_status(
         self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
     ) -> None:
         now = time.time()
+        # Soft-validate state transition (log only, do not block).
+        task = self.get_task(task_id)
+        if task is not None and not validate_task_transition(task.status, status):
+            import structlog
+
+            structlog.get_logger().warning(
+                "invalid_task_transition",
+                task_id=task_id,
+                current=task.status,
+                target=status,
+            )
         with self._get_conn():
             self._get_conn().execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
@@ -310,6 +325,30 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 actor="kernel",
                 payload={"status": status, **(payload or {})},
             )
+
+        # Cascade-cancel non-terminal children when parent fails or is cancelled
+        if status in self._CASCADE_CANCEL_STATUSES:
+            self._cascade_cancel_children(task_id, reason=f"parent_{status}")
+
+    def update_task_budget(self, task_id: str, *, budget_tokens_used: int) -> None:
+        """Update the budget_tokens_used counter for a task."""
+        now = time.time()
+        with self._get_conn():
+            self._get_conn().execute(
+                "UPDATE tasks SET budget_tokens_used = ?, updated_at = ? WHERE task_id = ?",
+                (budget_tokens_used, now, task_id),
+            )
+
+    def _cascade_cancel_children(self, parent_task_id: str, *, reason: str) -> None:
+        """Cancel all non-terminal child tasks when a parent reaches a terminal failure state."""
+        children = self.list_child_tasks(parent_task_id=parent_task_id)
+        for child in children:
+            if child.status not in self._TERMINAL_TASK_STATUSES:
+                self.update_task_status(
+                    child.task_id,
+                    "cancelled",
+                    payload={"reason": reason, "cascaded_from": parent_task_id},
+                )
 
     def get_last_task_for_conversation(self, conversation_id: str) -> TaskRecord | None:
         row = self._row(
@@ -331,10 +370,15 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         input_bindings: dict[str, str] | None = None,
         max_attempts: int = 1,
         node_key: str | None = None,
+        verification_required: bool = False,
+        verifies: list[str] | None = None,
+        supersedes: list[str] | None = None,
     ) -> StepRecord:
         now = time.time()
         step_id = self._id("step")
         dep_list = list(depends_on or [])
+        verifies_list = list(verifies or [])
+        supersedes_list = list(supersedes or [])
         effective_status = "waiting" if dep_list else status
         if dep_list:
             self._check_dag_cycles(task_id, step_id, dep_list)
@@ -344,9 +388,10 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 INSERT INTO steps (
                     step_id, task_id, kind, status, attempt, node_key, title, contract_ref,
                     depends_on_json, join_strategy, input_bindings_json,
-                    max_attempts, started_at, created_at, updated_at
+                    max_attempts, verification_required, verifies_json, supersedes_json,
+                    started_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
@@ -360,6 +405,9 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     join_strategy,
                     json.dumps(dict(input_bindings or {}), ensure_ascii=False),
                     max(int(max_attempts or 1), 1),
+                    int(verification_required),
+                    json.dumps(verifies_list, ensure_ascii=False),
+                    json.dumps(supersedes_list, ensure_ascii=False),
                     now,
                     now,
                     now,
@@ -385,6 +433,9 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     "join_strategy": join_strategy,
                     "input_bindings": dict(input_bindings or {}),
                     "max_attempts": max(int(max_attempts or 1), 1),
+                    "verification_required": verification_required,
+                    "verifies": verifies_list,
+                    "supersedes": supersedes_list,
                     "input_ref": None,
                     "output_ref": None,
                     "started_at": now,
@@ -975,6 +1026,145 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             status="ready",
             queue_priority=queue_priority,
         )
+
+    def skip_step(
+        self,
+        task_id: str,
+        step_id: str,
+        *,
+        reason: str = "",
+    ) -> None:
+        """Mark a step as skipped (terminal) and activate downstream dependents.
+
+        Sets step status to ``skipped``, closes any waiting step_attempts,
+        emits a ``dag.topology_changed`` event, and then activates downstream
+        dependents so the DAG can continue.
+        """
+        now = time.time()
+        with self._get_conn():
+            self._get_conn().execute(
+                """
+                UPDATE steps
+                SET status = 'skipped', finished_at = ?, updated_at = ?
+                WHERE step_id = ?
+                """,
+                (now, now, step_id),
+            )
+            self._get_conn().execute(
+                """
+                UPDATE step_attempts
+                SET status = 'skipped', finished_at = ?
+                WHERE step_id = ? AND status IN ('waiting', 'ready')
+                """,
+                (now, step_id),
+            )
+            self._get_conn().execute(
+                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+                (now, task_id),
+            )
+            self._append_event_tx(
+                event_id=self._id("event"),
+                event_type="dag.topology_changed",
+                entity_type="step",
+                entity_id=step_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={
+                    "mutation": "skip_step",
+                    "step_id": step_id,
+                    "reason": reason,
+                },
+            )
+        # Activate downstream dependents (skipped counts as success).
+        self.activate_waiting_dependents(task_id, step_id)
+
+    def update_step_depends_on(
+        self,
+        step_id: str,
+        *,
+        task_id: str,
+        new_depends_on: list[str],
+    ) -> None:
+        """Update the dependencies of a step and recalculate its status.
+
+        If ``new_depends_on`` is empty and the step was waiting, it becomes
+        ``ready``.  If all new dependencies are in a terminal success state,
+        the step also becomes ``ready``.  Otherwise it remains ``waiting``.
+
+        Emits a ``dag.topology_changed`` event with before/after snapshots.
+        """
+        step = self.get_step(step_id)
+        if step is None:
+            return
+        old_depends_on = list(step.depends_on)
+        now = time.time()
+
+        # Determine new status
+        if not new_depends_on:
+            new_status = "ready"
+        else:
+            # Check if all new deps are in terminal success
+            rows = self._rows(
+                "SELECT step_id, status FROM steps WHERE task_id = ? AND step_id IN ({})".format(
+                    ",".join("?" for _ in new_depends_on)
+                ),
+                (task_id, *new_depends_on),
+            )
+            dep_statuses = {str(r["step_id"]): str(r["status"]) for r in rows}
+            all_success = all(
+                dep_statuses.get(d) in ("succeeded", "completed", "skipped") for d in new_depends_on
+            )
+            new_status = "ready" if all_success else "waiting"
+
+        with self._get_conn():
+            self._get_conn().execute(
+                """
+                UPDATE steps
+                SET depends_on_json = ?, status = ?, updated_at = ?
+                WHERE step_id = ?
+                """,
+                (json.dumps(new_depends_on, ensure_ascii=False), new_status, now, step_id),
+            )
+            # Also update step_attempts status if changing to ready
+            if new_status == "ready" and step.status == "waiting":
+                self._get_conn().execute(
+                    """
+                    UPDATE step_attempts
+                    SET status = 'ready'
+                    WHERE step_id = ? AND status = 'waiting'
+                    """,
+                    (step_id,),
+                )
+            elif new_status == "waiting" and step.status == "ready":
+                self._get_conn().execute(
+                    """
+                    UPDATE step_attempts
+                    SET status = 'waiting'
+                    WHERE step_id = ? AND status = 'ready'
+                    """,
+                    (step_id,),
+                )
+            self._get_conn().execute(
+                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+                (now, task_id),
+            )
+            self._append_event_tx(
+                event_id=self._id("event"),
+                event_type="dag.topology_changed",
+                entity_type="step",
+                entity_id=step_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={
+                    "mutation": "rewire_dependency",
+                    "step_id": step_id,
+                    "old_depends_on": old_depends_on,
+                    "new_depends_on": new_depends_on,
+                    "new_status": new_status,
+                },
+            )
 
     def has_non_terminal_steps(self, task_id: str) -> bool:
         """Check if there are any non-terminal steps for a task."""

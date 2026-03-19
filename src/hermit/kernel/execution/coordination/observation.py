@@ -287,9 +287,16 @@ def normalize_subtask_join_observation(value: Any) -> SubtaskJoinObservation | N
 
 
 class ObservationService:
-    def __init__(self, runner: Any, *, budget: ExecutionBudget | None = None) -> None:
+    def __init__(
+        self,
+        runner: Any,
+        *,
+        budget: ExecutionBudget | None = None,
+        store: Any | None = None,
+    ) -> None:
         self._runner = runner
         self._budget = budget or get_runtime_budget()
+        self._store = store
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._resuming: set[str] = set()
@@ -298,6 +305,7 @@ class ObservationService:
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
+        self._recover_active_tickets()
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._loop,
@@ -310,6 +318,20 @@ class ObservationService:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+
+    def _recover_active_tickets(self) -> None:
+        """On service start, query all active observation tickets from store."""
+        if self._store is None:
+            return
+        try:
+            active = self._store.list_active_observation_tickets()
+            if active:
+                import structlog
+
+                logger = structlog.get_logger()
+                logger.info("observation.recovery", active_tickets=len(active))
+        except Exception:
+            pass
 
     def _loop(self) -> None:
         while not self._stop.wait(self._budget.observation_poll_interval):
@@ -324,6 +346,7 @@ class ObservationService:
         tool_executor = getattr(agent, "tool_executor", None)
         if controller is None or tool_executor is None:
             return
+        self._enforce_timeouts(controller)
         attempts = controller.store.list_step_attempts(status="observing", limit=200)
         now = time.time()
         for attempt in attempts:
@@ -343,3 +366,68 @@ class ObservationService:
             finally:
                 with self._lock:
                     self._resuming.discard(attempt.step_attempt_id)
+
+    def _enforce_timeouts(self, controller: Any) -> None:
+        """Check active observation tickets for hard_deadline_at exceeded."""
+        store = getattr(controller, "store", self._store)
+        if store is None:
+            return
+        try:
+            active = store.list_active_observation_tickets()
+        except Exception:
+            return
+        now = time.time()
+        for ticket in active:
+            deadline = ticket.get("hard_deadline_at")
+            if deadline is not None and now > deadline:
+                ticket_id = ticket["ticket_id"]
+                step_attempt_id = ticket["step_attempt_id"]
+                try:
+                    store.timeout_observation(ticket_id, now=now)
+                    store.update_step_attempt(
+                        step_attempt_id,
+                        status="failed",
+                        waiting_reason="observation_timeout",
+                    )
+                except Exception:
+                    pass
+
+    def persist_ticket(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        step_attempt_id: str,
+        observer_kind: str,
+        poll_after_seconds: float = 5.0,
+        hard_deadline_at: float | None = None,
+        ready_patterns: list[Any] | None = None,
+        failure_patterns: list[Any] | None = None,
+        ticket_data: dict[str, Any] | None = None,
+    ) -> str | None:
+        """Persist an observation ticket to the store. Returns ticket_id or None."""
+        if self._store is None:
+            return None
+        try:
+            return self._store.create_observation_ticket(
+                task_id=task_id,
+                step_id=step_id,
+                step_attempt_id=step_attempt_id,
+                observer_kind=observer_kind,
+                poll_after_seconds=poll_after_seconds,
+                hard_deadline_at=hard_deadline_at,
+                ready_patterns=ready_patterns,
+                failure_patterns=failure_patterns,
+                ticket_data=ticket_data,
+            )
+        except Exception:
+            return None
+
+    def resolve_ticket(self, ticket_id: str, *, status: str = "completed") -> None:
+        """Mark a durable observation ticket as resolved."""
+        if self._store is None:
+            return
+        try:
+            self._store.resolve_observation(ticket_id, status=status)
+        except Exception:
+            pass

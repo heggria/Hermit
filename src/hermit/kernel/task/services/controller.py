@@ -29,6 +29,7 @@ from hermit.kernel.task.state.outcomes import (
     build_task_outcome,
     clean_runtime_text,
 )
+from hermit.kernel.task.state.transitions import validate_task_transition
 
 _AUTO_PARENT = object()
 AUTO_PARENT = _AUTO_PARENT  # Public alias for use outside this module
@@ -61,9 +62,14 @@ class IngressDecision:
 
 
 class TaskController:
-    def __init__(self, store: KernelStore) -> None:
+    def __init__(
+        self,
+        store: KernelStore,
+        workspace_lease_service: Any | None = None,
+    ) -> None:
         self.store = store
         self.ingress_router = IngressRouter(store)
+        self._workspace_lease_service = workspace_lease_service
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
@@ -1029,6 +1035,25 @@ class TaskController:
             task_status = "running"
         else:
             task_status = "completed" if status in ("succeeded", "completed", "skipped") else status
+        # Release workspace leases when task reaches terminal state
+        if task_status in TERMINAL_TASK_STATUSES and self._workspace_lease_service is not None:
+            try:
+                released = self._workspace_lease_service.release_all_for_task(ctx.task_id)
+                if released:
+                    self.store.append_event(
+                        event_type="workspace.task_terminal_cleanup",
+                        entity_type="task",
+                        entity_id=ctx.task_id,
+                        task_id=ctx.task_id,
+                        actor="kernel",
+                        payload={
+                            "released_lease_ids": released,
+                            "task_status": task_status,
+                        },
+                    )
+            except Exception:
+                pass  # Best-effort cleanup; must not break task finalization
+
         self.store.update_task_status(ctx.task_id, task_status, payload=payload)
         self._refresh_focus_after_task_status(ctx.conversation_id, ctx.task_id)
 
@@ -1071,6 +1096,17 @@ class TaskController:
         self.mark_suspended(ctx, waiting_kind="awaiting_approval")
 
     def mark_suspended(self, ctx: TaskExecutionContext, *, waiting_kind: str) -> None:
+        task = self.store.get_task(ctx.task_id)
+        if task is not None and not validate_task_transition(task.status, "blocked"):
+            import structlog
+
+            structlog.get_logger().warning(
+                "invalid_task_transition",
+                task_id=ctx.task_id,
+                current=task.status,
+                target="blocked",
+                caller="mark_suspended",
+            )
         self.store.update_step(ctx.step_id, status="blocked")
         self.store.update_step_attempt(ctx.step_attempt_id, status=waiting_kind)
         self.store.update_task_status(ctx.task_id, "blocked")
@@ -1089,6 +1125,16 @@ class TaskController:
                     task_id=task_id,
                 )
             )
+        if not validate_task_transition(task.status, "paused"):
+            import structlog
+
+            structlog.get_logger().warning(
+                "invalid_task_transition",
+                task_id=task_id,
+                current=task.status,
+                target="paused",
+                caller="pause_task",
+            )
         self.store.update_task_status(task_id, "paused")
         self._refresh_focus_after_task_status(task.conversation_id, task_id)
 
@@ -1101,6 +1147,16 @@ class TaskController:
                     default="Unknown task: {task_id}",
                     task_id=task_id,
                 )
+            )
+        if not validate_task_transition(task.status, "cancelled"):
+            import structlog
+
+            structlog.get_logger().warning(
+                "invalid_task_transition",
+                task_id=task_id,
+                current=task.status,
+                target="cancelled",
+                caller="cancel_task",
             )
         self.store.update_task_status(task_id, "cancelled")
         self._refresh_focus_after_task_status(task.conversation_id, task_id)

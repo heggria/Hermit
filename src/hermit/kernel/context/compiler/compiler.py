@@ -50,6 +50,7 @@ class ContextPack:
     focus_summary: dict[str, Any] | None = None
     bound_ingress_deltas: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     session_projection_ref: str | None = None
+    blackboard_entries: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     artifact_uri: str | None = None
     artifact_hash: str | None = None
 
@@ -78,6 +79,7 @@ class ContextPack:
             "excluded_memory_ids": self.excluded_memory_ids,
             "excluded_reasons": self.excluded_reasons,
             "pack_hash": self.pack_hash,
+            "blackboard_entries": self.blackboard_entries,
             "artifact_uri": self.artifact_uri,
             "artifact_hash": self.artifact_hash,
         }
@@ -116,6 +118,7 @@ class ContextCompiler:
         focus_summary: dict[str, Any] | None = None,
         bound_ingress_deltas: list[dict[str, Any]] | None = None,
         session_projection_ref: str | None = None,
+        blackboard_entries: list[dict[str, Any]] | None = None,
     ) -> ContextPack:
         selection_reasons: dict[str, str] = {}
         excluded_reasons: dict[str, str] = {}
@@ -227,6 +230,7 @@ class ContextCompiler:
             "focus_summary": dict(focus_summary or {}) or None,
             "bound_ingress_deltas": list(bound_ingress_deltas or []),
             "session_projection_ref": session_projection_ref,
+            "blackboard_entries": list(blackboard_entries or []),
             "selection_reasons": selection_reasons,
             "excluded_memory_ids": sorted(excluded_reasons),
             "excluded_reasons": excluded_reasons,
@@ -256,6 +260,7 @@ class ContextCompiler:
             focus_summary=dict(focus_summary or {}) or None,
             bound_ingress_deltas=list(bound_ingress_deltas or []),
             session_projection_ref=session_projection_ref,
+            blackboard_entries=list(blackboard_entries or []),
             selection_reasons=selection_reasons,
             excluded_memory_ids=sorted(excluded_reasons),
             excluded_reasons=excluded_reasons,

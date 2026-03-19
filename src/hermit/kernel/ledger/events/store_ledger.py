@@ -1826,3 +1826,19 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             params = (limit,)
         rows = self._rows(query, params)
         return [self._receipt_from_row(row) for row in rows]
+
+    def list_receipts_for_step(self, *, step_id: str, limit: int = 50) -> list[ReceiptRecord]:
+        """Return all receipts associated with a specific step."""
+        rows = self._rows(
+            "SELECT * FROM receipts WHERE step_id = ? ORDER BY created_at DESC LIMIT ?",
+            (step_id, limit),
+        )
+        return [self._receipt_from_row(row) for row in rows]
+
+    def update_receipt_signature(self, receipt_id: str, signature: str) -> None:
+        """Persist an HMAC signature on an existing receipt."""
+        with self._get_conn():
+            self._get_conn().execute(
+                "UPDATE receipts SET signature = ? WHERE receipt_id = ?",
+                (signature, receipt_id),
+            )

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
 from typing import Any
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
@@ -12,6 +15,29 @@ class ReceiptService:
         self.store = store
         self.artifact_store = artifact_store or ArtifactStore(store.db_path.parent / "artifacts")
         self.proofs = ProofService(store, self.artifact_store)
+
+    @staticmethod
+    def _compute_signature(
+        receipt_id: str,
+        task_id: str,
+        step_id: str,
+        action_type: str,
+        result_code: str,
+    ) -> str | None:
+        """Compute HMAC-SHA256 signature for a receipt.
+
+        Uses HERMIT_PROOF_SIGNING_SECRET from the environment.
+        Returns None if no signing secret is configured.
+        """
+        secret = os.environ.get("HERMIT_PROOF_SIGNING_SECRET")
+        if not secret:
+            return None
+        message = f"{receipt_id}:{task_id}:{step_id}:{action_type}:{result_code}"
+        return hmac.new(
+            secret.encode("utf-8"),
+            message.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
 
     def issue(
         self,
@@ -81,5 +107,14 @@ class ReceiptService:
             observed_effect_summary=observed_effect_summary,
             reconciliation_required=reconciliation_required,
         )
+
+        # Compute and persist HMAC signature after receipt creation so we
+        # can use the store-generated receipt_id.
+        signature = self._compute_signature(
+            receipt.receipt_id, task_id, step_id, action_type, result_code
+        )
+        if signature is not None:
+            self.store.update_receipt_signature(receipt.receipt_id, signature)
+
         self.proofs.ensure_receipt_bundle(receipt.receipt_id)
         return receipt.receipt_id

@@ -7,7 +7,11 @@ from typing import Any
 import structlog
 
 from hermit.kernel.ledger.journal.store import KernelStore
-from hermit.kernel.task.models.delegation import DelegationRecord, DelegationScope
+from hermit.kernel.task.models.delegation import (
+    ApprovalDelegationPolicy,
+    DelegationRecord,
+    DelegationScope,
+)
 
 log = structlog.get_logger()
 
@@ -34,6 +38,7 @@ class TaskDelegationService:
         child_goal: str,
         delegated_principal_id: str,
         scope_constraints: DelegationScope | None = None,
+        approval_delegation_policy: ApprovalDelegationPolicy | None = None,
     ) -> str:
         """Create a child task delegated from a parent task.
 
@@ -72,10 +77,21 @@ class TaskDelegationService:
             delegated_principal_id=delegated_principal_id,
             scope=scope,
             status="active",
+            approval_delegation_policy=approval_delegation_policy,
             created_at=now,
             updated_at=now,
         )
         self._delegations[delegation_id] = record
+
+        payload: dict[str, Any] = {
+            "delegation_id": delegation_id,
+            "parent_task_id": parent_task_id,
+            "child_task_id": child.task_id,
+            "delegated_principal_id": delegated_principal_id,
+            "scope": asdict(scope),
+        }
+        if approval_delegation_policy is not None:
+            payload["approval_delegation_policy"] = asdict(approval_delegation_policy)
 
         self.store.append_event(
             event_type="delegation.created",
@@ -83,13 +99,7 @@ class TaskDelegationService:
             entity_id=delegation_id,
             task_id=parent_task_id,
             actor="kernel",
-            payload={
-                "delegation_id": delegation_id,
-                "parent_task_id": parent_task_id,
-                "child_task_id": child.task_id,
-                "delegated_principal_id": delegated_principal_id,
-                "scope": asdict(scope),
-            },
+            payload=payload,
         )
 
         log.info(
@@ -214,6 +224,26 @@ class TaskDelegationService:
             if record.parent_task_id == parent_task_id and record.child_task_id == child_task_id:
                 return record
         return None
+
+    def check_delegation_approval_policy(
+        self,
+        *,
+        child_task_id: str,
+        action_class: str,
+    ) -> tuple[str, str | None]:
+        """Check whether a child task's approval can be auto-resolved by delegation policy.
+
+        Returns a tuple of (resolution, delegation_id):
+        - ('auto_approve', delegation_id) if policy auto-approves the action class
+        - ('require_parent_approval', delegation_id) if parent must explicitly approve
+        - ('deny', delegation_id) if policy denies the action class
+        - ('no_policy', None) if no delegation record or no policy is configured
+        """
+        record = self._find_delegation_by_child(child_task_id)
+        if record is None or record.approval_delegation_policy is None:
+            return ("no_policy", None)
+        resolution = record.approval_delegation_policy.resolve(action_class)
+        return (resolution, record.delegation_id)
 
     def _find_delegation_by_child(self, child_task_id: str) -> DelegationRecord | None:
         for record in self._delegations.values():

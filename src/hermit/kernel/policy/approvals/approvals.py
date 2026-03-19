@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import time
 from typing import Any
+
+import structlog
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.authority.grants import CapabilityGrantService
@@ -8,6 +11,8 @@ from hermit.kernel.execution.controller.contracts import contract_for
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy.approvals.decisions import DecisionService
 from hermit.kernel.verification.receipts.receipts import ReceiptService
+
+log = structlog.get_logger()
 
 
 class ApprovalService:
@@ -285,6 +290,7 @@ class ApprovalService:
         task_id: str,
         approval_requests: list[dict[str, Any]],
         batch_reason: str = "",
+        batch_metadata: dict[str, Any] | None = None,
     ) -> list[str]:
         """Create correlated approvals for multiple parallel steps.
 
@@ -305,11 +311,17 @@ class ApprovalService:
                 requested_action=req.get("requested_action", {}),
                 request_packet_ref=req.get("request_packet_ref"),
             )
+            resolution: dict[str, Any] = {
+                "batch_id": batch_id,
+                "batch_reason": batch_reason,
+            }
+            if batch_metadata is not None:
+                resolution["batch_metadata"] = batch_metadata
             self.store.resolve_approval(
                 aid,
                 status="pending",
                 resolved_by="system",
-                resolution={"batch_id": batch_id, "batch_reason": batch_reason},
+                resolution=resolution,
             )
             ids.append(aid)
         return ids
@@ -324,3 +336,180 @@ class ApprovalService:
                 self.approve(a.approval_id, resolved_by=resolved_by)
                 approved.append(a.approval_id)
         return approved
+
+    def approve_batch_ids(
+        self,
+        approval_ids: list[str],
+        *,
+        resolved_by: str = "user",
+    ) -> list[str]:
+        """Approve specific approval IDs directly with a single decision.
+
+        Returns list of successfully approved IDs.
+        """
+        approved: list[str] = []
+        for aid in approval_ids:
+            self.approve(aid, resolved_by=resolved_by)
+            approved.append(aid)
+        return approved
+
+    def request_with_delegation_check(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        step_attempt_id: str,
+        approval_type: str,
+        requested_action: dict[str, Any],
+        request_packet_ref: str | None,
+        action_class: str,
+        delegation_service: Any | None = None,
+        **kwargs: Any,
+    ) -> tuple[str, str]:
+        """Create an approval request with delegation policy auto-resolution.
+
+        If a delegation_service is provided, checks the parent's delegation
+        policy to determine whether the approval can be auto-resolved.
+
+        Returns (approval_id, resolution_status) where resolution_status is
+        one of: 'auto_approved', 'denied', 'pending'.
+        """
+        approval_id = self.request(
+            task_id=task_id,
+            step_id=step_id,
+            step_attempt_id=step_attempt_id,
+            approval_type=approval_type,
+            requested_action=requested_action,
+            request_packet_ref=request_packet_ref,
+            **kwargs,
+        )
+
+        if delegation_service is None:
+            return (approval_id, "pending")
+
+        policy_result, delegation_id = delegation_service.check_delegation_approval_policy(
+            child_task_id=task_id,
+            action_class=action_class,
+        )
+
+        if policy_result == "auto_approve":
+            self.approve(approval_id, resolved_by="delegation_policy")
+            log.info(
+                "approval.auto_resolved_by_delegation",
+                approval_id=approval_id,
+                delegation_id=delegation_id,
+                action_class=action_class,
+                resolution="auto_approved",
+            )
+            return (approval_id, "auto_approved")
+
+        if policy_result == "deny":
+            self.deny(
+                approval_id,
+                resolved_by="delegation_policy",
+                reason="denied_by_delegation_policy",
+            )
+            log.info(
+                "approval.auto_resolved_by_delegation",
+                approval_id=approval_id,
+                delegation_id=delegation_id,
+                action_class=action_class,
+                resolution="denied",
+            )
+            return (approval_id, "denied")
+
+        return (approval_id, "pending")
+
+
+class ApprovalTimeoutService:
+    """Background service that checks for expired approvals and auto-denies them.
+
+    Optionally emits escalation events before auto-deny when escalation is enabled.
+    """
+
+    def __init__(self, store: KernelStore, *, escalation_enabled: bool = False) -> None:
+        self.store = store
+        self.escalation_enabled = escalation_enabled
+
+    def check_expired(self) -> list[dict[str, Any]]:
+        """Check for pending approvals that have exceeded their drift_expiry.
+
+        For each expired approval:
+        1. If escalation_enabled, emit 'approval.escalation_needed' event
+        2. Auto-deny with reason 'approval_timeout'
+        3. Emit 'approval.timed_out' event
+
+        Returns a list of dicts describing each timed-out approval.
+        """
+        now = time.time()
+        results: list[dict[str, Any]] = []
+        approvals = self.store.list_approvals(status="pending", limit=1000)
+
+        for approval in approvals:
+            drift_expiry = getattr(approval, "drift_expiry", None)
+            if drift_expiry is None or drift_expiry >= now:
+                continue
+
+            escalation_emitted = False
+            if self.escalation_enabled:
+                self.store.append_event(
+                    event_type="approval.escalation_needed",
+                    entity_type="approval",
+                    entity_id=approval.approval_id,
+                    task_id=approval.task_id,
+                    actor="kernel",
+                    payload={
+                        "approval_id": approval.approval_id,
+                        "task_id": approval.task_id,
+                        "drift_expiry": drift_expiry,
+                        "expired_at": now,
+                    },
+                )
+                escalation_emitted = True
+                log.info(
+                    "approval.escalation_needed",
+                    approval_id=approval.approval_id,
+                    task_id=approval.task_id,
+                )
+
+            self.store.resolve_approval(
+                approval.approval_id,
+                status="denied",
+                resolved_by="system",
+                resolution={
+                    "status": "denied",
+                    "mode": "denied",
+                    "reason": "approval_timeout",
+                },
+            )
+
+            self.store.append_event(
+                event_type="approval.timed_out",
+                entity_type="approval",
+                entity_id=approval.approval_id,
+                task_id=approval.task_id,
+                actor="kernel",
+                payload={
+                    "approval_id": approval.approval_id,
+                    "task_id": approval.task_id,
+                    "drift_expiry": drift_expiry,
+                    "timed_out_at": now,
+                },
+            )
+
+            log.info(
+                "approval.timed_out",
+                approval_id=approval.approval_id,
+                task_id=approval.task_id,
+            )
+
+            results.append(
+                {
+                    "approval_id": approval.approval_id,
+                    "task_id": approval.task_id,
+                    "timed_out_at": now,
+                    "escalation_emitted": escalation_emitted,
+                }
+            )
+
+        return results

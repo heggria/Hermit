@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hermit.kernel.context.memory.governance import MemoryGovernanceService
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.models.records import BeliefRecord, MemoryRecord
 from hermit.plugins.builtin.hooks.memory.engine import MemoryEngine
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
+
+if TYPE_CHECKING:
+    from hermit.kernel.artifacts.models.artifacts import ArtifactStore
+    from hermit.kernel.verification.receipts.receipts import ReceiptService
 
 
 class BeliefService:
@@ -63,10 +68,19 @@ class BeliefService:
 
 
 class MemoryRecordService:
-    def __init__(self, store: KernelStore, *, mirror_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        store: KernelStore,
+        *,
+        mirror_path: Path | None = None,
+        receipt_service: ReceiptService | None = None,
+        artifact_store: ArtifactStore | None = None,
+    ) -> None:
         self.store = store
         self.mirror_path = mirror_path
         self.governance = MemoryGovernanceService()
+        self._receipt_service = receipt_service
+        self._artifact_store = artifact_store
 
     def promote_from_belief(
         self,
@@ -153,9 +167,15 @@ class MemoryRecordService:
                 invalidated_at=time.time(),
                 supersession_reason=f"reconciliation:{resolved_reconciliation_ref}",
             )
+        self._issue_memory_write_receipt(
+            belief=belief,
+            memory=memory,
+            superseded_records=superseded_records,
+        )
         return memory
 
     def invalidate(self, memory_id: str) -> None:
+        self._issue_memory_invalidate_receipt(memory_id)
         self.store.update_memory_record(memory_id, status="invalidated", invalidated_at=time.time())
 
     def invalidate_by_reconciliation(self, reconciliation_ref: str, result_class: str) -> list[str]:
@@ -245,6 +265,69 @@ class MemoryRecordService:
         ):
             categories.setdefault(record.category, []).append(self._entry_from_memory(record))
         return categories
+
+    def _issue_memory_write_receipt(
+        self,
+        *,
+        belief: BeliefRecord,
+        memory: MemoryRecord,
+        superseded_records: list[MemoryRecord],
+    ) -> str | None:
+        if self._receipt_service is None or self._artifact_store is None:
+            return None
+        prestate = {
+            "belief_ids": [belief.belief_id],
+            "memory_ids": [r.memory_id for r in superseded_records],
+        }
+        prestate_uri, prestate_hash = self._artifact_store.store_json(prestate)
+        prestate_artifact = self.store.create_artifact(
+            task_id=belief.task_id,
+            step_id="memory_promotion",
+            kind="prestate.memory_write",
+            uri=prestate_uri,
+            content_hash=prestate_hash,
+            producer="memory_record_service",
+            retention_class="audit",
+            trust_tier="observed",
+            metadata={"memory_id": memory.memory_id},
+        )
+        return self._receipt_service.issue(
+            task_id=belief.task_id,
+            step_id="memory_promotion",
+            step_attempt_id=f"promote:{belief.belief_id}",
+            action_type="memory_write",
+            input_refs=[belief.belief_id],
+            environment_ref=None,
+            policy_result={"verdict": "allow", "reason": "belief_promotion"},
+            approval_ref=None,
+            output_refs=[memory.memory_id],
+            result_summary=f"Promoted belief {belief.belief_id} to memory {memory.memory_id}",
+            result_code="succeeded",
+            rollback_supported=True,
+            rollback_strategy="supersede_or_invalidate",
+            rollback_artifact_refs=[prestate_artifact.artifact_id],
+        )
+
+    def _issue_memory_invalidate_receipt(self, memory_id: str) -> str | None:
+        if self._receipt_service is None:
+            return None
+        record = self.store.get_memory_record(memory_id)
+        if record is None:
+            return None
+        return self._receipt_service.issue(
+            task_id=record.task_id,
+            step_id="memory_invalidation",
+            step_attempt_id=f"invalidate:{memory_id}",
+            action_type="memory_invalidate",
+            input_refs=[memory_id],
+            environment_ref=None,
+            policy_result={"verdict": "allow", "reason": "memory_invalidation"},
+            approval_ref=None,
+            output_refs=[],
+            result_summary=f"Invalidated memory {memory_id}",
+            result_code="succeeded",
+            rollback_supported=False,
+        )
 
     @staticmethod
     def _entry_from_memory(record: MemoryRecord) -> MemoryEntry:

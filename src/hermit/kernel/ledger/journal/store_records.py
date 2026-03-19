@@ -49,6 +49,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
         )
 
     def _task_from_row(self, row: sqlite3.Row) -> TaskRecord:
+        keys = row.keys() if hasattr(row, "keys") else []
         return TaskRecord(
             task_id=str(row["task_id"]),
             conversation_id=str(row["conversation_id"]),
@@ -64,6 +65,12 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
             requested_by_principal_id=row["requested_by_principal_id"],
+            budget_tokens_used=int(row["budget_tokens_used"])
+            if "budget_tokens_used" in keys
+            else 0,
+            budget_tokens_limit=int(row["budget_tokens_limit"])
+            if "budget_tokens_limit" in keys and row["budget_tokens_limit"] is not None
+            else None,
         )
 
     def _step_from_row(self, row: sqlite3.Row) -> StepRecord:
@@ -85,6 +92,13 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             if "input_bindings_json" in keys
             else {},
             max_attempts=int(row["max_attempts"] or 1),
+            verification_required=bool(row["verification_required"])
+            if "verification_required" in keys
+            else False,
+            verifies=list(json_loads(row["verifies_json"])) if "verifies_json" in keys else [],
+            supersedes=list(json_loads(row["supersedes_json"]))
+            if "supersedes_json" in keys
+            else [],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
             created_at=row["created_at"],
@@ -128,6 +142,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             superseded_by_step_attempt_id=row["superseded_by_step_attempt_id"],
             started_at=row["started_at"],
             claimed_at=row["claimed_at"],
+            last_heartbeat_at=row["last_heartbeat_at"] if "last_heartbeat_at" in row else None,  # noqa: SIM401
             finished_at=row["finished_at"],
         )
 

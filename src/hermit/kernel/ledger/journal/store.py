@@ -7,7 +7,10 @@ import time
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from hermit.kernel.task.models.records import BlackboardRecord
 
 from hermit.kernel.authority.identity.models import PrincipalRecord
 from hermit.kernel.execution.competition.store import CompetitionStoreMixin
@@ -25,8 +28,23 @@ from hermit.kernel.ledger.projections.store_projection import KernelProjectionSt
 from hermit.kernel.signals.store import SignalStoreMixin
 from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 
-_SCHEMA_VERSION = "13"
-_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", "8", "9", "10", "11", "12", _SCHEMA_VERSION}
+_SCHEMA_VERSION = "17"
+_HASH_CACHE_MISS = object()  # sentinel for event-hash cache
+_MIGRATABLE_SCHEMA_VERSIONS = {
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16",
+    _SCHEMA_VERSION,
+}
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "conversation_projection_cache",
@@ -61,6 +79,8 @@ _KNOWN_KERNEL_TABLES = {
     "memory_entity_triples",
     "procedural_memories",
     "hash_chain_checkpoints",
+    "blackboard_entries",
+    "observation_tickets",
 }
 
 
@@ -87,12 +107,27 @@ class KernelStore(
         self._connect_target: str | Path = ":memory:" if self._in_memory else self.db_path
         self._local = threading.local()
         self._event_chain_lock = threading.Lock()
+        # Per-task locks for event chain hash continuity.  Different tasks have
+        # independent hash chains, so they can commit concurrently without
+        # forking each other's chain.  The global lock is kept only for events
+        # with task_id=None (rare system-level events).
+        self._task_chain_locks: dict[str, threading.Lock] = {}
+        self._task_chain_locks_guard = threading.Lock()
         # Registry of all per-thread file-backed connections for proper cleanup
         self._all_conns: list[sqlite3.Connection] = []
         self._conn_lock = threading.Lock()
         # Threading events fired on task status changes (used by hermit_await_completion)
         self._task_events: dict[str, threading.Event] = {}
         self._task_events_lock = threading.Lock()
+        # Phase 1: Principal ID cache — actor set is tiny (< 10), mapping is immutable.
+        self._principal_id_cache: dict[str, str] = {}
+        self._principal_id_cache_lock = threading.Lock()
+        # Phase 2: Event hash cache — avoids DB SELECT on every _append_event_tx.
+        # Reads/writes are protected by the per-task chain lock already held by callers.
+        self._latest_event_hash_cache: dict[str, str | None] = {}
+        # Phase 5: Shared listeners for hermit_await_completion parallel wait.
+        self._task_change_listeners: dict[str, list[threading.Event]] = {}
+        self._task_change_listeners_lock = threading.Lock()
         # For :memory: databases (tests), all threads must share one connection
         # since each new connection gets a separate empty database.
         self._shared_conn: sqlite3.Connection | None
@@ -154,6 +189,37 @@ class KernelStore(
             ev = self._task_events.pop(task_id, None)
         if ev is not None:
             ev.set()
+        # Phase 5: notify shared listeners (used by hermit_await_completion).
+        with self._task_change_listeners_lock:
+            listeners = self._task_change_listeners.get(task_id)
+            if listeners:
+                for shared_ev in listeners:
+                    shared_ev.set()
+
+    # --- Phase 5: Shared task-change listener registration ---
+
+    def register_task_change_listener(
+        self, task_ids: list[str], shared_event: threading.Event
+    ) -> None:
+        """Register a shared Event that is set when any of *task_ids* changes."""
+        with self._task_change_listeners_lock:
+            for tid in task_ids:
+                self._task_change_listeners.setdefault(tid, []).append(shared_event)
+
+    def deregister_task_change_listener(
+        self, task_ids: list[str], shared_event: threading.Event
+    ) -> None:
+        """Remove a previously registered shared Event."""
+        with self._task_change_listeners_lock:
+            for tid in task_ids:
+                lst = self._task_change_listeners.get(tid)
+                if lst is not None:
+                    try:
+                        lst.remove(shared_event)
+                    except ValueError:
+                        pass
+                    if not lst:
+                        del self._task_change_listeners[tid]
 
     # --- Overridden to fire task events ---
 
@@ -307,6 +373,8 @@ class KernelStore(
                     parent_task_id TEXT,
                     task_contract_ref TEXT,
                     requested_by_principal_id TEXT,
+                    budget_tokens_used INTEGER NOT NULL DEFAULT 0,
+                    budget_tokens_limit INTEGER,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -325,6 +393,9 @@ class KernelStore(
                     join_strategy TEXT NOT NULL DEFAULT 'all_required',
                     input_bindings_json TEXT NOT NULL DEFAULT '{}',
                     max_attempts INTEGER NOT NULL DEFAULT 1,
+                    verification_required INTEGER NOT NULL DEFAULT 0,
+                    verifies_json TEXT NOT NULL DEFAULT '[]',
+                    supersedes_json TEXT NOT NULL DEFAULT '[]',
                     started_at REAL,
                     finished_at REAL,
                     created_at REAL,
@@ -621,6 +692,19 @@ class KernelStore(
                     final_state_witness_ref TEXT,
                     created_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS blackboard_entries (
+                    entry_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    step_attempt_id TEXT,
+                    entry_type TEXT NOT NULL,
+                    content_json TEXT NOT NULL DEFAULT '{}',
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    supersedes_entry_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    resolution TEXT,
+                    created_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS beliefs (
                     belief_id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL,
@@ -738,6 +822,7 @@ class KernelStore(
                 CREATE INDEX IF NOT EXISTS idx_evidence_cases_subject ON evidence_cases(subject_kind, subject_ref, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_authorization_plans_attempt ON authorization_plans(step_attempt_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_reconciliations_attempt ON reconciliations(step_attempt_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_blackboard_task ON blackboard_entries(task_id, entry_type, status);
                 """
             )
             self._ensure_column("receipts", "receipt_bundle_ref", "TEXT")
@@ -812,6 +897,7 @@ class KernelStore(
             self._ensure_column("step_attempts", "policy_version", "TEXT")
             self._ensure_column("step_attempts", "resume_from_ref", "TEXT")
             self._ensure_column("step_attempts", "claimed_at", "REAL")
+            self._ensure_column("step_attempts", "last_heartbeat_at", "REAL")
             self._ensure_column("artifacts", "artifact_class", "TEXT")
             self._ensure_column("artifacts", "media_type", "TEXT")
             self._ensure_column("artifacts", "byte_size", "INTEGER")
@@ -861,6 +947,10 @@ class KernelStore(
             self._ensure_column("memory_records", "learned_from_reconciliation_ref", "TEXT")
             self._get_conn().execute(
                 "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue ON step_attempts(status, queue_priority DESC, started_at ASC)"
+            )
+            # Phase 4: composite index for claim_next_ready_step_attempt NOT EXISTS subquery.
+            self._get_conn().execute(
+                "CREATE INDEX IF NOT EXISTS idx_steps_task_status ON steps(task_id, status)"
             )
             self._ensure_column("memory_records", "freshness_class", "TEXT")
             self._ensure_column("memory_records", "last_accessed_at", "REAL")
@@ -932,6 +1022,10 @@ class KernelStore(
             self._migrate_category_english_v8()
             self._migrate_memory_kind_index_v12()
             self._migrate_hash_chain_checkpoints_v13()
+            self._migrate_verification_v14()
+            self._migrate_blackboard_v15()
+            self._migrate_observation_tickets_v16()
+            self._migrate_budget_v17()
             self._backfill_event_hash_chain()
             self._get_conn().execute(
                 """
@@ -1153,6 +1247,357 @@ class KernelStore(
             """
         )
 
+    def _migrate_verification_v14(self) -> None:
+        """Add verification-driven scheduling columns to steps table."""
+        self._ensure_column("steps", "verification_required", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("steps", "verifies_json", "TEXT NOT NULL DEFAULT '[]'")
+        self._ensure_column("steps", "supersedes_json", "TEXT NOT NULL DEFAULT '[]'")
+
+    def _migrate_blackboard_v15(self) -> None:
+        """Ensure blackboard_entries table exists (safety net for existing DBs)."""
+        self._get_conn().execute(
+            """
+            CREATE TABLE IF NOT EXISTS blackboard_entries (
+                entry_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                step_attempt_id TEXT,
+                entry_type TEXT NOT NULL,
+                content_json TEXT NOT NULL DEFAULT '{}',
+                confidence REAL NOT NULL DEFAULT 0.5,
+                supersedes_entry_id TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                resolution TEXT,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        self._get_conn().execute(
+            "CREATE INDEX IF NOT EXISTS idx_blackboard_task "
+            "ON blackboard_entries(task_id, entry_type, status)"
+        )
+
+    def _migrate_budget_v17(self) -> None:
+        """Add budget tracking columns to tasks table."""
+        self._ensure_column("tasks", "budget_tokens_used", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("tasks", "budget_tokens_limit", "INTEGER")
+
+    # ------------------------------------------------------------------
+    # Blackboard CRUD
+    # ------------------------------------------------------------------
+
+    def insert_blackboard_entry(self, record: BlackboardRecord) -> None:
+
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                """INSERT INTO blackboard_entries (
+                    entry_id, task_id, step_id, step_attempt_id, entry_type,
+                    content_json, confidence, supersedes_entry_id, status,
+                    resolution, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record.entry_id,
+                    record.task_id,
+                    record.step_id,
+                    record.step_attempt_id,
+                    record.entry_type,
+                    _canonical_json(record.content),
+                    record.confidence,
+                    record.supersedes_entry_id,
+                    record.status,
+                    record.resolution,
+                    record.created_at or time.time(),
+                ),
+            )
+
+    def get_blackboard_entry(self, entry_id: str) -> BlackboardRecord | None:
+        row = self._row("SELECT * FROM blackboard_entries WHERE entry_id = ?", (entry_id,))
+        if row is None:
+            return None
+        return self._blackboard_entry_from_row(row)
+
+    def query_blackboard_entries(
+        self,
+        *,
+        task_id: str,
+        entry_type: str | None = None,
+        status: str | None = None,
+    ) -> list[BlackboardRecord]:
+        clauses = ["task_id = ?"]
+        params: list[Any] = [task_id]
+        if entry_type is not None:
+            clauses.append("entry_type = ?")
+            params.append(entry_type)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " AND ".join(clauses)
+        rows = self._rows(
+            f"SELECT * FROM blackboard_entries WHERE {where} ORDER BY created_at ASC",
+            params,
+        )
+        return [self._blackboard_entry_from_row(r) for r in rows]
+
+    def update_blackboard_entry_status(
+        self, entry_id: str, status: str, *, resolution: str | None = None
+    ) -> None:
+        conn = self._get_conn()
+        with conn:
+            if resolution is not None:
+                conn.execute(
+                    "UPDATE blackboard_entries SET status = ?, resolution = ? WHERE entry_id = ?",
+                    (status, resolution, entry_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE blackboard_entries SET status = ? WHERE entry_id = ?",
+                    (status, entry_id),
+                )
+
+    def _blackboard_entry_from_row(self, row: sqlite3.Row) -> BlackboardRecord:
+        from hermit.kernel.ledger.journal.store_support import json_loads
+        from hermit.kernel.task.models.records import BlackboardRecord
+
+        return BlackboardRecord(
+            entry_id=str(row["entry_id"]),
+            task_id=str(row["task_id"]),
+            step_id=str(row["step_id"]),
+            step_attempt_id=row["step_attempt_id"],
+            entry_type=str(row["entry_type"]),
+            content=json_loads(row["content_json"]),
+            confidence=float(row["confidence"]),
+            supersedes_entry_id=row["supersedes_entry_id"],
+            status=str(row["status"]),
+            resolution=row["resolution"],
+            created_at=float(row["created_at"]),
+        )
+
+    def _migrate_observation_tickets_v16(self) -> None:
+        """Create observation_tickets table for durable observation tracking."""
+        self._get_conn().executescript(
+            """
+            CREATE TABLE IF NOT EXISTS observation_tickets (
+                ticket_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                step_attempt_id TEXT NOT NULL,
+                observer_kind TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                poll_after_seconds REAL NOT NULL DEFAULT 5.0,
+                hard_deadline_at REAL,
+                ready_patterns_json TEXT NOT NULL DEFAULT '[]',
+                failure_patterns_json TEXT NOT NULL DEFAULT '[]',
+                ticket_data_json TEXT NOT NULL DEFAULT '{}',
+                created_at REAL NOT NULL,
+                last_polled_at REAL,
+                resolved_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_observation_tickets_status
+                ON observation_tickets(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_observation_tickets_attempt
+                ON observation_tickets(step_attempt_id, status);
+            """
+        )
+
+    # ------------------------------------------------------------------
+    # Observation ticket CRUD
+    # ------------------------------------------------------------------
+
+    def create_observation_ticket(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        step_attempt_id: str,
+        observer_kind: str,
+        poll_after_seconds: float = 5.0,
+        hard_deadline_at: float | None = None,
+        ready_patterns: list[Any] | None = None,
+        failure_patterns: list[Any] | None = None,
+        ticket_data: dict[str, Any] | None = None,
+    ) -> str:
+        ticket_id = self._id("obs")
+        now = time.time()
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO observation_tickets (
+                    ticket_id, task_id, step_id, step_attempt_id, observer_kind,
+                    status, poll_after_seconds, hard_deadline_at,
+                    ready_patterns_json, failure_patterns_json, ticket_data_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ticket_id,
+                    task_id,
+                    step_id,
+                    step_attempt_id,
+                    observer_kind,
+                    poll_after_seconds,
+                    hard_deadline_at,
+                    _canonical_json(ready_patterns or []),
+                    _canonical_json(failure_patterns or []),
+                    _canonical_json(ticket_data or {}),
+                    now,
+                ),
+            )
+            self._append_event_tx(
+                event_id=self.generate_id("event"),
+                event_type="observation.created",
+                entity_type="observation_ticket",
+                entity_id=ticket_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={
+                    "ticket_id": ticket_id,
+                    "observer_kind": observer_kind,
+                    "step_attempt_id": step_attempt_id,
+                    "poll_after_seconds": poll_after_seconds,
+                    "hard_deadline_at": hard_deadline_at,
+                },
+            )
+        return ticket_id
+
+    def update_observation_progress(self, ticket_id: str, *, now: float | None = None) -> None:
+        ts = now or time.time()
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                "UPDATE observation_tickets SET last_polled_at = ? WHERE ticket_id = ?",
+                (ts, ticket_id),
+            )
+            row = self._row(
+                "SELECT task_id, step_id FROM observation_tickets WHERE ticket_id = ?",
+                (ticket_id,),
+            )
+            task_id = str(row["task_id"]) if row else None
+            step_id = str(row["step_id"]) if row else None
+            self._append_event_tx(
+                event_id=self.generate_id("event"),
+                event_type="observation.polled",
+                entity_type="observation_ticket",
+                entity_id=ticket_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={"ticket_id": ticket_id, "polled_at": ts},
+            )
+
+    def resolve_observation(
+        self, ticket_id: str, *, status: str = "completed", now: float | None = None
+    ) -> None:
+        ts = now or time.time()
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                "UPDATE observation_tickets SET status = ?, resolved_at = ? WHERE ticket_id = ?",
+                (status, ts, ticket_id),
+            )
+            row = self._row(
+                "SELECT task_id, step_id FROM observation_tickets WHERE ticket_id = ?",
+                (ticket_id,),
+            )
+            task_id = str(row["task_id"]) if row else None
+            step_id = str(row["step_id"]) if row else None
+            self._append_event_tx(
+                event_id=self.generate_id("event"),
+                event_type="observation.resolved",
+                entity_type="observation_ticket",
+                entity_id=ticket_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={"ticket_id": ticket_id, "status": status, "resolved_at": ts},
+            )
+
+    def timeout_observation(self, ticket_id: str, *, now: float | None = None) -> None:
+        ts = now or time.time()
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                "UPDATE observation_tickets SET status = 'timed_out', resolved_at = ?"
+                " WHERE ticket_id = ?",
+                (ts, ticket_id),
+            )
+            row = self._row(
+                "SELECT task_id, step_id FROM observation_tickets WHERE ticket_id = ?",
+                (ticket_id,),
+            )
+            task_id = str(row["task_id"]) if row else None
+            step_id = str(row["step_id"]) if row else None
+            self._append_event_tx(
+                event_id=self.generate_id("event"),
+                event_type="observation.timed_out",
+                entity_type="observation_ticket",
+                entity_id=ticket_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={"ticket_id": ticket_id, "timed_out_at": ts},
+            )
+
+    def list_active_observation_tickets(self) -> list[dict[str, Any]]:
+        from hermit.kernel.ledger.journal.store_support import json_loads as _jl
+
+        rows = self._rows(
+            "SELECT * FROM observation_tickets WHERE status = 'active' ORDER BY created_at"
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            result.append(
+                {
+                    "ticket_id": str(row["ticket_id"]),
+                    "task_id": str(row["task_id"]),
+                    "step_id": str(row["step_id"]),
+                    "step_attempt_id": str(row["step_attempt_id"]),
+                    "observer_kind": str(row["observer_kind"]),
+                    "status": str(row["status"]),
+                    "poll_after_seconds": float(row["poll_after_seconds"]),
+                    "hard_deadline_at": float(row["hard_deadline_at"])
+                    if row["hard_deadline_at"]
+                    else None,
+                    "ready_patterns": _jl(row["ready_patterns_json"]),
+                    "failure_patterns": _jl(row["failure_patterns_json"]),
+                    "ticket_data": _jl(row["ticket_data_json"]),
+                    "created_at": float(row["created_at"]),
+                    "last_polled_at": float(row["last_polled_at"])
+                    if row["last_polled_at"]
+                    else None,
+                    "resolved_at": None,
+                }
+            )
+        return result
+
+    def get_observation_ticket(self, ticket_id: str) -> dict[str, Any] | None:
+        from hermit.kernel.ledger.journal.store_support import json_loads as _jl
+
+        row = self._row(
+            "SELECT * FROM observation_tickets WHERE ticket_id = ?",
+            (ticket_id,),
+        )
+        if row is None:
+            return None
+        return {
+            "ticket_id": str(row["ticket_id"]),
+            "task_id": str(row["task_id"]),
+            "step_id": str(row["step_id"]),
+            "step_attempt_id": str(row["step_attempt_id"]),
+            "observer_kind": str(row["observer_kind"]),
+            "status": str(row["status"]),
+            "poll_after_seconds": float(row["poll_after_seconds"]),
+            "hard_deadline_at": float(row["hard_deadline_at"]) if row["hard_deadline_at"] else None,
+            "ready_patterns": _jl(row["ready_patterns_json"]),
+            "failure_patterns": _jl(row["failure_patterns_json"]),
+            "ticket_data": _jl(row["ticket_data_json"]),
+            "created_at": float(row["created_at"]),
+            "last_polled_at": float(row["last_polled_at"]) if row["last_polled_at"] else None,
+            "resolved_at": float(row["resolved_at"]) if row["resolved_at"] else None,
+        }
+
     def generate_id(self, prefix: str) -> str:
         return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
@@ -1178,26 +1623,25 @@ class KernelStore(
         *,
         write: bool = False,
     ) -> list[sqlite3.Row]:
-        """Execute a raw SQL statement under the event-chain lock.
+        """Execute a raw SQL statement.
 
-        For read queries (``write=False``) the statement is executed and all
-        rows are returned without an explicit transaction.
+        For read queries (``write=False``) the statement runs without locking —
+        SQLite WAL mode allows concurrent readers.
 
         For write queries (``write=True``) the statement is executed inside a
-        ``with conn:`` block so that the change is committed (or rolled back on
-        error) atomically.
+        ``with conn:`` block under the global event-chain lock so that the
+        change is committed atomically.
 
         Returns an empty list for statements that produce no rows (DML).
         """
         conn = self._get_conn()
-        with self._event_chain_lock:
-            if write:
-                with conn:
-                    cursor = conn.execute(sql, tuple(params))
-                    return list(cursor.fetchall()) if cursor.description else []
-            else:
+        if write:
+            with self._event_chain_lock, conn:
                 cursor = conn.execute(sql, tuple(params))
-                return list(cursor.fetchall())
+                return list(cursor.fetchall()) if cursor.description else []
+        else:
+            cursor = conn.execute(sql, tuple(params))
+            return list(cursor.fetchall())
 
     def count_events_by_type(
         self,
@@ -1300,6 +1744,11 @@ class KernelStore(
         raw = str(actor or "kernel").strip()
         if not raw:
             raw = "kernel"
+        # Phase 1: cache hit fast path — actor set is tiny and mapping is immutable.
+        with self._principal_id_cache_lock:
+            cached = self._principal_id_cache.get(raw)
+        if cached is not None:
+            return cached
         inferred_type = principal_type or self._infer_principal_type(raw)
         principal_id = (
             raw if raw.startswith("principal_") else f"principal_{self._principal_slug(raw)}"
@@ -1315,6 +1764,8 @@ class KernelStore(
             external_ref=None if raw.startswith("principal_") else raw,
             metadata={"legacy_actor": raw},
         )
+        with self._principal_id_cache_lock:
+            self._principal_id_cache[raw] = principal_id
         return principal_id
 
     def update_task_priority(self, task_id: str, *, priority: str) -> None:
@@ -1350,7 +1801,10 @@ class KernelStore(
         actor_principal_id = self._ensure_principal_id(actor)
         payload_json = _canonical_json(payload or {})
         occurred_at = time.time()
-        with self._event_chain_lock:
+        # Use a per-task lock so different tasks can commit concurrently.
+        # Events with task_id=None (rare) fall back to the global lock.
+        lock = self._get_task_chain_lock(task_id)
+        with lock:
             prev_event_hash = self._latest_task_event_hash(task_id)
             event_hash = self._compute_event_hash(
                 event_id=event_id,
@@ -1396,11 +1850,64 @@ class KernelStore(
             # Per-thread connections in file-backed mode have independent transaction
             # snapshots; without this commit, the chain would fork.
             conn.commit()
+            # Phase 2: update hash cache while still holding per-task lock.
+            if task_id is not None:
+                self._latest_event_hash_cache[task_id] = event_hash
         return event_id
+
+    def append_event(
+        self,
+        *,
+        event_type: str,
+        entity_type: str,
+        entity_id: str,
+        task_id: str | None,
+        step_id: str | None = None,
+        actor: str = "kernel",
+        payload: dict[str, Any] | None = None,
+        causation_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> str:
+        """Public API to append an event to the ledger.
+
+        Generates an event ID automatically and delegates to the internal
+        ``_append_event_tx`` which handles hash chaining and persistence.
+        """
+        return self._append_event_tx(
+            event_id=self.generate_id("event"),
+            event_type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            task_id=task_id,
+            step_id=step_id,
+            actor=actor,
+            payload=payload,
+            causation_id=causation_id,
+            correlation_id=correlation_id,
+        )
+
+    def _get_task_chain_lock(self, task_id: str | None) -> threading.Lock:
+        """Return a per-task lock for event chain serialisation.
+
+        Different tasks have independent hash chains, so they can safely commit
+        in parallel.  Events without a task_id use the global fallback lock.
+        """
+        if task_id is None:
+            return self._event_chain_lock
+        with self._task_chain_locks_guard:
+            lock = self._task_chain_locks.get(task_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._task_chain_locks[task_id] = lock
+            return lock
 
     def _latest_task_event_hash(self, task_id: str | None) -> str | None:
         if not task_id:
             return None
+        # Phase 2: check in-memory cache first (caller holds per-task lock).
+        cached = self._latest_event_hash_cache.get(task_id, _HASH_CACHE_MISS)
+        if cached is not _HASH_CACHE_MISS:
+            return cached  # type: ignore[return-value]
         row = self._row(
             """
             SELECT event_hash
@@ -1411,7 +1918,9 @@ class KernelStore(
             """,
             (task_id,),
         )
-        return str(row["event_hash"]) if row is not None and row["event_hash"] else None
+        result = str(row["event_hash"]) if row is not None and row["event_hash"] else None
+        self._latest_event_hash_cache[task_id] = result
+        return result
 
     def _compute_event_hash(
         self,

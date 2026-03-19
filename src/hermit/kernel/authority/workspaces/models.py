@@ -20,3 +20,21 @@ class WorkspaceLeaseRecord:
     expires_at: float | None = None
     released_at: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+
+
+@dataclass
+class WorkspaceLeaseQueueEntry:
+    """A queued request for a mutable workspace lease (FIFO)."""
+
+    queue_entry_id: str
+    workspace_id: str
+    task_id: str
+    step_attempt_id: str
+    root_path: str
+    holder_principal_id: str
+    mode: str
+    resource_scope: list[str] = field(default_factory=list)
+    ttl_seconds: int | None = None
+    queued_at: float | None = None
+    status: str = "pending"
+    metadata: dict[str, Any] = field(default_factory=dict)

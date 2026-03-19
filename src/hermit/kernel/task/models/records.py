@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 
@@ -23,6 +24,8 @@ class TaskRecord:
     # Artifact refs produced by child tasks spawned under this task.
     # Populated as children reach terminal status and report their output_ref.
     child_result_refs: list[str] = field(default_factory=list[str])
+    budget_tokens_used: int = 0
+    budget_tokens_limit: int | None = None
 
     @property
     def owner(self) -> str:
@@ -49,6 +52,9 @@ class StepRecord:
     join_strategy: str = "all_required"
     input_bindings: dict[str, str] = field(default_factory=dict[str, str])
     max_attempts: int = 1
+    verification_required: bool = False
+    verifies: list[str] = field(default_factory=list[str])
+    supersedes: list[str] = field(default_factory=list[str])
     started_at: float | None = None
     finished_at: float | None = None
     created_at: float | None = None
@@ -92,6 +98,7 @@ class StepAttemptRecord:
     superseded_by_step_attempt_id: str | None = None
     started_at: float | None = None
     claimed_at: float | None = None
+    last_heartbeat_at: float | None = None
     finished_at: float | None = None
 
     @property
@@ -460,6 +467,24 @@ class ConversationRecord:
 
 
 @dataclass
+class ObservationTicketRecord:
+    ticket_id: str
+    task_id: str
+    step_id: str
+    step_attempt_id: str
+    observer_kind: str
+    status: str
+    poll_after_seconds: float
+    hard_deadline_at: float | None = None
+    ready_patterns: list[Any] = field(default_factory=list)
+    failure_patterns: list[Any] = field(default_factory=list)
+    ticket_data: dict[str, Any] = field(default_factory=dict)
+    created_at: float = 0.0
+    last_polled_at: float | None = None
+    resolved_at: float | None = None
+
+
+@dataclass
 class IngressRecord:
     ingress_id: str
     conversation_id: str
@@ -481,3 +506,34 @@ class IngressRecord:
     rationale: dict[str, Any] = field(default_factory=dict[str, Any])
     created_at: float = 0.0
     updated_at: float = 0.0
+
+
+class BlackboardEntryType(StrEnum):
+    claim = "claim"
+    evidence = "evidence"
+    patch = "patch"
+    risk = "risk"
+    conflict = "conflict"
+    todo = "todo"
+    decision = "decision"
+
+
+class BlackboardEntryStatus(StrEnum):
+    active = "active"
+    superseded = "superseded"
+    resolved = "resolved"
+
+
+@dataclass
+class BlackboardRecord:
+    entry_id: str
+    task_id: str
+    step_id: str
+    step_attempt_id: str | None
+    entry_type: str
+    content: dict[str, Any] = field(default_factory=dict[str, Any])
+    confidence: float = 0.5
+    supersedes_entry_id: str | None = None
+    status: str = "active"
+    resolution: str | None = None
+    created_at: float | None = None

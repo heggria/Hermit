@@ -1324,6 +1324,24 @@ class ToolExecutor:
                 decided_by=str(matched_approval.resolved_by_principal_id or "principal_user"),
             )
         if governed:
+            # Revalidation gate: if the authorization plan has revalidation
+            # rules with check_policy_version=True, verify policy hasn't
+            # changed since the plan was created.
+            if authorization_plan is not None:
+                revalidation_rules = authorization_plan.revalidation_rules or {}
+                if revalidation_rules.get("check_policy_version", False):
+                    invalidated = self.authorization_plans.revalidate(
+                        authorization_plan.authorization_plan_id,
+                        POLICY_RULES_VERSION,
+                    )
+                    if invalidated:
+                        return self._supersede_attempt_for_drift(
+                            attempt_ctx=attempt_ctx,
+                            tool_name=tool_name,
+                            tool_input=tool_input,
+                            drift_reason="authorization_plan_policy_revalidation",
+                        )
+
             self._set_attempt_phase(
                 attempt_ctx, "authorized_pre_exec", reason="execution_authorized"
             )
@@ -1582,6 +1600,29 @@ class ToolExecutor:
                 authorized_effect_summary=authorized_effect_summary,
             )
             execution_status = self._reconciliation_execution_status(reconciliation)
+
+        # --- Budget tracking ---
+        task_record = self.store.get_task(attempt_ctx.task_id)
+        if task_record is not None and task_record.budget_tokens_limit is not None:
+            token_cost = len(str(tool_input)) + len(str(raw_result))
+            new_used = task_record.budget_tokens_used + token_cost
+            self.store.update_task_budget(attempt_ctx.task_id, budget_tokens_used=new_used)
+            if new_used >= task_record.budget_tokens_limit:
+                self.store.append_event(
+                    event_type="budget.exceeded",
+                    entity_type="task",
+                    entity_id=attempt_ctx.task_id,
+                    task_id=attempt_ctx.task_id,
+                    step_id=attempt_ctx.step_id,
+                    actor="kernel",
+                    payload={
+                        "budget_tokens_used": new_used,
+                        "budget_tokens_limit": task_record.budget_tokens_limit,
+                        "step_token_cost": token_cost,
+                    },
+                )
+                self.store.update_task_status(attempt_ctx.task_id, "budget_exceeded")
+
         return ToolExecutionResult(
             model_content=model_content,
             raw_result=raw_result,

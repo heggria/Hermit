@@ -58,9 +58,80 @@ class KernelDispatchService:
     def wake(self) -> None:
         self._wake.set()
 
+    def report_heartbeat(self, step_attempt_id: str) -> None:
+        """Record a heartbeat for a running step attempt.
+
+        Called by step executors to signal liveness.  The heartbeat timestamp
+        is written to the dedicated ``last_heartbeat_at`` column so the
+        background check can compare it against the configured interval.
+        """
+        try:
+            store = self._runner.task_controller.store
+            store.update_step_attempt(step_attempt_id, last_heartbeat_at=time.time())
+        except Exception:
+            log.exception(
+                "kernel_dispatch_heartbeat_failed",
+                step_attempt_id=step_attempt_id,
+            )
+
+    def check_heartbeat_timeouts(self) -> None:
+        """Scan running attempts with heartbeat intervals and fail timed-out ones.
+
+        Heartbeat is opt-in: only attempts whose context contains
+        ``heartbeat_interval_seconds`` are checked.  If the last heartbeat
+        (or the ``claimed_at`` timestamp when no heartbeat has been reported
+        yet) is older than the configured interval, the attempt is marked
+        failed with reason ``heartbeat_timeout`` and a retry attempt is
+        created if allowed by ``max_attempts``.
+        """
+        store = self._runner.task_controller.store
+        now = time.time()
+        for status in ("running", "dispatching", "executing"):
+            for attempt in store.list_step_attempts(status=status, limit=500):
+                ctx = attempt.context or {}
+                interval = ctx.get("heartbeat_interval_seconds")
+                if interval is None:
+                    continue
+                interval = float(interval)
+                last_beat = attempt.last_heartbeat_at or attempt.claimed_at or attempt.started_at
+                if last_beat is None:
+                    continue
+                if now - float(last_beat) <= interval:
+                    continue
+                # Heartbeat timed out — fail this attempt.
+                log.warning(
+                    "heartbeat_timeout",
+                    step_attempt_id=attempt.step_attempt_id,
+                    last_heartbeat_at=last_beat,
+                    interval=interval,
+                )
+                store.update_step_attempt(
+                    attempt.step_attempt_id,
+                    status="failed",
+                    waiting_reason="heartbeat_timeout",
+                    finished_at=now,
+                )
+                store.update_step(attempt.step_id, status="failed", finished_at=now)
+                # Trigger retry via the store if max_attempts allows.
+                step = store.get_step(attempt.step_id)
+                if step is not None and step.attempt < step.max_attempts:
+                    store.retry_step(attempt.task_id, attempt.step_id)
+                else:
+                    store.propagate_step_failure(attempt.task_id, attempt.step_id)
+                    if not store.has_non_terminal_steps(attempt.task_id):
+                        store.update_task_status(
+                            attempt.task_id,
+                            "failed",
+                            payload={
+                                "result_preview": "heartbeat_timeout",
+                                "result_text": "heartbeat_timeout",
+                            },
+                        )
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             self._reap_futures()
+            self.check_heartbeat_timeouts()
             claimed = False
             while self._capacity_available():
                 attempt = self._runner.task_controller.store.claim_next_ready_step_attempt()
