@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -26,6 +27,10 @@ from hermit.runtime.provider_host.execution.runtime import (
 
 if TYPE_CHECKING:
     from hermit.runtime.capability.registry.manager import PluginManager
+
+
+_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
+_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
 
 
 class RunnerTaskExecutor:
@@ -116,10 +121,6 @@ class RunnerTaskExecutor:
 
     @staticmethod
     def _result_preview(text: str, *, limit: int = 280) -> str:
-        import re
-
-        _SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-        _FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
         cleaned = _SESSION_TIME_RE.sub("", text) if text else ""
         cleaned = _FEISHU_META_RE.sub("", cleaned)
         if not cleaned:

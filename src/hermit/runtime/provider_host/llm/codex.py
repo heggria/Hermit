@@ -295,14 +295,7 @@ def _normalize_openai_schema(schema: Any) -> Any:
     return schema
 
 
-def _tool_schema(tool: ToolSpec, *, codex_oauth: bool = False) -> dict[str, Any]:
-    if codex_oauth:
-        return {
-            "type": "function",
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": _normalize_openai_schema(tool.input_schema),
-        }
+def _tool_schema(tool: ToolSpec) -> dict[str, Any]:
     return {
         "type": "function",
         "name": tool.name,
@@ -677,7 +670,7 @@ class CodexOAuthProvider(Provider):
             "stream": True,
         }
         if request.tools:
-            payload["tools"] = [_tool_schema(tool, codex_oauth=True) for tool in request.tools]
+            payload["tools"] = [_tool_schema(tool) for tool in request.tools]
             payload["tool_choice"] = "auto"
         return payload
 

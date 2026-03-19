@@ -95,8 +95,7 @@ class KernelServiceRegistry:
         except KeyError:
             raise KeyError(
                 f"Kernel service '{name}' is not registered. Available services: "
-                + ", ".join(sorted(self._services))
-                or "(none)"
+                + (", ".join(sorted(self._services)) or "(none)")
             ) from None
 
     def has(self, name: str) -> bool:
