@@ -392,6 +392,37 @@ def promote_memories_via_kernel(
                     "embedding_index_failed_non_critical", memory_ids=promoted_memories
                 )
 
+            # Post-promotion enrichment: influence_link and episode_index records
+            try:
+                for mem_id in promoted_memories:
+                    store.create_memory_record(
+                        task_id=ctx.task_id,
+                        conversation_id=ctx.conversation_id,
+                        category="enrichment",
+                        memory_kind="influence_link",
+                        claim_text=(
+                            f"Influence link for memory {mem_id} from {ctx.conversation_id}"
+                        ),
+                        confidence=0.7,
+                    )
+                store.create_memory_record(
+                    task_id=ctx.task_id,
+                    conversation_id=ctx.conversation_id,
+                    category="enrichment",
+                    memory_kind="episode_index",
+                    claim_text=(
+                        f"Episode index for session "
+                        f"{session_id or ctx.conversation_id} "
+                        f"({len(promoted_memories)} memories promoted via {mode})"
+                    ),
+                    confidence=0.7,
+                )
+            except Exception:
+                log.warning(
+                    "enrichment_records_failed_non_critical",
+                    memory_ids=promoted_memories,
+                )
+
         rollback_ref = _store_memory_artifact(
             store,
             artifact_store,
