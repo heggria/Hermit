@@ -48,11 +48,16 @@ class HermitMcpServer:
         self._mcp = FastMCP(
             "Hermit Kernel",
             instructions=(
-                "Hermit is a governed agent kernel. Use these tools to submit tasks, "
-                "monitor execution, and manage approvals. Use hermit_await_completion "
-                "to block until tasks finish instead of polling hermit_task_status. "
-                "When status is 'blocked' with pending approvals, "
-                "use hermit_approve or hermit_deny to resolve them."
+                "Hermit is a governed agent kernel that AUTONOMOUSLY EXECUTES code "
+                "modifications, shell commands, and multi-step tasks. When you submit "
+                "a task, Hermit compiles context, calls its own LLM provider, runs "
+                "tools (write_file, bash, etc.) under governed policy, and produces "
+                "receipts and proofs — all without Claude needing to intervene. "
+                "Intermediate statuses like 'reconciling' are normal and transient; "
+                "the task will reach 'completed' or 'failed' on its own. "
+                "Use hermit_await_completion to block until tasks finish instead of "
+                "polling hermit_task_status. When status is 'blocked' with pending "
+                "approvals, use hermit_approve or hermit_deny to resolve them."
             ),
         )
         self._register_tools()

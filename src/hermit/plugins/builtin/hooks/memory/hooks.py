@@ -405,3 +405,56 @@ def _bump_session_index(state_file: Path) -> int:  # pyright: ignore[reportUnuse
     except Exception:
         log.warning("session_state_update_failed")
         return 1
+
+
+# ---------------------------------------------------------------------------
+# Consolidation trigger
+# ---------------------------------------------------------------------------
+
+_CONSOLIDATION_THROTTLE_SECONDS = 3 * 3600  # run at most once every 3 hours
+_CONSOLIDATION_THROTTLE_FILE = ".last_consolidation"
+
+
+def _maybe_consolidate(settings: Any) -> None:
+    """Run the memory consolidation dream cycle, throttled to avoid over-firing.
+
+    Skips silently when:
+    - ``settings.kernel_db_path`` is absent or falsy
+    - A throttle file written by the previous run is recent enough
+    """
+    import time
+    from pathlib import Path as _Path
+
+    kernel_db_path = getattr(settings, "kernel_db_path", None)
+    if not kernel_db_path:
+        return
+
+    memory_file = getattr(settings, "memory_file", None)
+    if memory_file is None:
+        return
+
+    throttle_file = _Path(memory_file).parent / _CONSOLIDATION_THROTTLE_FILE
+    if throttle_file.exists():
+        try:
+            last_run = float(throttle_file.read_text().strip())
+            if (time.time() - last_run) < _CONSOLIDATION_THROTTLE_SECONDS:
+                log.debug("memory_consolidation_throttled", throttle_file=str(throttle_file))
+                return
+        except Exception:
+            pass  # corrupt throttle file → proceed with consolidation
+
+    try:
+        from hermit.kernel.ledger.journal.store import KernelStore
+        from hermit.plugins.builtin.hooks.memory.services import get_services
+
+        store = KernelStore(_Path(kernel_db_path))
+        try:
+            services = get_services(store)
+            services.consolidation.run_consolidation(store)
+        finally:
+            store.close()
+
+        throttle_file.write_text(str(time.time()))
+        log.info("memory_consolidation_complete")
+    except Exception:
+        log.warning("memory_consolidation_failed", exc_info=True)
