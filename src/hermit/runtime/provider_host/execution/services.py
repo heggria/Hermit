@@ -292,10 +292,10 @@ def build_runtime(
         tool_executor=tool_executor,
         locale=getattr(settings, "locale", None),
     )
-    runtime.workspace_root = str(workdir)  # type: ignore[attr-defined]
-    runtime.kernel_store = kernel_store  # type: ignore[attr-defined]
-    runtime.artifact_store = artifact_store  # type: ignore[attr-defined]
-    runtime.task_controller = TaskController(kernel_store)  # type: ignore[attr-defined]
+    runtime.workspace_root = str(workdir)
+    runtime.kernel_store = kernel_store
+    runtime.artifact_store = artifact_store
+    runtime.task_controller = TaskController(kernel_store)
     pm.configure_subagent_runtime(runtime)
     return runtime, pm
 

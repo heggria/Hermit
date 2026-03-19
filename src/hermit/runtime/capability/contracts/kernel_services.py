@@ -8,10 +8,11 @@ instances at startup; plugins retrieve them by name through the registry.
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol, runtime_checkable
 
-log = logging.getLogger(__name__)
+import structlog
+
+log = structlog.get_logger()
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.services.controller import TaskController
 
@@ -13,14 +12,7 @@ if TYPE_CHECKING:
     )
 
 
-def _t(
-    message_key: str,
-    *,
-    default: str | None = None,
-    **kwargs: object,
-) -> str:
-    locale = resolve_locale()
-    return tr(message_key, locale=locale, default=default, **kwargs)
+from hermit.runtime.control.runner.utils import _t
 
 
 class ApprovalResolver:
@@ -75,7 +67,8 @@ class ApprovalResolver:
         on_tool_start: ToolStartCallback | None = None,
     ) -> object:
         from hermit.kernel.policy.approvals.approvals import ApprovalService
-        from hermit.runtime.control.runner.runner import DispatchResult, _result_preview
+        from hermit.runtime.control.runner.runner import DispatchResult
+        from hermit.runtime.control.runner.utils import result_preview
 
         approval = self.store.get_approval(approval_id)
         if approval is None:
@@ -146,7 +139,7 @@ class ApprovalResolver:
                 self.task_controller.finalize_result(
                     task_ctx,
                     status=status,
-                    result_preview=_result_preview(result.text or ""),
+                    result_preview=result_preview(result.text or ""),
                     result_text=result.text or "",
                 )
             pm.on_post_run(result, session_id=session_id, session=session, runner=None)  # type: ignore[union-attr]

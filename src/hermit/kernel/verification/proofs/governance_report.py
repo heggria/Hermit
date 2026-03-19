@@ -3,12 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
-def _truncate(text: str, max_len: int) -> str:
-    text = text.replace("\n", " ").strip()
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 3] + "..."
+from .formatter import _truncate
 
 
 @dataclass

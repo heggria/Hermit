@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.ledger.journal.store_support import canonical_json as _canonical_json
 from hermit.kernel.ledger.journal.store_support import sha256_hex as _sha256_hex
+from hermit.kernel.task.constants import _FEISHU_META_RE as _FEISHU_TAG_RE
+from hermit.kernel.task.constants import _SESSION_TIME_RE
 from hermit.kernel.task.state.outcomes import TERMINAL_TASK_STATUSES, build_task_outcome
 
 _CONVERSATION_PROJECTION_SCHEMA_VERSION = "conversation-v3"
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_TAG_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
 
 
 class ConversationProjectionService:

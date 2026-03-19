@@ -199,14 +199,17 @@ class MemoryLineageService:
 
     @staticmethod
     def _find_all_influence_links(store: KernelStore) -> list[dict[str, Any]]:
-        """Retrieve all influence_link records as dicts."""
-        all_records = store.list_memory_records(status="active", limit=5000)
-        links: list[dict[str, Any]] = []
-        for r in all_records:
-            if r.memory_kind != "influence_link":
-                continue
-            links.append(dict(r.structured_assertion or {}))
-        return links
+        """Retrieve all influence_link records as dicts.
+
+        Uses a filtered SQL query on the indexed memory_kind column instead of
+        loading all memory_records and filtering in Python.
+        """
+        records = store.list_memory_records(
+            status="active",
+            memory_kind="influence_link",
+            limit=5000,
+        )
+        return [dict(r.structured_assertion or {}) for r in records]
 
 
 __all__ = ["MemoryLineageService"]

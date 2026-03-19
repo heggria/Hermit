@@ -173,21 +173,31 @@ class ProofService:
             "latest_reconciliation": latest_reconciliation.__dict__
             if latest_reconciliation is not None
             else None,
-            "projection": {
-                "events_processed": projection["events_processed"],
-                "last_event_seq": projection["last_event_seq"],
-                "step_count": len(projection["steps"]),
-                "step_attempt_count": len(projection["step_attempts"]),
-                "approval_count": len(projection["approvals"]),
-                "decision_count": len(projection["decisions"]),
-                "capability_grant_count": len(projection["capability_grants"]),
-                "workspace_lease_count": len(projection["workspace_leases"]),
-                "receipt_count": len(projection["receipts"]),
-                "execution_contract_count": len(projection["execution_contracts"]),
-                "evidence_case_count": len(projection["evidence_cases"]),
-                "authorization_plan_count": len(projection["authorization_plans"]),
-                "reconciliation_count": len(projection["reconciliations"]),
-            },
+            "projection": self._build_projection_dict(projection),
+        }
+
+    @staticmethod
+    def _build_projection_dict(projection: dict[str, Any]) -> dict[str, Any]:
+        """Build the projection summary sub-dict from a pre-fetched task projection.
+
+        Extracted so that export_task_proof() can reuse the result of
+        build_task_projection() without triggering a second verify_task_chain()
+        call via build_proof_summary().
+        """
+        return {
+            "events_processed": projection["events_processed"],
+            "last_event_seq": projection["last_event_seq"],
+            "step_count": len(projection["steps"]),
+            "step_attempt_count": len(projection["step_attempts"]),
+            "approval_count": len(projection["approvals"]),
+            "decision_count": len(projection["decisions"]),
+            "capability_grant_count": len(projection["capability_grants"]),
+            "workspace_lease_count": len(projection["workspace_leases"]),
+            "receipt_count": len(projection["receipts"]),
+            "execution_contract_count": len(projection["execution_contracts"]),
+            "evidence_case_count": len(projection["evidence_cases"]),
+            "authorization_plan_count": len(projection["authorization_plans"]),
+            "reconciliation_count": len(projection["reconciliations"]),
         }
 
     def ensure_receipt_bundle(self, receipt_id: str) -> str:
@@ -286,6 +296,9 @@ class ProofService:
 
         verification = self.verify_task_chain(task_id)
         inclusion = self._receipt_inclusion_proofs(receipt_bundles)
+        # Build projection once here; avoids a second verify_task_chain() call
+        # that would otherwise occur inside build_proof_summary().
+        projection = self.store.build_task_projection(task_id)
 
         # --- Core payload (always included) ---
         proof_payload: dict[str, Any] = {
@@ -298,7 +311,7 @@ class ProofService:
             "proof_coverage": self._proof_coverage(receipts),
             "status": "verified" if verification["valid"] else "invalid_chain",
             "chain_verification": verification,
-            "task_projection_summary": self.build_proof_summary(task_id)["projection"],
+            "task_projection_summary": self._build_projection_dict(projection),
             "receipt_merkle_root": inclusion["root"],
             "receipt_count": len(receipts),
             "decision_refs": sorted({r.decision_ref for r in receipts if r.decision_ref}),
@@ -790,11 +803,15 @@ class ProofService:
         chains: list[dict[str, Any]] = []
         complete_chains = 0
         incomplete_chains = 0
+        # Batch-load all step attempts in a single query to avoid N+1 lookups.
+        step_attempt_ids = [
+            receipt.step_attempt_id for receipt in receipts if receipt.step_attempt_id
+        ]
+        attempts_by_id = self.store.batch_get_step_attempts(step_attempt_ids)
+
         for receipt in receipts:
             attempt = (
-                self.store.get_step_attempt(receipt.step_attempt_id)
-                if receipt.step_attempt_id
-                else None
+                attempts_by_id.get(receipt.step_attempt_id) if receipt.step_attempt_id else None
             )
             gaps: list[str] = []
             contract_ref = getattr(attempt, "execution_contract_ref", None) if attempt else None

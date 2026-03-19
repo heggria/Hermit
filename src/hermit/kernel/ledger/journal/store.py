@@ -23,9 +23,10 @@ from hermit.kernel.ledger.journal.store_tasks import KernelTaskStoreMixin
 from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
 from hermit.kernel.signals.store import SignalStoreMixin
+from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 
-_SCHEMA_VERSION = "11"
-_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", "8", "9", "10", _SCHEMA_VERSION}
+_SCHEMA_VERSION = "13"
+_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", "8", "9", "10", "11", "12", _SCHEMA_VERSION}
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "conversation_projection_cache",
@@ -54,10 +55,12 @@ _KNOWN_KERNEL_TABLES = {
     "evidence_signals",
     "competitions",
     "competition_candidates",
+    "delegations",
     "memory_embeddings",
     "memory_graph_edges",
     "memory_entity_triples",
     "procedural_memories",
+    "hash_chain_checkpoints",
 }
 
 
@@ -74,6 +77,7 @@ class KernelStore(
     KernelV2StoreMixin,
     SignalStoreMixin,
     CompetitionStoreMixin,
+    DelegationStoreMixin,
 ):
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -86,6 +90,9 @@ class KernelStore(
         # Registry of all per-thread file-backed connections for proper cleanup
         self._all_conns: list[sqlite3.Connection] = []
         self._conn_lock = threading.Lock()
+        # Threading events fired on task status changes (used by hermit_await_completion)
+        self._task_events: dict[str, threading.Event] = {}
+        self._task_events_lock = threading.Lock()
         # For :memory: databases (tests), all threads must share one connection
         # since each new connection gets a separate empty database.
         self._shared_conn: sqlite3.Connection | None
@@ -120,6 +127,36 @@ class KernelStore(
             with self._conn_lock:
                 self._all_conns.append(conn)
         return conn
+
+    # --- Task change notification (Event-driven await) ---
+
+    def get_or_create_task_event(self, task_id: str) -> threading.Event:
+        """Return a shared threading.Event for the given task.
+
+        The event is set whenever the task's status changes. Callers should
+        call ``event.wait(timeout=...)`` and then re-read the task status.
+        """
+        with self._task_events_lock:
+            if task_id not in self._task_events:
+                self._task_events[task_id] = threading.Event()
+            return self._task_events[task_id]
+
+    def notify_task_changed(self, task_id: str) -> None:
+        """Fire (and reset) the event for *task_id* so waiters can re-check status."""
+        with self._task_events_lock:
+            ev = self._task_events.get(task_id)
+        if ev is not None:
+            ev.set()
+            ev.clear()
+
+    # --- Overridden to fire task events ---
+
+    def update_task_status(
+        self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
+    ) -> None:
+        """Update task status in DB and notify any waiting threads."""
+        super().update_task_status(task_id, status, payload=payload)
+        self.notify_task_changed(task_id)
 
     def close(self) -> None:
         if self._shared_conn is not None:
@@ -870,14 +907,24 @@ class KernelStore(
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS hash_chain_checkpoints (
+                    task_key TEXT NOT NULL,
+                    checkpoint_event_seq INTEGER NOT NULL,
+                    checkpoint_event_hash TEXT NOT NULL,
+                    checkpointed_at REAL NOT NULL,
+                    PRIMARY KEY (task_key)
+                );
                 """
             )
             self._init_signal_schema()
             self._init_competition_schema()
+            self._init_delegation_schema()
             self._migrate_memory_schema_v4()
             self._migrate_dag_schema_v11()
             self._migrate_kernel_convergence_v6()
             self._migrate_category_english_v8()
+            self._migrate_memory_kind_index_v12()
+            self._migrate_hash_chain_checkpoints_v13()
             self._backfill_event_hash_chain()
             self._get_conn().execute(
                 """
@@ -1073,6 +1120,32 @@ class KernelStore(
             """
         )
 
+    def _migrate_memory_kind_index_v12(self) -> None:
+        """Add index on memory_records.memory_kind for O(log n) filtered lookups."""
+        self._get_conn().execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_records_kind "
+            "ON memory_records(memory_kind, status, updated_at DESC)"
+        )
+
+    def _migrate_hash_chain_checkpoints_v13(self) -> None:
+        """Ensure hash_chain_checkpoints table has all required columns.
+
+        The table is created in the baseline schema DDL via CREATE TABLE IF NOT EXISTS,
+        so this migration is a safety net for existing DBs that may have been created
+        before the table was added to the baseline DDL.
+        """
+        self._get_conn().execute(
+            """
+            CREATE TABLE IF NOT EXISTS hash_chain_checkpoints (
+                task_key TEXT NOT NULL,
+                checkpoint_event_seq INTEGER NOT NULL,
+                checkpoint_event_hash TEXT NOT NULL,
+                checkpointed_at REAL NOT NULL,
+                PRIMARY KEY (task_key)
+            )
+            """
+        )
+
     def generate_id(self, prefix: str) -> str:
         return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
@@ -1086,6 +1159,70 @@ class KernelStore(
     def _rows(self, query: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         cursor = self._get_conn().execute(query, tuple(params))
         return list(cursor.fetchall())
+
+    # ------------------------------------------------------------------
+    # Public query-layer APIs (for subsystems that extend the schema)
+    # ------------------------------------------------------------------
+
+    def execute_raw(
+        self,
+        sql: str,
+        params: Iterable[Any] = (),
+        *,
+        write: bool = False,
+    ) -> list[sqlite3.Row]:
+        """Execute a raw SQL statement under the event-chain lock.
+
+        For read queries (``write=False``) the statement is executed and all
+        rows are returned without an explicit transaction.
+
+        For write queries (``write=True``) the statement is executed inside a
+        ``with conn:`` block so that the change is committed (or rolled back on
+        error) atomically.
+
+        Returns an empty list for statements that produce no rows (DML).
+        """
+        conn = self._get_conn()
+        with self._event_chain_lock:
+            if write:
+                with conn:
+                    cursor = conn.execute(sql, tuple(params))
+                    return list(cursor.fetchall()) if cursor.description else []
+            else:
+                cursor = conn.execute(sql, tuple(params))
+                return list(cursor.fetchall())
+
+    def count_events_by_type(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        event_type: str,
+    ) -> int:
+        """Return the number of events that match the given entity and event type.
+
+        This is the canonical, public alternative to calling ``self._rows()``
+        directly inside subsystems.  It never surfaces internal SQLite row
+        objects to callers.
+        """
+        row = self._row(
+            "SELECT COUNT(*) AS cnt FROM events "
+            "WHERE entity_type = ? AND entity_id = ? AND event_type = ?",
+            (entity_type, entity_id, event_type),
+        )
+        return int(row["cnt"]) if row else 0
+
+    def ensure_schema(self, ddl: str) -> None:
+        """Run a DDL script under the event-chain lock.
+
+        Use this to create extension tables (``CREATE TABLE IF NOT EXISTS …``)
+        from subsystems that live outside the core store class.  The *ddl*
+        string is passed verbatim to ``executescript``, which commits any open
+        transaction before executing, so multi-statement DDL blocks are fine.
+        """
+        conn = self._get_conn()
+        with self._event_chain_lock, conn:
+            conn.executescript(ddl)
 
     def _infer_principal_type(self, value: str) -> str:
         normalized = value.strip().lower()

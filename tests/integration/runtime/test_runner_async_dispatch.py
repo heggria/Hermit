@@ -11,8 +11,10 @@ from hermit.runtime.control.runner import runner as runner_module
 from hermit.runtime.control.runner.runner import (
     AgentRunner,
     DispatchResult,
-    _result_preview,
+)
+from hermit.runtime.control.runner.utils import (
     _strip_internal_markup,
+    result_preview,
 )
 from hermit.runtime.provider_host.execution.runtime import AgentResult
 
@@ -747,8 +749,8 @@ def test_runner_helper_functions_and_constructor_guard() -> None:
         )
         == "Hello"
     )
-    assert _result_preview("") == ""
-    assert _result_preview("word " * 100, limit=12).endswith("…")
+    assert result_preview("") == ""
+    assert result_preview("word " * 100, limit=12).endswith("…")
 
     with pytest.raises(ValueError):
         AgentRunner(_Agent(), _SessionManager(), _PluginManager(), task_controller=None)

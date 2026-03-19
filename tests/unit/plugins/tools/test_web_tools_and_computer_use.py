@@ -91,6 +91,13 @@ def test_fetch_helpers_cover_errors_and_text_extraction(monkeypatch) -> None:
     assert (
         fetch._html_to_text("<div>hello<br>world</div><style>ignored</style>") == "hello\n\nworld"
     )
+    # Markdown link rendering: absolute href → [text](url), others → plain text
+    assert "](" in fetch._html_to_text('<a href="https://example.com">click</a>')
+    assert "](https://example.com)" in fetch._html_to_text(
+        '<a href="https://example.com">click</a>'
+    )
+    assert "](" not in fetch._html_to_text('<a href="/relative">link</a>')
+    assert "[" not in fetch._html_to_text('<a href="/relative">link</a>')
 
 
 def test_search_helpers_cover_results_parsing_and_errors(monkeypatch) -> None:

@@ -13,7 +13,6 @@ from hermit.runtime.provider_host.llm.codex import (
     CodexOAuthProvider,
     CodexOAuthTokenManager,
     CodexProvider,
-    _codex_oauth_image_part_from_block,
     _decode_unverified_jwt_claims,
     _error_code_message,
     _format_stream_error,
@@ -101,16 +100,14 @@ def test_codex_error_and_image_helpers_cover_edge_cases() -> None:
     assert _image_part_from_block(
         {"source": {"type": "base64", "media_type": "image/png", "data": "abc"}}
     )["image_url"].startswith("data:image/png;base64,abc")
-    assert _codex_oauth_image_part_from_block(
-        {"source": {"type": "url", "url": "https://example.com"}}
-    ) == {
+    assert _image_part_from_block({"source": {"type": "url", "url": "https://example.com"}}) == {
         "type": "input_image",
         "image_url": "https://example.com",
     }
     with pytest.raises(ValueError, match="missing source"):
         _image_part_from_block({"source": None})
     with pytest.raises(ValueError, match="empty image URL"):
-        _codex_oauth_image_part_from_block({"source": {"type": "url", "url": " "}})
+        _image_part_from_block({"source": {"type": "url", "url": " "}})
     with pytest.raises(ValueError, match="Unsupported image source type"):
         _image_part_from_block({"source": {"type": "file"}})
 

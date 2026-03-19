@@ -113,6 +113,36 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         rows = self._rows(query, params)
         return [self._artifact_from_row(row) for row in rows]
 
+    def list_artifacts_for_tasks(
+        self,
+        task_ids: list[str],
+        *,
+        limit_per_task: int = 50,
+    ) -> dict[str, list[ArtifactRecord]]:
+        """Bulk-fetch artifacts for multiple tasks in a single query.
+
+        Returns a mapping of ``task_id -> list[ArtifactRecord]`` ordered by
+        ``created_at ASC`` within each task.  Tasks with no artifacts are omitted.
+        """
+        if not task_ids:
+            return {}
+        placeholders = ",".join("?" * len(task_ids))
+        total_limit = limit_per_task * len(task_ids)
+        rows = self._rows(
+            f"SELECT * FROM artifacts WHERE task_id IN ({placeholders})"
+            f" ORDER BY created_at ASC LIMIT ?",
+            (*task_ids, total_limit),
+        )
+        result: dict[str, list[ArtifactRecord]] = {}
+        per_task_counts: dict[str, int] = {}
+        for row in rows:
+            tid = str(row["task_id"])
+            if per_task_counts.get(tid, 0) >= limit_per_task:
+                continue
+            per_task_counts[tid] = per_task_counts.get(tid, 0) + 1
+            result.setdefault(tid, []).append(self._artifact_from_row(row))
+        return result
+
     @staticmethod
     def _artifact_class_for_kind(kind: str) -> str:
         prefix = str(kind or "").split("/", 1)[0]
@@ -974,6 +1004,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         scope_kind: str | None = None,
         scope_ref: str | None = None,
         task_id: str | None = None,
+        memory_kind: str | None = None,
         limit: int = 200,
     ) -> list[MemoryRecord]:
         clauses: list[str] = []
@@ -997,6 +1028,9 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         if scope_ref:
             clauses.append("scope_ref = ?")
             params.append(scope_ref)
+        if memory_kind:
+            clauses.append("memory_kind = ?")
+            params.append(memory_kind)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
         rows = self._rows(

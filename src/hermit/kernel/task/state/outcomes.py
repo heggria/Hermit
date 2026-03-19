@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from hermit.kernel.task.constants import _FEISHU_META_RE, _SESSION_TIME_RE
 from hermit.kernel.task.services.topics import build_task_topic
 
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
 
 
 def clean_runtime_text(value: Any) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
-from collections import deque
+from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -101,8 +101,11 @@ class MemoryGraphService:
         my_entities = {t.subject for t in my_triples} | {t.object_ for t in my_triples}
 
         if my_entities:
+            # Batch-load all other-record triples in ONE query instead of N queries.
+            other_ids = [r.memory_id for r in other_records]
+            all_other_triples = _load_triples_for_batch(other_ids, store)
             for other in other_records:
-                other_triples = self._get_triples_for_memory(other.memory_id, store)
+                other_triples = all_other_triples.get(other.memory_id, [])
                 other_entities = {t.subject for t in other_triples} | {
                     t.object_ for t in other_triples
                 }
@@ -313,76 +316,72 @@ class MemoryGraphService:
 
 def ensure_graph_schema(store: KernelStore) -> None:
     """Create graph tables if they don't exist."""
-    conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-    with conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS memory_graph_edges (
-                edge_id TEXT PRIMARY KEY,
-                from_memory_id TEXT NOT NULL,
-                to_memory_id TEXT NOT NULL,
-                relation_type TEXT NOT NULL,
-                weight REAL NOT NULL DEFAULT 1.0,
-                metadata_json TEXT NOT NULL DEFAULT '{}',
-                created_at REAL NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_graph_edges_from
-                ON memory_graph_edges(from_memory_id);
-            CREATE INDEX IF NOT EXISTS idx_graph_edges_to
-                ON memory_graph_edges(to_memory_id);
+    store.ensure_schema(
+        """
+        CREATE TABLE IF NOT EXISTS memory_graph_edges (
+            edge_id TEXT PRIMARY KEY,
+            from_memory_id TEXT NOT NULL,
+            to_memory_id TEXT NOT NULL,
+            relation_type TEXT NOT NULL,
+            weight REAL NOT NULL DEFAULT 1.0,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_graph_edges_from
+            ON memory_graph_edges(from_memory_id);
+        CREATE INDEX IF NOT EXISTS idx_graph_edges_to
+            ON memory_graph_edges(to_memory_id);
 
-            CREATE TABLE IF NOT EXISTS memory_entity_triples (
-                triple_id TEXT PRIMARY KEY,
-                source_memory_id TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                predicate TEXT NOT NULL,
-                object TEXT NOT NULL,
-                confidence REAL NOT NULL DEFAULT 0.5,
-                valid_from REAL NOT NULL,
-                valid_until REAL,
-                created_at REAL NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_triples_subject
-                ON memory_entity_triples(subject);
-            CREATE INDEX IF NOT EXISTS idx_triples_object
-                ON memory_entity_triples(object);
-            CREATE INDEX IF NOT EXISTS idx_triples_source
-                ON memory_entity_triples(source_memory_id);
-            """
-        )
+        CREATE TABLE IF NOT EXISTS memory_entity_triples (
+            triple_id TEXT PRIMARY KEY,
+            source_memory_id TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            valid_from REAL NOT NULL,
+            valid_until REAL,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_triples_subject
+            ON memory_entity_triples(subject);
+        CREATE INDEX IF NOT EXISTS idx_triples_object
+            ON memory_entity_triples(object);
+        CREATE INDEX IF NOT EXISTS idx_triples_source
+            ON memory_entity_triples(source_memory_id);
+        """
+    )
 
 
 def _store_edge(edge: GraphEdge, store: KernelStore) -> None:
     import json
 
-    conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-    with conn:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO memory_graph_edges
-                (edge_id, from_memory_id, to_memory_id, relation_type, weight, metadata_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                edge.edge_id,
-                edge.from_memory_id,
-                edge.to_memory_id,
-                edge.relation_type,
-                edge.weight,
-                json.dumps(edge.metadata),
-                edge.created_at,
-            ),
-        )
+    store.execute_raw(
+        """
+        INSERT OR REPLACE INTO memory_graph_edges
+            (edge_id, from_memory_id, to_memory_id, relation_type, weight, metadata_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            edge.edge_id,
+            edge.from_memory_id,
+            edge.to_memory_id,
+            edge.relation_type,
+            edge.weight,
+            json.dumps(edge.metadata),
+            edge.created_at,
+        ),
+        write=True,
+    )
 
 
 def _load_edges_from(memory_id: str, store: KernelStore) -> list[GraphEdge]:
     import json
 
-    conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-    rows = conn.execute(
+    rows = store.execute_raw(
         "SELECT * FROM memory_graph_edges WHERE from_memory_id = ?",
         (memory_id,),
-    ).fetchall()
+    )
 
     edges: list[GraphEdge] = []
     for row in rows:
@@ -401,34 +400,32 @@ def _load_edges_from(memory_id: str, store: KernelStore) -> list[GraphEdge]:
 
 
 def _store_triple(triple: EntityTriple, store: KernelStore) -> None:
-    conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-    with conn:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO memory_entity_triples
-                (triple_id, source_memory_id, subject, predicate, object, confidence, valid_from, valid_until, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                triple.triple_id,
-                triple.source_memory_id,
-                triple.subject,
-                triple.predicate,
-                triple.object_,
-                triple.confidence,
-                triple.valid_from,
-                triple.valid_until,
-                triple.created_at,
-            ),
-        )
+    store.execute_raw(
+        """
+        INSERT OR REPLACE INTO memory_entity_triples
+            (triple_id, source_memory_id, subject, predicate, object, confidence, valid_from, valid_until, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            triple.triple_id,
+            triple.source_memory_id,
+            triple.subject,
+            triple.predicate,
+            triple.object_,
+            triple.confidence,
+            triple.valid_from,
+            triple.valid_until,
+            triple.created_at,
+        ),
+        write=True,
+    )
 
 
 def _load_triples_for(memory_id: str, store: KernelStore) -> list[EntityTriple]:
-    conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-    rows = conn.execute(
+    rows = store.execute_raw(
         "SELECT * FROM memory_entity_triples WHERE source_memory_id = ?",
         (memory_id,),
-    ).fetchall()
+    )
 
     triples: list[EntityTriple] = []
     for row in rows:
@@ -448,4 +445,40 @@ def _load_triples_for(memory_id: str, store: KernelStore) -> list[EntityTriple]:
     return triples
 
 
-__all__ = ["MemoryGraphService", "ensure_graph_schema"]
+def _load_triples_for_batch(
+    memory_ids: list[str],
+    store: KernelStore,
+) -> dict[str, list[EntityTriple]]:
+    """Load triples for multiple memory IDs in a single SQL query.
+
+    Returns a dict mapping source_memory_id → list[EntityTriple].
+    Avoids N individual DB round-trips when building entity edges.
+    """
+    if not memory_ids:
+        return {}
+
+    placeholders = ",".join("?" * len(memory_ids))
+    rows = store.execute_raw(
+        f"SELECT * FROM memory_entity_triples WHERE source_memory_id IN ({placeholders})",
+        memory_ids,
+    )
+
+    result: dict[str, list[EntityTriple]] = defaultdict(list)
+    for row in rows:
+        result[str(row["source_memory_id"])].append(
+            EntityTriple(
+                triple_id=str(row["triple_id"]),
+                source_memory_id=str(row["source_memory_id"]),
+                subject=str(row["subject"]),
+                predicate=str(row["predicate"]),
+                object_=str(row["object"]),
+                confidence=float(row["confidence"]),
+                valid_from=float(row["valid_from"]),
+                valid_until=float(row["valid_until"]) if row["valid_until"] else None,
+                created_at=float(row["created_at"]),
+            )
+        )
+    return dict(result)
+
+
+__all__ = ["MemoryGraphService", "_load_triples_for_batch", "ensure_graph_schema"]

@@ -7,6 +7,7 @@ from typing import Any
 from hermit.kernel.authority.grants.models import CapabilityGrantRecord
 from hermit.kernel.authority.identity.models import PrincipalRecord
 from hermit.kernel.authority.workspaces.models import WorkspaceLeaseRecord
+from hermit.kernel.task.models.delegation import DelegationRecord, DelegationScope
 from hermit.kernel.task.models.records import (
     ApprovalRecord,
     ArtifactRecord,
@@ -106,6 +107,10 @@ class KernelStoreTypingBase:
 
     def get_step_attempt(self, step_attempt_id: str) -> StepAttemptRecord | None: ...
 
+    def batch_get_step_attempts(
+        self, step_attempt_ids: list[str]
+    ) -> dict[str, StepAttemptRecord]: ...
+
     def get_ingress(self, ingress_id: str) -> IngressRecord | None: ...
 
     def get_conversation(self, conversation_id: str) -> ConversationRecord | None: ...
@@ -148,10 +153,59 @@ class KernelStoreTypingBase:
         limit: int = 200,
     ) -> list[dict[str, Any]]: ...
 
+    def list_events_for_tasks(
+        self,
+        task_ids: list[str],
+        *,
+        limit_per_task: int = 500,
+    ) -> dict[str, list[dict[str, Any]]]: ...
+
+    def get_last_event_per_task(
+        self,
+        task_ids: list[str],
+    ) -> dict[str, dict[str, Any]]: ...
+
+    def list_artifacts_for_tasks(
+        self,
+        task_ids: list[str],
+        *,
+        limit_per_task: int = 50,
+    ) -> dict[str, list[Any]]: ...
+
     def list_open_tasks_for_conversation(
         self, *, conversation_id: str, limit: int = 50
     ) -> list[TaskRecord]: ...
 
     def set_conversation_focus(
         self, conversation_id: str, *, task_id: str | None, reason: str = ""
+    ) -> None: ...
+
+    def create_delegation(
+        self,
+        *,
+        delegation_id: str,
+        parent_task_id: str,
+        child_task_id: str,
+        delegated_principal_id: str,
+        scope: DelegationScope,
+        delegation_grant_ref: str | None = None,
+        created_at: float | None = None,
+    ) -> DelegationRecord: ...
+
+    def get_delegation_record(self, delegation_id: str) -> DelegationRecord | None: ...
+
+    def find_delegation_by_pair(
+        self, parent_task_id: str, child_task_id: str
+    ) -> DelegationRecord | None: ...
+
+    def find_delegation_by_child(self, child_task_id: str) -> DelegationRecord | None: ...
+
+    def list_delegations_for_parent(self, parent_task_id: str) -> list[DelegationRecord]: ...
+
+    def update_delegation_status(
+        self,
+        delegation_id: str,
+        *,
+        status: str,
+        recall_reason: str | None = None,
     ) -> None: ...

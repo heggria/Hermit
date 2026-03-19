@@ -201,21 +201,16 @@ class ProceduralMemoryService:
     def _load_all_procedures(self, store: KernelStore) -> list[ProceduralRecord]:
         """Load all procedures from the store."""
         _ensure_procedural_schema(store)
-        conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-        with store._event_chain_lock:  # pyright: ignore[reportPrivateUsage]
-            rows = conn.execute(
-                "SELECT * FROM procedural_memories WHERE status != 'deleted'"
-            ).fetchall()
+        rows = store.execute_raw("SELECT * FROM procedural_memories WHERE status != 'deleted'")
         return [self._row_to_record(row) for row in rows]
 
     def _load_procedure(self, procedure_id: str, store: KernelStore) -> ProceduralRecord | None:
         _ensure_procedural_schema(store)
-        conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-        with store._event_chain_lock:  # pyright: ignore[reportPrivateUsage]
-            row = conn.execute(
-                "SELECT * FROM procedural_memories WHERE procedure_id = ?",
-                (procedure_id,),
-            ).fetchone()
+        rows = store.execute_raw(
+            "SELECT * FROM procedural_memories WHERE procedure_id = ?",
+            (procedure_id,),
+        )
+        row = rows[0] if rows else None
         return self._row_to_record(row) if row else None
 
     def _save_procedure(
@@ -227,38 +222,37 @@ class ProceduralMemoryService:
     ) -> None:
         _ensure_procedural_schema(store)
         now = time.time()
-        conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-        with store._event_chain_lock, conn:  # pyright: ignore[reportPrivateUsage]
-            conn.execute(
-                """
-                INSERT INTO procedural_memories
-                    (procedure_id, trigger_pattern, steps_json, confidence,
-                     source_memory_ids_json, success_count, failure_count,
-                     status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(procedure_id) DO UPDATE SET
-                    trigger_pattern = excluded.trigger_pattern,
-                    steps_json = excluded.steps_json,
-                    confidence = excluded.confidence,
-                    source_memory_ids_json = excluded.source_memory_ids_json,
-                    success_count = excluded.success_count,
-                    failure_count = excluded.failure_count,
-                    status = excluded.status,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    proc.procedure_id,
-                    proc.trigger_pattern,
-                    json.dumps(proc.steps),
-                    proc.confidence,
-                    json.dumps(proc.source_memory_ids),
-                    proc.success_count,
-                    proc.failure_count,
-                    status or proc.status,
-                    proc.created_at or now,
-                    now,
-                ),
-            )
+        store.execute_raw(
+            """
+            INSERT INTO procedural_memories
+                (procedure_id, trigger_pattern, steps_json, confidence,
+                 source_memory_ids_json, success_count, failure_count,
+                 status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(procedure_id) DO UPDATE SET
+                trigger_pattern = excluded.trigger_pattern,
+                steps_json = excluded.steps_json,
+                confidence = excluded.confidence,
+                source_memory_ids_json = excluded.source_memory_ids_json,
+                success_count = excluded.success_count,
+                failure_count = excluded.failure_count,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            """,
+            (
+                proc.procedure_id,
+                proc.trigger_pattern,
+                json.dumps(proc.steps),
+                proc.confidence,
+                json.dumps(proc.source_memory_ids),
+                proc.success_count,
+                proc.failure_count,
+                status or proc.status,
+                proc.created_at or now,
+                now,
+            ),
+            write=True,
+        )
 
     @staticmethod
     def _row_to_record(row: Any) -> ProceduralRecord:
@@ -281,24 +275,22 @@ class ProceduralMemoryService:
 
 def _ensure_procedural_schema(store: KernelStore) -> None:
     """Create procedural_memories table if it doesn't exist."""
-    conn = store._get_conn()  # pyright: ignore[reportPrivateUsage]
-    with store._event_chain_lock, conn:  # pyright: ignore[reportPrivateUsage]
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS procedural_memories (
-                procedure_id TEXT PRIMARY KEY,
-                trigger_pattern TEXT NOT NULL,
-                steps_json TEXT NOT NULL,
-                confidence REAL NOT NULL DEFAULT 0.5,
-                source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
-                success_count INTEGER NOT NULL DEFAULT 0,
-                failure_count INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'active',
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL
-            )
-            """
+    store.ensure_schema(
+        """
+        CREATE TABLE IF NOT EXISTS procedural_memories (
+            procedure_id TEXT PRIMARY KEY,
+            trigger_pattern TEXT NOT NULL,
+            steps_json TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            source_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
         )
+        """
+    )
 
 
 __all__ = ["ProceduralMemoryService", "ProceduralRecord"]

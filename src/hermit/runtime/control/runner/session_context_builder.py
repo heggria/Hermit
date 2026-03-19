@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from hermit.kernel.context.models.context import TaskExecutionContext
@@ -12,27 +11,9 @@ if TYPE_CHECKING:
     from hermit.kernel.ledger.journal.store import KernelStore
     from hermit.runtime.capability.registry.manager import PluginManager
 
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
-
-
-def _strip_internal_markup(text: str) -> str:
-    if not text:
-        return ""
-    cleaned = _SESSION_TIME_RE.sub("", text)
-    cleaned = _FEISHU_META_RE.sub("", cleaned)
-    cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
-    return cleaned.strip()
-
-
-def _result_preview(text: str, *, limit: int = 280) -> str:
-    cleaned = _strip_internal_markup(text)
-    if not cleaned:
-        return ""
-    cleaned = " ".join(cleaned.split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[: limit - 1].rstrip() + "\u2026"
+from hermit.runtime.control.runner.utils import (
+    result_preview,
+)
 
 
 class SessionContextBuilder:
@@ -84,7 +65,7 @@ class SessionContextBuilder:
             mark(
                 task_ctx,
                 plan_artifact_ref=plan_ref,
-                result_preview=_result_preview(result.text or ""),
+                result_preview=result_preview(result.text or ""),
                 result_text=result.text or "",
             )
         result.execution_status = "planning_ready"

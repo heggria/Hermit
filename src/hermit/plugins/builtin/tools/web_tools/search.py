@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 
 # DDG date-filter codes
@@ -35,6 +36,21 @@ def handle_search(payload: dict[str, Any]) -> str:
     time_filter = str(payload.get("time_filter", "")).strip().lower()
     search_type = str(payload.get("search_type", "web")).strip().lower()
 
+    # --- Cache look-up ---
+    cache_params = {
+        "query": query,
+        "max_results": max_results,
+        "region": region,
+        "time_filter": time_filter,
+        "search_type": search_type,
+    }
+    cache = get_cache()
+    cache_key = cache.make_key("web_search", cache_params)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    # ---------------------
+
     parts: list[str] = []
 
     # Only use Instant Answer for general factual queries (not news/recent events)
@@ -59,7 +75,9 @@ def handle_search(payload: dict[str, Any]) -> str:
     if not parts:
         return _t("tools.web.search.no_results", query=query)
 
-    return "\n\n".join(parts)
+    result = "\n\n".join(parts)
+    cache.set(cache_key, result)
+    return result
 
 
 def _ddg_lite_search(

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import datetime
-import re
 from typing import TYPE_CHECKING, Any
 
-from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.context.injection.provider_input import ProviderInputCompiler
 from hermit.kernel.context.models.context import CompiledProviderInput, TaskExecutionContext
 from hermit.kernel.task.services.planning import PlanningService
@@ -21,31 +19,10 @@ if TYPE_CHECKING:
     from hermit.kernel.task.services.controller import TaskController
     from hermit.runtime.capability.registry.manager import PluginManager
 
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
-
-
-def _strip_internal_markup(text: str) -> str:
-    if not text:
-        return ""
-    cleaned = _SESSION_TIME_RE.sub("", text)
-    cleaned = _FEISHU_META_RE.sub("", cleaned)
-    return cleaned.strip()
-
-
-def _locale_for_pm(pm: PluginManager | None = None) -> str:
-    settings = getattr(pm, "settings", None)
-    return resolve_locale(getattr(settings, "locale", None))
-
-
-def _t(
-    message_key: str,
-    *,
-    pm: PluginManager | None = None,
-    default: str | None = None,
-    **kwargs: object,
-) -> str:
-    return tr(message_key, locale=_locale_for_pm(pm), default=default, **kwargs)
+from hermit.runtime.control.runner.utils import (
+    _strip_internal_markup,
+    _t,
+)
 
 
 class MessageCompiler:

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import weakref
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -36,20 +37,41 @@ class FileGuard:
     """Registry of per-path threading.RLock instances.
 
     Each canonical (resolved) path gets exactly one RLock for the lifetime of
-    the process, so all callers sharing the same path will serialise through the
-    same lock object.
+    the lock object.  Entries are automatically removed from the registry once
+    no caller holds a reference to the RLock (WeakValueDictionary), preventing
+    unbounded growth when many distinct paths are accessed over time.
     """
 
-    _registry: dict[Path, threading.RLock] = {}
+    # WeakValueDictionary: entries are evicted automatically when the RLock is
+    # no longer referenced by any acquire() caller, preventing the memory leak
+    # that would occur with a plain dict whose entries are never removed.
+    _registry: weakref.WeakValueDictionary[Path, threading.RLock] = weakref.WeakValueDictionary()
     _registry_lock: threading.Lock = threading.Lock()
 
     @classmethod
     def _get_rlock(cls, path: Path) -> threading.RLock:
         canonical = path.resolve()
         with cls._registry_lock:
-            if canonical not in cls._registry:
-                cls._registry[canonical] = threading.RLock()
-            return cls._registry[canonical]
+            rlock = cls._registry.get(canonical)
+            if rlock is None:
+                rlock = threading.RLock()
+                cls._registry[canonical] = rlock
+            return rlock
+
+    @classmethod
+    def cleanup(cls) -> int:
+        """Remove all entries from the registry.
+
+        Normally unnecessary — WeakValueDictionary handles cleanup
+        automatically.  Exposed here for testing and explicit teardown.
+
+        Returns:
+            Number of entries that were present before clearing.
+        """
+        with cls._registry_lock:
+            count = len(cls._registry)
+            cls._registry.clear()
+            return count
 
     @classmethod
     @contextlib.contextmanager

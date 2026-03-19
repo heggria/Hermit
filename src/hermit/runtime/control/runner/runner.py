@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import datetime  # noqa: F401 — used by test monkeypatching (runner_module.datetime)
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.execution.coordination.observation import ObservationService
 from hermit.kernel.task.services.controller import AUTO_PARENT, TaskController
 from hermit.runtime.control.lifecycle.session import SessionManager
@@ -20,29 +18,12 @@ from hermit.runtime.provider_host.execution.runtime import (
 if TYPE_CHECKING:
     from hermit.runtime.capability.registry.manager import PluginManager
 
+from hermit.runtime.control.runner.utils import (
+    _t,
+    result_preview,
+)
+
 CommandHandler = Callable[["AgentRunner", str, str], "DispatchResult"]
-
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
-
-
-def _strip_internal_markup(text: str) -> str:
-    if not text:
-        return ""
-    cleaned = _SESSION_TIME_RE.sub("", text)
-    cleaned = _FEISHU_META_RE.sub("", cleaned)
-    cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
-    return cleaned.strip()
-
-
-def _result_preview(text: str, *, limit: int = 280) -> str:
-    cleaned = _strip_internal_markup(text)
-    if not cleaned:
-        return ""
-    cleaned = " ".join(cleaned.split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[: limit - 1].rstrip() + "\u2026"
 
 
 def _trim_session_messages(
@@ -62,23 +43,12 @@ def _trim_session_messages(
     return sanitize_session_messages(trimmed)
 
 
-def _locale_for_runner(runner: AgentRunner | None = None) -> str:
-    settings = getattr(getattr(runner, "pm", None), "settings", None)
-    return resolve_locale(getattr(settings, "locale", None))
-
-
-def _t(
-    message_key: str,
-    *,
-    runner: AgentRunner | None = None,
-    default: str | None = None,
-    **kwargs: object,
-) -> str:
-    return tr(message_key, locale=_locale_for_runner(runner), default=default, **kwargs)
-
-
 def _resolve_help_text(help_text: str, *, runner: AgentRunner | None = None) -> str:
-    return tr(help_text, locale=_locale_for_runner(runner), default=help_text)
+    from hermit.infra.system.i18n import resolve_locale, tr
+
+    settings = getattr(getattr(runner, "pm", None), "settings", None)
+    locale = resolve_locale(getattr(settings, "locale", None))
+    return tr(help_text, locale=locale, default=help_text)
 
 
 @dataclass
@@ -531,7 +501,7 @@ class AgentRunner:
                 self.task_controller.finalize_result(
                     task_ctx,
                     status=status,
-                    result_preview=_result_preview(result.text or ""),
+                    result_preview=result_preview(result.text or ""),
                     result_text=result.text or "",
                 )
             self.pm.on_post_run(
@@ -785,7 +755,7 @@ class AgentRunner:
                 self.task_controller.finalize_result(
                     task_ctx,
                     status=status,
-                    result_preview=_result_preview(result.text or ""),
+                    result_preview=result_preview(result.text or ""),
                     result_text=result.text or "",
                 )
         if not (result.suspended or result.blocked):
@@ -794,15 +764,9 @@ class AgentRunner:
 
     @staticmethod
     def _result_status(result: AgentResult) -> str:
-        explicit = str(getattr(result, "execution_status", "") or "").strip()
-        if explicit:
-            return explicit
-        text = result.text or ""
-        if text.startswith("[Execution Requires Attention]"):
-            return "needs_attention"
-        if text.startswith("[API Error]") or text.startswith("[Policy Denied]"):
-            return "failed"
-        return "succeeded"
+        from hermit.runtime.control.runner.utils import result_status
+
+        return result_status(result)
 
 
 # ------------------------------------------------------------------

@@ -12,6 +12,7 @@ from hermit.kernel.task.services.controller import AUTO_PARENT, TaskController
 from hermit.kernel.task.services.planning import PlanningService
 from hermit.runtime.capability.contracts.base import HookEvent
 from hermit.runtime.control.lifecycle.session import SessionManager
+from hermit.runtime.control.runner.utils import result_status
 from hermit.runtime.provider_host.execution.runtime import AgentResult
 
 if TYPE_CHECKING:
@@ -176,7 +177,7 @@ class AsyncDispatcher:
         notify = dict(task_ctx.ingress_metadata.get("notify", {}) or {})
         if not notify:
             return []
-        success = self._runner._result_status(result) == "succeeded"
+        success = result_status(result) == "succeeded"
         return self.pm.hooks.fire(
             HookEvent.DISPATCH_RESULT,
             source=str(task_ctx.ingress_metadata.get("source_ref", "") or task_ctx.source_channel),
@@ -224,11 +225,9 @@ class AsyncDispatcher:
             job_name=job_name,
             started_at=started_at,
             finished_at=finished_at,
-            success=self._runner._result_status(result) == "succeeded",
+            success=result_status(result) == "succeeded",
             result_text=result.text or "",
-            error=(
-                None if self._runner._result_status(result) == "succeeded" else (result.text or "")
-            ),
+            error=(None if result_status(result) == "succeeded" else (result.text or "")),
         )
         delivery: dict[str, Any] | None = None
         for _item in delivery_results or []:

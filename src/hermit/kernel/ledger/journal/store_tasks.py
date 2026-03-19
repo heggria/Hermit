@@ -637,6 +637,16 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         row = self._row("SELECT * FROM step_attempts WHERE step_attempt_id = ?", (step_attempt_id,))
         return self._step_attempt_from_row(row) if row is not None else None
 
+    def batch_get_step_attempts(self, step_attempt_ids: list[str]) -> dict[str, StepAttemptRecord]:
+        if not step_attempt_ids:
+            return {}
+        placeholders = ",".join("?" * len(step_attempt_ids))
+        rows = self._rows(
+            f"SELECT * FROM step_attempts WHERE step_attempt_id IN ({placeholders})",
+            tuple(step_attempt_ids),
+        )
+        return {str(row["step_attempt_id"]): self._step_attempt_from_row(row) for row in rows}
+
     def list_step_attempts(
         self,
         *,
@@ -1592,6 +1602,104 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 break
             yield from batch
             cursor = int(batch[-1]["event_seq"])
+
+    def list_events_for_tasks(
+        self,
+        task_ids: list[str],
+        *,
+        limit_per_task: int = 500,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Bulk-fetch events for multiple tasks in a single query.
+
+        Returns a mapping of ``task_id -> list[event_dict]`` ordered by
+        ``event_seq ASC`` within each task.  Tasks with no events are omitted.
+
+        SQLite does not support ``LIMIT`` per partition directly, so we fetch
+        all events for the supplied task IDs (bounded by
+        ``limit_per_task * len(task_ids)``) and enforce the per-task cap in
+        Python.  This is safe because callers typically pass O(10-200) tasks.
+        """
+        if not task_ids:
+            return {}
+        placeholders = ",".join("?" * len(task_ids))
+        total_limit = limit_per_task * len(task_ids)
+        rows = self._rows(
+            f"SELECT * FROM events WHERE task_id IN ({placeholders})"
+            f" ORDER BY event_seq ASC LIMIT ?",
+            (*task_ids, total_limit),
+        )
+        result: dict[str, list[dict[str, Any]]] = {}
+        per_task_counts: dict[str, int] = {}
+        for row in rows:
+            tid = row["task_id"]
+            if per_task_counts.get(tid, 0) >= limit_per_task:
+                continue
+            per_task_counts[tid] = per_task_counts.get(tid, 0) + 1
+            result.setdefault(tid, []).append(
+                {
+                    "event_seq": int(row["event_seq"]),
+                    "event_id": str(row["event_id"]),
+                    "task_id": row["task_id"],
+                    "step_id": row["step_id"],
+                    "entity_type": str(row["entity_type"]),
+                    "entity_id": str(row["entity_id"]),
+                    "event_type": str(row["event_type"]),
+                    "actor_principal_id": str(row["actor_principal_id"]),
+                    "actor": str(row["actor_principal_id"]),
+                    "payload": json_loads(row["payload_json"]),
+                    "occurred_at": float(row["occurred_at"]),
+                    "event_hash": row["event_hash"],
+                    "prev_event_hash": row["prev_event_hash"],
+                    "hash_chain_algo": row["hash_chain_algo"],
+                }
+            )
+        return result
+
+    def get_last_event_per_task(
+        self,
+        task_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Return the highest-``event_seq`` event for each task in a single query.
+
+        Uses a subquery to find the max ``event_seq`` per ``task_id``, then
+        joins back to fetch the full row.  Returns a mapping of
+        ``task_id -> event_dict`` (tasks with no events are omitted).
+        """
+        if not task_ids:
+            return {}
+        placeholders = ",".join("?" * len(task_ids))
+        rows = self._rows(
+            f"""
+            SELECT e.*
+            FROM events e
+            INNER JOIN (
+                SELECT task_id, MAX(event_seq) AS max_seq
+                FROM events
+                WHERE task_id IN ({placeholders})
+                GROUP BY task_id
+            ) latest ON e.task_id = latest.task_id AND e.event_seq = latest.max_seq
+            """,
+            tuple(task_ids),
+        )
+        return {
+            row["task_id"]: {
+                "event_seq": int(row["event_seq"]),
+                "event_id": str(row["event_id"]),
+                "task_id": row["task_id"],
+                "step_id": row["step_id"],
+                "entity_type": str(row["entity_type"]),
+                "entity_id": str(row["entity_id"]),
+                "event_type": str(row["event_type"]),
+                "actor_principal_id": str(row["actor_principal_id"]),
+                "actor": str(row["actor_principal_id"]),
+                "payload": json_loads(row["payload_json"]),
+                "occurred_at": float(row["occurred_at"]),
+                "event_hash": row["event_hash"],
+                "prev_event_hash": row["prev_event_hash"],
+                "hash_chain_algo": row["hash_chain_algo"],
+            }
+            for row in rows
+        }
 
     # ------------------------------------------------------------------
     # Health query helpers

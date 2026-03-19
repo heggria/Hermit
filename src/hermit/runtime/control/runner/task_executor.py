@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -29,8 +28,10 @@ if TYPE_CHECKING:
     from hermit.runtime.capability.registry.manager import PluginManager
 
 
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
+from hermit.runtime.control.runner.utils import (
+    result_preview,
+    result_status,
+)
 
 
 class RunnerTaskExecutor:
@@ -109,26 +110,11 @@ class RunnerTaskExecutor:
 
     @staticmethod
     def _result_status(result: AgentResult) -> str:
-        explicit = str(getattr(result, "execution_status", "") or "").strip()
-        if explicit:
-            return explicit
-        text = result.text or ""
-        if text.startswith("[Execution Requires Attention]"):
-            return "needs_attention"
-        if text.startswith("[API Error]") or text.startswith("[Policy Denied]"):
-            return "failed"
-        return "succeeded"
+        return result_status(result)
 
     @staticmethod
     def _result_preview(text: str, *, limit: int = 280) -> str:
-        cleaned = _SESSION_TIME_RE.sub("", text) if text else ""
-        cleaned = _FEISHU_META_RE.sub("", cleaned)
-        if not cleaned:
-            return ""
-        cleaned = " ".join(cleaned.split())
-        if len(cleaned) <= limit:
-            return cleaned
-        return cleaned[: limit - 1].rstrip() + "\u2026"
+        return result_preview(text, limit=limit)
 
     def _maybe_capture_planning_result(
         self,

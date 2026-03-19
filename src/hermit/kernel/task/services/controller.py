@@ -11,6 +11,8 @@ from hermit.infra.system.i18n import resolve_locale, tr, tr_list_all_locales
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.coordination.data_flow import StepDataFlowService
 from hermit.kernel.ledger.journal.store import KernelStore
+from hermit.kernel.task.constants import _FEISHU_META_RE as _FEISHU_TAG_RE
+from hermit.kernel.task.constants import _SESSION_TIME_RE
 from hermit.kernel.task.models.records import TaskRecord
 from hermit.kernel.task.services.ingress_router import BindingDecision, IngressRouter
 from hermit.kernel.task.services.planning import PlanningService
@@ -31,8 +33,6 @@ from hermit.kernel.task.state.outcomes import (
 _AUTO_PARENT = object()
 AUTO_PARENT = _AUTO_PARENT  # Public alias for use outside this module
 _LOW_SIGNAL_RE = re.compile(r"^[\s\?\uff1f!！,，。\.~～…]+$")
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_TAG_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
 _ARTIFACT_REF_RE = re.compile(r"\bartifact_[a-z0-9]{6,}\b", re.IGNORECASE)
 
 

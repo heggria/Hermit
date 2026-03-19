@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 _log = structlog.get_logger()
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-_AWAIT_POLL_INTERVAL = 0.5  # seconds between internal status checks
 
 
 def _task_summary(task: Any, store: Any) -> dict[str, Any]:
@@ -438,8 +437,32 @@ class HermitMcpServer:
             newly_done: dict[str, dict[str, Any]] = {}
             still_pending: list[str] = list(pending_ids)
 
+            # Subscribe to status-change events for all pending tasks.
+            # get_or_create_task_event is only available on KernelStore (not the
+            # generic store protocol), so we fall back to a short poll interval
+            # when the store doesn't support events.
+            _get_event = getattr(store, "get_or_create_task_event", None)
+            _FALLBACK_POLL = 0.5  # seconds – used only when store lacks event support
+
             while time.monotonic() < deadline and still_pending:
-                time.sleep(_AWAIT_POLL_INTERVAL)
+                # Wait for any status change, then scan all still-pending tasks.
+                if _get_event is not None:
+                    # Collect the union of all per-task events so that any single
+                    # status change wakes us up.  We subscribe *before* checking
+                    # status to avoid a race where the event fires between the
+                    # status-read and the wait.
+                    events = [_get_event(tid) for tid in still_pending]
+                    wait_secs = max(0.0, deadline - time.monotonic())
+                    # Wait for any single event (we check all tasks afterwards).
+                    for ev in events:
+                        ev.wait(timeout=wait_secs)
+                        if time.monotonic() >= deadline:
+                            break
+                        if ev.is_set():
+                            break
+                else:
+                    time.sleep(_FALLBACK_POLL)
+
                 remaining: list[str] = []
                 for tid in still_pending:
                     task = store.get_task(tid)

@@ -4,7 +4,6 @@ import json
 import time
 from typing import TYPE_CHECKING, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.task.models.records import TaskRecord
 from hermit.kernel.task.services.controller import TaskController
 from hermit.kernel.task.services.planning import PlanningService
@@ -19,41 +18,19 @@ if TYPE_CHECKING:
     from hermit.runtime.control.runner.runner import AgentRunner, DispatchResult
 
 
-def _locale_for_runner(runner: AgentRunner | None = None) -> str:
-    settings = getattr(getattr(runner, "pm", None), "settings", None)
-    return resolve_locale(getattr(settings, "locale", None))
-
-
-def _t(
-    message_key: str,
-    *,
-    runner: AgentRunner | None = None,
-    default: str | None = None,
-    **kwargs: object,
-) -> str:
-    return tr(message_key, locale=_locale_for_runner(runner), default=default, **kwargs)
+from hermit.runtime.control.runner.utils import (
+    _t,
+    result_preview,
+    result_status,
+)
 
 
 def _resolve_help_text(help_text: str, *, runner: AgentRunner | None = None) -> str:
-    return tr(help_text, locale=_locale_for_runner(runner), default=help_text)
+    from hermit.infra.system.i18n import resolve_locale, tr
 
-
-def _result_preview(text: str, *, limit: int = 280) -> str:
-    """Produce a short preview of result text for storage."""
-    import re
-
-    _SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-    _FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
-    cleaned = _SESSION_TIME_RE.sub("", text)
-    cleaned = _FEISHU_META_RE.sub("", cleaned)
-    cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
-    cleaned = cleaned.strip()
-    if not cleaned:
-        return ""
-    cleaned = " ".join(cleaned.split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[: limit - 1].rstrip() + "\u2026"
+    settings = getattr(getattr(runner, "pm", None), "settings", None)
+    locale = resolve_locale(getattr(settings, "locale", None))
+    return tr(help_text, locale=locale, default=help_text)
 
 
 class ControlActionDispatcher:
@@ -538,12 +515,12 @@ class ControlActionDispatcher:
                 else:
                     self._task_controller.mark_blocked(task_ctx)
         else:
-            status = runner._result_status(result)
+            status = result_status(result)
             if not getattr(result, "status_managed_by_kernel", False):
                 self._task_controller.finalize_result(
                     task_ctx,
                     status=status,
-                    result_preview=_result_preview(result.text or ""),
+                    result_preview=result_preview(result.text or ""),
                     result_text=result.text or "",
                 )
             self._pm.on_post_run(result, session_id=session_id, session=session, runner=runner)

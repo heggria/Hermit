@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
+from hermit.kernel.task.constants import _FEISHU_META_RE, _SESSION_TIME_RE
 
 
 def _clean_topic_text(value: Any) -> str:

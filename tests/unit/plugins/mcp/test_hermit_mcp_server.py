@@ -835,3 +835,113 @@ class TestMcpHooksLifecycle:
         )
         ctx._hooks.fire(HookEvent.SERVE_STOP, reload_mode=True)
         assert stopped == []  # Should NOT stop during reload
+
+
+# ---------------------------------------------------------------------------
+# Event-driven hermit_await_completion (KernelStore integration)
+# ---------------------------------------------------------------------------
+
+
+class TestHermitAwaitCompletionEventDriven:
+    """Validate that hermit_await_completion wakes up via threading.Event
+    rather than sleeping for a full poll interval."""
+
+    def _make_store_with_running_task(self) -> tuple[Any, str]:
+        """Return (KernelStore, task_id) with one running task seeded."""
+        from pathlib import Path
+
+        from hermit.kernel.ledger.journal.store import KernelStore
+
+        store = KernelStore(Path(":memory:"))
+        store.ensure_conversation("conv-ev", source_channel="test")
+        task = store.create_task(
+            conversation_id="conv-ev",
+            title="Event task",
+            goal="Test event wakeup",
+            source_channel="test",
+            status="running",
+        )
+        return store, task.task_id
+
+    def test_event_driven_wakes_immediately_on_status_change(self) -> None:
+        """With KernelStore, the event fires well under 0.5 s (the old poll interval)
+        after update_task_status is called."""
+        import threading
+        import time
+
+        store, task_id = self._make_store_with_running_task()
+
+        ev = store.get_or_create_task_event(task_id)
+        assert not ev.is_set()
+
+        DELAY = 0.05  # 50 ms — far below the 500 ms poll interval
+
+        def change_status() -> None:
+            time.sleep(DELAY)
+            store.update_task_status(task_id, "completed")
+
+        t = threading.Thread(target=change_status, daemon=True)
+        t.start()
+
+        t0 = time.monotonic()
+        triggered = ev.wait(timeout=2.0)
+        elapsed = time.monotonic() - t0
+        t.join(timeout=5)
+
+        assert triggered, "Event was never fired after update_task_status"
+        # Should have been woken up close to DELAY, not after a full poll interval
+        assert elapsed < 0.4, f"Event-driven wait took {elapsed:.3f}s, expected < 0.4s"
+
+    def test_notify_task_changed_fires_event(self) -> None:
+        """notify_task_changed fires without error and is idempotent."""
+        store, task_id = self._make_store_with_running_task()
+        # First call creates the event and immediately sets+clears it
+        store.notify_task_changed(task_id)
+        # Subsequent calls on the same task are idempotent
+        store.notify_task_changed(task_id)
+        # Calling on a task with no event registered is safe
+        store.notify_task_changed("nonexistent-task-id")
+
+    def test_get_or_create_task_event_returns_same_event(self) -> None:
+        """get_or_create_task_event is idempotent for the same task_id."""
+        from pathlib import Path
+
+        from hermit.kernel.ledger.journal.store import KernelStore
+
+        store = KernelStore(Path(":memory:"))
+        ev1 = store.get_or_create_task_event("task-x")
+        ev2 = store.get_or_create_task_event("task-x")
+        assert ev1 is ev2
+
+    def test_update_task_status_fires_event_for_all_terminal_statuses(self) -> None:
+        """Every terminal status transition fires the per-task event."""
+        import threading
+        import time
+        from pathlib import Path
+
+        from hermit.kernel.ledger.journal.store import KernelStore
+
+        for terminal in ("completed", "failed", "cancelled"):
+            store = KernelStore(Path(":memory:"))
+            store.ensure_conversation("c", source_channel="test")
+            task = store.create_task(
+                conversation_id="c",
+                title="t",
+                goal="g",
+                source_channel="test",
+                status="running",
+            )
+            ev = store.get_or_create_task_event(task.task_id)
+
+            fired: list[bool] = []
+
+            def _wait(event: Any = ev, out: list[bool] = fired) -> None:
+                out.append(event.wait(timeout=1.0))
+
+            watcher = threading.Thread(target=_wait, daemon=True)
+            watcher.start()
+            time.sleep(0.02)
+            store.update_task_status(task.task_id, terminal)
+            watcher.join(timeout=2.0)
+
+            assert fired == [True], f"Event not fired for status={terminal!r}"

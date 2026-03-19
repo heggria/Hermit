@@ -245,13 +245,11 @@ class ContractTemplateLearner:
 
     def _reinforcement_count(self, memory_id: str) -> int:
         """Count ``contract_template.reinforced`` events for a memory record."""
-        rows = self.store._rows(
-            "SELECT COUNT(*) AS cnt FROM events "
-            "WHERE entity_type = 'memory_record' AND entity_id = ? "
-            "AND event_type = 'contract_template.reinforced'",
-            (memory_id,),
+        return self.store.count_events_by_type(
+            entity_type="memory_record",
+            entity_id=memory_id,
+            event_type="contract_template.reinforced",
         )
-        return int(rows[0]["cnt"]) if rows else 0
 
     def _success_count_for(self, record: MemoryRecord) -> int:
         """Total success count from structured assertion, falling back to event counting."""

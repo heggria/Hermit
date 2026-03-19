@@ -160,7 +160,7 @@ def test_schema_v3_database_requires_hard_cut_archive_or_delete(tmp_path: Path) 
     except KernelSchemaError as exc:
         message = str(exc)
         assert "schema_version=3" in message
-        assert "requires schema_version=11" in message
+        assert "requires schema_version=13" in message
         assert "Archive or delete" in message
     else:
         raise AssertionError("KernelStore should hard-fail for schema_version=3")
