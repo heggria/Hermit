@@ -354,7 +354,7 @@ def command_prefix() -> list[str]:
             "--project",
             str(project_root),
             "--python",
-            "3.11",
+            "3.13",
             "python",
             "-m",
             "hermit.surfaces.cli.main",
@@ -369,7 +369,7 @@ def command_prefix() -> list[str]:
 
 
 def _project_root() -> Path | None:
-    candidate = Path(__file__).resolve().parents[2]
+    candidate = Path(__file__).resolve().parents[4]
     if (candidate / "pyproject.toml").exists():
         return candidate
     return None

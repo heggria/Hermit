@@ -128,7 +128,7 @@ def test_launcher_command_prefers_companion_binary(tmp_path: Path, monkeypatch) 
 
 
 def test_project_root_and_icon_source_follow_repo_layout(tmp_path: Path, monkeypatch) -> None:
-    fake_file = tmp_path / "pkg" / "companion" / "appbundle.py"
+    fake_file = tmp_path / "src" / "hermit" / "apps" / "companion" / "appbundle.py"
     fake_file.parent.mkdir(parents=True)
     fake_file.write_text("", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='hermit'\n", encoding="utf-8")

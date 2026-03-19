@@ -15,7 +15,7 @@ def test_command_prefix_uses_resolved_uv_bin_when_repo_available(monkeypatch) ->
         "--project",
         "/Users/beta/work/Hermit",
         "--python",
-        "3.11",
+        "3.13",
         "python",
         "-m",
         "hermit.surfaces.cli.main",
