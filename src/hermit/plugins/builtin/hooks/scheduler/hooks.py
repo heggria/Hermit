@@ -16,7 +16,9 @@ _engine: SchedulerEngine | None = None
 _hooks_ref: Any = None
 
 
-def _on_serve_start(*, settings: Any, runner: Any = None, **kw: Any) -> None:
+def _on_serve_start(
+    *, settings: Any, runner: Any = None, reload_mode: bool = False, **kw: Any
+) -> None:
     global _engine
     if not bool(getattr(settings, "scheduler_enabled", True)):
         log.info("scheduler_disabled")
@@ -24,6 +26,12 @@ def _on_serve_start(*, settings: Any, runner: Any = None, **kw: Any) -> None:
 
     if _hooks_ref is None:
         log.warning("scheduler_no_hooks_engine")
+        return
+
+    if reload_mode and _engine is not None:
+        # Hot-swap: keep the scheduler running, just update the runner reference
+        _engine.set_runner(runner)
+        log.info("scheduler_runner_hot_swapped")
         return
 
     catch_up = bool(getattr(settings, "scheduler_catch_up", True))
@@ -35,8 +43,11 @@ def _on_serve_start(*, settings: Any, runner: Any = None, **kw: Any) -> None:
     _engine.start(catch_up=catch_up)
 
 
-def _on_serve_stop(**kw: Any) -> None:
+def _on_serve_stop(*, reload_mode: bool = False, **kw: Any) -> None:
     global _engine
+    if reload_mode:
+        # During reload, keep the scheduler running
+        return
     if _engine is not None:
         _engine.stop()
         _engine = None

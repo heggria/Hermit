@@ -1011,7 +1011,7 @@ class FeishuAdapter:
         task = store.get_task(task_id)
         if task is None:
             return False
-        if task.status in _TERMINAL_TASK_STATUSES:
+        if task.status not in _TERMINAL_TASK_STATUSES:
             return False
         mapping = self._task_topic_mapping(task.conversation_id, task_id)
         root_message_id = message_id or str(mapping.get("root_message_id", "") or "")
