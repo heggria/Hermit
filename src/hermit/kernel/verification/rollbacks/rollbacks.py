@@ -143,7 +143,6 @@ class RollbackService:
             )
             self.store.update_step(step.step_id, status="succeeded", output_ref=rollback_receipt_id)
             self.store.update_step_attempt(attempt.step_attempt_id, status="succeeded")
-            self.store.update_task_status(receipt.task_id, "completed")
             return {
                 "rollback_id": rollback.rollback_id,
                 "receipt_id": rollback_receipt_id,
@@ -221,7 +220,7 @@ class RollbackService:
             head = str(prestate["head"])
             if bool(prestate.get("dirty")):
                 raise RollbackError("dirty_repo", self._t("kernel.rollback.error.dirty_repo"))
-            self._git_worktree().hard_reset(repo_path, head)
+            self.git_worktree.hard_reset(repo_path, head)
             return {"result_summary": self._t("kernel.rollback.result.git_reset", head=head)}
         if receipt.action_type == "memory_write" and strategy == "supersede_or_invalidate":
             targets = self._prestate_payload(receipt)
@@ -262,6 +261,3 @@ class RollbackService:
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
-
-    def _git_worktree(self) -> GitWorktreeInspector:
-        return getattr(self, "git_worktree", GitWorktreeInspector())
