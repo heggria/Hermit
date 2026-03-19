@@ -121,6 +121,10 @@ class KernelStoreTypingBase:
 
     def get_capability_grant(self, grant_id: str) -> CapabilityGrantRecord | None: ...
 
+    def list_capability_grants_by_parent(
+        self, *, parent_grant_ref: str
+    ) -> list[CapabilityGrantRecord]: ...
+
     def get_workspace_lease(self, lease_id: str) -> WorkspaceLeaseRecord | None: ...
 
     def get_receipt(self, receipt_id: str) -> ReceiptRecord | None: ...
@@ -171,6 +175,8 @@ class KernelStoreTypingBase:
         *,
         limit_per_task: int = 50,
     ) -> dict[str, list[Any]]: ...
+
+    def batch_get_artifacts(self, artifact_ids: list[str]) -> dict[str, Any]: ...
 
     def list_open_tasks_for_conversation(
         self, *, conversation_id: str, limit: int = 50

@@ -261,6 +261,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             expires_at=row["expires_at"],
             consumed_at=row["consumed_at"],
             revoked_at=row["revoked_at"],
+            parent_grant_ref=row["parent_grant_ref"] if "parent_grant_ref" in row.keys() else None,  # noqa: SIM118
         )
 
     def _workspace_lease_from_row(self, row: sqlite3.Row) -> WorkspaceLeaseRecord:

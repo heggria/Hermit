@@ -7,7 +7,10 @@ from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
-from hermit.kernel.execution.executor import attempt_helpers
+from hermit.kernel.execution.executor.execution_helpers import (
+    _contract_refs,
+    _set_attempt_phase,
+)
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import POLICY_RULES_VERSION, ActionRequest, PolicyDecision
 from hermit.kernel.policy.permits.authorization_plans import AuthorizationPlanService
@@ -35,14 +38,7 @@ class ContractExecutor:
     def contract_refs(
         self, attempt_ctx: TaskExecutionContext
     ) -> tuple[str | None, str | None, str | None]:
-        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
-        if attempt is None:
-            return None, None, None
-        return (
-            attempt.execution_contract_ref,
-            attempt.evidence_case_ref,
-            attempt.authorization_plan_ref,
-        )
+        return _contract_refs(self.store, attempt_ctx)
 
     def load_contract_bundle(
         self, attempt_ctx: TaskExecutionContext
@@ -94,7 +90,9 @@ class ContractExecutor:
         preview_artifact: str | None,
         witness_ref: str | None,
     ) -> tuple[Any, Any, Any]:
-        self._set_attempt_phase(attempt_ctx, "contracting", reason="contract_synthesis_started")
+        _set_attempt_phase(
+            self.store, attempt_ctx, "contracting", reason="contract_synthesis_started"
+        )
         self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="contracting")
         contract, _contract_artifact_ref = self.execution_contracts.synthesize_default(
             attempt_ctx=attempt_ctx,
@@ -115,8 +113,8 @@ class ContractExecutor:
             policy_result_ref=policy_result_ref,
             witness_ref=witness_ref,
         )
-        self._set_attempt_phase(
-            attempt_ctx, "preflighting", reason="authorization_preflight_started"
+        _set_attempt_phase(
+            self.store, attempt_ctx, "preflighting", reason="authorization_preflight_started"
         )
         self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="preflighting")
         authorization_plan, _authorization_artifact_ref = self.authorization_plans.preflight(
@@ -163,4 +161,4 @@ class ContractExecutor:
         *,
         reason: str | None = None,
     ) -> None:
-        attempt_helpers.set_attempt_phase(self.store, attempt_ctx, phase, reason=reason)
+        _set_attempt_phase(self.store, attempt_ctx, phase, reason=reason)

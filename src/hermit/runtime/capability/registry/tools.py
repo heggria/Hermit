@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from hermit.infra.storage import atomic_write
 from hermit.infra.system.i18n import localize_schema, resolve_locale, tr
 from hermit.runtime.provider_host.execution.sandbox import CommandSandbox
 
+if TYPE_CHECKING:
+    from hermit.kernel.context.models.context import TaskExecutionContext
+
 ToolHandler = Callable[[dict[str, Any]], Any]
+# A contextual handler accepts (payload, task_context) and is detected by inspect.
+ContextualToolHandler = Callable[["dict[str, Any]", "TaskExecutionContext"], Any]
 _RISK_HINTS = {"low", "medium", "high", "critical"}
 
 
@@ -83,6 +89,48 @@ class ToolRegistry:
         if readonly_only:
             tools = (t for t in tools if t.readonly)  # type: ignore[assignment]
         return list(tools)
+
+
+def _is_contextual_handler(handler: Any) -> bool:
+    """Return True if *handler* accepts a second ``task_context`` positional argument.
+
+    Contextual handlers have the signature ``(payload, task_context)``.
+    Regular handlers have the signature ``(payload,)``.
+    This is detected at call time using :mod:`inspect` so that existing handlers
+    remain unchanged and the extended calling convention is strictly opt-in.
+    """
+    try:
+        sig = inspect.signature(handler)
+        params = [
+            p
+            for p in sig.parameters.values()
+            if p.kind
+            not in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            )
+        ]
+        return len(params) >= 2
+    except (ValueError, TypeError):
+        return False
+
+
+def invoke_tool_handler(
+    handler: Any,
+    payload: dict[str, Any],
+    task_context: TaskExecutionContext | None = None,
+) -> Any:
+    """Invoke a tool handler, passing ``task_context`` when the handler supports it.
+
+    Handlers with signature ``(payload,)`` are called as before.
+    Handlers with signature ``(payload, task_context)`` receive the current
+    :class:`~hermit.kernel.context.models.context.TaskExecutionContext` so they
+    can access ``task_context.task_id`` as ``parent_task_id`` when spawning
+    child steps.
+    """
+    if task_context is not None and _is_contextual_handler(handler):
+        return handler(payload, task_context)
+    return handler(payload)
 
 
 def localize_tool_spec(tool: ToolSpec, *, locale: str | None = None) -> ToolSpec:

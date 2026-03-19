@@ -12,6 +12,10 @@ from hermit.kernel.execution.executor.recovery_handler import RecoveryHandler
 from hermit.kernel.execution.executor.request_builder import RequestBuilder
 from hermit.kernel.execution.executor.snapshot import RuntimeSnapshotManager
 from hermit.kernel.execution.executor.state_persistence import StatePersistence
+from hermit.kernel.execution.executor.subtask_handler import (
+    SubtaskSpawner,
+    normalize_spawn_descriptors,
+)
 from hermit.kernel.execution.executor.witness import WitnessCapture
 from hermit.kernel.execution.executor.witness_handler import WitnessHandler
 
@@ -29,8 +33,10 @@ __all__ = [
     "RequestBuilder",
     "RuntimeSnapshotManager",
     "StatePersistence",
+    "SubtaskSpawner",
     "ToolExecutionResult",
     "ToolExecutor",
     "WitnessCapture",
     "WitnessHandler",
+    "normalize_spawn_descriptors",
 ]

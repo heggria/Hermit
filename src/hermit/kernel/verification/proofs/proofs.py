@@ -712,17 +712,17 @@ class ProofService:
             if receipt.witness_ref:
                 artifact_ids.add(receipt.witness_ref)
             artifact_ids.update(receipt.rollback_artifact_refs)
-        index: dict[str, dict[str, Any]] = {}
-        for artifact_id in sorted(artifact_ids):
-            artifact = self.store.get_artifact(artifact_id)
-            if artifact is None:
-                continue
-            index[artifact_id] = {
+        # Batch-load all referenced artifacts in a single query to avoid N+1 per-ID lookups.
+        artifact_map = self.store.batch_get_artifacts(sorted(artifact_ids))
+        index: dict[str, dict[str, Any]] = {
+            artifact_id: {
                 "kind": artifact.kind,
                 "content_hash": artifact.content_hash,
                 "uri": artifact.uri,
                 "metadata": artifact.metadata,
             }
+            for artifact_id, artifact in artifact_map.items()
+        }
         return index
 
     def _capability_grants_for_receipts(
@@ -852,8 +852,10 @@ class ProofService:
         all_hashes: dict[str, str | None] = {}
         for key in ("input_hashes", "output_hashes", "rollback_artifact_hashes"):
             all_hashes.update(bundle.get(key) or {})
+        # Batch-load all referenced artifacts to avoid N+1 per-ID lookups.
+        artifact_map = self.store.batch_get_artifacts(list(all_hashes.keys()))
         for artifact_id, expected_hash in all_hashes.items():
-            artifact = self.store.get_artifact(artifact_id)
+            artifact = artifact_map.get(artifact_id)
             if artifact is None:
                 self.store.append_event(
                     event_type="proof.validation_warning",

@@ -23,6 +23,8 @@ class HookEvent(StrEnum):
     SERVE_START = "serve_start"
     SERVE_STOP = "serve_stop"
     DISPATCH_RESULT = "dispatch_result"
+    SUBTASK_SPAWN = "subtask_spawn"
+    SUBTASK_COMPLETE = "subtask_complete"
 
     def __str__(self) -> str:
         return self.value

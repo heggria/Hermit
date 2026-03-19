@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.execution.executor.execution_helpers import (
+    _is_governed_action,
+    _set_attempt_phase,
+)
 from hermit.kernel.ledger.journal.store import KernelStore
-from hermit.kernel.policy import PolicyDecision
-from hermit.runtime.capability.registry.tools import ToolSpec
+
+# Re-export for callers that import _is_governed_action from this module.
+# The canonical implementation now lives in execution_helpers.
+__all__ = [
+    "PhaseTracker",
+    "_execution_status_from_result_code",
+    "_is_governed_action",
+    "_needs_witness",
+]
 
 _WITNESS_REQUIRED_ACTIONS = {
     "write_local",
@@ -15,14 +26,6 @@ _WITNESS_REQUIRED_ACTIONS = {
     "publication",
     "memory_write",
 }
-
-
-def _is_governed_action(tool: ToolSpec, policy: PolicyDecision) -> bool:
-    if tool.readonly and policy.verdict == "allow":
-        return False
-    if policy.action_class in {"read_local", "network_read"} and not policy.requires_receipt:
-        return False
-    return policy.action_class != "ephemeral_ui_mutation"
 
 
 def _needs_witness(action_class: str) -> bool:
@@ -60,26 +63,4 @@ class PhaseTracker:
         *,
         reason: str | None = None,
     ) -> None:
-        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
-        if attempt is None:
-            return
-        context = dict(attempt.context or {})
-        previous = str(context.get("phase", "") or "")
-        if previous == phase:
-            return
-        context["phase"] = phase
-        self.store.update_step_attempt(attempt_ctx.step_attempt_id, context=context)
-        self.store.append_event(
-            event_type="step_attempt.phase_changed",
-            entity_type="step_attempt",
-            entity_id=attempt_ctx.step_attempt_id,
-            task_id=attempt_ctx.task_id,
-            step_id=attempt_ctx.step_id,
-            actor="kernel",
-            payload={
-                "step_attempt_id": attempt_ctx.step_attempt_id,
-                "previous_phase": previous,
-                "phase": phase,
-                "reason": reason,
-            },
-        )
+        _set_attempt_phase(self.store, attempt_ctx, phase, reason=reason)

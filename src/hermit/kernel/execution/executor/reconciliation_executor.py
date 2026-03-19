@@ -8,7 +8,11 @@ from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
 from hermit.kernel.execution.controller.pattern_learner import TaskPatternLearner
-from hermit.kernel.execution.executor import attempt_helpers
+from hermit.kernel.execution.executor.execution_helpers import (
+    _contract_refs,
+    _load_witness_payload,
+    _set_attempt_phase,
+)
 from hermit.kernel.execution.recovery.reconcile import ReconcileOutcome
 from hermit.kernel.execution.recovery.reconciliations import ReconciliationService
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -37,27 +41,6 @@ class ReconciliationExecutor:
         self._pattern_learner = pattern_learner
 
     # ------------------------------------------------------------------
-    # Internal helpers (replicated from ToolExecutor to keep self-contained)
-    # ------------------------------------------------------------------
-
-    def _contract_refs(
-        self, attempt_ctx: TaskExecutionContext
-    ) -> tuple[str | None, str | None, str | None]:
-        return attempt_helpers.contract_refs(self.store, attempt_ctx)
-
-    def _set_attempt_phase(
-        self,
-        attempt_ctx: TaskExecutionContext,
-        phase: str,
-        *,
-        reason: str | None = None,
-    ) -> None:
-        attempt_helpers.set_attempt_phase(self.store, attempt_ctx, phase, reason=reason)
-
-    def _load_witness_payload(self, witness_ref: str | None) -> dict[str, Any]:
-        return attempt_helpers.load_witness_payload(self.store, self.artifact_store, witness_ref)
-
-    # ------------------------------------------------------------------
     # Public API (extracted from ToolExecutor, underscore prefix removed)
     # ------------------------------------------------------------------
 
@@ -74,10 +57,14 @@ class ReconciliationExecutor:
         authorized_effect_summary: str,
         resume_execution: bool = False,
     ) -> tuple[ReconciliationRecord | None, ReconcileOutcome | None]:
-        contract_ref, _evidence_case_ref, _authorization_plan_ref = self._contract_refs(attempt_ctx)
+        contract_ref, _evidence_case_ref, _authorization_plan_ref = _contract_refs(
+            self.store, attempt_ctx
+        )
         if contract_ref is None:
             return None, None
-        self._set_attempt_phase(attempt_ctx, "reconciling", reason="receipt_reconciliation_started")
+        _set_attempt_phase(
+            self.store, attempt_ctx, "reconciling", reason="receipt_reconciliation_started"
+        )
         self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="reconciling")
         reconciliation, outcome, _artifact_ref = self.reconciliations.reconcile_attempt(
             attempt_ctx=attempt_ctx,
@@ -87,7 +74,7 @@ class ReconciliationExecutor:
             tool_input=tool_input,
             workspace_root=attempt_ctx.workspace_root,
             observables=observables,
-            witness=self._load_witness_payload(witness_ref),
+            witness=_load_witness_payload(self.store, self.artifact_store, witness_ref),
             result_code_hint=result_code_hint,
             authorized_effect_summary=authorized_effect_summary,
         )
@@ -115,7 +102,9 @@ class ReconciliationExecutor:
         self.record_template_outcome(attempt_ctx, result_class)
         if resume_execution:
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="running")
-            self._set_attempt_phase(attempt_ctx, "executing", reason="reconciliation_complete")
+            _set_attempt_phase(
+                self.store, attempt_ctx, "executing", reason="reconciliation_complete"
+            )
             return reconciliation, outcome
         if result_class == "satisfied":
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="succeeded")
@@ -126,7 +115,9 @@ class ReconciliationExecutor:
             else:
                 # DAG task still has pending steps — keep it running, not completed.
                 self.store.update_task_status(attempt_ctx.task_id, "running")
-            self._set_attempt_phase(attempt_ctx, "reconciled", reason="reconciliation_satisfied")
+            _set_attempt_phase(
+                self.store, attempt_ctx, "reconciled", reason="reconciliation_satisfied"
+            )
             return reconciliation, outcome
         if result_class in {"partial", "satisfied_with_downgrade"}:
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="reconciling")

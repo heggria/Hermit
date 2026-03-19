@@ -34,6 +34,10 @@ from hermit.kernel.execution.executor.reconciliation_executor import Reconciliat
 from hermit.kernel.execution.executor.request_builder import RequestBuilder
 from hermit.kernel.execution.executor.snapshot import RuntimeSnapshotManager
 from hermit.kernel.execution.executor.state_persistence import StatePersistence
+from hermit.kernel.execution.executor.subtask_handler import (
+    SubtaskSpawner,
+    normalize_spawn_descriptors,
+)
 from hermit.kernel.execution.executor.witness import WitnessCapture
 from hermit.kernel.execution.executor.witness_handler import WitnessHandler
 from hermit.kernel.execution.recovery.reconcile import ReconcileService
@@ -55,7 +59,7 @@ from hermit.kernel.task.projections.progress_summary import (
     ProgressSummaryFormatter,
 )
 from hermit.kernel.verification.receipts.receipts import ReceiptService
-from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec
+from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec, invoke_tool_handler
 
 
 @dataclass
@@ -221,6 +225,7 @@ class ToolExecutor:
             tool_output_limit=tool_output_limit,
             executor=self,
         )
+        self._subtask = SubtaskSpawner(store=store, executor=self)
 
     # ------------------------------------------------------------------
     # Phase tracking (delegates to PhaseTracker)
@@ -779,6 +784,31 @@ class ToolExecutor:
             result_code=result_code,
             execution_status=self._reconciliation_execution_status(reconciliation),
             state_applied=True,
+        )
+
+    # ------------------------------------------------------------------
+    # Subtask spawning (delegates to SubtaskSpawner)
+    # ------------------------------------------------------------------
+
+    def spawn_subtasks(
+        self,
+        *,
+        attempt_ctx: TaskExecutionContext,
+        descriptors: list[dict[str, Any]],
+    ) -> ToolExecutionResult:
+        """Spawn kernel-managed child steps and suspend the parent step-attempt.
+
+        Parameters
+        ----------
+        attempt_ctx:
+            Execution context of the parent step-attempt.
+        descriptors:
+            List of subtask descriptors, each with at minimum a ``tool_name``
+            key.  Pass the output of ``normalize_spawn_descriptors()`` directly.
+        """
+        return self._subtask.handle_spawn(
+            attempt_ctx=attempt_ctx,
+            descriptors=descriptors,
         )
 
     # ------------------------------------------------------------------
@@ -1425,7 +1455,7 @@ class ToolExecutor:
             self._set_attempt_phase(attempt_ctx, "executing", reason="tool_handler_invoked")
             if contract is not None:
                 self.store.update_execution_contract(contract.contract_id, status="executing")
-            raw_result = tool.handler(tool_input)
+            raw_result = invoke_tool_handler(tool.handler, tool_input, attempt_ctx)
         except Exception as exc:
             if governed and capability_grant_id is not None:
                 self.capability_service.mark_uncertain(capability_grant_id)
@@ -1476,6 +1506,10 @@ class ToolExecutor:
                 approval_mode=approval_mode,
                 rollback_plan=rollback_plan,
             )
+
+        spawn_descriptors = normalize_spawn_descriptors(raw_result)
+        if spawn_descriptors is not None:
+            return self.spawn_subtasks(attempt_ctx=attempt_ctx, descriptors=spawn_descriptors)
 
         model_content = _format_model_content(raw_result, self.tool_output_limit)
         receipt_id = None

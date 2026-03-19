@@ -700,3 +700,61 @@ def test_try_finalize_step_attempt_rejects_all_terminal_statuses(tmp_path: Path)
             attempt.step_attempt_id, status="succeeded", finished_at=now + 1
         )
         assert lost is False, f"Re-finalization of '{terminal}' attempt must be rejected"
+
+
+def test_batch_get_artifacts_returns_matching_records_in_single_query(tmp_path: Path) -> None:
+    """batch_get_artifacts fetches multiple artifacts in one DB round-trip."""
+    store = KernelStore(tmp_path / "state.db")
+    store.ensure_conversation("conv-batch", source_channel="chat")
+    task = store.create_task(
+        conversation_id="conv-batch",
+        title="Batch Artifact Task",
+        goal="batch_get_artifacts test",
+        source_channel="chat",
+    )
+
+    # Create three artifacts on disk
+    paths = []
+    for i in range(3):
+        p = tmp_path / f"artifact_{i}.txt"
+        p.write_text(f"content-{i}", encoding="utf-8")
+        paths.append(p)
+
+    a0 = store.create_artifact(
+        task_id=task.task_id,
+        step_id=None,
+        kind="text/plain",
+        uri=str(paths[0]),
+        content_hash="hash-0",
+        producer="test",
+    )
+    a1 = store.create_artifact(
+        task_id=task.task_id,
+        step_id=None,
+        kind="text/plain",
+        uri=str(paths[1]),
+        content_hash="hash-1",
+        producer="test",
+    )
+    a2 = store.create_artifact(
+        task_id=task.task_id,
+        step_id=None,
+        kind="text/plain",
+        uri=str(paths[2]),
+        content_hash="hash-2",
+        producer="test",
+    )
+
+    # Batch-fetch all three by ID
+    result = store.batch_get_artifacts([a0.artifact_id, a1.artifact_id, a2.artifact_id])
+    assert set(result.keys()) == {a0.artifact_id, a1.artifact_id, a2.artifact_id}
+    assert result[a0.artifact_id].uri == str(paths[0])
+    assert result[a1.artifact_id].uri == str(paths[1])
+    assert result[a2.artifact_id].uri == str(paths[2])
+
+    # Missing IDs are silently omitted
+    result_partial = store.batch_get_artifacts([a0.artifact_id, "nonexistent-id"])
+    assert set(result_partial.keys()) == {a0.artifact_id}
+
+    # Empty input returns empty dict
+    assert store.batch_get_artifacts([]) == {}

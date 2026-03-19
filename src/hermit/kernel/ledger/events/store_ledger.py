@@ -101,6 +101,21 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         row = self._row("SELECT * FROM artifacts WHERE artifact_id = ?", (artifact_id,))
         return self._artifact_from_row(row) if row is not None else None
 
+    def batch_get_artifacts(self, artifact_ids: list[str]) -> dict[str, ArtifactRecord]:
+        """Batch-fetch artifacts by ID in a single query.
+
+        Returns a mapping of ``artifact_id -> ArtifactRecord``.  Missing IDs are
+        silently omitted from the result.
+        """
+        if not artifact_ids:
+            return {}
+        placeholders = ",".join("?" * len(artifact_ids))
+        rows = self._rows(
+            f"SELECT * FROM artifacts WHERE artifact_id IN ({placeholders})",
+            tuple(artifact_ids),
+        )
+        return {str(row["artifact_id"]): self._artifact_from_row(row) for row in rows}
+
     def list_artifacts(
         self, *, task_id: str | None = None, limit: int = 200
     ) -> list[ArtifactRecord]:
@@ -324,6 +339,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         idempotency_key: str | None,
         expires_at: float | None,
         status: str = "issued",
+        parent_grant_ref: str | None = None,
     ) -> CapabilityGrantRecord:
         grant_id = self._id("grant")
         issued_at = time.time()
@@ -348,6 +364,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             "expires_at": expires_at,
             "consumed_at": None,
             "revoked_at": None,
+            "parent_grant_ref": parent_grant_ref,
         }
         with self._get_conn():
             self._get_conn().execute(
@@ -356,8 +373,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     grant_id, task_id, step_id, step_attempt_id, decision_ref, approval_ref, policy_ref,
                     issued_to_principal_id, issued_by_principal_id, workspace_lease_ref,
                     action_class, resource_scope_json, constraints_json, idempotency_key,
-                    status, issued_at, expires_at, consumed_at, revoked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                    status, issued_at, expires_at, consumed_at, revoked_at, parent_grant_ref
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
                 """,
                 (
                     grant_id,
@@ -377,6 +394,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     status,
                     issued_at,
                     expires_at,
+                    parent_grant_ref,
                 ),
             )
             self._append_event_tx(
@@ -460,6 +478,15 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             query = "SELECT * FROM capability_grants ORDER BY issued_at DESC LIMIT ?"
             params = (limit,)
         rows = self._rows(query, params)
+        return [self._capability_grant_from_row(row) for row in rows]
+
+    def list_capability_grants_by_parent(
+        self, *, parent_grant_ref: str
+    ) -> list[CapabilityGrantRecord]:
+        rows = self._rows(
+            "SELECT * FROM capability_grants WHERE parent_grant_ref = ? ORDER BY issued_at ASC",
+            (parent_grant_ref,),
+        )
         return [self._capability_grant_from_row(row) for row in rows]
 
     def create_workspace_lease(

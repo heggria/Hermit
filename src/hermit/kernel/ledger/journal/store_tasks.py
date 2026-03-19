@@ -274,6 +274,24 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         )
         return [self._task_from_row(row) for row in rows]
 
+    def list_child_tasks(self, *, parent_task_id: str, limit: int = 200) -> list[TaskRecord]:
+        """Return all tasks that have the given parent_task_id.
+
+        Used by the join-barrier check to enumerate sibling children and
+        determine whether all (or a sufficient subset) have reached a
+        terminal status.
+        """
+        rows = self._rows(
+            """
+            SELECT * FROM tasks
+            WHERE parent_task_id = ?
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (parent_task_id, limit),
+        )
+        return [self._task_from_row(row) for row in rows]
+
     def update_task_status(
         self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
     ) -> None:

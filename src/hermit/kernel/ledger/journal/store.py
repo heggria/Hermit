@@ -848,6 +848,7 @@ class KernelStore(
             self._ensure_column("beliefs", "evidence_case_ref", "TEXT")
             self._ensure_column("beliefs", "epistemic_origin", "TEXT NOT NULL DEFAULT 'observed'")
             self._ensure_column("beliefs", "freshness_class", "TEXT")
+            self._ensure_column("capability_grants", "parent_grant_ref", "TEXT")
             self._ensure_column("beliefs", "last_validated_at", "REAL")
             self._ensure_column("beliefs", "validation_basis", "TEXT")
             self._ensure_column("beliefs", "supersession_reason", "TEXT")

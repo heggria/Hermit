@@ -216,6 +216,76 @@ class ObservationPollResult:
     should_resume: bool = False
 
 
+_SUBTASK_JOIN_OBSERVATION_KIND = "subtask_join"
+
+
+@dataclass
+class SubtaskJoinObservation:
+    """Observation ticket for a parent step waiting on spawned child steps.
+
+    Carried in the parent StepAttemptRecord's context under the key
+    ``"subtask_join_observation"`` so the JoinBarrierService can evaluate
+    completion without re-scanning the full DAG on every poll cycle.
+
+    Attributes:
+        child_step_ids: Ordered list of step_ids spawned by the parent step.
+        join_strategy: Determines when the barrier is considered satisfied.
+            Mirrors ``JoinStrategy`` values from ``join_barrier.py``.
+        parent_step_id: The step_id of the spawning (parent) step.
+        parent_attempt_id: The step_attempt_id of the parent attempt that
+            transitioned to 'observing' status.
+    """
+
+    child_step_ids: list[str]
+    join_strategy: str
+    parent_step_id: str
+    parent_attempt_id: str
+
+    # ------------------------------------------------------------------
+    # Serialisation helpers
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": _SUBTASK_JOIN_OBSERVATION_KIND,
+            "child_step_ids": list(self.child_step_ids),
+            "join_strategy": self.join_strategy,
+            "parent_step_id": self.parent_step_id,
+            "parent_attempt_id": self.parent_attempt_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SubtaskJoinObservation:
+        child_ids = data.get("child_step_ids")
+        if not isinstance(child_ids, list):
+            child_ids = []
+        return cls(
+            child_step_ids=[str(s) for s in child_ids],
+            join_strategy=str(data.get("join_strategy", "all_required") or "all_required"),
+            parent_step_id=str(data.get("parent_step_id", "") or ""),
+            parent_attempt_id=str(data.get("parent_attempt_id", "") or ""),
+        )
+
+
+def normalize_subtask_join_observation(value: Any) -> SubtaskJoinObservation | None:
+    """Coerce *value* to a :class:`SubtaskJoinObservation`, or return ``None``.
+
+    Accepts either an already-constructed instance or a plain ``dict`` whose
+    ``"kind"`` field equals ``"subtask_join"``.
+    """
+    if isinstance(value, SubtaskJoinObservation):
+        return value
+    if not isinstance(value, dict):
+        return None
+    d: dict[str, Any] = cast(dict[str, Any], value)
+    if d.get("kind") != _SUBTASK_JOIN_OBSERVATION_KIND:
+        return None
+    child_ids = d.get("child_step_ids")
+    if not isinstance(child_ids, list) or not child_ids:
+        return None
+    return SubtaskJoinObservation.from_dict(d)
+
+
 class ObservationService:
     def __init__(self, runner: Any, *, budget: ExecutionBudget | None = None) -> None:
         self._runner = runner

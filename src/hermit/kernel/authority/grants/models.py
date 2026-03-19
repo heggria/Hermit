@@ -25,3 +25,8 @@ class CapabilityGrantRecord:
     expires_at: float | None = None
     consumed_at: float | None = None
     revoked_at: float | None = None
+    # Reference to the parent grant this record was derived from.
+    # When set, enforce() verifies that this grant's scope is a subset of the
+    # parent grant's scope, and cascade_revocation() can revoke all children
+    # when the parent is revoked.
+    parent_grant_ref: str | None = None

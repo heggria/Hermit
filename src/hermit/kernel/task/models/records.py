@@ -20,6 +20,9 @@ class TaskRecord:
     created_at: float = 0.0
     updated_at: float = 0.0
     requested_by_principal_id: str | None = None
+    # Artifact refs produced by child tasks spawned under this task.
+    # Populated as children reach terminal status and report their output_ref.
+    child_result_refs: list[str] = field(default_factory=list[str])
 
     @property
     def owner(self) -> str:

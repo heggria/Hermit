@@ -123,6 +123,9 @@ def test_search_helpers_cover_results_parsing_and_errors(monkeypatch) -> None:
         "_ddg_lite_search",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("network")),
     )
+    from hermit.plugins.builtin.tools.web_tools.cache import get_cache
+
+    get_cache().clear()
     assert "Search error: network" in search.handle_search({"query": "life"})
 
     monkeypatch.setattr(search, "_ddg_lite_search", lambda *args, **kwargs: "")

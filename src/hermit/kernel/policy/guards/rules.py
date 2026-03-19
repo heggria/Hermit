@@ -7,6 +7,18 @@ from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations,
 
 POLICY_RULES_VERSION = "strict-task-first-v2"
 
+# ---------------------------------------------------------------------------
+# Policy strictness ordering
+# Higher ordinal = more restrictive. Child tasks must not exceed parent's
+# ordinal (i.e. must be equally or more restrictive, never more permissive).
+# ---------------------------------------------------------------------------
+POLICY_STRICTNESS: dict[str, int] = {
+    "readonly": 3,
+    "supervised": 2,
+    "default": 1,
+    "autonomous": 0,
+}
+
 
 @dataclass
 class RuleOutcome:
@@ -22,6 +34,32 @@ class RuleOutcome:
 def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
     """Evaluate policy rules for an action request via dispatch chain."""
     profile = str(request.context.get("policy_profile", "default"))
+
+    # ------------------------------------------------------------------
+    # Delegation scope enforcement: if a delegation_scope is attached to
+    # this request's context (injected by TaskDelegationService), deny
+    # any action whose action_class is not in allowed_action_classes.
+    # An empty allowed_action_classes list means "no restriction".
+    # ------------------------------------------------------------------
+    delegation_scope = request.context.get("delegation_scope")
+    if delegation_scope is not None:
+        allowed = delegation_scope.get("allowed_action_classes", [])
+        if allowed and request.action_class not in allowed:
+            return [
+                RuleOutcome(
+                    verdict="deny",
+                    reasons=[
+                        PolicyReason(
+                            "delegation_scope_violation",
+                            f"Action class '{request.action_class}' is not permitted by "
+                            f"delegation scope. Allowed: {allowed}.",
+                            "error",
+                        )
+                    ],
+                    obligations=PolicyObligations(require_receipt=False),
+                    risk_level=request.risk_hint,
+                )
+            ]
 
     if profile == "readonly" and request.action_class != "read_local":
         return [
@@ -50,12 +88,12 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
 
     evaluators = [
         evaluate_readonly_rules,
-        evaluate_governance_rules,
-        evaluate_attachment_rules,
-        evaluate_planning_rules,
         evaluate_filesystem_rules,
         evaluate_shell_rules,
         evaluate_network_rules,
+        evaluate_attachment_rules,
+        evaluate_planning_rules,
+        evaluate_governance_rules,
     ]
 
     for evaluator in evaluators:

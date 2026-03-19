@@ -10,6 +10,11 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.execution.executor.execution_helpers import (
+    _contract_refs,
+    _load_witness_payload,
+    _set_attempt_phase,
+)
 from hermit.kernel.execution.executor.reconciliation_executor import ReconciliationExecutor
 from hermit.kernel.execution.recovery.reconcile import ReconcileOutcome
 from hermit.kernel.policy.models.models import ActionRequest
@@ -97,7 +102,7 @@ class TestContractRefs:
         self, executor: ReconciliationExecutor, mock_store: MagicMock
     ) -> None:
         ctx = _make_attempt_ctx()
-        refs = executor._contract_refs(ctx)
+        refs = _contract_refs(mock_store, ctx)
         assert refs == ("contract-1", "evidence-1", "authplan-1")
         mock_store.get_step_attempt.assert_called_once_with("attempt-1")
 
@@ -106,7 +111,7 @@ class TestContractRefs:
     ) -> None:
         mock_store.get_step_attempt.return_value = None
         ctx = _make_attempt_ctx()
-        assert executor._contract_refs(ctx) == (None, None, None)
+        assert _contract_refs(mock_store, ctx) == (None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +124,7 @@ class TestSetAttemptPhase:
         self, executor: ReconciliationExecutor, mock_store: MagicMock
     ) -> None:
         ctx = _make_attempt_ctx()
-        executor._set_attempt_phase(ctx, "reconciling", reason="test")
+        _set_attempt_phase(mock_store, ctx, "reconciling", reason="test")
         mock_store.update_step_attempt.assert_called_once_with(
             "attempt-1", context={"phase": "reconciling"}
         )
@@ -135,7 +140,7 @@ class TestSetAttemptPhase:
             context={"phase": "executing"}
         )
         ctx = _make_attempt_ctx()
-        executor._set_attempt_phase(ctx, "executing")
+        _set_attempt_phase(mock_store, ctx, "executing")
         mock_store.update_step_attempt.assert_not_called()
         mock_store.append_event.assert_not_called()
 
@@ -144,7 +149,7 @@ class TestSetAttemptPhase:
     ) -> None:
         mock_store.get_step_attempt.return_value = None
         ctx = _make_attempt_ctx()
-        executor._set_attempt_phase(ctx, "reconciling")
+        _set_attempt_phase(mock_store, ctx, "reconciling")
         mock_store.update_step_attempt.assert_not_called()
 
 
@@ -154,58 +159,58 @@ class TestSetAttemptPhase:
 
 
 class TestLoadWitnessPayload:
-    def test_returns_empty_dict_for_none_ref(self, executor: ReconciliationExecutor) -> None:
-        assert executor._load_witness_payload(None) == {}
+    def test_returns_empty_dict_for_none_ref(
+        self, mock_store: MagicMock, mock_deps: dict[str, MagicMock]
+    ) -> None:
+        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], None) == {}
 
     def test_returns_empty_dict_when_artifact_missing(
-        self, executor: ReconciliationExecutor, mock_store: MagicMock
+        self, mock_store: MagicMock, mock_deps: dict[str, MagicMock]
     ) -> None:
         mock_store.get_artifact.return_value = None
-        assert executor._load_witness_payload("witness-1") == {}
+        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
 
     def test_returns_parsed_dict(
         self,
-        executor: ReconciliationExecutor,
         mock_store: MagicMock,
         mock_deps: dict[str, MagicMock],
     ) -> None:
         artifact = SimpleNamespace(uri="file:///witness.json")
         mock_store.get_artifact.return_value = artifact
         mock_deps["artifact_store"].read_text.return_value = json.dumps({"key": "value"})
-        assert executor._load_witness_payload("witness-1") == {"key": "value"}
+        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {
+            "key": "value"
+        }
 
     def test_returns_empty_dict_on_json_error(
         self,
-        executor: ReconciliationExecutor,
         mock_store: MagicMock,
         mock_deps: dict[str, MagicMock],
     ) -> None:
         artifact = SimpleNamespace(uri="file:///bad.json")
         mock_store.get_artifact.return_value = artifact
         mock_deps["artifact_store"].read_text.return_value = "not json"
-        assert executor._load_witness_payload("witness-1") == {}
+        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
 
     def test_returns_empty_dict_on_os_error(
         self,
-        executor: ReconciliationExecutor,
         mock_store: MagicMock,
         mock_deps: dict[str, MagicMock],
     ) -> None:
         artifact = SimpleNamespace(uri="file:///missing.json")
         mock_store.get_artifact.return_value = artifact
         mock_deps["artifact_store"].read_text.side_effect = OSError("not found")
-        assert executor._load_witness_payload("witness-1") == {}
+        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
 
     def test_returns_empty_dict_for_non_dict_json(
         self,
-        executor: ReconciliationExecutor,
         mock_store: MagicMock,
         mock_deps: dict[str, MagicMock],
     ) -> None:
         artifact = SimpleNamespace(uri="file:///array.json")
         mock_store.get_artifact.return_value = artifact
         mock_deps["artifact_store"].read_text.return_value = json.dumps([1, 2, 3])
-        assert executor._load_witness_payload("witness-1") == {}
+        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
 
 
 # ---------------------------------------------------------------------------
