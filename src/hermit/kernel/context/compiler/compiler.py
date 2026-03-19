@@ -4,6 +4,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+import structlog
+
 from hermit.infra.system.i18n import tr, tr_list_all_locales
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.memory.governance import MemoryGovernanceService
@@ -167,7 +169,10 @@ class ContextCompiler:
                         excluded_reasons[m.memory_id] = "hybrid_rank_cutoff"
                 used_hybrid = True
             except Exception:
-                pass  # Fall through to legacy scoring
+                structlog.get_logger().warning(
+                    "hybrid_retrieval_fallback",
+                    exc_info=True,
+                )
 
         if not used_hybrid:
             retrieval_candidates.sort(

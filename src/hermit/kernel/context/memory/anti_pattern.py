@@ -107,7 +107,7 @@ class AntiPatternService:
             scope_kind=original.scope_kind,
             scope_ref=original.scope_ref,
             promotion_reason="pitfall_inversion",
-            retention_class=original.retention_class,
+            retention_class="pitfall_warning",
             memory_kind="pitfall_warning",
             confidence=pitfall_confidence,
             trust_tier="durable",

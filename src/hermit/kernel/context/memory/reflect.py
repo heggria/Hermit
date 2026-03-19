@@ -105,6 +105,7 @@ class ReflectionService:
             memory_kind="durable_fact",
             confidence=insight.confidence,
             trust_tier="durable",
+            evidence_refs=list(insight.source_memory_ids),
         )
         log.info(
             "reflection_insight_promoted",

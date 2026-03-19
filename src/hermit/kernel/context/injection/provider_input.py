@@ -575,13 +575,15 @@ class ProviderInputCompiler:
         for d in directives:
             if d.disposition == "pending":
                 self.store.update_steering_disposition(d.directive_id, "acknowledged")
-                d.disposition = "acknowledged"
+                disposition_value = "acknowledged"
+            else:
+                disposition_value = d.disposition
             items.append(
                 {
                     "directive_id": d.directive_id,
                     "steering_type": d.steering_type,
                     "directive": d.directive,
-                    "disposition": d.disposition,
+                    "disposition": disposition_value,
                     "issued_by": d.issued_by,
                     "created_at": d.created_at,
                 }
