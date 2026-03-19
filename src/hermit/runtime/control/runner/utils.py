@@ -10,7 +10,8 @@ from a single source of truth.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.runtime.provider_host.execution.runtime import AgentResult
@@ -52,11 +53,9 @@ def _strip_internal_markup(text: str) -> str:
 
 
 def result_preview(text: str, *, limit: int = 280) -> str:
-    """Return a short, single-line preview of *text* suitable for storage.
+    """Return a short preview of *text* suitable for task result storage.
 
-    Internal markup is stripped first; the result is then collapsed to a
-    single run of whitespace and truncated at *limit* characters with an
-    ellipsis if necessary.
+    Strips internal markup first, then truncates to *limit* characters.
     """
     cleaned = _strip_internal_markup(text)
     if not cleaned:
@@ -64,19 +63,14 @@ def result_preview(text: str, *, limit: int = 280) -> str:
     cleaned = " ".join(cleaned.split())
     if len(cleaned) <= limit:
         return cleaned
-    return cleaned[: limit - 1].rstrip() + "\u2026"
-
-
-# ---------------------------------------------------------------------------
-# Status helper
-# ---------------------------------------------------------------------------
+    return cleaned[: limit - 1].rstrip() + "…"
 
 
 def result_status(result: AgentResult) -> str:
-    """Determine the canonical execution status string for *result*.
+    """Infer a task result status string from *result*.
 
-    Prefers an explicit ``execution_status`` attribute on the result; falls
-    back to heuristic inspection of the result text for well-known prefixes.
+    Checks ``execution_status`` first (set by the provider), then falls
+    back to sniffing the result text for well-known prefixes.
     """
     explicit = str(getattr(result, "execution_status", "") or "").strip()
     if explicit:
@@ -87,6 +81,43 @@ def result_status(result: AgentResult) -> str:
     if text.startswith("[API Error]") or text.startswith("[Policy Denied]"):
         return "failed"
     return "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# DispatchResult — moved here from runner.py to break circular imports
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DispatchResult:
+    """Unified result returned by AgentRunner.dispatch() for both commands and agent replies."""
+
+    text: str
+    is_command: bool = False
+    should_exit: bool = False
+    agent_result: AgentResult | None = None
+
+
+# ---------------------------------------------------------------------------
+# Session message helpers
+# ---------------------------------------------------------------------------
+
+
+def _trim_session_messages(
+    messages: list[dict[str, Any]], *, max_messages: int = 100
+) -> list[dict[str, Any]]:
+    from hermit.runtime.control.lifecycle.session import sanitize_session_messages
+
+    if len(messages) <= max_messages:
+        return list(messages)
+    first_msg = messages[0] if messages else None
+    has_system_first = first_msg is not None and first_msg.get("role") == "system"
+    if has_system_first:
+        tail = messages[-(max_messages - 1) :]
+        trimmed = [first_msg, *tail]
+    else:
+        trimmed = messages[-max_messages:]
+    return sanitize_session_messages(trimmed)
 
 
 # ---------------------------------------------------------------------------

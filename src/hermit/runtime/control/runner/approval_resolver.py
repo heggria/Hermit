@@ -12,7 +12,11 @@ if TYPE_CHECKING:
     )
 
 
-from hermit.runtime.control.runner.utils import _t
+from hermit.runtime.control.runner.utils import (
+    DispatchResult,
+    _t,
+    _trim_session_messages,
+)
 
 
 class ApprovalResolver:
@@ -67,7 +71,6 @@ class ApprovalResolver:
         on_tool_start: ToolStartCallback | None = None,
     ) -> object:
         from hermit.kernel.policy.approvals.approvals import ApprovalService
-        from hermit.runtime.control.runner.runner import DispatchResult
         from hermit.runtime.control.runner.utils import result_preview
 
         approval = self.store.get_approval(approval_id)
@@ -84,7 +87,6 @@ class ApprovalResolver:
             text = _t("kernel.runner.approval_denied")
             messages = list(session.messages)
             messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
-            from hermit.runtime.control.runner.runner import _trim_session_messages
 
             session.messages = _trim_session_messages(messages)
             session_manager.save(session)  # type: ignore[union-attr]
@@ -118,7 +120,6 @@ class ApprovalResolver:
         session.total_output_tokens += result.output_tokens
         session.total_cache_read_tokens += result.cache_read_tokens
         session.total_cache_creation_tokens += result.cache_creation_tokens
-        from hermit.runtime.control.runner.runner import _trim_session_messages
 
         session.messages = _trim_session_messages(result.messages)
         session_manager.save(session)  # type: ignore[union-attr]

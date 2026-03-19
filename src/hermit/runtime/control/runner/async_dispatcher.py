@@ -12,13 +12,18 @@ from hermit.kernel.task.services.controller import AUTO_PARENT, TaskController
 from hermit.kernel.task.services.planning import PlanningService
 from hermit.runtime.capability.contracts.base import HookEvent
 from hermit.runtime.control.lifecycle.session import SessionManager
-from hermit.runtime.control.runner.utils import result_status
+from hermit.runtime.control.runner.utils import (
+    DispatchResult,
+    _t,
+    _trim_session_messages,
+    result_status,
+)
 from hermit.runtime.provider_host.execution.runtime import AgentResult
 
 if TYPE_CHECKING:
     from hermit.kernel.ledger.journal.store import KernelStore
     from hermit.runtime.capability.registry.manager import PluginManager
-    from hermit.runtime.control.runner.runner import AgentRunner, DispatchResult
+    from hermit.runtime.control.runner.runner import AgentRunner
 
 
 class AsyncDispatcher:
@@ -118,7 +123,6 @@ class AsyncDispatcher:
         reason: str = "",
     ) -> DispatchResult:
         from hermit.kernel.policy.approvals.approvals import ApprovalService
-        from hermit.runtime.control.runner.runner import DispatchResult, _t
 
         approval = self.task_controller.store.get_approval(approval_id)
         if approval is None:
@@ -138,7 +142,6 @@ class AsyncDispatcher:
             text = _t("kernel.runner.approval_denied", runner=self._runner)
             messages = list(session.messages)
             messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
-            from hermit.runtime.control.runner.runner import _trim_session_messages
 
             session.messages = _trim_session_messages(messages)
             self.session_manager.save(session)
@@ -157,7 +160,6 @@ class AsyncDispatcher:
         )
         messages = list(session.messages)
         messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
-        from hermit.runtime.control.runner.runner import _trim_session_messages
 
         session.messages = _trim_session_messages(messages)
         self.session_manager.save(session)

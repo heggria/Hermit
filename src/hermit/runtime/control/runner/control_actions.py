@@ -15,11 +15,13 @@ from hermit.runtime.provider_host.execution.runtime import (
 if TYPE_CHECKING:
     from hermit.kernel.ledger.journal.store import KernelStore
     from hermit.runtime.capability.registry.manager import PluginManager
-    from hermit.runtime.control.runner.runner import AgentRunner, DispatchResult
+    from hermit.runtime.control.runner.runner import AgentRunner
 
 
 from hermit.runtime.control.runner.utils import (
+    DispatchResult,
     _t,
+    _trim_session_messages,
     result_preview,
     result_status,
 )
@@ -66,7 +68,6 @@ class ControlActionDispatcher:
         on_tool_call: ToolCallback | None = None,
         on_tool_start: ToolStartCallback | None = None,
     ) -> DispatchResult:
-        from hermit.runtime.control.runner.runner import DispatchResult
 
         runner = self._runner
 
@@ -159,7 +160,6 @@ class ControlActionDispatcher:
         on_tool_call: ToolCallback | None = None,
         on_tool_start: ToolStartCallback | None = None,
     ) -> DispatchResult:
-        from hermit.runtime.control.runner.runner import DispatchResult
 
         runner = self._runner
 
@@ -318,7 +318,6 @@ class ControlActionDispatcher:
         resolved_target: str,
         session_id: str,
     ) -> DispatchResult:
-        from hermit.runtime.control.runner.runner import DispatchResult
 
         runner = self._runner
         if planning is None:
@@ -343,7 +342,6 @@ class ControlActionDispatcher:
         resolved_target: str,
         session_id: str,
     ) -> DispatchResult:
-        from hermit.runtime.control.runner.runner import DispatchResult
 
         runner = self._runner
         if planning is None:
@@ -363,7 +361,6 @@ class ControlActionDispatcher:
         on_tool_call: ToolCallback | None = None,
         on_tool_start: ToolStartCallback | None = None,
     ) -> DispatchResult:
-        from hermit.runtime.control.runner.runner import DispatchResult
 
         runner = self._runner
         if planning is None:
@@ -439,7 +436,6 @@ class ControlActionDispatcher:
         on_tool_start: ToolStartCallback | None = None,
     ) -> DispatchResult:
         from hermit.kernel.policy.approvals.approvals import ApprovalService
-        from hermit.runtime.control.runner.runner import DispatchResult
 
         runner = self._runner
 
@@ -457,7 +453,6 @@ class ControlActionDispatcher:
             text = _t("kernel.runner.approval_denied", runner=runner)
             messages = list(session.messages)
             messages.append({"role": "assistant", "content": [{"type": "text", "text": text}]})
-            from hermit.runtime.control.runner.runner import _trim_session_messages
 
             session.messages = _trim_session_messages(
                 messages,
@@ -496,7 +491,6 @@ class ControlActionDispatcher:
         session.total_output_tokens += result.output_tokens
         session.total_cache_read_tokens += result.cache_read_tokens
         session.total_cache_creation_tokens += result.cache_creation_tokens
-        from hermit.runtime.control.runner.runner import _trim_session_messages
 
         session.messages = _trim_session_messages(
             result.messages,

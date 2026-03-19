@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import datetime  # noqa: F401 — used by test monkeypatching (runner_module.datetime)
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from hermit.kernel.execution.coordination.observation import ObservationService
 from hermit.kernel.task.services.controller import AUTO_PARENT, TaskController
@@ -19,28 +18,13 @@ if TYPE_CHECKING:
     from hermit.runtime.capability.registry.manager import PluginManager
 
 from hermit.runtime.control.runner.utils import (
+    DispatchResult,
     _t,
+    _trim_session_messages,
     result_preview,
 )
 
 CommandHandler = Callable[["AgentRunner", str, str], "DispatchResult"]
-
-
-def _trim_session_messages(
-    messages: list[dict[str, Any]], *, max_messages: int = 100
-) -> list[dict[str, Any]]:
-    from hermit.runtime.control.lifecycle.session import sanitize_session_messages
-
-    if len(messages) <= max_messages:
-        return list(messages)
-    first_msg = messages[0] if messages else None
-    has_system_first = first_msg is not None and first_msg.get("role") == "system"
-    if has_system_first:
-        tail = messages[-(max_messages - 1) :]
-        trimmed = [first_msg, *tail]
-    else:
-        trimmed = messages[-max_messages:]
-    return sanitize_session_messages(trimmed)
 
 
 def _resolve_help_text(help_text: str, *, runner: AgentRunner | None = None) -> str:
@@ -49,16 +33,6 @@ def _resolve_help_text(help_text: str, *, runner: AgentRunner | None = None) -> 
     settings = getattr(getattr(runner, "pm", None), "settings", None)
     locale = resolve_locale(getattr(settings, "locale", None))
     return tr(help_text, locale=locale, default=help_text)
-
-
-@dataclass
-class DispatchResult:
-    """Unified result returned by AgentRunner.dispatch() for both commands and agent replies."""
-
-    text: str
-    is_command: bool = False
-    should_exit: bool = False
-    agent_result: AgentResult | None = None
 
 
 class AgentRunner:

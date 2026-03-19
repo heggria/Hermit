@@ -142,12 +142,18 @@ class KernelStore(
             return self._task_events[task_id]
 
     def notify_task_changed(self, task_id: str) -> None:
-        """Fire (and reset) the event for *task_id* so waiters can re-check status."""
+        """Fire the event for *task_id* so waiters can re-check status.
+
+        The old Event is *popped* from the dict under the lock so that any
+        thread currently blocking on event.wait() is guaranteed to be
+        woken.  The next call to get_or_create_task_event will insert a
+        fresh Event, eliminating the set()/clear() race where a waiter could
+        miss the notification window between those two calls.
+        """
         with self._task_events_lock:
-            ev = self._task_events.get(task_id)
+            ev = self._task_events.pop(task_id, None)
         if ev is not None:
             ev.set()
-            ev.clear()
 
     # --- Overridden to fire task events ---
 
@@ -1439,6 +1445,14 @@ class KernelStore(
         return _sha256_hex(_canonical_json(payload))
 
     def _backfill_event_hash_chain(self) -> None:
+        # Fast path: skip if no events need backfill
+        needs_backfill = self._row(
+            "SELECT COUNT(*) as cnt FROM events WHERE event_hash IS NULL OR event_hash = ''"
+        )
+        if needs_backfill and int(needs_backfill["cnt"]) == 0:
+            return
+
+        # Slow path: full backfill needed
         rows = self._rows("SELECT * FROM events ORDER BY event_seq ASC")
         previous_by_task: dict[str, str] = {}
         for row in rows:

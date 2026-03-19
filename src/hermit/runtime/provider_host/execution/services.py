@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import re
 import tomllib
 from pathlib import Path
 from typing import Any, cast
@@ -10,7 +8,6 @@ import structlog
 
 from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel import (
-    ApprovalCopyService,
     ApprovalService,
     ArtifactStore,
     KernelStore,
@@ -19,15 +16,13 @@ from hermit.kernel import (
     TaskController,
     ToolExecutor,
 )
-from hermit.kernel.task.projections.progress_summary import (
-    ProgressSummary,
-    ProgressSummaryFormatter,
-)
 from hermit.runtime.assembly.config import Settings
 from hermit.runtime.assembly.context import build_base_context
 from hermit.runtime.capability.registry.manager import PluginManager
 from hermit.runtime.capability.registry.tools import create_builtin_tool_registry
 from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, configure_runtime_budget
+from hermit.runtime.provider_host.execution.approval_services import build_approval_copy_service
+from hermit.runtime.provider_host.execution.progress_services import build_progress_summarizer
 from hermit.runtime.provider_host.execution.runtime import AgentRuntime
 from hermit.runtime.provider_host.execution.sandbox import CommandSandbox
 from hermit.runtime.provider_host.llm import (
@@ -36,12 +31,7 @@ from hermit.runtime.provider_host.llm import (
     CodexProvider,
     build_claude_provider,
 )
-from hermit.runtime.provider_host.shared.contracts import (
-    Provider,
-    ProviderRequest,
-    ProviderResponse,
-)
-from hermit.runtime.provider_host.shared.messages import extract_text
+from hermit.runtime.provider_host.shared.contracts import Provider
 
 log = structlog.get_logger()
 
@@ -300,95 +290,6 @@ def build_runtime(
     return runtime, pm
 
 
-class StructuredExtractionService:
-    def __init__(self, provider: Provider, *, model: str) -> None:
-        self.provider = provider
-        self.model = model
-
-    def extract_json(
-        self, *, system_prompt: str, user_content: str, max_tokens: int = 2048
-    ) -> dict[str, Any] | None:
-        response = self.provider.generate(
-            request=self._request(
-                system_prompt=system_prompt, user_content=user_content, max_tokens=max_tokens
-            )
-        )
-        return _parse_json_response(response)
-
-    def _request(self, *, system_prompt: str, user_content: str, max_tokens: int) -> Any:
-        from hermit.runtime.provider_host.shared.contracts import ProviderRequest
-
-        return ProviderRequest(
-            model=self.model,
-            max_tokens=max_tokens,
-            system_prompt=system_prompt,
-            messages=[{"role": "user", "content": user_content}],
-        )
-
-
-class LLMProgressSummarizer:
-    def __init__(
-        self,
-        provider: Provider,
-        *,
-        model: str,
-        locale: str | None = None,
-        max_tokens: int = 160,
-    ) -> None:
-        self.provider = provider
-        self.model = model
-        self.locale = resolve_locale(locale)
-        self.max_tokens = max_tokens
-
-    def summarize(self, *, facts: dict[str, Any]) -> ProgressSummary | None:
-        response = self.provider.generate(
-            ProviderRequest(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system_prompt=self._system_prompt(),
-                messages=[
-                    {"role": "user", "content": json.dumps(facts, ensure_ascii=False, indent=2)}
-                ],
-            )
-        )
-        parsed = _parse_json_response(response)
-        if not isinstance(parsed, dict):
-            return None
-        summary = str(parsed.get("summary", "") or "").strip()
-        if not summary:
-            return None
-        return ProgressSummary.from_dict(parsed)
-
-    def _system_prompt(self) -> str:
-        language = "Simplified Chinese" if self.locale.lower().startswith("zh") else "English"
-        return f"{_PROGRESS_SUMMARY_SYSTEM_PROMPT} Write the summary in {language}."
-
-
-class VisionAnalysisService:
-    def __init__(self, provider: Provider, *, model: str) -> None:
-        self.provider = provider
-        self.model = model
-
-    def analyze_image(
-        self, *, system_prompt: str, text: str, image_block: dict[str, Any], max_tokens: int = 512
-    ) -> dict[str, Any] | None:
-        if not self.provider.features.supports_images:
-            raise RuntimeError(f"Provider '{self.provider.name}' does not support image analysis")
-        from hermit.runtime.provider_host.shared.contracts import ProviderRequest
-
-        response = self.provider.generate(
-            ProviderRequest(
-                model=self.model,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-                messages=[
-                    {"role": "user", "content": [image_block, {"type": "text", "text": text}]}
-                ],
-            )
-        )
-        return _parse_json_response(response)
-
-
 def build_background_runtime(settings: Any, *, cwd: Path) -> tuple[AgentRuntime, PluginManager]:
     return build_runtime(settings, cwd=cwd)
 
@@ -406,116 +307,3 @@ def _resolve_codex_model(settings: Any, requested_model: str) -> str:
         except Exception:
             log.debug("codex_config_model_read_failed", path=str(config_path))
     return "gpt-5.4"
-
-
-def _parse_json_response(response: ProviderResponse) -> dict[str, Any] | None:
-    raw = extract_text(response.content)
-    if not raw:
-        return None
-    cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
-    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
-    for candidate in (cleaned, raw):
-        try:
-            parsed = json.loads(candidate)
-            return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
-        except json.JSONDecodeError:
-            continue
-    brace_start = cleaned.find("{")
-    if brace_start >= 0:
-        fragment = cleaned[brace_start:]
-        for suffix in ("", "}", "]}", '"}', '"]}', '"]}'):
-            try:
-                parsed = json.loads(fragment + suffix)
-                return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
-            except json.JSONDecodeError:
-                continue
-    log.warning("provider_json_parse_failed", preview=raw[:200])
-    return None
-
-
-class LLMApprovalFormatter:
-    def __init__(
-        self,
-        provider: Provider,
-        *,
-        model: str,
-        locale: str | None = None,
-        max_tokens: int = 120,
-    ) -> None:
-        self.provider = provider
-        self.model = model
-        self.locale = resolve_locale(locale)
-        self.max_tokens = max_tokens
-
-    def format(self, facts: dict[str, Any]) -> dict[str, str] | None:
-        response = self.provider.generate(
-            ProviderRequest(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system_prompt=tr(
-                    "kernel.provider.approval_formatter.system_prompt",
-                    locale=self.locale,
-                    default=_APPROVAL_COPY_SYSTEM_PROMPT,
-                ),
-                messages=[
-                    {"role": "user", "content": json.dumps(facts, ensure_ascii=False, indent=2)}
-                ],
-            )
-        )
-        parsed = _parse_json_response(response)
-        if not isinstance(parsed, dict):
-            return None
-        title = str(parsed.get("title", "")).strip()
-        summary = str(parsed.get("summary", "")).strip()
-        detail = str(parsed.get("detail", "")).strip()
-        if not title or not summary or not detail:
-            return None
-        return {
-            "title": title,
-            "summary": summary,
-            "detail": detail,
-        }
-
-
-def build_approval_copy_service(settings: Any) -> ApprovalCopyService:
-    locale = getattr(settings, "locale", None)
-    if not bool(getattr(settings, "approval_copy_formatter_enabled", False)):
-        return ApprovalCopyService(locale=locale)
-    try:
-        model = getattr(settings, "approval_copy_model", None) or getattr(settings, "model", "")
-        provider = build_provider(settings, model=model, system_prompt=None)
-        formatter = LLMApprovalFormatter(
-            provider,
-            model=getattr(provider, "model", model),
-            locale=locale,
-        )
-        return ApprovalCopyService(
-            formatter=formatter.format,
-            formatter_timeout_ms=int(getattr(settings, "approval_copy_formatter_timeout_ms", 500)),
-            locale=locale,
-        )
-    except Exception as exc:
-        log.warning("approval_copy_formatter_init_failed", error=str(exc))
-        return ApprovalCopyService(locale=locale)
-
-
-def build_progress_summarizer(
-    settings: Any,
-    *,
-    provider: Provider,
-    model: str,
-) -> ProgressSummaryFormatter | None:
-    if not bool(getattr(settings, "progress_summary_enabled", True)):
-        return None
-    summary_model = getattr(settings, "progress_summary_model", None) or model
-    try:
-        summary_provider = provider.clone(model=summary_model, system_prompt=None)
-        return LLMProgressSummarizer(
-            summary_provider,
-            model=summary_model,
-            locale=getattr(settings, "locale", None),
-            max_tokens=int(getattr(settings, "progress_summary_max_tokens", 160) or 160),
-        )
-    except Exception as exc:
-        log.warning("progress_summarizer_init_failed", error=str(exc))
-        return None

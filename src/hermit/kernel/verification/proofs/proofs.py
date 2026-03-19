@@ -200,7 +200,9 @@ class ProofService:
             "reconciliation_count": len(projection["reconciliations"]),
         }
 
-    def ensure_receipt_bundle(self, receipt_id: str) -> str:
+    def ensure_receipt_bundle(
+        self, receipt_id: str, *, verification: dict[str, Any] | None = None
+    ) -> str:
         receipt = self.store.get_receipt(receipt_id)
         if receipt is None:
             raise KeyError(f"Receipt not found: {receipt_id}")
@@ -210,7 +212,7 @@ class ProofService:
 
         context_manifest_ref = self._create_context_manifest(receipt)
         receipt_bundle_payload = self._build_receipt_bundle_payload(
-            receipt, context_manifest_ref=context_manifest_ref
+            receipt, context_manifest_ref=context_manifest_ref, verification=verification
         )
         self._validate_bundle_artifact_hashes(receipt, receipt_bundle_payload)
         signature_meta = self._signature_metadata(
@@ -260,9 +262,12 @@ class ProofService:
 
         receipts = self.store.list_receipts(task_id=task_id, limit=500)
 
+        verification = self.verify_task_chain(task_id)
+
         # Receipt bundles are always computed (needed for Merkle root)
         receipt_bundle_refs = [
-            self.ensure_receipt_bundle(receipt.receipt_id) for receipt in receipts
+            self.ensure_receipt_bundle(receipt.receipt_id, verification=verification)
+            for receipt in receipts
         ]
         receipt_bundles = [self._load_artifact_payload(ref_id) for ref_id in receipt_bundle_refs]
         context_manifest_refs = sorted(
@@ -294,7 +299,6 @@ class ProofService:
             else []
         )
 
-        verification = self.verify_task_chain(task_id)
         inclusion = self._receipt_inclusion_proofs(receipt_bundles)
         # Build projection once here; avoids a second verify_task_chain() call
         # that would otherwise occur inside build_proof_summary().
@@ -464,6 +468,7 @@ class ProofService:
         receipt: ReceiptRecord,
         *,
         context_manifest_ref: str,
+        verification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         approval = (
             self.store.get_approval(receipt.approval_ref or "") if receipt.approval_ref else None
@@ -478,7 +483,7 @@ class ProofService:
             if receipt.workspace_lease_ref
             else None
         )
-        verification = self.verify_task_chain(receipt.task_id)
+        verification = verification or self.verify_task_chain(receipt.task_id)
         return {
             "schema": "receipt.bundle/v1",
             "receipt_id": receipt.receipt_id,
