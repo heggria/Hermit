@@ -221,16 +221,23 @@ class EpisodicMemoryService:
         task_id: str,
     ) -> list[MemoryRecord]:
         """Find episode_index records for a specific task."""
-        all_records = store.list_memory_records(task_id=task_id, status="active", limit=100)
-        return [r for r in all_records if r.memory_kind == "episode_index"]
+        return store.list_memory_records(
+            task_id=task_id,
+            status="active",
+            memory_kind="episode_index",
+            limit=100,
+        )
 
     @staticmethod
     def _find_all_episode_records(
         store: KernelStore,
     ) -> list[MemoryRecord]:
         """Find all active episode_index records."""
-        all_records = store.list_memory_records(status="active", limit=5000)
-        return [r for r in all_records if r.memory_kind == "episode_index"]
+        return store.list_memory_records(
+            status="active",
+            memory_kind="episode_index",
+            limit=5000,
+        )
 
 
 __all__ = ["EpisodicMemoryService"]

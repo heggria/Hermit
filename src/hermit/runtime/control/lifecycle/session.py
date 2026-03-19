@@ -274,7 +274,3 @@ class SessionManager:
 
     def _finalize(self, session: Session) -> None:
         self._active.pop(session.session_id, None)
-
-    def _session_path(self, session_id: str) -> Path:
-        safe_name = session_id.replace("/", "_").replace("..", "_")
-        return self.sessions_dir / f"{safe_name}.json"

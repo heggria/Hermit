@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import time
-from typing import Any, cast
+from typing import Any
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.authority.grants import CapabilityGrantError, CapabilityGrantService
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.execution.executor import attempt_helpers
 from hermit.kernel.execution.executor.witness import WitnessCapture
 from hermit.kernel.execution.recovery.reconciliations import ReconciliationService
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -289,13 +289,4 @@ class RecoveryHandler:
 
     def _load_witness_payload(self, witness_ref: str | None) -> dict[str, Any]:
         """Load a previously-captured witness payload from the artifact store."""
-        if not witness_ref:
-            return {}
-        artifact = self.store.get_artifact(witness_ref)
-        if artifact is None:
-            return {}
-        try:
-            payload: Any = json.loads(self.artifact_store.read_text(artifact.uri))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        return attempt_helpers.load_witness_payload(self.store, self.artifact_store, witness_ref)

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from hermit.kernel.authority.grants import CapabilityGrantError
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.execution.executor import attempt_helpers
 from hermit.kernel.execution.executor.receipt_handler import ReceiptHandler
 from hermit.kernel.execution.executor.reconciliation_executor import ReconciliationExecutor
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -34,14 +35,7 @@ class DispatchDeniedHandler:
     def _contract_refs(
         self, attempt_ctx: TaskExecutionContext
     ) -> tuple[str | None, str | None, str | None]:
-        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
-        if attempt is None:
-            return None, None, None
-        return (
-            attempt.execution_contract_ref,
-            attempt.evidence_case_ref,
-            attempt.authorization_plan_ref,
-        )
+        return attempt_helpers.contract_refs(self.store, attempt_ctx)
 
     def handle_dispatch_denied(
         self,

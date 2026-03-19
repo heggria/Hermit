@@ -205,3 +205,15 @@ def localize_schema(schema: Any, *, locale: str | None = None) -> Any:
             default=default_title if isinstance(default_title, str) else "",
         )
     return localized
+
+
+def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+    """Shared i18n helper used across modules.
+
+    Resolves the current locale automatically via :func:`resolve_locale` and
+    delegates to :func:`tr`.  Import this instead of re-defining the same
+    two-line wrapper in every module::
+
+        from hermit.infra.system.i18n import _t
+    """
+    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)

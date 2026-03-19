@@ -10,15 +10,19 @@ import pytest
 from hermit.runtime.capability.contracts.base import CommandSpec
 from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec
 from hermit.runtime.provider_host.execution import services
+from hermit.runtime.provider_host.execution.progress_services import (
+    LLMProgressSummarizer,
+    build_progress_summarizer,
+)
 from hermit.runtime.provider_host.execution.runtime import AgentRuntime
 from hermit.runtime.provider_host.execution.services import (
-    LLMProgressSummarizer,
-    StructuredExtractionService,
-    VisionAnalysisService,
     build_approval_copy_service,
-    build_progress_summarizer,
     build_provider,
     build_provider_client_kwargs,
+)
+from hermit.runtime.provider_host.execution.vision_services import (
+    StructuredExtractionService,
+    VisionAnalysisService,
 )
 from hermit.runtime.provider_host.shared.contracts import (
     ProviderEvent,

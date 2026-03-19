@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import _t
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.authority.grants import CapabilityGrantService
 from hermit.kernel.authority.workspaces import WorkspaceLeaseService
@@ -15,10 +15,6 @@ from hermit.kernel.policy import PolicyDecision
 from hermit.kernel.policy.models.models import ActionRequest
 from hermit.kernel.policy.permits.authorization_plans import AuthorizationPlanService
 from hermit.runtime.capability.registry.tools import ToolRegistry
-
-
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
 
 
 class AuthorizationHandler:

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from hermit import __version__
 from hermit.apps.companion.control import hermit_base_dir
+from hermit.infra.paths import project_root as _project_root
 from hermit.infra.system.i18n import tr
 
 APP_NAME = "Hermit"
@@ -67,13 +68,6 @@ def _launcher_command() -> list[str]:  # pyright: ignore[reportUnusedFunction]
 
 def _bundle_python_target() -> Path:
     return Path(sys.executable).resolve()
-
-
-def _project_root() -> Path | None:
-    candidate = Path(__file__).resolve().parents[4]
-    if (candidate / "pyproject.toml").exists():
-        return candidate
-    return None
 
 
 def _icon_source() -> Path | None:

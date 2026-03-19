@@ -8,15 +8,11 @@ import urllib.error
 import urllib.request
 from typing import Any, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import _t, tr
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 
 _XAI_BASE_URL = "https://api.x.ai/v1"
 _DEFAULT_MODEL = "grok-4-1-fast-non-reasoning"
-
-
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
 
 
 def _get_api_key() -> str:

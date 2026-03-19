@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import json
 import time
-from typing import Any, cast
+from typing import Any
 
 from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
 from hermit.kernel.execution.controller.pattern_learner import TaskPatternLearner
+from hermit.kernel.execution.executor import attempt_helpers
 from hermit.kernel.execution.recovery.reconcile import ReconcileOutcome
 from hermit.kernel.execution.recovery.reconciliations import ReconciliationService
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -43,14 +43,7 @@ class ReconciliationExecutor:
     def _contract_refs(
         self, attempt_ctx: TaskExecutionContext
     ) -> tuple[str | None, str | None, str | None]:
-        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
-        if attempt is None:
-            return None, None, None
-        return (
-            attempt.execution_contract_ref,
-            attempt.evidence_case_ref,
-            attempt.authorization_plan_ref,
-        )
+        return attempt_helpers.contract_refs(self.store, attempt_ctx)
 
     def _set_attempt_phase(
         self,
@@ -59,41 +52,10 @@ class ReconciliationExecutor:
         *,
         reason: str | None = None,
     ) -> None:
-        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
-        if attempt is None:
-            return
-        context = dict(attempt.context or {})
-        previous = str(context.get("phase", "") or "")
-        if previous == phase:
-            return
-        context["phase"] = phase
-        self.store.update_step_attempt(attempt_ctx.step_attempt_id, context=context)
-        self.store.append_event(
-            event_type="step_attempt.phase_changed",
-            entity_type="step_attempt",
-            entity_id=attempt_ctx.step_attempt_id,
-            task_id=attempt_ctx.task_id,
-            step_id=attempt_ctx.step_id,
-            actor="kernel",
-            payload={
-                "step_attempt_id": attempt_ctx.step_attempt_id,
-                "previous_phase": previous,
-                "phase": phase,
-                "reason": reason,
-            },
-        )
+        attempt_helpers.set_attempt_phase(self.store, attempt_ctx, phase, reason=reason)
 
     def _load_witness_payload(self, witness_ref: str | None) -> dict[str, Any]:
-        if not witness_ref:
-            return {}
-        artifact = self.store.get_artifact(witness_ref)
-        if artifact is None:
-            return {}
-        try:
-            payload: Any = json.loads(self.artifact_store.read_text(artifact.uri))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        return attempt_helpers.load_witness_payload(self.store, self.artifact_store, witness_ref)
 
     # ------------------------------------------------------------------
     # Public API (extracted from ToolExecutor, underscore prefix removed)

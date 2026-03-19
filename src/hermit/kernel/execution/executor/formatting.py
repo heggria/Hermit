@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.execution.coordination.observation import (
     normalize_observation_progress,
 )
@@ -15,10 +14,6 @@ from hermit.kernel.task.projections.progress_summary import (
 from hermit.runtime.capability.registry.tools import serialize_tool_result
 
 BLOCK_TYPES = {"text", "image"}
-
-
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
 
 
 def truncate_middle(text: str, limit: int) -> str:

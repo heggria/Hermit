@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import _t
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.coordination.observation import ObservationTicket
@@ -13,10 +13,6 @@ from hermit.kernel.ledger.journal.store import KernelStore
 _RUNTIME_SNAPSHOT_KEY = "runtime_snapshot"
 _PENDING_EXECUTION_KEY = "pending_observation_execution"
 _PENDING_EXECUTION_KIND = "runtime.pending_execution"
-
-
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
 
 
 class StatePersistence:

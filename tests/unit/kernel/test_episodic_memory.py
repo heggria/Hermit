@@ -50,11 +50,14 @@ def _mock_store(
     def list_memory_records(**kwargs):
         task_id = kwargs.get("task_id")
         status = kwargs.get("status")
+        memory_kind = kwargs.get("memory_kind")
         result = all_memories
         if task_id:
             result = [m for m in result if m.task_id == task_id]
         if status:
             result = [m for m in result if m.status == status]
+        if memory_kind:
+            result = [m for m in result if m.memory_kind == memory_kind]
         limit = kwargs.get("limit", 5000)
         return result[:limit]
 

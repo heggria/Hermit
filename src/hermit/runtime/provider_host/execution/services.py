@@ -21,10 +21,21 @@ from hermit.runtime.assembly.context import build_base_context
 from hermit.runtime.capability.registry.manager import PluginManager
 from hermit.runtime.capability.registry.tools import create_builtin_tool_registry
 from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, configure_runtime_budget
-from hermit.runtime.provider_host.execution.approval_services import build_approval_copy_service
-from hermit.runtime.provider_host.execution.progress_services import build_progress_summarizer
+from hermit.runtime.provider_host.execution.approval_services import (
+    LLMApprovalFormatter,  # noqa: F401  re-export
+    build_approval_copy_service,
+)
+from hermit.runtime.provider_host.execution.progress_services import (
+    LLMProgressSummarizer,  # noqa: F401  re-export
+    build_progress_summarizer,
+)
 from hermit.runtime.provider_host.execution.runtime import AgentRuntime
 from hermit.runtime.provider_host.execution.sandbox import CommandSandbox
+from hermit.runtime.provider_host.execution.vision_services import (  # noqa: F401  re-export
+    StructuredExtractionService,
+    VisionAnalysisService,
+    _parse_json_response,
+)
 from hermit.runtime.provider_host.llm import (
     CodexOAuthProvider,
     CodexOAuthTokenManager,
@@ -34,25 +45,6 @@ from hermit.runtime.provider_host.llm import (
 from hermit.runtime.provider_host.shared.contracts import Provider
 
 log = structlog.get_logger()
-
-_APPROVAL_COPY_SYSTEM_PROMPT = (
-    "You rewrite approval prompts into user-friendly English product copy. "
-    "You must only use the supplied JSON facts and must not invent any targets, commands, risks, or services. "
-    "Return strict JSON with exactly these keys: title, summary, detail. "
-    "Keep summary and detail concise, clear, and human. "
-    "Explain what the tool is about to do and why approval is needed. "
-    "Do not dump raw shell commands into summary or detail unless absolutely necessary."
-)
-
-_PROGRESS_SUMMARY_SYSTEM_PROMPT = (
-    "You write short live progress updates for an AI agent task. "
-    "You must only use the supplied JSON facts and must not invent any steps, results, blockers, or tools. "
-    "Return strict JSON with exactly these keys: summary, detail, phase, progress_percent. "
-    "The summary must be a single short sentence describing what the task is doing right now. "
-    "The detail should be optional, compact, and explain the next likely step or blocker when useful. "
-    "Keep the tone calm and operator-friendly, like a live task update. "
-    "Do not mention internal IDs, JSON, or implementation details."
-)
 
 
 def _execution_budget(settings: Settings) -> ExecutionBudget:

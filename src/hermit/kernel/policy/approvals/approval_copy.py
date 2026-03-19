@@ -42,6 +42,16 @@ class ApprovalCopyService:
         self._formatter = formatter
         self._formatter_timeout_ms = formatter_timeout_ms
         self._locale = resolve_locale(locale) if locale else None
+        # A single shared executor avoids spawning a new thread per call.
+        # Only allocated when a formatter is actually provided.
+        self._executor: concurrent.futures.ThreadPoolExecutor | None = (
+            concurrent.futures.ThreadPoolExecutor(max_workers=1) if formatter is not None else None
+        )
+
+    def __del__(self) -> None:
+        if self._executor is not None:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor = None
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=resolve_locale(self._locale), default=default, **kwargs)
@@ -104,16 +114,13 @@ class ApprovalCopyService:
         )
 
     def _format_with_optional_formatter(self, facts: dict[str, Any]) -> ApprovalCopy | None:
-        if self._formatter is None:
+        if self._formatter is None or self._executor is None:
             return None
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            future = executor.submit(self._formatter, facts)
+            future = self._executor.submit(self._formatter, facts)
             payload = future.result(timeout=max(0.001, self._formatter_timeout_ms / 1000))
         except Exception:
-            executor.shutdown(wait=False, cancel_futures=True)
             return None
-        executor.shutdown(wait=False, cancel_futures=True)
         if isinstance(payload, dict):
             return self._copy_from_mapping(payload)
         if isinstance(payload, str):

@@ -4,7 +4,7 @@ import json
 import time
 from typing import Any, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import _t
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.errors import SnapshotError
@@ -44,10 +44,6 @@ _RUNTIME_SNAPSHOT_V3_ALLOWED_KEYS = {
     "note_cursor_event_seq",
     "observation",
 }
-
-
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
 
 
 class RuntimeSnapshotManager:

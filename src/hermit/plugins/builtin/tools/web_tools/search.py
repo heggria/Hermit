@@ -9,7 +9,7 @@ import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import _t
 from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 
@@ -20,10 +20,6 @@ _TIME_FILTER_MAP = {
     "month": "m",
     "year": "y",
 }
-
-
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
 
 
 def handle_search(payload: dict[str, Any]) -> str:

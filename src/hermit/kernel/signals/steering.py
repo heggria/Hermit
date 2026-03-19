@@ -5,10 +5,14 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+import structlog
+
 from hermit.kernel.signals.models import SteeringDirective
 
 if TYPE_CHECKING:
     from hermit.kernel.ledger.journal.store import KernelStore
+
+log = structlog.get_logger()
 
 
 class SteeringProtocol:
@@ -56,14 +60,19 @@ class SteeringProtocol:
         self._emit_event("steering.rejected", directive, extra={"reason": reason})
 
     def supersede(self, old_id: str, new: SteeringDirective) -> SteeringDirective:
-        """Mark old as superseded, set new's supersedes_id, then issue new."""
-        sig = self._store.get_signal(old_id)
-        if sig is not None:
-            self._store.update_steering_disposition(old_id, "superseded")
-            old_directive = SteeringDirective.from_signal(sig)
+        """Reject the old directive and issue the new one as its replacement."""
+        self._store.update_steering_disposition(
+            old_id,
+            "superseded",
+        )
+        old_sig = self._store.get_signal(old_id)
+        if old_sig is not None:
+            old_directive = SteeringDirective.from_signal(old_sig)
             old_directive.disposition = "superseded"
             self._emit_event(
-                "steering.superseded", old_directive, extra={"superseded_by": new.directive_id}
+                "steering.superseded",
+                old_directive,
+                extra={"superseded_by": new.directive_id},
             )
         new.supersedes_id = old_id
         return self.issue(new)
@@ -115,4 +124,8 @@ class SteeringProtocol:
                 payload={"reason": "steering_directive_issued"},
             )
         except Exception:
-            pass  # best-effort
+            log.warning(
+                "steering._mark_input_dirty failed (best-effort)",
+                task_id=task_id,
+                exc_info=True,
+            )

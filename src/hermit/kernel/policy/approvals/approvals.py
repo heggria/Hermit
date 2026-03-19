@@ -83,12 +83,8 @@ class ApprovalService:
         )
 
     def approve_once(self, approval_id: str, *, resolved_by: str = "user") -> str | None:
-        return self._resolve(
-            approval_id,
-            status="granted",
-            resolved_by=resolved_by,
-            resolution={"status": "granted", "mode": "once"},
-        )
+        """Alias for approve(); kept for backward compatibility."""
+        return self.approve(approval_id, resolved_by=resolved_by)
 
     def approve_mutable_workspace(
         self, approval_id: str, *, resolved_by: str = "user"

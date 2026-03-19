@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from hermit.infra.paths import project_root as _project_root
 from hermit.infra.system.executables import resolve_uv_bin
 from hermit.infra.system.i18n import catalog_locales, tr
 from hermit.runtime.provider_host.shared.profiles import load_profile_catalog
@@ -366,13 +367,6 @@ def command_prefix() -> list[str]:
     if installed:
         return [installed]
     return [sys.executable, "-m", "hermit.surfaces.cli.main"]
-
-
-def _project_root() -> Path | None:
-    candidate = Path(__file__).resolve().parents[4]
-    if (candidate / "pyproject.toml").exists():
-        return candidate
-    return None
 
 
 def readme_path() -> Path:

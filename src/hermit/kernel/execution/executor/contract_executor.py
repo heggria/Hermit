@@ -7,6 +7,7 @@ from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
+from hermit.kernel.execution.executor import attempt_helpers
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import POLICY_RULES_VERSION, ActionRequest, PolicyDecision
 from hermit.kernel.policy.permits.authorization_plans import AuthorizationPlanService
@@ -162,26 +163,4 @@ class ContractExecutor:
         *,
         reason: str | None = None,
     ) -> None:
-        attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
-        if attempt is None:
-            return
-        context = dict(attempt.context or {})
-        previous = str(context.get("phase", "") or "")
-        if previous == phase:
-            return
-        context["phase"] = phase
-        self.store.update_step_attempt(attempt_ctx.step_attempt_id, context=context)
-        self.store.append_event(
-            event_type="step_attempt.phase_changed",
-            entity_type="step_attempt",
-            entity_id=attempt_ctx.step_attempt_id,
-            task_id=attempt_ctx.task_id,
-            step_id=attempt_ctx.step_id,
-            actor="kernel",
-            payload={
-                "step_attempt_id": attempt_ctx.step_attempt_id,
-                "previous_phase": previous,
-                "phase": phase,
-                "reason": reason,
-            },
-        )
+        attempt_helpers.set_attempt_phase(self.store, attempt_ctx, phase, reason=reason)

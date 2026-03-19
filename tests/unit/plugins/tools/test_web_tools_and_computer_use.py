@@ -10,6 +10,7 @@ import pytest
 
 from hermit.plugins.builtin.tools.computer_use import actions
 from hermit.plugins.builtin.tools.web_tools import fetch, search
+from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 
 
 class _FakeResponse:
@@ -70,6 +71,7 @@ def test_fetch_helpers_cover_errors_and_text_extraction(monkeypatch) -> None:
         "urlopen",
         lambda req, timeout=15: _FakeResponse(b'{"ok": true}', content_type="application/json"),
     )
+    get_cache().clear()
     assert '{"ok": true}' in fetch.handle_fetch({"url": "https://example.com"})
 
     monkeypatch.setattr(
@@ -77,6 +79,7 @@ def test_fetch_helpers_cover_errors_and_text_extraction(monkeypatch) -> None:
         "urlopen",
         lambda req, timeout=15: _FakeResponse(b"plain text", content_type="text/plain"),
     )
+    get_cache().clear()
     assert "plain text" in fetch.handle_fetch({"url": "https://example.com"})
 
     monkeypatch.setattr(
@@ -84,6 +87,7 @@ def test_fetch_helpers_cover_errors_and_text_extraction(monkeypatch) -> None:
         "urlopen",
         lambda req, timeout=15: _FakeResponse(b"<html><script>only script</script></html>"),
     )
+    get_cache().clear()
     assert "could not extract text content" in fetch.handle_fetch({"url": "https://example.com"})
 
     assert fetch._detect_encoding("text/html; charset=gbk", b"") == "gbk"

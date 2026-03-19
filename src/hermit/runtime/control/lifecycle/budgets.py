@@ -13,25 +13,25 @@ class Deadline:
 
     @classmethod
     def start(cls, *, soft_seconds: float, hard_seconds: float) -> Deadline:
-        now = time.time()
+        now = time.monotonic()
         soft = max(float(soft_seconds), 0.0)
         hard = max(float(hard_seconds), soft)
         return cls(started_at=now, soft_at=now + soft, hard_at=now + hard)
 
     def soft_remaining(self, *, now: float | None = None) -> float:
-        current = time.time() if now is None else now
+        current = time.monotonic() if now is None else now
         return max(0.0, self.soft_at - current)
 
     def hard_remaining(self, *, now: float | None = None) -> float:
-        current = time.time() if now is None else now
+        current = time.monotonic() if now is None else now
         return max(0.0, self.hard_at - current)
 
     def soft_exceeded(self, *, now: float | None = None) -> bool:
-        current = time.time() if now is None else now
+        current = time.monotonic() if now is None else now
         return current >= self.soft_at
 
     def hard_exceeded(self, *, now: float | None = None) -> bool:
-        current = time.time() if now is None else now
+        current = time.monotonic() if now is None else now
         return current >= self.hard_at
 
 
