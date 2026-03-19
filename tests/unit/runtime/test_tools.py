@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from hermit.infra.system.sandbox import CommandSandbox
 from hermit.runtime.capability.registry.tools import create_builtin_tool_registry
+from hermit.runtime.provider_host.execution.sandbox import CommandSandbox
 
 
 def _wait_for_poll(
@@ -213,7 +213,9 @@ def test_command_sandbox_coarse_observation_only_extends_completion_once(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("hermit.infra.system.sandbox._COARSE_OBSERVATION_GRACE_SECONDS", 5.0)
+    monkeypatch.setattr(
+        "hermit.runtime.provider_host.execution.sandbox._COARSE_OBSERVATION_GRACE_SECONDS", 5.0
+    )
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
     command = f'{sys.executable} -u -c "import time; time.sleep(0.5)"'
 

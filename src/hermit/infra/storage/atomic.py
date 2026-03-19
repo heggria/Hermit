@@ -32,6 +32,8 @@ def atomic_write(path: Path, content: str, encoding: str = "utf-8") -> None:
     try:
         with os.fdopen(fd, "w", encoding=encoding) as fh:
             fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp_path, path)
     except Exception:
         try:

@@ -1136,17 +1136,21 @@ class TestPolicySuggestionEdgeCases:
 
 class TestRecordTemplateOutcome:
     def test_record_outcome_not_found(self, tmp_path: Path) -> None:
-        """record_template_outcome returns early when template ref not found."""
+        """record_template_outcome is a no-op when the template ref doesn't exist."""
         store = _make_store(tmp_path)
         learner = ContractTemplateLearner(store)
 
-        # Should not raise — just returns None
-        learner.record_template_outcome(
+        # Should not raise — guard exits early
+        result = learner.record_template_outcome(
             template_ref="nonexistent-contract-ref",
             result_class="satisfied",
             task_id="task-1",
             step_id="step-1",
         )
+
+        # Returns None and writes no template record
+        assert result is None
+        assert learner._find_template_by_source_contract_ref("nonexistent-contract-ref") is None
 
     def test_record_outcome_satisfied(self, tmp_path: Path) -> None:
         """Satisfied outcome increments success_count and invocation_count."""

@@ -16,6 +16,7 @@ from hermit.kernel.execution.executor.observation_handler import (
     _format_model_content,
     _is_governed_action,
     _progress_signature,
+    _progress_summary_signature,
     _truncate_middle,
 )
 from hermit.kernel.policy.models.models import PolicyDecision, PolicyObligations
@@ -203,6 +204,32 @@ class TestProgressSignature:
         assert sig[0] == "building"
         assert sig[1] == "compiling"
         assert sig[3] == 50
+
+
+class TestProgressSummarySignature:
+    def test_none_input_returns_none(self) -> None:
+        assert _progress_summary_signature(None) is None
+
+    def test_empty_dict_returns_none(self) -> None:
+        assert _progress_summary_signature({}) is None
+
+    def test_valid_summary_returns_tuple(self) -> None:
+        data = {"summary": "building", "phase": "compiling"}
+        sig = _progress_summary_signature(data)
+        assert sig is not None
+        assert sig[0] == "building"
+        assert sig[2] == "compiling"
+
+    def test_with_progress_percent_in_tuple(self) -> None:
+        data = {"summary": "done", "phase": "final", "progress_percent": 75}
+        sig = _progress_summary_signature(data)
+        assert sig is not None
+        assert sig[3] == 75
+
+    def test_summary_without_phase_returns_none(self) -> None:
+        # A dict with no 'summary' field should normalize to None
+        data = {"phase": "compiling"}
+        assert _progress_summary_signature(data) is None
 
 
 class TestIsGovernedAction:

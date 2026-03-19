@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from hermit.infra.storage import atomic_write
 from hermit.infra.system.i18n import localize_schema, resolve_locale, tr
-from hermit.infra.system.sandbox import CommandSandbox
+from hermit.runtime.provider_host.execution.sandbox import CommandSandbox
 
 ToolHandler = Callable[[dict[str, Any]], Any]
 _RISK_HINTS = {"low", "medium", "high", "critical"}

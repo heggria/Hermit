@@ -339,8 +339,11 @@ def test_auto_link_by_topic_empty_tokens_returns_empty(tmp_path: Path) -> None:
         m1 = _create_memory(store, claim_text="the")
         svc = MemoryGraphService()
         edges = svc.auto_link(m1.memory_id, store)
-        # With no topic tokens, should return empty
+        # With no topic tokens (stopword-only input), must return an empty list
         assert isinstance(edges, list)
+        assert len(edges) == 0, (
+            f"Expected no graph edges for a stopword-only memory; got {len(edges)} edge(s): {edges}"
+        )
     finally:
         store.close()
 

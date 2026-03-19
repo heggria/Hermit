@@ -9,7 +9,6 @@ from typing import Any, cast
 import structlog
 
 from hermit.infra.system.i18n import resolve_locale, tr
-from hermit.infra.system.sandbox import CommandSandbox
 from hermit.kernel import (
     ApprovalCopyService,
     ApprovalService,
@@ -30,6 +29,7 @@ from hermit.runtime.capability.registry.manager import PluginManager
 from hermit.runtime.capability.registry.tools import create_builtin_tool_registry
 from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, configure_runtime_budget
 from hermit.runtime.provider_host.execution.runtime import AgentRuntime
+from hermit.runtime.provider_host.execution.sandbox import CommandSandbox
 from hermit.runtime.provider_host.llm import (
     CodexOAuthProvider,
     CodexOAuthTokenManager,

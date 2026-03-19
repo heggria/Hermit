@@ -83,6 +83,9 @@ class KernelStore(
         self._connect_target: str | Path = ":memory:" if self._in_memory else self.db_path
         self._local = threading.local()
         self._event_chain_lock = threading.Lock()
+        # Registry of all per-thread file-backed connections for proper cleanup
+        self._all_conns: list[sqlite3.Connection] = []
+        self._conn_lock = threading.Lock()
         # For :memory: databases (tests), all threads must share one connection
         # since each new connection gets a separate empty database.
         self._shared_conn: sqlite3.Connection | None
@@ -114,25 +117,36 @@ class KernelStore(
         if conn is None:
             conn = self._make_conn()
             self._local.conn = conn
+            with self._conn_lock:
+                self._all_conns.append(conn)
         return conn
 
     def close(self) -> None:
         if self._shared_conn is not None:
             self._shared_conn.close()
         else:
-            conn = getattr(self._local, "conn", None)
-            if conn is not None:
-                conn.close()
-                self._local.conn = None
+            with self._conn_lock:
+                conns, self._all_conns = self._all_conns, []
+            for conn in conns:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._local.conn = None
 
     def __del__(self) -> None:
         try:
             if self._shared_conn is not None:
                 self._shared_conn.close()
             else:
-                conn = getattr(self._local, "conn", None)
-                if conn is not None:
-                    conn.close()
+                with self._conn_lock:
+                    conns, self._all_conns = self._all_conns, []
+                for conn in conns:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                self._local.conn = None
         except Exception:
             pass
 

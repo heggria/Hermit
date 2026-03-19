@@ -97,29 +97,60 @@ class KernelDispatchService:
                 self._on_attempt_completed(attempt_id)
             except Exception:
                 log.exception("kernel_dispatch_attempt_failed", step_attempt_id=attempt_id)
+                # Ensure the step is marked failed and DAG dependents are
+                # unblocked even when process_claimed_attempt crashes.
+                self._force_fail_attempt(attempt_id)
 
-    def _on_attempt_completed(self, step_attempt_id: str) -> None:
-        """After a step completes, activate waiting dependents or cascade failure."""
+    def _force_fail_attempt(self, step_attempt_id: str) -> None:
+        """Mark a crashed attempt as failed and propagate DAG failure.
+
+        Called when ``process_claimed_attempt`` itself raises an unhandled
+        exception.  Without this, the step remains in an intermediate status
+        and downstream DAG steps hang indefinitely.
+        """
         if not step_attempt_id:
             return
         try:
-            attempt = self._runner.task_controller.store.get_step_attempt(step_attempt_id)
+            store = self._runner.task_controller.store
+            attempt = store.get_step_attempt(step_attempt_id)
             if attempt is None:
                 return
-            store = self._runner.task_controller.store
-            if attempt.status in ("succeeded", "completed", "skipped"):
-                activated = store.activate_waiting_dependents(attempt.task_id, attempt.step_id)
-                if activated:
-                    self._wake.set()
-            elif attempt.status == "failed":
-                # Cascade failure to downstream steps and activate best_effort barriers.
-                store.propagate_step_failure(attempt.task_id, attempt.step_id)
-                self._wake.set()
+            now = time.time()
+            if attempt.status not in ("failed", "succeeded", "completed", "skipped"):
+                store.update_step_attempt(
+                    step_attempt_id,
+                    status="failed",
+                    waiting_reason="worker_exception",
+                    finished_at=now,
+                )
+                store.update_step(attempt.step_id, status="failed", finished_at=now)
+            store.propagate_step_failure(attempt.task_id, attempt.step_id)
+            if not store.has_non_terminal_steps(attempt.task_id):
+                store.update_task_status(
+                    attempt.task_id,
+                    "failed",
+                    payload={
+                        "result_preview": "worker_exception",
+                        "result_text": "worker_exception",
+                    },
+                )
+            self._wake.set()
         except Exception:
             log.exception(
-                "kernel_dispatch_dag_activation_failed",
+                "kernel_dispatch_force_fail_failed",
                 step_attempt_id=step_attempt_id,
             )
+
+    def _on_attempt_completed(self, step_attempt_id: str) -> None:
+        """Wake the dispatch loop after a step completes.
+
+        DAG activation (activate_waiting_dependents / propagate_step_failure) is
+        handled by ``controller.finalize_result()`` which is called inside
+        ``process_claimed_attempt``.  This method only needs to wake the dispatch
+        loop so that newly-ready steps get claimed promptly.
+        """
+        if step_attempt_id:
+            self._wake.set()
 
     def _recover_interrupted_attempts(self) -> None:
         store = self._runner.task_controller.store

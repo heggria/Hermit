@@ -99,6 +99,8 @@ def _read_catalog(locale: str) -> dict[str, str]:
     for path in _catalog_paths(locale):
         with path.open("r", encoding="utf-8") as handle:
             raw = json.load(handle)
+        if not isinstance(raw, dict):
+            continue
         merged.update({str(key): str(value) for key, value in raw.items()})
     return merged
 

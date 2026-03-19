@@ -116,9 +116,10 @@ def _register_a2a_routes(server: Any, handler: Any) -> None:
 
     async def task_status(task_id: str, request: Request) -> dict[str, Any]:
         if server._config.control_secret:
-            body = await request.body()
+            # GET requests carry no body; sign over b"" (empty bytes) as the
+            # canonical representation so the HMAC remains well-defined.
             WebhookServer._verify_signature(  # pyright: ignore[reportPrivateUsage]
-                body,
+                b"",
                 server._config.control_secret,
                 "X-Hermit-Signature-256",
                 request.headers,

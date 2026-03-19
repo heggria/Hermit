@@ -212,3 +212,38 @@ class TestMaterialize:
             assert meta.get("dispatch_mode") == "async"
             assert meta.get("entry_prompt") == title
             assert meta.get("dag_node_key") == key
+
+    def test_workspace_root_propagated_to_step_attempts(
+        self, builder: StepDAGBuilder, store: KernelStore
+    ) -> None:
+        """workspace_root must be stored in step_attempt context so that the
+        dispatch service can reconstruct a correct TaskExecutionContext with
+        the right workspace lease root path."""
+        store.ensure_conversation("conv_1", source_channel="test")
+        task_id = _make_task(store)
+        nodes = [
+            StepNode(key="a", kind="execute", title="A"),
+            StepNode(key="b", kind="code", title="B", depends_on=["a"]),
+        ]
+        dag = builder.validate(nodes)
+        key_map = builder.materialize(task_id, dag, workspace_root="/Users/test/project")
+
+        for key in ("a", "b"):
+            attempts = store.list_step_attempts(step_id=key_map[key], limit=1)
+            assert len(attempts) == 1
+            ctx = attempts[0].context or {}
+            assert ctx.get("workspace_root") == "/Users/test/project"
+
+    def test_workspace_root_omitted_when_empty(
+        self, builder: StepDAGBuilder, store: KernelStore
+    ) -> None:
+        """When workspace_root is empty, it should not pollute the context."""
+        store.ensure_conversation("conv_1", source_channel="test")
+        task_id = _make_task(store)
+        nodes = [StepNode(key="a", kind="execute", title="A")]
+        dag = builder.validate(nodes)
+        key_map = builder.materialize(task_id, dag, workspace_root="")
+
+        attempts = store.list_step_attempts(step_id=key_map["a"], limit=1)
+        ctx = attempts[0].context or {}
+        assert "workspace_root" not in ctx

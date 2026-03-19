@@ -669,6 +669,7 @@ def test_kernel_dispatch_service_reaps_failed_futures_and_wakes(monkeypatch) -> 
     store = SimpleNamespace(
         list_step_attempts=lambda status, limit: [],
         claim_next_ready_step_attempt=lambda: None,
+        get_step_attempt=lambda step_attempt_id: None,
     )
     runner = SimpleNamespace(
         task_controller=SimpleNamespace(store=store),

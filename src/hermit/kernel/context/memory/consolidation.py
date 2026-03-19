@@ -152,6 +152,7 @@ class ConsolidationService:
                 if new_confidence > record.confidence:
                     store.update_memory_record(
                         record.memory_id,
+                        confidence=new_confidence,
                         structured_assertion={
                             **assertion,
                             "strengthened_at": time.time(),

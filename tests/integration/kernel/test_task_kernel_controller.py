@@ -332,7 +332,11 @@ def test_kernel_dispatch_loop_claims_attempts_and_reaps_futures(monkeypatch) -> 
 
 
 def test_kernel_dispatch_reap_futures_handles_worker_exception() -> None:
-    runner = SimpleNamespace(task_controller=SimpleNamespace(store=SimpleNamespace()))
+    runner = SimpleNamespace(
+        task_controller=SimpleNamespace(
+            store=SimpleNamespace(get_step_attempt=lambda step_attempt_id: None)
+        )
+    )
     service = KernelDispatchService(runner, worker_count=1)
     future: concurrent.futures.Future[Any] = concurrent.futures.Future()
     future.set_exception(RuntimeError("boom"))
@@ -341,6 +345,66 @@ def test_kernel_dispatch_reap_futures_handles_worker_exception() -> None:
     service._reap_futures()
 
     assert service._futures == {}
+
+
+def test_force_fail_attempt_marks_step_and_task_failed(tmp_path: Path) -> None:
+    """When a worker crashes, _force_fail_attempt should mark the attempt, step,
+    and task as failed, and propagate DAG failure to dependents."""
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    store.ensure_conversation("conv_1", source_channel="test")
+    task = store.create_task(
+        conversation_id="conv_1", title="test", goal="test", source_channel="test"
+    )
+    step = store.create_step(task_id=task.task_id, kind="execute", status="ready", title="Step A")
+    attempt = store.create_step_attempt(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        status="running",
+        queue_priority=0,
+        context={"ingress_metadata": {"dispatch_mode": "async"}},
+    )
+    store.update_task_status(task.task_id, "running")
+
+    runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
+    service = KernelDispatchService(runner, worker_count=1)
+
+    service._force_fail_attempt(attempt.step_attempt_id)
+
+    updated_attempt = store.get_step_attempt(attempt.step_attempt_id)
+    assert updated_attempt.status == "failed"
+    assert updated_attempt.waiting_reason == "worker_exception"
+
+    updated_step = store.get_step(step.step_id)
+    assert updated_step.status == "failed"
+
+    updated_task = store.get_task(task.task_id)
+    assert updated_task.status == "failed"
+
+
+def test_force_fail_attempt_skips_already_terminal(tmp_path: Path) -> None:
+    """_force_fail_attempt should not overwrite an already-terminal attempt."""
+    store = KernelStore(tmp_path / "kernel" / "state.db")
+    store.ensure_conversation("conv_1", source_channel="test")
+    task = store.create_task(
+        conversation_id="conv_1", title="test", goal="test", source_channel="test"
+    )
+    step = store.create_step(task_id=task.task_id, kind="execute", status="ready", title="Step A")
+    attempt = store.create_step_attempt(
+        task_id=task.task_id,
+        step_id=step.step_id,
+        status="succeeded",
+        queue_priority=0,
+        context={},
+    )
+
+    runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
+    service = KernelDispatchService(runner, worker_count=1)
+
+    service._force_fail_attempt(attempt.step_attempt_id)
+
+    # Should remain succeeded, not overwritten
+    updated_attempt = store.get_step_attempt(attempt.step_attempt_id)
+    assert updated_attempt.status == "succeeded"
 
 
 def test_kernel_dispatch_service_start_stop_and_wake(monkeypatch) -> None:

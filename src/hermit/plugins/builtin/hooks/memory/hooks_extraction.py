@@ -35,7 +35,7 @@ def _build_memory_re(key: str) -> re.Pattern[str]:
     keywords = tr_list_all_locales(key)
     if not keywords:
         return re.compile(r"(?!)")
-    escaped = [re.escape(k) if not any(c in k for c in r".\+*?[](){}^$|") else k for k in keywords]
+    escaped = [re.escape(k) for k in keywords]
     return re.compile(r"(" + "|".join(escaped) + r")", re.IGNORECASE)
 
 

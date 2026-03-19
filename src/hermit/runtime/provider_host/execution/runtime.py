@@ -841,6 +841,7 @@ class AgentRuntime:
             tool_result_blocks: list[dict[str, Any]] = []
             for block in tool_use_blocks:
                 tool_name = str(block_value(block, "name"))
+                tool_input = dict(block_value(block, "input", {}) or {})
                 try:
                     if self.tool_executor is None:
                         raise RuntimeError(
@@ -849,13 +850,15 @@ class AgentRuntime:
                                 default="Task-scoped kernel executor is required for streaming tool execution.",
                             )
                         )
-                    raise RuntimeError(
-                        self._t(
-                            "kernel.runtime.error.tool_execution_missing_context",
-                            default="Tool '{tool_name}' requires task-scoped governed execution; task context is missing.",
-                            tool_name=tool_name,
-                        )
+                    exec_result = self._execute_tool(
+                        task_context=None,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
                     )
+                    serialized = exec_result.model_content
+                except KeyError:
+                    available_tools = [tool.name for tool in self.registry.list_tools()]
+                    serialized = f"Error: Unknown tool '{tool_name}'. Available: {available_tools}"
                 except Exception as exc:
                     serialized = self._t(
                         "kernel.runtime.error.serialized_tool_execution",

@@ -707,17 +707,24 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             if row is None:
                 return None
             attempt = self._step_attempt_from_row(row)
-            self._get_conn().execute(
-                "UPDATE step_attempts SET status = ?, claimed_at = ? WHERE step_attempt_id = ?",
-                ("running", time.time(), attempt.step_attempt_id),
+            # Atomic CAS: only claim if still in 'ready' status to prevent
+            # two threads from claiming the same attempt concurrently.
+            now = time.time()
+            cur = self._get_conn().execute(
+                "UPDATE step_attempts SET status = ?, claimed_at = ? "
+                "WHERE step_attempt_id = ? AND status = 'ready'",
+                ("running", now, attempt.step_attempt_id),
             )
+            if cur.rowcount == 0:
+                # Another thread claimed this attempt between SELECT and UPDATE.
+                return None
             self._get_conn().execute(
                 "UPDATE steps SET status = ?, finished_at = NULL WHERE step_id = ?",
                 ("running", attempt.step_id),
             )
             self._get_conn().execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
-                ("running", time.time(), attempt.task_id),
+                ("running", now, attempt.task_id),
             )
             self._append_event_tx(
                 event_id=self._id("event"),
@@ -1256,6 +1263,33 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                   AND status IN ('running', 'awaiting_approval')
                 """,
                 (finished_at, step_attempt_id),
+            )
+            return cursor.rowcount == 1
+
+    def try_finalize_step_attempt(
+        self,
+        step_attempt_id: str,
+        *,
+        status: str,
+        finished_at: float,
+    ) -> bool:
+        """Atomically transition a step attempt to a terminal status.
+
+        This is a compare-and-swap (CAS) guard: the UPDATE is conditioned on
+        the attempt NOT already being in a terminal state, so at most one
+        concurrent caller can win.  Returns ``True`` if the transition
+        succeeded (rowcount == 1) and ``False`` if the attempt was already in
+        a terminal/superseded state (e.g. another worker beat us to it).
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE step_attempts
+                SET status = ?, finished_at = ?
+                WHERE step_attempt_id = ?
+                  AND status NOT IN ('succeeded', 'completed', 'skipped', 'failed', 'superseded')
+                """,
+                (status, finished_at, step_attempt_id),
             )
             return cursor.rowcount == 1
 

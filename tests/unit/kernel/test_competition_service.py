@@ -184,9 +184,12 @@ def test_no_candidates_pass_cancels(tmp_path: Path) -> None:
 
 
 def test_dispatch_result_hook_ignores_non_competition_tasks(tmp_path: Path) -> None:
-    svc, _store = _make_service(tmp_path)
+    """on_dispatch_result silently returns when task_id has no competition record."""
+    svc, store = _make_service(tmp_path)
     # Should not raise for unknown task
     svc.on_dispatch_result("unknown_task_id")
+    # State must be unchanged: no competitions created
+    assert store.find_competition_by_candidate_task("unknown_task_id") is None
 
 
 def test_cancel_already_decided_is_noop(tmp_path: Path) -> None:
@@ -337,11 +340,12 @@ def test_on_candidate_task_completed_timeout_cancel(tmp_path: Path) -> None:
 
 
 def test_select_winner_competition_not_found(tmp_path: Path) -> None:
-    """select_winner returns early if competition is None (line 284)."""
-    svc, _store = _make_service(tmp_path)
+    """select_winner returns early without writing any state if competition is None."""
+    svc, store = _make_service(tmp_path)
     winner = CandidateScore(candidate_id="cand_1", task_id="task_1", total=0.9, passed=True)
-    # Should not raise
     svc.select_winner("nonexistent", winner)
+    # Guard exited early: no competition record should exist
+    assert store.get_competition("nonexistent") is None
 
 
 def test_promote_winner_not_decided(tmp_path: Path) -> None:
@@ -373,9 +377,11 @@ def test_promote_winner_no_winner_task_id(tmp_path: Path) -> None:
 
 
 def test_promote_winner_nonexistent(tmp_path: Path) -> None:
-    """promote_winner returns early if competition not found (line 330)."""
-    svc, _store = _make_service(tmp_path)
+    """promote_winner returns early without modifying state if competition not found."""
+    svc, store = _make_service(tmp_path)
     svc.promote_winner("nonexistent")
+    # Guard exited early: nothing was written
+    assert store.get_competition("nonexistent") is None
 
 
 def test_promote_winner_with_workspace_merge(tmp_path: Path) -> None:
@@ -461,9 +467,11 @@ def test_promote_winner_merge_failure_still_cleans_up(tmp_path: Path) -> None:
 
 
 def test_cancel_competition_nonexistent(tmp_path: Path) -> None:
-    """cancel_competition returns early for unknown competition (line 362)."""
-    svc, _store = _make_service(tmp_path)
+    """cancel_competition returns early without writing state for unknown competition."""
+    svc, store = _make_service(tmp_path)
     svc.cancel_competition("nonexistent")
+    # Guard exited early: no competition record created
+    assert store.get_competition("nonexistent") is None
 
 
 def test_cancel_competition_disqualify_raises_is_caught(
@@ -520,10 +528,12 @@ def test_cancel_competition_with_workspace_cleanup(tmp_path: Path) -> None:
 
 
 def test_cleanup_orphan_worktrees_no_workspace(tmp_path: Path) -> None:
-    """cleanup_orphan_worktrees returns early when workspace is None (line 399-400)."""
+    """cleanup_orphan_worktrees is a no-op (no exception) when no workspace_manager is set."""
     svc, _store = _make_service(tmp_path)
-    # No workspace_manager set, should not raise
+    # No workspace_manager set — guard must return early without raising
     svc.cleanup_orphan_worktrees()
+    # Service internal state: workspace attribute stays None after the call
+    assert svc._workspace is None
 
 
 def test_cleanup_orphan_worktrees(tmp_path: Path) -> None:

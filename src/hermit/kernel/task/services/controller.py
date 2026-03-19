@@ -234,6 +234,7 @@ class TaskController:
             task.task_id,
             nodes,
             ingress_metadata=metadata,
+            workspace_root=workspace_root,
         )
         self.store.update_task_status(task.task_id, "queued")
 
@@ -974,9 +975,16 @@ class TaskController:
         result_preview: str | None = None,
         result_text: str | None = None,
     ) -> None:
+        # Atomic CAS guard: prevent double-finalization from concurrent workers.
+        # try_finalize_step_attempt() does a conditional UPDATE that only succeeds
+        # if the attempt is not already in a terminal state, eliminating the
+        # TOCTOU window that caused duplicate DAG activations.
         now = time.time()
+        if not self.store.try_finalize_step_attempt(
+            ctx.step_attempt_id, status=status, finished_at=now
+        ):
+            return  # another worker already finalized this attempt
         self.store.update_step(ctx.step_id, status=status, output_ref=output_ref, finished_at=now)
-        self.store.update_step_attempt(ctx.step_attempt_id, status=status, finished_at=now)
         payload: dict[str, Any] | None = None
         if result_preview or result_text:
             payload = {}

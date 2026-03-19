@@ -37,23 +37,38 @@ def _make_directive(**overrides: object) -> SteeringDirective:
 class TestAcknowledgeNonexistent:
     """Cover line 31: acknowledge returns early when signal not found."""
 
-    def test_acknowledge_nonexistent_is_noop(self, protocol: SteeringProtocol) -> None:
-        # Should not raise, just return silently
+    def test_acknowledge_nonexistent_is_noop(
+        self, protocol: SteeringProtocol, store: KernelStore
+    ) -> None:
+        # Should not raise, just return silently, and must not create any signals.
+        before = store.list_signals()
         protocol.acknowledge("nonexistent_id")
+        after = store.list_signals()
+        assert len(after) == len(before), "acknowledge on missing id must not create signals"
 
 
 class TestApplyNonexistent:
     """Cover line 41: apply returns early when signal not found."""
 
-    def test_apply_nonexistent_is_noop(self, protocol: SteeringProtocol) -> None:
+    def test_apply_nonexistent_is_noop(
+        self, protocol: SteeringProtocol, store: KernelStore
+    ) -> None:
+        before = store.list_signals()
         protocol.apply("nonexistent_id")
+        after = store.list_signals()
+        assert len(after) == len(before), "apply on missing id must not create signals"
 
 
 class TestRejectNonexistent:
     """Cover line 51: reject returns early when signal not found."""
 
-    def test_reject_nonexistent_is_noop(self, protocol: SteeringProtocol) -> None:
+    def test_reject_nonexistent_is_noop(
+        self, protocol: SteeringProtocol, store: KernelStore
+    ) -> None:
+        before = store.list_signals()
         protocol.reject("nonexistent_id", reason="doesn't exist")
+        after = store.list_signals()
+        assert len(after) == len(before), "reject on missing id must not create signals"
 
 
 class TestMarkInputDirtyException:

@@ -493,6 +493,21 @@ class ControlActionDispatcher:
             approvals.approve_mutable_workspace(approval_id, resolved_by="user")
         else:
             approvals.approve_once(approval_id, resolved_by="user")
+
+        # For async/DAG-dispatched steps, enqueue_resume so the dispatch loop
+        # re-claims and executes the step with proper reconciliation.
+        # Calling agent.resume() directly here bypasses reconciliation and
+        # can mark steps as succeeded without the approved action executing.
+        if self._is_async_dispatch(approval.step_attempt_id):
+            self._task_controller.enqueue_resume(approval.step_attempt_id)
+            runner.wake_dispatcher()
+            text = _t(
+                "kernel.runner.approval_enqueued",
+                runner=runner,
+                default="Approved. The step has been re-queued for execution.",
+            )
+            return DispatchResult(text=text, is_command=True)
+
         task_ctx = self._task_controller.context_for_attempt(approval.step_attempt_id)
         result = runner.agent.resume(
             step_attempt_id=approval.step_attempt_id,
@@ -537,3 +552,15 @@ class ControlActionDispatcher:
             is_command=False,
             agent_result=result,
         )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _is_async_dispatch(self, step_attempt_id: str) -> bool:
+        """Return True if the step attempt was dispatched asynchronously (DAG/MCP)."""
+        attempt = self._task_controller.store.get_step_attempt(step_attempt_id)
+        if attempt is None:
+            return False
+        ingress = dict((attempt.context or {}).get("ingress_metadata", {}) or {})
+        return str(ingress.get("dispatch_mode", "") or "") == "async"

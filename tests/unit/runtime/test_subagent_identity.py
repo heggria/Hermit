@@ -154,10 +154,15 @@ def test_register_principal_handles_store_error() -> None:
 
 
 def test_emit_event_noop_without_store() -> None:
-    """No kernel_store → silent no-op."""
-    se = _executor_with_runtime(runtime=SimpleNamespace())  # no kernel_store
-    # Should not raise
-    se.emit_subagent_event("subagent_spawned", _governed_spec(), "pid_1")
+    """No kernel_store → silent no-op: function returns without attempting append_event."""
+    runtime = SimpleNamespace()  # no kernel_store attribute
+    se = _executor_with_runtime(runtime=runtime)
+
+    result = se.emit_subagent_event("subagent_spawned", _governed_spec(), "pid_1")
+
+    # Returns None (-> None declared) and never touches a non-existent store.
+    assert result is None
+    assert not hasattr(runtime, "kernel_store")
 
 
 def test_emit_event_calls_append_event() -> None:
@@ -179,13 +184,16 @@ def test_emit_event_calls_append_event() -> None:
 
 
 def test_emit_event_handles_store_error() -> None:
-    """If append_event raises, log warning but don't propagate."""
+    """If append_event raises, the exception is swallowed and not propagated."""
     store = MagicMock()
     store.append_event.side_effect = RuntimeError("disk full")
     se = _executor_with_runtime(runtime=SimpleNamespace(kernel_store=store))
 
-    # Should not raise
-    se.emit_subagent_event("subagent_failed", _governed_spec(), "pid_1")
+    result = se.emit_subagent_event("subagent_failed", _governed_spec(), "pid_1")
+
+    # The call was attempted (not silently skipped) and the error was swallowed.
+    store.append_event.assert_called_once()
+    assert result is None
 
 
 # ── run_subagent governed lifecycle tests ──

@@ -1022,6 +1022,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         structured_assertion: dict[str, Any] | None | object = UNSET,
         freshness_class: str | None | object = UNSET,
         last_accessed_at: float | None | object = UNSET,
+        confidence: float | object = UNSET,
     ) -> None:
         record = self.get_memory_record(memory_id)
         if record is None:
@@ -1072,6 +1073,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         next_last_accessed_at = (
             record.last_accessed_at if last_accessed_at is UNSET else last_accessed_at
         )
+        next_confidence = record.confidence if confidence is UNSET else float(confidence)
         with self._get_conn():
             self._get_conn().execute(
                 """
@@ -1081,6 +1083,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     expires_at = ?, validation_basis = ?, last_validated_at = ?, supersession_reason = ?,
                     learned_from_reconciliation_ref = ?, structured_assertion_json = ?,
                     freshness_class = ?, last_accessed_at = ?,
+                    confidence = ?,
                     updated_at = ?
                 WHERE memory_id = ?
                 """,
@@ -1099,6 +1102,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     json.dumps(next_structured_assertion or {}, ensure_ascii=False),
                     next_freshness_class,
                     next_last_accessed_at,
+                    next_confidence,
                     updated_at,
                     memory_id,
                 ),

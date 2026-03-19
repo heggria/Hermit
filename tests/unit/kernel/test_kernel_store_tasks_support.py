@@ -620,3 +620,83 @@ def test_context_manifest_scopes_memory_refs_to_the_task_conversation(tmp_path: 
     assert context_manifest is not None
     manifest_payload = json.loads(Path(context_manifest.uri).read_text(encoding="utf-8"))
     assert manifest_payload["memory_refs"] == [relevant_memory.memory_id]
+
+
+def test_try_finalize_step_attempt_is_atomic_and_idempotent(tmp_path: Path) -> None:
+    """try_finalize_step_attempt() must behave as a CAS: the first caller wins,
+    and a second concurrent caller (or any subsequent call) returns False without
+    triggering a second status transition."""
+    store = KernelStore(tmp_path / "state.db")
+
+    conv = store.ensure_conversation("conv-cas", source_channel="chat")
+    task = store.create_task(
+        conversation_id=conv.conversation_id,
+        title="CAS Test",
+        goal="Verify atomic finalize",
+        source_channel="chat",
+    )
+    step = store.create_step(task_id=task.task_id, kind="respond")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+
+    finished_at = 1_700_000_000.0
+
+    # First call: attempt is 'running' → CAS should succeed
+    won = store.try_finalize_step_attempt(
+        attempt.step_attempt_id, status="succeeded", finished_at=finished_at
+    )
+    assert won is True
+
+    # DB row must reflect the new status
+    updated = store.get_step_attempt(attempt.step_attempt_id)
+    assert updated is not None
+    assert updated.status == "succeeded"
+
+    # Second call: attempt is already terminal → CAS must return False (idempotent guard)
+    lost = store.try_finalize_step_attempt(
+        attempt.step_attempt_id, status="succeeded", finished_at=finished_at + 1
+    )
+    assert lost is False
+
+    # Status must be unchanged after the losing call
+    still_updated = store.get_step_attempt(attempt.step_attempt_id)
+    assert still_updated is not None
+    assert still_updated.status == "succeeded"
+
+
+def test_try_finalize_step_attempt_rejects_all_terminal_statuses(tmp_path: Path) -> None:
+    """try_finalize_step_attempt() must return False for every terminal status
+    ('succeeded', 'completed', 'skipped', 'failed', 'superseded') so that
+    no terminal → terminal re-transition is possible."""
+    import time
+
+    store = KernelStore(tmp_path / "state.db")
+    conv = store.ensure_conversation("conv-terminals", source_channel="chat")
+    task = store.create_task(
+        conversation_id=conv.conversation_id,
+        title="Terminal Guard Test",
+        goal="Reject re-finalization",
+        source_channel="chat",
+    )
+
+    terminal_statuses = ("succeeded", "completed", "skipped", "failed", "superseded")
+    now = time.time()
+
+    for terminal in terminal_statuses:
+        step = store.create_step(task_id=task.task_id, kind="respond")
+        attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+
+        # Force-set the terminal status directly via try_finalize (for non-superseded)
+        # or try_supersede (for superseded).
+        if terminal == "superseded":
+            store.try_supersede_step_attempt(attempt.step_attempt_id, finished_at=now)
+        else:
+            won = store.try_finalize_step_attempt(
+                attempt.step_attempt_id, status=terminal, finished_at=now
+            )
+            assert won is True, f"First finalize for '{terminal}' should win"
+
+        # Second attempt must fail regardless of what terminal status we try to set
+        lost = store.try_finalize_step_attempt(
+            attempt.step_attempt_id, status="succeeded", finished_at=now + 1
+        )
+        assert lost is False, f"Re-finalization of '{terminal}' attempt must be rejected"

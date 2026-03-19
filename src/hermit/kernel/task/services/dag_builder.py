@@ -104,6 +104,7 @@ class StepDAGBuilder:
         *,
         queue_priority: int = 0,
         ingress_metadata: dict[str, Any] | None = None,
+        workspace_root: str = "",
     ) -> dict[str, str]:
         """Create steps and step_attempts in the store from a DAGDefinition.
 
@@ -114,6 +115,9 @@ class StepDAGBuilder:
             ingress_metadata: Base metadata merged into each step attempt's
                 context.  The step title is used as ``entry_prompt`` so that
                 the dispatch service can send a meaningful prompt to the LLM.
+            workspace_root: Filesystem root for workspace lease validation.
+                Must be set so that the dispatch service can reconstruct a
+                correct ``TaskExecutionContext`` when claiming the attempt.
         """
         base_meta: dict[str, Any] = dict(ingress_metadata or {})
         base_meta.setdefault("dispatch_mode", "async")
@@ -147,12 +151,16 @@ class StepDAGBuilder:
             if node.metadata:
                 step_meta["dag_node_metadata"] = node.metadata
 
+            attempt_context: dict[str, Any] = {"ingress_metadata": step_meta}
+            if workspace_root:
+                attempt_context["workspace_root"] = workspace_root
+
             self._store.create_step_attempt(
                 task_id=task_id,
                 step_id=step.step_id,
                 status=status,
                 queue_priority=queue_priority,
-                context={"ingress_metadata": step_meta},
+                context=attempt_context,
             )
 
         return key_to_step_id

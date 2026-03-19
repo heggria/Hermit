@@ -35,12 +35,10 @@ class OvernightReportService:
         self._store = store
 
     def _query(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
-        conn = self._store._get_conn()
-        return conn.execute(sql, params).fetchall()
+        return self._store._rows(sql, params)
 
     def _query_one(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
-        conn = self._store._get_conn()
-        return conn.execute(sql, params).fetchone()
+        return self._store._row(sql, params)
 
     def generate(self, *, lookback_hours: int = 12) -> OvernightSummary:
         now = time.time()

@@ -8,9 +8,6 @@ from types import SimpleNamespace
 import pytest
 import typer
 
-import hermit.surfaces.cli._helpers as helpers_mod
-import hermit.surfaces.cli._preflight as preflight_mod
-import hermit.surfaces.cli.main as main_mod
 from hermit.runtime.capability.contracts.base import McpServerSpec, McpToolGovernance
 from hermit.runtime.capability.resolver.mcp_client import (
     MCP_TOOL_PREFIX,
@@ -25,6 +22,9 @@ from hermit.runtime.capability.resolver.mcp_client import (
 def test_main_env_helpers_and_output_helpers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import hermit.surfaces.cli._helpers as helpers_mod
+    import hermit.surfaces.cli.main as main_mod
+
     base_dir = tmp_path / ".hermit"
     env_path = base_dir / ".env"
     base_dir.mkdir(parents=True)
@@ -54,6 +54,8 @@ def test_main_env_helpers_and_output_helpers(
 
 
 def test_stream_printer_handles_thinking_and_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    import hermit.surfaces.cli._helpers as helpers_mod
+
     stream = io.StringIO()
     monkeypatch.setattr(helpers_mod.sys, "stdout", stream)
     printer = helpers_mod._StreamPrinter()
@@ -71,6 +73,8 @@ def test_stream_printer_handles_thinking_and_text(monkeypatch: pytest.MonkeyPatc
 def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import hermit.surfaces.cli._helpers as helpers_mod
+
     settings = SimpleNamespace(
         provider="codex-oauth",
         claude_api_key=None,
@@ -191,6 +195,9 @@ def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
 def test_main_preflight_helpers_cover_codex_and_oauth_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import hermit.surfaces.cli._preflight as preflight_mod
+    import hermit.surfaces.cli.main as _main_init  # noqa: F401 – must load before _preflight to resolve circular imports
+
     base_dir = tmp_path / ".hermit"
     base_dir.mkdir(parents=True)
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
