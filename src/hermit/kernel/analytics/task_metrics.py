@@ -100,14 +100,16 @@ class TaskMetricsService:
                     limit=10,
                 )
                 for attempt in attempts:
-                    if attempt.started_at is not None:
+                    effective_start = attempt.claimed_at or attempt.started_at
+                    if effective_start is not None:
                         if started is None:
-                            started = attempt.started_at
+                            started = effective_start
                         if attempt.finished_at is not None and finished is None:
                             finished = attempt.finished_at
                     # Use the most-recent finished attempt's timestamps
-                    if attempt.started_at is not None and attempt.finished_at is not None:
-                        started = attempt.started_at
+                    effective_start_2 = attempt.claimed_at or attempt.started_at
+                    if effective_start_2 is not None and attempt.finished_at is not None:
+                        started = effective_start_2
                         finished = attempt.finished_at
                         break
 

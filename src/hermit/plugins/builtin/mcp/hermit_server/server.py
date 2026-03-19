@@ -186,14 +186,18 @@ class HermitMcpServer:
                 )
 
             conversation_id = f"mcp-dag-{uuid4().hex[:8]}"
+            workspace_root = str(
+                getattr(getattr(runner, "agent", None), "workspace_root", "") or ""
+            )
             try:
-                ctx, dag, key_to_step_id = task_controller.start_dag_task(
+                ctx, dag, key_to_step_id, _root_contexts = task_controller.start_dag_task(
                     conversation_id=conversation_id,
                     goal=goal,
                     source_channel="mcp-supervisor",
                     nodes=parsed_nodes,
                     policy_profile=policy_profile,
                     requested_by="supervisor",
+                    workspace_root=workspace_root,
                 )
             except ValueError as exc:
                 return {"error": str(exc)}

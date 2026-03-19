@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from hermit.infra.system.i18n import resolve_locale, tr, tr_list_all_locales
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.execution.coordination.data_flow import StepDataFlowService
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.services.ingress_router import BindingDecision, IngressRouter
 from hermit.kernel.task.services.planning import PlanningService
@@ -208,10 +209,13 @@ class TaskController:
         workspace_root: str = "",
         requested_by: str | None = None,
         ingress_metadata: dict[str, Any] | None = None,
-    ) -> tuple[TaskExecutionContext, Any, dict[str, str]]:
+    ) -> tuple[TaskExecutionContext, Any, dict[str, str], list[TaskExecutionContext]]:
         """Create a task with a DAG of steps.
 
-        Returns (ctx_for_first_root, DAGDefinition, key→step_id mapping).
+        Returns (ctx_for_first_root, DAGDefinition, key→step_id mapping, all_root_contexts).
+
+        Fix 6: all_root_contexts contains one TaskExecutionContext per root node,
+        enabling callers to dispatch multiple roots in parallel for multi-root DAGs.
         """
         from hermit.kernel.task.services.dag_builder import StepDAGBuilder
 
@@ -229,24 +233,30 @@ class TaskController:
         dag, key_to_step_id = builder.build_and_materialize(task.task_id, nodes)
         self.store.update_task_status(task.task_id, "queued")
 
-        first_root_key = dag.roots[0]
-        first_root_step_id = key_to_step_id[first_root_key]
-        attempts = self.store.list_step_attempts(step_id=first_root_step_id, limit=1)
-        first_attempt = attempts[0] if attempts else None
-        ctx = TaskExecutionContext(
-            conversation_id=conversation_id,
-            task_id=task.task_id,
-            step_id=first_root_step_id,
-            step_attempt_id=first_attempt.step_attempt_id if first_attempt else "",
-            source_channel=source_channel,
-            policy_profile=policy_profile,
-            workspace_root=workspace_root,
-            ingress_metadata=metadata,
-        )
+        # Fix 6: build contexts for ALL roots, not just the first one.
+        all_root_contexts: list[TaskExecutionContext] = []
+        for root_key in dag.roots:
+            root_step_id = key_to_step_id[root_key]
+            root_attempts = self.store.list_step_attempts(step_id=root_step_id, limit=1)
+            root_attempt = root_attempts[0] if root_attempts else None
+            all_root_contexts.append(
+                TaskExecutionContext(
+                    conversation_id=conversation_id,
+                    task_id=task.task_id,
+                    step_id=root_step_id,
+                    step_attempt_id=root_attempt.step_attempt_id if root_attempt else "",
+                    source_channel=source_channel,
+                    policy_profile=policy_profile,
+                    workspace_root=workspace_root,
+                    ingress_metadata=metadata,
+                )
+            )
+
+        ctx = all_root_contexts[0]
         self._set_focus(
             conversation_id=conversation_id, task_id=task.task_id, reason="dag_task_started"
         )
-        return ctx, dag, key_to_step_id
+        return ctx, dag, key_to_step_id, all_root_contexts
 
     def enqueue_task(
         self,
@@ -973,9 +983,34 @@ class TaskController:
         self._apply_acknowledged_steerings(ctx.task_id)
 
         if status in ("succeeded", "completed", "skipped"):
-            self.store.activate_waiting_dependents(ctx.task_id, ctx.step_id)
+            activated_step_ids = self.store.activate_waiting_dependents(ctx.task_id, ctx.step_id)
+            # Fix 2: auto-inject input_bindings for newly activated steps.
+            # Fix 3: load key_to_step_id from DB via node_key so symbolic bindings
+            #        resolve even when the in-memory mapping is not available
+            #        (e.g. across process restarts or in a separate worker).
+            if activated_step_ids:
+                _data_flow = StepDataFlowService(self.store)
+                key_to_step_id = self.store.get_key_to_step_id(ctx.task_id)
+                for activated_step_id in activated_step_ids:
+                    activated_attempts = self.store.list_step_attempts(
+                        step_id=activated_step_id, status="ready", limit=1
+                    )
+                    if activated_attempts:
+                        resolved = _data_flow.resolve_inputs(
+                            ctx.task_id, activated_step_id, key_to_step_id=key_to_step_id
+                        )
+                        if resolved:
+                            _data_flow.inject_resolved_inputs(
+                                activated_attempts[0].step_attempt_id, resolved
+                            )
         elif status == "failed":
-            self.store.propagate_step_failure(ctx.task_id, ctx.step_id)
+            # Fix 1: max_attempts retry — use retry_step() for atomic attempt increment
+            #        instead of raw _get_conn() calls.
+            step = self.store.get_step(ctx.step_id)
+            if step is not None and step.attempt < step.max_attempts:
+                self.store.retry_step(ctx.task_id, ctx.step_id)
+            else:
+                self.store.propagate_step_failure(ctx.task_id, ctx.step_id)
 
         if self.store.has_non_terminal_steps(ctx.task_id):
             task_status = "running"

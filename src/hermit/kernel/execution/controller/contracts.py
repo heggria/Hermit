@@ -88,6 +88,15 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         reconcile_strategy="command_observation",
         rollback_strategy="manual_or_followup",
     ),
+    "execute_command_readonly": ActionContract(
+        action_class="execute_command_readonly",
+        default_risk_band="medium",
+        decision_required=False,
+        witness_required=False,
+        receipt_required=True,
+        reconcile_strategy="stdout_capture",
+        rollback_strategy="not_needed",
+    ),
     "vcs_mutation": ActionContract(
         action_class="vcs_mutation",
         default_risk_band="critical",

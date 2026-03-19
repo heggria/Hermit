@@ -74,6 +74,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             kind=str(row["kind"]),
             status=str(row["status"]),
             attempt=int(row["attempt"]),
+            node_key=row["node_key"] if "node_key" in keys else None,
             input_ref=row["input_ref"],
             output_ref=row["output_ref"],
             title=row["title"],
@@ -126,6 +127,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             resume_from_ref=row["resume_from_ref"],
             superseded_by_step_attempt_id=row["superseded_by_step_attempt_id"],
             started_at=row["started_at"],
+            claimed_at=row["claimed_at"],
             finished_at=row["finished_at"],
         )
 

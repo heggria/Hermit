@@ -21,6 +21,11 @@ class StepDataFlowService:
 
         Each binding maps a local_name to "step_key.output_ref".
         Returns local_name → artifact_ref mapping.
+
+        Fix 3: when key_to_step_id is not provided, fall back to looking up the
+        source step by node_key via get_step_by_node_key so that node-key symbolic
+        bindings (e.g. "producer.output_ref") resolve correctly without requiring
+        the caller to maintain a key→step_id mapping across process boundaries.
         """
         step = self._store.get_step(step_id)
         if step is None or not step.input_bindings:
@@ -33,11 +38,18 @@ class StepDataFlowService:
                 continue
             source_key, output_field = parts
 
-            source_step_id = source_key
+            # Resolve source_key → source step, preferring explicit mapping,
+            # then node_key lookup (Fix 3), then treating source_key as step_id.
+            source_step = None
             if key_to_step_id and source_key in key_to_step_id:
-                source_step_id = key_to_step_id[source_key]
+                source_step = self._store.get_step(key_to_step_id[source_key])
+            else:
+                # Fix 3: try node_key lookup before treating as raw step_id
+                source_step = self._store.get_step_by_node_key(task_id, source_key)
+                if source_step is None:
+                    # last resort: treat source_key as a literal step_id
+                    source_step = self._store.get_step(source_key)
 
-            source_step = self._store.get_step(source_step_id)
             if source_step is None:
                 continue
 

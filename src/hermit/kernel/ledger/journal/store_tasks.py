@@ -312,6 +312,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         join_strategy: str = "all_required",
         input_bindings: dict[str, str] | None = None,
         max_attempts: int = 1,
+        node_key: str | None = None,
     ) -> StepRecord:
         now = time.time()
         step_id = self._id("step")
@@ -323,17 +324,18 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             self._get_conn().execute(
                 """
                 INSERT INTO steps (
-                    step_id, task_id, kind, status, attempt, title, contract_ref,
+                    step_id, task_id, kind, status, attempt, node_key, title, contract_ref,
                     depends_on_json, join_strategy, input_bindings_json,
                     max_attempts, started_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
                     task_id,
                     kind,
                     effective_status,
+                    node_key,
                     title or kind,
                     contract_ref,
                     json.dumps(dep_list, ensure_ascii=False),
@@ -358,6 +360,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     "kind": kind,
                     "status": effective_status,
                     "attempt": 1,
+                    "node_key": node_key,
                     "title": title or kind,
                     "contract_ref": contract_ref,
                     "depends_on": dep_list,
@@ -375,6 +378,28 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         step = self.get_step(step_id)
         assert step is not None
         return step
+
+    def get_step_by_node_key(self, task_id: str, node_key: str) -> StepRecord | None:
+        """Look up a step by its DAG node key within a task."""
+        row = self._row(
+            "SELECT * FROM steps WHERE task_id = ? AND node_key = ? LIMIT 1",
+            (task_id, node_key),
+        )
+        return self._step_from_row(row) if row is not None else None
+
+    def get_key_to_step_id(self, task_id: str) -> dict[str, str]:
+        """Return a mapping of node_key → step_id for all steps in a task.
+
+        Fix 3: persists the key_to_step_id mapping via the node_key column so
+        callers can reconstruct symbolic bindings without keeping the in-memory
+        dict returned by materialize().
+        Only includes steps that have a non-null node_key.
+        """
+        rows = self._rows(
+            "SELECT step_id, node_key FROM steps WHERE task_id = ? AND node_key IS NOT NULL",
+            (task_id,),
+        )
+        return {str(row["node_key"]): str(row["step_id"]) for row in rows}
 
     def _check_dag_cycles(self, task_id: str, new_step_id: str, depends_on: list[str]) -> None:
         """Detect cycles in the step DAG before inserting a new step."""
@@ -669,6 +694,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                         AND dep.step_id IN (SELECT value FROM json_each(s.depends_on_json))
                         AND dep.status NOT IN ('succeeded', 'completed', 'skipped')
                   )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM step_attempts sa2
+                      WHERE sa2.step_id = sa.step_id
+                        AND sa2.status IN ('running', 'dispatching', 'reconciling',
+                                           'observing', 'contracting', 'preflighting')
+                  )
                 ORDER BY sa.queue_priority DESC, sa.started_at ASC
                 LIMIT 1
                 """
@@ -677,8 +708,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 return None
             attempt = self._step_attempt_from_row(row)
             self._get_conn().execute(
-                "UPDATE step_attempts SET status = ? WHERE step_attempt_id = ?",
-                ("running", attempt.step_attempt_id),
+                "UPDATE step_attempts SET status = ?, claimed_at = ? WHERE step_attempt_id = ?",
+                ("running", time.time(), attempt.step_attempt_id),
             )
             self._get_conn().execute(
                 "UPDATE steps SET status = ?, finished_at = NULL WHERE step_id = ?",
@@ -710,18 +741,17 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         activated: list[str] = []
         candidates = self._rows(
             """
-            SELECT step_id, depends_on_json, join_strategy
-            FROM steps
-            WHERE task_id = ? AND status = 'waiting'
-              AND depends_on_json LIKE ?
+            SELECT s.step_id, s.depends_on_json, s.join_strategy
+            FROM steps s, json_each(s.depends_on_json) dep
+            WHERE s.task_id = ? AND s.status = 'waiting'
+              AND dep.value = ?
+            GROUP BY s.step_id
             """,
-            (task_id, f"%{completed_step_id}%"),
+            (task_id, completed_step_id),
         )
         for row in candidates:
             step_id = str(row["step_id"])
             deps = list(json.loads(str(row["depends_on_json"] or "[]")))
-            if completed_step_id not in deps:
-                continue
             strategy = str(row["join_strategy"] or "all_required")
             if self._join_barrier_satisfied(task_id, deps, strategy):
                 now = time.time()
@@ -783,15 +813,19 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         """Cascade failure to downstream waiting steps (all_required strategy)."""
         cascaded: list[str] = []
         waiting = self._rows(
-            "SELECT step_id, depends_on_json, join_strategy FROM steps WHERE task_id = ? AND status = 'waiting'",
-            (task_id,),
+            """
+            SELECT s.step_id, s.depends_on_json, s.join_strategy
+            FROM steps s, json_each(s.depends_on_json) dep
+            WHERE s.task_id = ? AND s.status = 'waiting'
+              AND dep.value = ?
+            GROUP BY s.step_id
+            """,
+            (task_id, failed_step_id),
         )
         for row in waiting:
             step_id = str(row["step_id"])
             deps = list(json.loads(str(row["depends_on_json"] or "[]")))
             strategy = str(row["join_strategy"] or "all_required")
-            if failed_step_id not in deps:
-                continue
             should_cascade = False
             if strategy == "all_required":
                 should_cascade = True
@@ -844,7 +878,68 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     )
                 cascaded.append(step_id)
                 cascaded.extend(self.propagate_step_failure(task_id, step_id))
+
+        # Fix 5: after cascading failures, activate any best_effort steps whose
+        # barriers are now fully satisfied (all deps terminal, some may have failed).
+        self.activate_waiting_dependents(task_id, failed_step_id)
         return cascaded
+
+    def retry_step(
+        self,
+        task_id: str,
+        step_id: str,
+        *,
+        queue_priority: int = 0,
+    ) -> StepAttemptRecord:
+        """Atomically increment the step attempt counter and create a new ready attempt.
+
+        Fix 1: encapsulates the retry logic so callers never need raw _get_conn() access.
+        Called when a step fails but has remaining attempts (step.attempt < step.max_attempts).
+        Updates ``steps.attempt``, resets ``steps.status`` to ``ready``, clears
+        ``steps.finished_at``, and inserts a new ``step_attempts`` row with the
+        incremented attempt number.
+
+        Returns the newly created StepAttemptRecord.
+        """
+        step = self.get_step(step_id)
+        if step is None:
+            raise ValueError(f"Step {step_id!r} not found")
+        next_attempt_num = step.attempt + 1
+        now = time.time()
+        with self._get_conn():
+            self._get_conn().execute(
+                """
+                UPDATE steps
+                SET attempt = ?, status = 'ready', finished_at = NULL, updated_at = ?
+                WHERE step_id = ?
+                """,
+                (next_attempt_num, now, step_id),
+            )
+            self._get_conn().execute(
+                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+                (now, task_id),
+            )
+            self._append_event_tx(
+                event_id=self._id("event"),
+                event_type="step.retry_scheduled",
+                entity_type="step",
+                entity_id=step_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={
+                    "attempt": next_attempt_num,
+                    "max_attempts": step.max_attempts,
+                    "previous_attempt": step.attempt,
+                },
+            )
+        return self.create_step_attempt(
+            task_id=task_id,
+            step_id=step_id,
+            attempt=next_attempt_num,
+            status="ready",
+            queue_priority=queue_priority,
+        )
 
     def has_non_terminal_steps(self, task_id: str) -> bool:
         """Check if there are any non-terminal steps for a task."""

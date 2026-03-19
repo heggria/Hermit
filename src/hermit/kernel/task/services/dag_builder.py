@@ -140,6 +140,7 @@ class StepDAGBuilder:
                 join_strategy=node.join_strategy,
                 input_bindings=node.input_bindings,
                 max_attempts=node.max_attempts,
+                node_key=key,
             )
             key_to_step_id[key] = step.step_id
             self._store.create_step_attempt(

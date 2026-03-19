@@ -16,6 +16,7 @@ class RuleOutcome:
     normalized_constraints: dict[str, Any] = field(default_factory=dict[str, Any])
     approval_packet: dict[str, Any] | None = None
     risk_level: str | None = None
+    action_class_override: str | None = None
 
 
 def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:

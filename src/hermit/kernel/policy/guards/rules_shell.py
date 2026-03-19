@@ -86,6 +86,7 @@ def evaluate_shell_rules(request: ActionRequest) -> list[RuleOutcome] | None:
                 obligations=PolicyObligations(require_receipt=True),
                 normalized_constraints={"shell_mode": "readonly"},
                 risk_level="medium",
+                action_class_override="execute_command_readonly",
             )
         )
 

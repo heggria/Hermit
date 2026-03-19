@@ -366,7 +366,8 @@ class TestHermitSubmitDagTask:
                 "backend": "step-3",
                 "review": "step-4",
             }
-            return ctx, dag, key_map
+            root_ctxs = [ctx]
+            return ctx, dag, key_map, root_ctxs
 
         runner.task_controller.start_dag_task = fake_start_dag_task
 
@@ -400,6 +401,95 @@ class TestHermitSubmitDagTask:
         assert result["step_ids"]["frontend"] == "step-2"
         assert len(call_log) == 1
         assert call_log[0]["policy_profile"] == "autonomous"
+
+    def test_submit_dag_passes_workspace_root(
+        self, server: HermitMcpServer, runner: FakeRunner
+    ) -> None:
+        """workspace_root from runner.agent is forwarded to start_dag_task."""
+        from dataclasses import dataclass
+        from typing import Any as _Any
+
+        @dataclass
+        class FakeDAGDef:
+            roots: list[str]
+            leaves: list[str]
+            topological_order: list[str]
+
+        call_log: list[dict[str, _Any]] = []
+
+        def fake_start_dag_task(
+            *,
+            conversation_id,
+            goal,
+            source_channel,
+            nodes,
+            policy_profile,
+            requested_by,
+            workspace_root="",
+            **kw,
+        ):
+            call_log.append({"workspace_root": workspace_root})
+            ctx = SimpleNamespace(task_id="dag-ws-1")
+            dag = FakeDAGDef(roots=["a"], leaves=["a"], topological_order=["a"])
+            return ctx, dag, {"a": "step-1"}, [ctx]
+
+        runner.task_controller.start_dag_task = fake_start_dag_task
+        # Attach a fake agent with workspace_root
+        runner.agent = SimpleNamespace(workspace_root="/Users/test/project")
+
+        _call_tool(
+            server,
+            "hermit_submit_dag_task",
+            goal="Test workspace root",
+            nodes=[{"key": "a", "kind": "execute", "title": "A"}],
+        )
+
+        assert len(call_log) == 1
+        assert call_log[0]["workspace_root"] == "/Users/test/project"
+
+    def test_submit_dag_workspace_root_empty_without_agent(
+        self, server: HermitMcpServer, runner: FakeRunner
+    ) -> None:
+        """Without agent attr, workspace_root defaults to empty string."""
+        from dataclasses import dataclass
+        from typing import Any as _Any
+
+        @dataclass
+        class FakeDAGDef:
+            roots: list[str]
+            leaves: list[str]
+            topological_order: list[str]
+
+        call_log: list[dict[str, _Any]] = []
+
+        def fake_start_dag_task(
+            *,
+            conversation_id,
+            goal,
+            source_channel,
+            nodes,
+            policy_profile,
+            requested_by,
+            workspace_root="",
+            **kw,
+        ):
+            call_log.append({"workspace_root": workspace_root})
+            ctx = SimpleNamespace(task_id="dag-ws-2")
+            dag = FakeDAGDef(roots=["a"], leaves=["a"], topological_order=["a"])
+            return ctx, dag, {"a": "step-1"}, [ctx]
+
+        runner.task_controller.start_dag_task = fake_start_dag_task
+        # No agent attr on runner
+
+        _call_tool(
+            server,
+            "hermit_submit_dag_task",
+            goal="Test no agent",
+            nodes=[{"key": "a", "kind": "execute", "title": "A"}],
+        )
+
+        assert len(call_log) == 1
+        assert call_log[0]["workspace_root"] == ""
 
     def test_submit_dag_missing_node_field(self, server: HermitMcpServer) -> None:
         """Node missing required 'kind' field returns error."""

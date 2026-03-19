@@ -41,9 +41,10 @@ def merge_outcomes(
         normalized_constraints.update(outcome.normalized_constraints)
         if approval_packet is None and outcome.approval_packet is not None:
             approval_packet = outcome.approval_packet
+    effective_action_class = chosen.action_class_override or action_class
     return PolicyDecision(
         verdict=chosen.verdict,
-        action_class=action_class,
+        action_class=effective_action_class,
         reasons=reasons,
         obligations=obligations,
         normalized_constraints=normalized_constraints,

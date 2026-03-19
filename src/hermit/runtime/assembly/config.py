@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_catch_up: bool = True
     scheduler_feishu_chat_id: str | None = None
-    kernel_dispatch_worker_count: int = 4
+    kernel_dispatch_worker_count: int = 8
     webhook_enabled: bool = True
     webhook_host: str | None = None
     webhook_port: int | None = None

@@ -47,7 +47,13 @@ class WorkspaceLeaseService:
             active_leases = self.store.list_workspace_leases(
                 workspace_id=workspace_id, status="active", limit=100
             )
+            now = time.time()
             for lease in active_leases:
+                if lease.expires_at is not None and lease.expires_at <= now:
+                    self.store.update_workspace_lease(
+                        lease.lease_id, status="expired", released_at=now
+                    )
+                    continue
                 if lease.mode == "mutable":
                     raise WorkspaceLeaseConflict(
                         f"Workspace {workspace_id} already has an active mutable lease: "

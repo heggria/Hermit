@@ -51,7 +51,7 @@ def test_diamond_dag_full_governed_lifecycle(
             key="review", kind="review", title="Code review", depends_on=["frontend", "backend"]
         ),
     ]
-    ctx, dag, key_map = controller.start_dag_task(
+    ctx, dag, key_map, _root_ctxs = controller.start_dag_task(
         conversation_id="e2e-dag-diamond",
         goal="Build full-stack feature with review",
         source_channel="chat",
@@ -163,7 +163,7 @@ def test_dag_failure_cascade_all_required(
         StepNode(key="c", kind="execute", title="Branch C", depends_on=["a"]),
         StepNode(key="d", kind="execute", title="Join", depends_on=["b", "c"]),
     ]
-    ctx, _dag, key_map = controller.start_dag_task(
+    ctx, _dag, key_map, _root_ctxs = controller.start_dag_task(
         conversation_id="e2e-dag-fail-cascade",
         goal="Test failure cascade",
         source_channel="chat",
@@ -209,7 +209,7 @@ def test_dag_any_sufficient_join_strategy(
             join_strategy="any_sufficient",
         ),
     ]
-    ctx, _dag, key_map = controller.start_dag_task(
+    ctx, _dag, key_map, _root_ctxs = controller.start_dag_task(
         conversation_id="e2e-dag-any-sufficient",
         goal="Test any_sufficient join",
         source_channel="chat",
@@ -240,7 +240,7 @@ def test_dag_best_effort_join_strategy(
             join_strategy="best_effort",
         ),
     ]
-    ctx, _dag, key_map = controller.start_dag_task(
+    ctx, _dag, key_map, _root_ctxs = controller.start_dag_task(
         conversation_id="e2e-dag-best-effort",
         goal="Test best_effort join",
         source_channel="chat",
@@ -268,7 +268,7 @@ def test_dag_finalize_result_integrates_with_controller(
         StepNode(key="a", kind="respond", title="First step"),
         StepNode(key="b", kind="respond", title="Second step", depends_on=["a"]),
     ]
-    ctx, _dag, key_map = controller.start_dag_task(
+    ctx, _dag, key_map, _root_ctxs = controller.start_dag_task(
         conversation_id="e2e-dag-finalize",
         goal="Test finalize integration",
         source_channel="chat",
@@ -335,7 +335,7 @@ def test_dag_batch_approval_for_parallel_steps(
         StepNode(key="w1", kind="execute", title="Worker 1", depends_on=["root"]),
         StepNode(key="w2", kind="execute", title="Worker 2", depends_on=["root"]),
     ]
-    ctx, _dag, key_map = controller.start_dag_task(
+    ctx, _dag, key_map, _root_ctxs = controller.start_dag_task(
         conversation_id="e2e-dag-batch-approval",
         goal="Test batch approvals",
         source_channel="chat",
@@ -400,7 +400,7 @@ def test_dag_data_flow_input_bindings(
             input_bindings={"data_ref": "producer.output_ref"},
         ),
     ]
-    ctx, _dag, key_map = controller.start_dag_task(
+    ctx, _dag, key_map, _root_ctxs = controller.start_dag_task(
         conversation_id="e2e-dag-data-flow",
         goal="Test data flow",
         source_channel="chat",
@@ -452,7 +452,7 @@ def test_dag_complex_topology(
         StepNode(key="e", kind="execute", title="E", depends_on=["c"]),
         StepNode(key="f", kind="execute", title="F", depends_on=["d"]),
     ]
-    ctx, _dag, key_map = controller.start_dag_task(
+    ctx, _dag, key_map, _root_ctxs = controller.start_dag_task(
         conversation_id="e2e-dag-complex",
         goal="Test complex DAG topology",
         source_channel="chat",

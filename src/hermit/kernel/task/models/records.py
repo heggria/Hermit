@@ -37,6 +37,7 @@ class StepRecord:
     kind: str
     status: str
     attempt: int
+    node_key: str | None = None
     input_ref: str | None = None
     output_ref: str | None = None
     title: str | None = None
@@ -87,6 +88,7 @@ class StepAttemptRecord:
     resume_from_ref: str | None = None
     superseded_by_step_attempt_id: str | None = None
     started_at: float | None = None
+    claimed_at: float | None = None
     finished_at: float | None = None
 
     @property

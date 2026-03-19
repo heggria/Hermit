@@ -464,12 +464,14 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
         step_attempt_id="attempt-running",
         step_id="step-running",
         task_id="task-running",
+        status="running",
         context={"ingress_metadata": {"dispatch_mode": "async"}},
     )
     sync_attempt = SimpleNamespace(
         step_attempt_id="attempt-sync",
         step_id="step-sync",
         task_id="task-sync",
+        status="running",
         context={"ingress_metadata": {"dispatch_mode": "sync"}},
     )
 
@@ -477,7 +479,9 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
     future.set_result(None)
 
     store = SimpleNamespace(
-        list_step_attempts=lambda status, limit: [async_attempt, sync_attempt],
+        list_step_attempts=lambda status, limit: (
+            [async_attempt, sync_attempt] if status == "running" else []
+        ),
         update_step_attempt=lambda step_attempt_id, **kwargs: failed_attempt_updates.append(
             (step_attempt_id, kwargs)
         ),
@@ -485,6 +489,7 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
         update_task_status=lambda task_id, status, payload=None: task_status_updates.append(
             (task_id, status, payload or {})
         ),
+        get_task=lambda task_id: None,
         claim_next_ready_step_attempt=lambda: claims.pop(0),
     )
     runner = SimpleNamespace(
@@ -513,28 +518,43 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
     service._recover_interrupted_attempts()
     service._loop()
 
-    assert failed_attempt_updates[0][0] == "attempt-running"
-    assert failed_attempt_updates[0][1]["status"] == "ready"
-    assert failed_attempt_updates[0][1]["waiting_reason"] == "worker_interrupted_requeued"
-    assert failed_attempt_updates[0][1]["context"]["recovered_after_interrupt"] is True
-    assert failed_attempt_updates[0][1]["context"]["reentry_required"] is True
-    assert failed_attempt_updates[0][1]["context"]["reentry_boundary"] == "policy_reentry"
-    assert failed_step_updates == [
-        (
-            "step-running",
-            {"status": "ready", "finished_at": None},
-        )
-    ]
-    assert task_status_updates == [
-        (
-            "task-running",
-            "queued",
-            {
-                "result_preview": "worker_interrupted_requeued",
-                "result_text": "worker_interrupted_requeued",
-            },
-        )
-    ]
+    # Both async and sync attempts are updated; find each by attempt_id
+    updates_by_id = {aid: kwargs for aid, kwargs in failed_attempt_updates}
+
+    # async attempt → requeued as ready
+    async_update = updates_by_id["attempt-running"]
+    assert async_update["status"] == "ready"
+    assert async_update["waiting_reason"] == "worker_interrupted_requeued"
+    assert async_update["context"]["recovered_after_interrupt"] is True
+    assert async_update["context"]["reentry_required"] is True
+    assert async_update["context"]["reentry_boundary"] == "policy_reentry"
+    assert async_update["context"]["original_status_at_interrupt"] == "running"
+
+    # sync attempt → failed as orphaned
+    sync_update = updates_by_id["attempt-sync"]
+    assert sync_update["status"] == "failed"
+    assert sync_update["waiting_reason"] == "worker_interrupted_sync_orphaned"
+    assert sync_update["context"]["recovery_action"] == "failed_orphaned_sync"
+
+    step_updates_by_id = {sid: kwargs for sid, kwargs in failed_step_updates}
+    assert step_updates_by_id["step-running"] == {"status": "ready", "finished_at": None}
+    assert step_updates_by_id["step-sync"]["status"] == "failed"
+
+    task_updates_by_id = {tid: (s, p) for tid, s, p in task_status_updates}
+    assert task_updates_by_id["task-running"] == (
+        "queued",
+        {
+            "result_preview": "worker_interrupted_requeued",
+            "result_text": "worker_interrupted_requeued",
+        },
+    )
+    assert task_updates_by_id["task-sync"] == (
+        "failed",
+        {
+            "result_preview": "worker_interrupted_sync_orphaned",
+            "result_text": "worker_interrupted_sync_orphaned",
+        },
+    )
     assert processed_attempts == ["attempt-ready"]
     assert service._futures == {}
 

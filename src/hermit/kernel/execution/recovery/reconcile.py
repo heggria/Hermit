@@ -43,6 +43,12 @@ class ReconcileService:
     ) -> ReconcileOutcome:
         observed = dict(observables or {})
         witness_payload = dict(witness or {})
+        if action_type == "execute_command_readonly":
+            return ReconcileOutcome(
+                result_code="reconciled_applied",
+                summary="Read-only command executed; no side effects expected.",
+                observed_refs=[],
+            )
         if action_type in {"write_local", "patch_file"}:
             outcome = self._reconcile_local_write(
                 tool_input=tool_input, workspace_root=workspace_root

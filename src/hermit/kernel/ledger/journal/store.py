@@ -258,6 +258,7 @@ class KernelStore(
                     kind TEXT NOT NULL,
                     status TEXT NOT NULL,
                     attempt INTEGER NOT NULL,
+                    node_key TEXT,
                     input_ref TEXT,
                     output_ref TEXT,
                     title TEXT,
@@ -306,6 +307,7 @@ class KernelStore(
                     resume_from_ref TEXT,
                     superseded_by_step_attempt_id TEXT,
                     started_at REAL,
+                    claimed_at REAL,
                     finished_at REAL
                 );
                 CREATE TABLE IF NOT EXISTS events (
@@ -751,6 +753,7 @@ class KernelStore(
             self._ensure_column("step_attempts", "executor_mode", "TEXT")
             self._ensure_column("step_attempts", "policy_version", "TEXT")
             self._ensure_column("step_attempts", "resume_from_ref", "TEXT")
+            self._ensure_column("step_attempts", "claimed_at", "REAL")
             self._ensure_column("artifacts", "artifact_class", "TEXT")
             self._ensure_column("artifacts", "media_type", "TEXT")
             self._ensure_column("artifacts", "byte_size", "INTEGER")
@@ -802,7 +805,7 @@ class KernelStore(
             )
             self._ensure_column("memory_records", "freshness_class", "TEXT")
             self._ensure_column("memory_records", "last_accessed_at", "REAL")
-            self._conn.executescript(
+            self._get_conn().executescript(
                 """
                 CREATE TABLE IF NOT EXISTS memory_embeddings (
                     memory_id TEXT PRIMARY KEY,
@@ -949,6 +952,7 @@ class KernelStore(
     def _migrate_dag_schema_v11(self) -> None:
         self._ensure_column("steps", "join_strategy", "TEXT NOT NULL DEFAULT 'all_required'")
         self._ensure_column("steps", "input_bindings_json", "TEXT NOT NULL DEFAULT '{}'")
+        self._ensure_column("steps", "node_key", "TEXT")
         self._ensure_column("events", "causation_ids_json", "TEXT NOT NULL DEFAULT '[]'")
 
     def _migrate_kernel_convergence_v6(self) -> None:

@@ -11,6 +11,17 @@ log = structlog.get_logger()
 
 _POLL_INTERVAL_SECONDS = 0.5
 
+_INFLIGHT_STATUSES = frozenset(
+    {
+        "running",
+        "dispatching",
+        "reconciling",
+        "observing",
+        "contracting",
+        "preflighting",
+    }
+)
+
 
 class KernelDispatchService:
     """Small in-process worker pool for async kernel ingress."""
@@ -110,62 +121,157 @@ class KernelDispatchService:
     def _recover_interrupted_attempts(self) -> None:
         store = self._runner.task_controller.store
         now = time.time()
-        for attempt in store.list_step_attempts(status="running", limit=1000):
+
+        # Phase 1: recover all in-flight intermediate-status attempts.
+        # Track which steps already have a recovered attempt to avoid
+        # re-readying multiple duplicate attempts for the same step.
+        recovered_steps: set[str] = set()
+        for inflight_status in _INFLIGHT_STATUSES:
+            for attempt in store.list_step_attempts(status=inflight_status, limit=1000):
+                if attempt.step_id in recovered_steps:
+                    # Duplicate attempt for a step already recovered — supersede it.
+                    context = dict(attempt.context or {})
+                    context["recovered_after_interrupt"] = True
+                    context["recovery_action"] = "superseded_duplicate"
+                    store.update_step_attempt(
+                        attempt.step_attempt_id,
+                        status="superseded",
+                        context=context,
+                        waiting_reason="duplicate_recovered_superseded",
+                        finished_at=now,
+                    )
+                    continue
+                self._recover_single_attempt(store, attempt, now)
+                recovered_steps.add(attempt.step_id)
+
+        # Phase 2: deduplicate ready attempts — if multiple ready attempts exist
+        # for the same step, keep only the latest and supersede the rest.
+        ready_by_step: dict[str, list[Any]] = {}
+        for attempt in store.list_step_attempts(status="ready", limit=1000):
+            ready_by_step.setdefault(attempt.step_id, []).append(attempt)
+        for _step_id, attempts in ready_by_step.items():
+            if len(attempts) > 1:
+                # Keep the one with the highest attempt number; supersede the rest.
+                attempts.sort(key=lambda a: a.attempt, reverse=True)
+                for dup in attempts[1:]:
+                    store.update_step_attempt(
+                        dup.step_attempt_id,
+                        status="superseded",
+                        waiting_reason="duplicate_ready_superseded",
+                        finished_at=now,
+                    )
+
+        # Phase 3: repair ready attempts whose parent task has a stale status.
+        for attempt in store.list_step_attempts(status="ready", limit=1000):
             ingress = dict(attempt.context.get("ingress_metadata", {}) or {})
             if ingress.get("dispatch_mode") != "async":
                 continue
-            context = dict(attempt.context or {})
-            context["recovered_after_interrupt"] = True
-            context["interrupt_recovered_at"] = now
-            capability_grant_id = getattr(attempt, "capability_grant_id", None)
-            if capability_grant_id:
-                context["recovery_required"] = True
-                context["reentry_required"] = True
-                context["reentry_reason"] = "worker_interrupted"
-                context["reentry_boundary"] = "observation_resolution"
-                context["reentry_requested_at"] = now
-                store.update_step_attempt(
-                    attempt.step_attempt_id,
-                    status="blocked",
-                    context=context,
-                    waiting_reason="worker_interrupted_recovery_required",
-                    finished_at=None,
-                )
-                store.update_step(
-                    attempt.step_id,
-                    status="blocked",
-                    finished_at=None,
-                )
+            task = store.get_task(attempt.task_id)
+            if task and task.status not in ("queued", "running"):
                 store.update_task_status(
                     attempt.task_id,
-                    "blocked",
+                    "queued",
                     payload={
-                        "result_preview": "worker_interrupted_recovery_required",
-                        "result_text": "worker_interrupted_recovery_required",
+                        "result_preview": "task_status_repaired_for_ready_attempt",
+                        "result_text": "task_status_repaired_for_ready_attempt",
                     },
                 )
-                continue
+
+    def _fail_orphaned_sync_attempt(self, store: Any, attempt: Any, now: float) -> None:
+        """Mark a non-async in-flight attempt as failed.
+
+        Sync-path attempts are not managed by the dispatch service, so they
+        cannot be re-queued.  Leaving them in an intermediate status forever
+        would block their parent task, so we fail them with a clear reason.
+        """
+        context = dict(attempt.context or {})
+        context["recovered_after_interrupt"] = True
+        context["interrupt_recovered_at"] = now
+        context["original_status_at_interrupt"] = attempt.status
+        context["recovery_action"] = "failed_orphaned_sync"
+        store.update_step_attempt(
+            attempt.step_attempt_id,
+            status="failed",
+            context=context,
+            waiting_reason="worker_interrupted_sync_orphaned",
+            finished_at=now,
+        )
+        store.update_step(
+            attempt.step_id,
+            status="failed",
+            finished_at=now,
+        )
+        store.update_task_status(
+            attempt.task_id,
+            "failed",
+            payload={
+                "result_preview": "worker_interrupted_sync_orphaned",
+                "result_text": "worker_interrupted_sync_orphaned",
+            },
+        )
+
+    def _recover_single_attempt(self, store: Any, attempt: Any, now: float) -> None:
+        ingress = dict(attempt.context.get("ingress_metadata", {}) or {})
+        if ingress.get("dispatch_mode") != "async":
+            self._fail_orphaned_sync_attempt(store, attempt, now)
+            return
+        context = dict(attempt.context or {})
+        context["recovered_after_interrupt"] = True
+        context["interrupt_recovered_at"] = now
+        context["original_status_at_interrupt"] = attempt.status
+
+        capability_grant_id = getattr(attempt, "capability_grant_id", None)
+        if capability_grant_id:
+            # capability grant exists → action may have executed → block for manual review
+            context["recovery_required"] = True
             context["reentry_required"] = True
             context["reentry_reason"] = "worker_interrupted"
-            context["reentry_boundary"] = "policy_reentry"
+            context["reentry_boundary"] = "observation_resolution"
             context["reentry_requested_at"] = now
             store.update_step_attempt(
                 attempt.step_attempt_id,
-                status="ready",
+                status="blocked",
                 context=context,
-                waiting_reason="worker_interrupted_requeued",
+                waiting_reason="worker_interrupted_recovery_required",
                 finished_at=None,
             )
             store.update_step(
                 attempt.step_id,
-                status="ready",
+                status="blocked",
                 finished_at=None,
             )
             store.update_task_status(
                 attempt.task_id,
-                "queued",
+                "blocked",
                 payload={
-                    "result_preview": "worker_interrupted_requeued",
-                    "result_text": "worker_interrupted_requeued",
+                    "result_preview": "worker_interrupted_recovery_required",
+                    "result_text": "worker_interrupted_recovery_required",
                 },
             )
+            return
+
+        # no capability grant → action never authorized/executed → safe to re-enter
+        context["reentry_required"] = True
+        context["reentry_reason"] = "worker_interrupted"
+        context["reentry_boundary"] = "policy_reentry"
+        context["reentry_requested_at"] = now
+        store.update_step_attempt(
+            attempt.step_attempt_id,
+            status="ready",
+            context=context,
+            waiting_reason="worker_interrupted_requeued",
+            finished_at=None,
+        )
+        store.update_step(
+            attempt.step_id,
+            status="ready",
+            finished_at=None,
+        )
+        store.update_task_status(
+            attempt.task_id,
+            "queued",
+            payload={
+                "result_preview": "worker_interrupted_requeued",
+                "result_text": "worker_interrupted_requeued",
+            },
+        )
