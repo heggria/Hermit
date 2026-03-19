@@ -27,11 +27,11 @@ def _create_memory(store: KernelStore, *, task_id: str = "task-1", **kwargs):
 
 def _age_memory(store: KernelStore, memory_id: str, created_at: float) -> None:
     """Backdate a memory's created_at via direct SQL."""
-    store._get_conn().execute(
+    store._conn.execute(
         "UPDATE memory_records SET created_at = ? WHERE memory_id = ?",
         (created_at, memory_id),
     )
-    store._get_conn().commit()
+    store._conn.commit()
 
 
 def test_extract_entities_uses_pattern(tmp_path: Path) -> None:

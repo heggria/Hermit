@@ -132,18 +132,7 @@ def _compile_context_pack(
             source_channel="memory",
             workspace_root=workspace_root,
         )
-        try:
-            from hermit.plugins.builtin.hooks.memory.services import get_services
-
-            _services = get_services(store)
-            compiler = ContextCompiler(
-                _GOVERNANCE,
-                artifact_store,
-                retrieval_service=_services.retrieval,
-                store=store,
-            )
-        except Exception:
-            compiler = ContextCompiler(_GOVERNANCE, artifact_store)
+        compiler = ContextCompiler(_GOVERNANCE, artifact_store)
         planning = PlanningService(store, artifact_store)
         planning_state = planning.state_for_task(task_id) if task_id else None
         pack = compiler.compile(

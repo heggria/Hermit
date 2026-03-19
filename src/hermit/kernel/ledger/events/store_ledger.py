@@ -973,10 +973,14 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         conversation_id: str | None = None,
         scope_kind: str | None = None,
         scope_ref: str | None = None,
+        task_id: str | None = None,
         limit: int = 200,
     ) -> list[MemoryRecord]:
         clauses: list[str] = []
         params: list[Any] = []
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
         if status:
             if status == "active":
                 clauses.append("status = 'active' AND (expires_at IS NULL OR expires_at > ?)")
@@ -1068,8 +1072,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         next_last_accessed_at = (
             record.last_accessed_at if last_accessed_at is UNSET else last_accessed_at
         )
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE memory_records
                 SET status = ?, supersedes_json = ?, supersedes_memory_ids_json = ?,
@@ -1119,6 +1123,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     "supersession_reason": next_supersession_reason,
                     "learned_from_reconciliation_ref": next_reconciliation_ref,
                     "structured_assertion": next_structured_assertion or {},
+                    "freshness_class": next_freshness_class,
+                    "last_accessed_at": next_last_accessed_at,
                     "updated_at": updated_at,
                 },
             )

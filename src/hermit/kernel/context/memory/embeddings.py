@@ -91,8 +91,8 @@ class EmbeddingService:
         embedding = self.embed(text)
         blob = _encode_embedding(embedding)
         now = time.time()
-        with store._get_conn():
-            store._get_conn().execute(
+        with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
+            store._conn.execute(  # pyright: ignore[reportPrivateUsage]
                 """
                 INSERT INTO memory_embeddings (memory_id, embedding, model_name, created_at)
                 VALUES (?, ?, ?, ?)
@@ -114,11 +114,10 @@ class EmbeddingService:
         """Search indexed memories by embedding similarity."""
         query_vec = self.embed(query)
 
-        rows = (
-            store._get_conn()
-            .execute("SELECT memory_id, embedding FROM memory_embeddings")
-            .fetchall()
-        )
+        with store._lock:  # pyright: ignore[reportPrivateUsage]
+            rows = store._conn.execute(  # pyright: ignore[reportPrivateUsage]
+                "SELECT memory_id, embedding FROM memory_embeddings"
+            ).fetchall()
 
         scored: list[tuple[str, float]] = []
         for row in rows:
@@ -166,8 +165,8 @@ def _decode_embedding(blob: bytes) -> list[float]:
 
 def ensure_embedding_schema(store: KernelStore) -> None:
     """Create the memory_embeddings table if it doesn't exist."""
-    with store._get_conn():
-        store._get_conn().execute(
+    with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
+        store._conn.execute(  # pyright: ignore[reportPrivateUsage]
             """
             CREATE TABLE IF NOT EXISTS memory_embeddings (
                 memory_id TEXT PRIMARY KEY,

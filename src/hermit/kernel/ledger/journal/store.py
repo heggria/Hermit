@@ -54,6 +54,10 @@ _KNOWN_KERNEL_TABLES = {
     "evidence_signals",
     "competitions",
     "competition_candidates",
+    "memory_embeddings",
+    "memory_graph_edges",
+    "memory_entity_triples",
+    "procedural_memories",
 }
 
 
@@ -798,7 +802,7 @@ class KernelStore(
             )
             self._ensure_column("memory_records", "freshness_class", "TEXT")
             self._ensure_column("memory_records", "last_accessed_at", "REAL")
-            self._get_conn().executescript(
+            self._conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS memory_embeddings (
                     memory_id TEXT PRIMARY KEY,

@@ -199,3 +199,48 @@ def test_context_compiler_keeps_followup_task_state_for_short_followup(tmp_path:
     )
 
     assert [item["memory_id"] for item in pack.retrieval_memory] == ["mem-task"]
+
+
+def test_context_compiler_excludes_quarantined_memory(tmp_path: Path) -> None:
+    """Quarantined memories should be excluded with reason 'quarantined'."""
+    workspace_root = str((tmp_path / "repo").resolve())
+    compiler = ContextCompiler(artifact_store=ArtifactStore(tmp_path / "artifacts"))
+    context = TaskExecutionContext(
+        conversation_id="chat-1",
+        task_id="task-1",
+        step_id="step-1",
+        step_attempt_id="attempt-1",
+        source_channel="chat",
+        workspace_root=workspace_root,
+    )
+    memories = [
+        _memory(
+            memory_id="mem-quarantined",
+            category="user_preference",
+            claim_text="Quarantined preference",
+            retention_class="user_preference",
+            scope_kind="global",
+            scope_ref="global",
+            status="quarantined",
+        ),
+        _memory(
+            memory_id="mem-active",
+            category="user_preference",
+            claim_text="Active preference",
+            retention_class="user_preference",
+            scope_kind="global",
+            scope_ref="global",
+        ),
+    ]
+
+    pack = compiler.compile(
+        context=context,
+        working_state=WorkingStateSnapshot(goal_summary="test"),
+        beliefs=[],
+        memories=memories,
+        query="test query",
+    )
+
+    # Lines 123-124: quarantined memory excluded with reason "quarantined"
+    assert pack.excluded_reasons.get("mem-quarantined") == "quarantined"
+    assert "mem-active" not in pack.excluded_reasons

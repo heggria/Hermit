@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 
 from hermit.kernel.context.memory.confidence import ConfidenceDecayService, ConfidenceReport
-
 from hermit.kernel.ledger.journal.store import KernelStore
 
 
@@ -34,8 +33,8 @@ def _create_memory(
 
 def _set_created_at(store: KernelStore, memory_id: str, ts: float) -> None:
     """Directly update created_at via SQL for time manipulation in tests."""
-    with store._get_conn():
-        store._get_conn().execute(
+    with store._lock, store._conn:  # type: ignore[attr-defined]
+        store._conn.execute(  # type: ignore[attr-defined]
             "UPDATE memory_records SET created_at = ? WHERE memory_id = ?",
             (ts, memory_id),
         )

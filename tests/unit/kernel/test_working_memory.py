@@ -5,7 +5,6 @@ from pathlib import Path
 from hermit.kernel.context.memory.working_memory import (
     WorkingMemoryManager,
 )
-
 from hermit.kernel.ledger.journal.store import KernelStore
 
 
@@ -110,11 +109,11 @@ def test_static_sorted_by_freshness(tmp_path: Path) -> None:
     try:
         old = _create_memory(store, claim_text="old memory content here")
         # Backdate old memory
-        store._get_conn().execute(
+        store._conn.execute(
             "UPDATE memory_records SET created_at = ?, updated_at = ? WHERE memory_id = ?",
             (1000.0, 1000.0, old.memory_id),
         )
-        store._get_conn().commit()
+        store._conn.commit()
 
         new = _create_memory(store, claim_text="new memory content here")
 

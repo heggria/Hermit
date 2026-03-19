@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hermit.kernel.context.memory.graph_models import EntityTriple
-
 from hermit.kernel.context.memory.graph import (
     MemoryGraphService,
     _load_triples_for,
     _store_triple,
     ensure_graph_schema,
 )
+from hermit.kernel.context.memory.graph_models import EntityTriple
 from hermit.kernel.ledger.journal.store import KernelStore
 
 
@@ -126,12 +125,10 @@ def test_triples_indexed_by_subject(tmp_path: Path) -> None:
         _store_triple(t2, store)
         _store_triple(t3, store)
 
-        if True:
-            rows = (
-                store._get_conn()
-                .execute("SELECT * FROM memory_entity_triples WHERE subject = ?", ("ruff",))
-                .fetchall()
-            )
+        with store._lock:
+            rows = store._conn.execute(
+                "SELECT * FROM memory_entity_triples WHERE subject = ?", ("ruff",)
+            ).fetchall()
 
         assert len(rows) == 2
     finally:

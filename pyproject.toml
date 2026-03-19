@@ -79,6 +79,9 @@ Discussions = "https://github.com/heggria/Hermit/discussions"
 macos = [
   "rumps>=0.4.0",
 ]
+embeddings = [
+  "sentence-transformers>=3.0.0",
+]
 
 [project.scripts]
 hermit = "hermit.surfaces.cli.main:app"

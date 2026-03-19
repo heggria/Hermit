@@ -376,6 +376,8 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             invalidation_reason=row["invalidation_reason"],
             invalidated_at=row["invalidated_at"],
             expires_at=row["expires_at"],
+            freshness_class=row["freshness_class"] if "freshness_class" in dict(row) else None,
+            last_accessed_at=row["last_accessed_at"] if "last_accessed_at" in dict(row) else None,
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
         )

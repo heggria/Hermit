@@ -8,7 +8,6 @@ import structlog
 
 from hermit.kernel.context.memory.confidence import ConfidenceDecayService
 from hermit.kernel.context.memory.embeddings import EmbeddingService
-from hermit.kernel.context.memory.reranker import CrossEncoderReranker
 from hermit.kernel.context.memory.text import shares_topic, topic_tokens
 
 if TYPE_CHECKING:
@@ -43,7 +42,6 @@ class RetrievalReport:
     total_candidates: int
     results: list[RetrievalResult] = field(default_factory=lambda: list[RetrievalResult]())
     retrieval_time_ms: float = 0.0
-    reranked: bool = False
 
 
 class HybridRetrievalService:
@@ -66,12 +64,10 @@ class HybridRetrievalService:
         embedding_service: EmbeddingService | None = None,
         confidence_service: ConfidenceDecayService | None = None,
         lineage_service: MemoryLineageService | None = None,
-        reranker: CrossEncoderReranker | None = None,
     ) -> None:
         self._embeddings = embedding_service or EmbeddingService()
         self._confidence = confidence_service or ConfidenceDecayService()
         self._lineage = lineage_service
-        self._reranker = reranker
 
     def retrieve(
         self,
@@ -120,29 +116,11 @@ class HybridRetrievalService:
 
         # Build result
         memory_map = {m.memory_id: m for m in memories}
-
-        # Cross-encoder reranking (deep path only)
-        reranked = False
-        if use_deep and self._reranker is not None:
-            # Prepare candidates: (memory_id, claim_text, rrf_score)
-            rerank_candidates = [
-                (mid, memory_map[mid].claim_text, score)
-                for mid, score in fused
-                if mid in memory_map
-            ]
-            reranked_candidates = self._reranker.rerank(query, rerank_candidates, limit=limit)
-            if reranked_candidates and reranked_candidates != rerank_candidates[:limit]:
-                reranked = True
-                # Rebuild fused from reranked order
-                fused = [(mid, score) for mid, _, score in reranked_candidates]
-
         results: list[RetrievalResult] = []
         for mid, score in fused[:limit]:
             if mid not in memory_map:
                 continue
             sources = [name for name, ranked in ranked_lists.items() if mid in ranked]
-            if reranked:
-                sources.append("cross_encoder")
             results.append(
                 RetrievalResult(
                     memory_id=mid,
@@ -159,7 +137,6 @@ class HybridRetrievalService:
             total_candidates=len(memories),
             results=results,
             retrieval_time_ms=round(elapsed, 2),
-            reranked=reranked,
         )
         log.debug(
             "hybrid_retrieval",

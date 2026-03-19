@@ -302,6 +302,8 @@ class MemoryRecord:
     invalidation_reason: str | None = None
     invalidated_at: float | None = None
     expires_at: float | None = None
+    freshness_class: str | None = None
+    last_accessed_at: float | None = None
     created_at: float | None = None
     updated_at: float | None = None
 

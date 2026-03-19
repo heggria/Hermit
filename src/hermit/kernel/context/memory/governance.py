@@ -109,6 +109,18 @@ _CATEGORY_POLICIES: dict[str, MemoryCategoryPolicy] = {
         retrieval_allowed=True,
         ttl_seconds=_VOLATILE_FACT_TTL_SECONDS,
     ),
+    "pitfall_warning": MemoryCategoryPolicy(
+        "pitfall_warning",
+        "workspace",
+        static_injection=True,
+        retrieval_allowed=True,
+    ),
+    "procedural": MemoryCategoryPolicy(
+        "procedural",
+        "workspace",
+        static_injection=False,
+        retrieval_allowed=True,
+    ),
 }
 
 
@@ -174,6 +186,7 @@ class MemoryGovernanceService:
                 "user_preference",
                 "project_convention",
                 "tooling_environment",
+                "pitfall_warning",
             },
             retrieval_allowed=policy.retrieval_allowed,
             subject_key=signals.subject_key,
@@ -260,6 +273,7 @@ class MemoryGovernanceService:
             "user_preference",
             "project_convention",
             "tooling_environment",
+            "pitfall_warning",
         }:
             return False
         return self.scope_matches(memory.scope_kind, memory.scope_ref, context=context)

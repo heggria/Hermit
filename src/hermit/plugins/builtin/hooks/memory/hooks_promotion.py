@@ -53,8 +53,6 @@ def promote_memories_via_kernel(
     )
 
     store = KernelStore(Path(kernel_db_path))
-    ctx = None
-    controller = None
     try:
         artifact_store = ArtifactStore(Path(kernel_artifacts_dir))
         controller = TaskController(store)
@@ -374,13 +372,6 @@ def promote_memories_via_kernel(
                 promoted_memories.append(memory.memory_id)
         if promoted_memories:
             memory_service.export_mirror(Path(settings.memory_file))
-            _enrich_promoted_memories(
-                promoted_memories,
-                store,
-                task_id=ctx.task_id,
-                conversation_id=ctx.conversation_id,
-                decision_id=decision_id,
-            )
 
         rollback_ref = _store_memory_artifact(
             store,
@@ -403,14 +394,6 @@ def promote_memories_via_kernel(
         capability_service.consume(capability_grant_id)
         controller.finalize_result(ctx, status="succeeded")
         return True
-    except Exception:
-        log.error("memory_promotion_failed", mode=mode, exc_info=True)
-        if ctx is not None and controller is not None:
-            try:
-                controller.finalize_result(ctx, status="failed")
-            except Exception:
-                log.error("memory_promotion_finalize_failed", task_id=ctx.task_id, exc_info=True)
-        return False
     finally:
         store.close()
 
@@ -452,86 +435,6 @@ def _store_memory_artifact(
             payload={"artifact_ref": artifact.artifact_id, **metadata},
         )
     return artifact.artifact_id
-
-
-def _enrich_promoted_memories(
-    promoted_memory_ids: list[str],
-    store: Any,
-    *,
-    task_id: str,
-    conversation_id: str,
-    decision_id: str,
-) -> None:
-    """Post-promotion enrichment: index, graph, procedural, episodic, lineage.
-
-    Each service runs in its own try/except so a failure in one
-    never blocks the others or the promotion pipeline.
-    """
-    from hermit.plugins.builtin.hooks.memory.services import get_services
-
-    try:
-        services = get_services(store)
-    except Exception:
-        log.warning("enrich_services_init_failed", exc_info=True)
-        return
-
-    # Collect MemoryRecord objects for per-memory enrichment
-    records = []
-    for mid in promoted_memory_ids:
-        rec = store.get_memory_record(mid)
-        if rec is not None:
-            records.append(rec)
-
-    # 1. Embedding index — per memory
-    for rec in records:
-        try:
-            services.embedding.index_memory(rec.memory_id, rec.claim_text, store)
-        except Exception:
-            log.warning("enrich_embedding_failed", memory_id=rec.memory_id, exc_info=True)
-
-    # 2. Knowledge graph — per memory
-    for rec in records:
-        try:
-            triples = services.graph.extract_entities(rec)
-            if triples:
-                services.graph.store_triples(triples, store)
-                services.graph.auto_link(rec.memory_id, store)
-        except Exception:
-            log.warning("enrich_graph_failed", memory_id=rec.memory_id, exc_info=True)
-
-    # 3. Procedural extraction — per memory
-    for rec in records:
-        try:
-            proc = services.procedural.extract_procedure(rec)
-            if proc is not None:
-                services.procedural.save_procedure(proc, store)
-        except Exception:
-            log.warning("enrich_procedural_failed", memory_id=rec.memory_id, exc_info=True)
-
-    # 4. Episodic index — once per batch (indexes task-level episode)
-    try:
-        services.episodic.index_episode(task_id, store, conversation_id=conversation_id)
-    except Exception:
-        log.warning("enrich_episodic_failed", task_id=task_id, exc_info=True)
-
-    # 5. Memory lineage — once per batch
-    try:
-        services.lineage.record_influence(
-            context_pack_id="",
-            decision_ids=[decision_id],
-            memory_ids=promoted_memory_ids,
-            store=store,
-            task_id=task_id,
-            conversation_id=conversation_id,
-        )
-    except Exception:
-        log.warning("enrich_lineage_failed", task_id=task_id, exc_info=True)
-
-    log.debug(
-        "post_promotion_enrichment_done",
-        memory_count=len(records),
-        task_id=task_id,
-    )
 
 
 __all__ = ["promote_memories_via_kernel"]

@@ -313,8 +313,8 @@ class MemoryGraphService:
 
 def ensure_graph_schema(store: KernelStore) -> None:
     """Create graph tables if they don't exist."""
-    with store._get_conn():
-        store._get_conn().executescript(  # pyright: ignore[reportPrivateUsage]
+    with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
+        store._conn.executescript(  # pyright: ignore[reportPrivateUsage]
             """
             CREATE TABLE IF NOT EXISTS memory_graph_edges (
                 edge_id TEXT PRIMARY KEY,
@@ -354,8 +354,8 @@ def ensure_graph_schema(store: KernelStore) -> None:
 def _store_edge(edge: GraphEdge, store: KernelStore) -> None:
     import json
 
-    with store._get_conn():
-        store._get_conn().execute(  # pyright: ignore[reportPrivateUsage]
+    with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
+        store._conn.execute(  # pyright: ignore[reportPrivateUsage]
             """
             INSERT OR REPLACE INTO memory_graph_edges
                 (edge_id, from_memory_id, to_memory_id, relation_type, weight, metadata_json, created_at)
@@ -376,14 +376,11 @@ def _store_edge(edge: GraphEdge, store: KernelStore) -> None:
 def _load_edges_from(memory_id: str, store: KernelStore) -> list[GraphEdge]:
     import json
 
-    rows = (
-        store._get_conn()
-        .execute(
+    with store._lock:  # pyright: ignore[reportPrivateUsage]
+        rows = store._conn.execute(  # pyright: ignore[reportPrivateUsage]
             "SELECT * FROM memory_graph_edges WHERE from_memory_id = ?",
             (memory_id,),
-        )
-        .fetchall()
-    )
+        ).fetchall()
 
     edges: list[GraphEdge] = []
     for row in rows:
@@ -402,8 +399,8 @@ def _load_edges_from(memory_id: str, store: KernelStore) -> list[GraphEdge]:
 
 
 def _store_triple(triple: EntityTriple, store: KernelStore) -> None:
-    with store._get_conn():
-        store._get_conn().execute(  # pyright: ignore[reportPrivateUsage]
+    with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
+        store._conn.execute(  # pyright: ignore[reportPrivateUsage]
             """
             INSERT OR REPLACE INTO memory_entity_triples
                 (triple_id, source_memory_id, subject, predicate, object, confidence, valid_from, valid_until, created_at)
@@ -424,14 +421,11 @@ def _store_triple(triple: EntityTriple, store: KernelStore) -> None:
 
 
 def _load_triples_for(memory_id: str, store: KernelStore) -> list[EntityTriple]:
-    rows = (
-        store._get_conn()
-        .execute(
+    with store._lock:  # pyright: ignore[reportPrivateUsage]
+        rows = store._conn.execute(  # pyright: ignore[reportPrivateUsage]
             "SELECT * FROM memory_entity_triples WHERE source_memory_id = ?",
             (memory_id,),
-        )
-        .fetchall()
-    )
+        ).fetchall()
 
     triples: list[EntityTriple] = []
     for row in rows:
