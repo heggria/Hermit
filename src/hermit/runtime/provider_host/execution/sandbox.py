@@ -261,7 +261,7 @@ class CommandSandbox:
             running = job.proc.poll() is None
 
         if running:
-            if now >= job.deadline.hard_at:
+            if job.deadline.hard_exceeded():
                 self._terminate_job(job, force=True)
                 stdout, stderr = self._output_text(job)
                 timeout_progress = {

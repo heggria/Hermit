@@ -57,15 +57,21 @@ def test_build_provider_client_kwargs_supports_auth_token_and_headers(monkeypatc
 
 
 def test_build_provider_client_kwargs_keeps_api_key_when_present(monkeypatch) -> None:
-    monkeypatch.delenv("HERMIT_AUTH_TOKEN", raising=False)
-    monkeypatch.delenv("HERMIT_BASE_URL", raising=False)
-    monkeypatch.delenv("HERMIT_CUSTOM_HEADERS", raising=False)
-    monkeypatch.delenv("HERMIT_CLAUDE_AUTH_TOKEN", raising=False)
-    monkeypatch.delenv("HERMIT_CLAUDE_BASE_URL", raising=False)
-    monkeypatch.delenv("HERMIT_CLAUDE_HEADERS", raising=False)
-    monkeypatch.delenv("HERMIT_PROVIDER", raising=False)
-    monkeypatch.delenv("HERMIT_PROFILE", raising=False)
-    monkeypatch.delenv("HERMIT_BASE_DIR", raising=False)
+    for var in (
+        "HERMIT_AUTH_TOKEN",
+        "HERMIT_BASE_URL",
+        "HERMIT_CUSTOM_HEADERS",
+        "HERMIT_CLAUDE_AUTH_TOKEN",
+        "HERMIT_CLAUDE_BASE_URL",
+        "HERMIT_CLAUDE_HEADERS",
+        "HERMIT_PROVIDER",
+        "HERMIT_PROFILE",
+        "HERMIT_BASE_DIR",
+        "HERMIT_MODEL",
+        "ANTHROPIC_API_KEY",
+        "HERMIT_CLAUDE_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
     settings = Settings(
         provider="claude",
         claude_api_key="api-key",

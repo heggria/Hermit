@@ -307,12 +307,11 @@ class TestLoadSuspendedState:
         persistence: StatePersistence,
         store: MagicMock,
     ) -> None:
+        # Attempt has no resume_from_ref and no snapshot in context,
+        # so _load_runtime_snapshot_envelope returns {} naturally.
         attempt = FakeAttempt(context={}, resume_from_ref=None)
         store.get_step_attempt.return_value = attempt
 
-        result = persistence._load_runtime_snapshot_envelope(attempt)
-        # Patch to return empty envelope
-        persistence._load_runtime_snapshot_envelope = MagicMock(return_value={})
         result = persistence.load_suspended_state("attempt_1")
         assert result == {}
 

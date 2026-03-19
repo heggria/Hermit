@@ -120,9 +120,9 @@ def test_command_sandbox_observation_emits_progress_and_ready(tmp_path) -> None:
         f"{sys.executable} -u -c "
         '"import sys,time; '
         "print('Booting server'); sys.stdout.flush(); "
-        "time.sleep(0.5); "
+        "time.sleep(0.1); "
         "print('READY http://127.0.0.1:3000'); sys.stdout.flush(); "
-        'time.sleep(0.2)"'
+        'time.sleep(0.05)"'
     )
 
     result = sandbox.run(
@@ -180,7 +180,7 @@ def test_command_sandbox_observation_uses_coarse_running_progress_without_metada
     tmp_path,
 ) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(1.0)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.3)"'
 
     result = sandbox.run({"command": command, "display_name": "Background Task"})
 
@@ -217,16 +217,16 @@ def test_command_sandbox_coarse_observation_only_extends_completion_once(
         "hermit.runtime.provider_host.execution.sandbox._COARSE_OBSERVATION_GRACE_SECONDS", 5.0
     )
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(0.5)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.1)"'
 
     result = sandbox.run({"command": command, "display_name": "Short Task"})
 
     assert "_hermit_observation" in result
     ticket = result["_hermit_observation"]
 
-    # Wait for the subprocess to finish (0.5s) plus margin, but well within
+    # Wait for the subprocess to finish (0.1s) plus margin, but well within
     # the 5.0s grace window so the observation has not been cleaned up yet.
-    time.sleep(1.5)
+    time.sleep(0.5)
 
     observing = sandbox.poll(ticket["job_id"])
     assert observing["status"] == "observing"
@@ -245,14 +245,14 @@ def test_command_sandbox_coarse_observation_only_extends_completion_once(
 @pytest.mark.slow
 def test_command_sandbox_followup_poll_quickly_reaches_completion(tmp_path) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path, timeout_seconds=0.05)
-    command = f'{sys.executable} -u -c "import time; time.sleep(2.0)"'
+    command = f'{sys.executable} -u -c "import time; time.sleep(0.5)"'
 
     result = sandbox.run({"command": command, "display_name": "Edge Task"})
 
     assert "_hermit_observation" in result
     ticket = result["_hermit_observation"]
 
-    time.sleep(0.2)
+    time.sleep(0.05)
 
     observing = sandbox.poll(ticket["job_id"])
     assert observing["status"] == "observing"
