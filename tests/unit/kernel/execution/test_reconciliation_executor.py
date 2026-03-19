@@ -255,7 +255,10 @@ class TestRecordReconciliation:
         mock_store: MagicMock,
         mock_deps: dict[str, MagicMock],
     ) -> None:
+        """Last step satisfied → task becomes 'completed'."""
         self._setup_reconcile(mock_store, mock_deps, result_class="satisfied")
+        # No remaining non-terminal steps — this is the last step.
+        mock_store.has_non_terminal_steps.return_value = False
         ctx = _make_attempt_ctx()
         rec, _out = executor.record_reconciliation(
             attempt_ctx=ctx,
@@ -273,6 +276,42 @@ class TestRecordReconciliation:
         mock_store.update_step.assert_any_call("step-1", status="succeeded")
         mock_store.update_task_status.assert_any_call("task-1", "completed")
         mock_deps["pattern_learner"].learn_from_completed_task.assert_called_once_with("task-1")
+
+    def test_satisfied_does_not_complete_task_when_dag_steps_remain(
+        self,
+        executor: ReconciliationExecutor,
+        mock_store: MagicMock,
+        mock_deps: dict[str, MagicMock],
+    ) -> None:
+        """Satisfied reconciliation mid-DAG must NOT mark the task 'completed'."""
+        self._setup_reconcile(mock_store, mock_deps, result_class="satisfied")
+        # Sibling steps still pending — this is not the last step.
+        mock_store.has_non_terminal_steps.return_value = True
+        ctx = _make_attempt_ctx()
+        rec, _out = executor.record_reconciliation(
+            attempt_ctx=ctx,
+            receipt_id="rcpt-1",
+            action_type="write_local",
+            tool_input={},
+            observables=None,
+            witness_ref=None,
+            result_code_hint="succeeded",
+            authorized_effect_summary="test",
+        )
+        assert rec is not None
+        assert rec.result_class == "satisfied"
+        mock_store.update_step_attempt.assert_any_call("attempt-1", status="succeeded")
+        mock_store.update_step.assert_any_call("step-1", status="succeeded")
+        # Task must NOT be prematurely completed.
+        completed_calls = [
+            c
+            for c in mock_store.update_task_status.call_args_list
+            if c.args == ("task-1", "completed") or c[0] == ("task-1", "completed")
+        ]
+        assert completed_calls == [], (
+            "update_task_status('completed') must not be called while DAG steps remain"
+        )
+        mock_deps["pattern_learner"].learn_from_completed_task.assert_not_called()
 
     def test_violated_invalidates_and_degrades(
         self,

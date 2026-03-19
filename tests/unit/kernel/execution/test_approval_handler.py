@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from hermit.kernel.execution.executor.approval_handler import (
+from hermit.kernel.execution.executor.approval_handler import ApprovalHandler
+from hermit.kernel.execution.executor.phase_tracker import (
     _WITNESS_REQUIRED_ACTIONS,
-    ApprovalHandler,
     _needs_witness,
 )
 from hermit.kernel.policy.guards.fingerprint import build_action_fingerprint

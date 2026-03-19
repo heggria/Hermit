@@ -5,6 +5,7 @@ from typing import Any
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.execution.executor.phase_tracker import _needs_witness
 from hermit.kernel.execution.executor.witness import WitnessCapture
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import (
@@ -15,21 +16,6 @@ from hermit.kernel.policy import (
 )
 from hermit.kernel.policy.approvals.approval_copy import ApprovalCopyService
 from hermit.kernel.policy.approvals.approvals import ApprovalService
-
-_WITNESS_REQUIRED_ACTIONS = {
-    "write_local",
-    "patch_file",
-    "execute_command",
-    "network_write",
-    "credentialed_api_call",
-    "vcs_mutation",
-    "publication",
-    "memory_write",
-}
-
-
-def _needs_witness(action_class: str) -> bool:
-    return action_class in _WITNESS_REQUIRED_ACTIONS
 
 
 class ApprovalHandler:

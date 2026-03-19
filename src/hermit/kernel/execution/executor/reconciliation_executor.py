@@ -158,8 +158,12 @@ class ReconciliationExecutor:
         if result_class == "satisfied":
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="succeeded")
             self.store.update_step(attempt_ctx.step_id, status="succeeded")
-            self.store.update_task_status(attempt_ctx.task_id, "completed")
-            self.learn_task_pattern(attempt_ctx.task_id)
+            if not self.store.has_non_terminal_steps(attempt_ctx.task_id):
+                self.store.update_task_status(attempt_ctx.task_id, "completed")
+                self.learn_task_pattern(attempt_ctx.task_id)
+            else:
+                # DAG task still has pending steps — keep it running, not completed.
+                self.store.update_task_status(attempt_ctx.task_id, "running")
             self._set_attempt_phase(attempt_ctx, "reconciled", reason="reconciliation_satisfied")
             return reconciliation, outcome
         if result_class in {"partial", "satisfied_with_downgrade"}:
