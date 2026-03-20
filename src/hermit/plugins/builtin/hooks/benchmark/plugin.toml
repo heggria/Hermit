@@ -1,0 +1,17 @@
+[plugin]
+name = "benchmark"
+version = "0.1.0"
+description = "Continuous benchmark and iteration learning"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+
+[variables.benchmark_enabled]
+setting = "benchmark_enabled"
+env = ["HERMIT_BENCHMARK_ENABLED"]
+default = false
+
+[variables.benchmark_check_timeout]
+setting = "benchmark_check_timeout"
+default = 600

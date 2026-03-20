@@ -757,53 +757,61 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return [self._step_attempt_from_row(row) for row in rows]
 
     def claim_next_ready_step_attempt(self) -> StepAttemptRecord | None:
-        with self._get_conn():
+        now = time.time()
+        conn = self._get_conn()
+        with conn:
+            # Atomic claim via UPDATE...RETURNING: combines SELECT + CAS into one
+            # statement.  The subquery finds the best candidate; the UPDATE only
+            # touches rows still in 'ready' status, so concurrent threads cannot
+            # double-claim.
             row = self._row(
                 """
-                SELECT sa.*
-                FROM step_attempts sa
-                JOIN steps s ON s.step_id = sa.step_id
-                JOIN tasks t ON t.task_id = sa.task_id
-                WHERE sa.status = 'ready'
-                  AND s.status = 'ready'
-                  AND t.status IN ('queued', 'running')
-                  AND NOT EXISTS (
-                      SELECT 1 FROM steps dep
-                      WHERE dep.task_id = s.task_id
-                        AND dep.step_id IN (SELECT value FROM json_each(s.depends_on_json))
-                        AND dep.status NOT IN ('succeeded', 'completed', 'skipped')
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM step_attempts sa2
-                      WHERE sa2.step_id = sa.step_id
-                        AND sa2.status IN ('running', 'dispatching', 'reconciling',
-                                           'observing', 'contracting', 'preflighting')
-                  )
-                ORDER BY sa.queue_priority DESC, sa.started_at ASC
-                LIMIT 1
-                """
+                UPDATE step_attempts
+                SET status = 'running', claimed_at = ?
+                WHERE step_attempt_id = (
+                    SELECT sa.step_attempt_id
+                    FROM step_attempts sa
+                    JOIN steps s ON s.step_id = sa.step_id
+                    JOIN tasks t ON t.task_id = sa.task_id
+                    WHERE sa.status = 'ready'
+                      AND s.status = 'ready'
+                      AND t.status IN ('queued', 'running')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM steps dep
+                          WHERE dep.task_id = s.task_id
+                            AND dep.step_id IN (
+                                SELECT value FROM json_each(s.depends_on_json)
+                            )
+                            AND dep.status NOT IN (
+                                'succeeded', 'completed', 'skipped'
+                            )
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM step_attempts sa2
+                          WHERE sa2.step_id = sa.step_id
+                            AND sa2.status IN (
+                                'running', 'dispatching', 'reconciling',
+                                'observing', 'contracting', 'preflighting'
+                            )
+                      )
+                    ORDER BY sa.queue_priority DESC, sa.started_at ASC
+                    LIMIT 1
+                )
+                RETURNING *
+                """,
+                (now,),
             )
             if row is None:
                 return None
             attempt = self._step_attempt_from_row(row)
-            # Atomic CAS: only claim if still in 'ready' status to prevent
-            # two threads from claiming the same attempt concurrently.
-            now = time.time()
-            cur = self._get_conn().execute(
-                "UPDATE step_attempts SET status = ?, claimed_at = ? "
-                "WHERE step_attempt_id = ? AND status = 'ready'",
-                ("running", now, attempt.step_attempt_id),
+            # Cascade status updates for step and task.
+            conn.execute(
+                "UPDATE steps SET status = 'running', finished_at = NULL WHERE step_id = ?",
+                (attempt.step_id,),
             )
-            if cur.rowcount == 0:
-                # Another thread claimed this attempt between SELECT and UPDATE.
-                return None
-            self._get_conn().execute(
-                "UPDATE steps SET status = ?, finished_at = NULL WHERE step_id = ?",
-                ("running", attempt.step_id),
-            )
-            self._get_conn().execute(
-                "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
-                ("running", now, attempt.task_id),
+            conn.execute(
+                "UPDATE tasks SET status = 'running', updated_at = ? WHERE task_id = ?",
+                (now, attempt.task_id),
             )
             self._append_event_tx(
                 event_id=self._id("event"),

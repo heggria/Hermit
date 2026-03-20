@@ -300,6 +300,7 @@ class MemoryRecord:
     retention_class: str = "volatile_fact"
     status: str = "active"
     confidence: float = 0.5
+    importance: int = 5  # 1-10, from LLM extraction
     trust_tier: str = "durable"
     evidence_refs: list[str] = field(default_factory=list[str])
     memory_kind: str = "durable_fact"

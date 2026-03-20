@@ -231,7 +231,7 @@ class TestGovernedPromotion:
     """Verify the full governed promotion pipeline creates kernel records."""
 
     def test_promote_creates_task_decision_receipt(self, tmp_path: Path) -> None:
-        """Full promotion: task → policy → decision → grant → belief → memory → receipt."""
+        """Promotion enqueues a task with correct policy_profile and artifacts."""
         settings = _make_settings(tmp_path)
         engine = MemoryEngine(settings.memory_file)
 
@@ -269,47 +269,14 @@ class TestGovernedPromotion:
 
         assert result is True
 
-        # Verify kernel records were created
+        # Promotion is now async — verify task was enqueued (not executed)
         store = KernelStore(Path(settings.kernel_db_path))
         try:
-            # Task should exist (policy_profile="memory" set by promotion pipeline)
+            # Task should exist with policy_profile="memory"
             tasks = store.list_tasks(limit=10)
             promo_tasks = [t for t in tasks if t.policy_profile == "memory"]
             assert len(promo_tasks) >= 1
-
-            # Memory records should exist
-            memories = store.list_memory_records(status="active", limit=100)
-            assert len(memories) >= 2
-
-            # Beliefs should exist
-            beliefs = store.list_beliefs(status="active", limit=100)
-            assert len(beliefs) >= 2
-
-            # Receipts should exist
-            receipts = store.list_receipts(limit=100)
-            assert len(receipts) >= 1
-            receipt = receipts[0]
-            assert receipt.result_code == "succeeded"
-            assert receipt.rollback_supported is True
-
-            # Decision should exist
-            decisions = store.list_decisions(limit=100)
-            assert len(decisions) >= 1
-            decision = decisions[0]
-            assert decision.decision_type == "memory_promotion"
-            assert len(decision.evidence_refs) >= 4  # transcript, extraction, action, policy
-
-            # Capability grant should exist and be consumed
-            grants = store.list_capability_grants(limit=100)
-            assert len(grants) >= 1
-
-            # Artifacts should exist (transcript, extraction, action, policy, result, env, rollback)
-            artifacts = store.list_artifacts(limit=100)
-            assert len(artifacts) >= 6
-
-            # Memory mirror file should be updated
-            mirror = Path(settings.memory_file).read_text(encoding="utf-8")
-            assert "vim" in mirror.lower() or "ruff" in mirror.lower()
+            assert "Promote durable memory" in promo_tasks[0].title
         finally:
             store.close()
 
@@ -372,8 +339,8 @@ class TestPostPromotionEnrichment:
     embedding index, graph entities, lineage links, episodic index.
     """
 
-    def test_promotion_creates_embedding_records(self, tmp_path: Path) -> None:
-        """After promotion, memory_embeddings table should have entries."""
+    def test_promotion_enqueues_with_correct_kind(self, tmp_path: Path) -> None:
+        """Promotion enqueues a memory_promotion task that dispatch can pick up."""
         settings = _make_settings(tmp_path)
         engine = MemoryEngine(settings.memory_file)
 
@@ -406,19 +373,20 @@ class TestPostPromotionEnrichment:
         )
         assert result is True
 
+        # Verify task was enqueued with correct kind
         store = KernelStore(Path(settings.kernel_db_path))
         try:
-            # Embedding table should exist and have entries
-            rows = store._get_conn().execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()
-            assert rows is not None
-            assert rows[0] >= 1, "Expected at least 1 embedding record after promotion"
+            tasks = store.list_tasks(limit=10)
+            promo_tasks = [t for t in tasks if t.policy_profile == "memory"]
+            assert len(promo_tasks) >= 1
+            assert "Promote durable memory" in promo_tasks[0].title
         finally:
             store.close()
 
         reset_services()
 
-    def test_promotion_creates_lineage_records(self, tmp_path: Path) -> None:
-        """After promotion, influence_link memory records should exist."""
+    def test_promotion_prevents_duplicate_running_tasks(self, tmp_path: Path) -> None:
+        """Second promotion for same conversation returns False when task is running."""
         settings = _make_settings(tmp_path)
         engine = MemoryEngine(settings.memory_file)
 
@@ -429,129 +397,38 @@ class TestPostPromotionEnrichment:
 
         reset_services()
 
-        result = promote_memories_via_kernel(
+        entry = MemoryEntry(
+            category="user_preference",
+            content="User prefers vim keybindings.",
+            confidence=0.85,
+        )
+        messages = _make_messages(
+            [("user", "Always use vim keybindings, remember this."), ("assistant", "Noted.")]
+        )
+
+        # First enqueue succeeds
+        result1 = promote_memories_via_kernel(
             engine,
             settings,
-            session_id="sess-enrich-lineage",
-            messages=_make_messages(
-                [
-                    ("user", "Always use vim keybindings, remember this."),
-                    ("assistant", "Noted."),
-                ]
-            ),
+            session_id="sess-dup",
+            messages=messages,
             used_keywords={"vim"},
-            new_entries=[
-                MemoryEntry(
-                    category="user_preference",
-                    content="User prefers vim keybindings.",
-                    confidence=0.85,
-                ),
-            ],
+            new_entries=[entry],
             mode="session_end",
         )
-        assert result is True
+        assert result1 is True
 
-        store = KernelStore(Path(settings.kernel_db_path))
-        try:
-            all_records = store.list_memory_records(status="active", limit=500)
-            lineage_records = [r for r in all_records if r.memory_kind == "influence_link"]
-            assert len(lineage_records) >= 1, (
-                "Expected at least 1 influence_link record after promotion"
-            )
-        finally:
-            store.close()
-
-        reset_services()
-
-    def test_promotion_creates_episodic_index(self, tmp_path: Path) -> None:
-        """After promotion, episode_index memory records should exist."""
-        settings = _make_settings(tmp_path)
-        engine = MemoryEngine(settings.memory_file)
-
-        from hermit.plugins.builtin.hooks.memory.hooks_promotion import (
-            promote_memories_via_kernel,
-        )
-        from hermit.plugins.builtin.hooks.memory.services import reset_services
-
-        reset_services()
-
-        result = promote_memories_via_kernel(
+        # Second enqueue for same conversation should be skipped
+        result2 = promote_memories_via_kernel(
             engine,
             settings,
-            session_id="sess-enrich-episodic",
-            messages=_make_messages(
-                [
-                    ("user", "We decided to use PostgreSQL, remember this always."),
-                    ("assistant", "Noted."),
-                ]
-            ),
-            used_keywords={"postgresql"},
-            new_entries=[
-                MemoryEntry(
-                    category="tech_decision",
-                    content="Project uses PostgreSQL.",
-                    confidence=0.9,
-                ),
-            ],
+            session_id="sess-dup",
+            messages=messages,
+            used_keywords={"vim"},
+            new_entries=[entry],
             mode="session_end",
         )
-        assert result is True
-
-        store = KernelStore(Path(settings.kernel_db_path))
-        try:
-            all_records = store.list_memory_records(status="active", limit=500)
-            episode_records = [r for r in all_records if r.memory_kind == "episode_index"]
-            assert len(episode_records) >= 1, (
-                "Expected at least 1 episode_index record after promotion"
-            )
-        finally:
-            store.close()
-
-        reset_services()
-
-    def test_enrichment_failure_does_not_block_promotion(self, tmp_path: Path) -> None:
-        """If an enrichment service fails, promotion still succeeds."""
-        settings = _make_settings(tmp_path)
-        engine = MemoryEngine(settings.memory_file)
-
-        from hermit.plugins.builtin.hooks.memory.hooks_promotion import (
-            promote_memories_via_kernel,
-        )
-        from hermit.plugins.builtin.hooks.memory.services import reset_services
-
-        reset_services()
-
-        # Promotion should succeed even if enrichment has issues
-        result = promote_memories_via_kernel(
-            engine,
-            settings,
-            session_id="sess-enrich-resilient",
-            messages=_make_messages(
-                [
-                    ("user", "Remember this: always use dark mode."),
-                    ("assistant", "Noted."),
-                ]
-            ),
-            used_keywords={"dark"},
-            new_entries=[
-                MemoryEntry(
-                    category="user_preference",
-                    content="User prefers dark mode.",
-                    confidence=0.8,
-                ),
-            ],
-            mode="session_end",
-        )
-        assert result is True
-
-        # Core promotion artifacts must exist regardless of enrichment
-        store = KernelStore(Path(settings.kernel_db_path))
-        try:
-            memories = store.list_memory_records(status="active", limit=100)
-            durable = [m for m in memories if m.memory_kind == "durable_fact"]
-            assert len(durable) >= 1
-        finally:
-            store.close()
+        assert result2 is False
 
         reset_services()
 

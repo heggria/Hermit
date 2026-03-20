@@ -19,3 +19,17 @@ def project_root() -> Path | None:
     if (candidate / "pyproject.toml").exists():
         return candidate
     return None
+
+
+def project_path(*parts: str, fallback_to_cwd: bool = True) -> Path | None:
+    """Return a path relative to the repository root.
+
+    When project root cannot be resolved, falls back to ``Path.cwd()`` by
+    default. Pass ``fallback_to_cwd=False`` to return ``None`` instead.
+    """
+    project = project_root()
+    if project is None:
+        if not fallback_to_cwd:
+            return None
+        return Path.cwd().joinpath(*parts)
+    return project.joinpath(*parts)

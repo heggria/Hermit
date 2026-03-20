@@ -560,7 +560,7 @@ OpenAI Codex operates in sandboxed cloud environments where each task gets:
 - Hermit's task isolation model mirrors Codex's container isolation
 - Adopt **speculative parallel search**: when exploring a codebase, submit multiple search strategies as parallel subtasks
 - The clean-state-per-container model maps to AWCP's workspace projection: each task gets a scoped workspace snapshot
-- Batch submission pattern already supported by Hermit's `hermit_submit_task` parallelism
+- Batch submission pattern already supported by Hermit's `hermit_submit` parallelism
 
 ### Typed Blackboard Research (2025-2026)
 

@@ -111,6 +111,7 @@ class AgentRunner:
                 getattr(getattr(self.pm, "settings", None), "kernel_dispatch_worker_count", 4) or 4
             )
             self._dispatch_service = KernelDispatchService(self, worker_count=worker_count)
+            self._register_kind_handlers(self._dispatch_service)
             self._dispatch_service.start()
 
     def stop_background_services(self) -> None:
@@ -122,6 +123,20 @@ class AgentRunner:
         if self._observation_service is not None:
             self._observation_service.stop()
             self._observation_service = None
+
+    def _register_kind_handlers(self, dispatch_service: object) -> None:
+        """Register custom step kind handlers on the dispatch service."""
+        try:
+            from hermit.plugins.builtin.hooks.memory.hooks_promotion import (
+                create_memory_promotion_handler,
+            )
+
+            dispatch_service.register_kind_handler(
+                "memory_promotion",
+                create_memory_promotion_handler(self),
+            )
+        except Exception:
+            pass  # memory plugin not available
 
     # ------------------------------------------------------------------
     # Command registration

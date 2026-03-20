@@ -109,6 +109,7 @@ def register(ctx: PluginContext) -> None:
 
     def _hook_session_end(session_id: str, messages: list[dict[str, Any]]) -> None:
         save_memories(engine, settings, session_id, messages)
+        _maybe_consolidate(settings)
 
     ctx.add_hook(HookEvent.SYSTEM_PROMPT, _hook_system_prompt, priority=20)
     ctx.add_hook(HookEvent.PRE_RUN, _hook_pre_run, priority=20)

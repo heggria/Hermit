@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from hermit.kernel.context.memory.governance import MemoryGovernanceService
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -37,6 +37,7 @@ class BeliefService:
         epistemic_origin: str = "observation",
         freshness_class: str | None = None,
         validation_basis: str | None = None,
+        structured_assertion: dict[str, Any] | None = None,
     ) -> BeliefRecord:
         return self.store.create_belief(
             task_id=task_id,
@@ -45,6 +46,7 @@ class BeliefService:
             scope_ref=scope_ref,
             category=category,
             claim_text=content,
+            structured_assertion=structured_assertion,
             confidence=confidence,
             trust_tier=trust_tier,
             evidence_refs=evidence_refs,
@@ -122,6 +124,8 @@ class MemoryRecordService:
             )
             return duplicate_record
         supersedes = [record.claim_text for record in superseded_records]
+        belief_assertion = dict(belief.structured_assertion)
+        importance = int(belief_assertion.pop("importance", 5))
         memory = self.store.create_memory_record(
             task_id=belief.task_id,
             conversation_id=conversation_id,
@@ -129,7 +133,7 @@ class MemoryRecordService:
             claim_text=belief.claim_text,
             structured_assertion={
                 **dict(classification.structured_assertion or {}),
-                **dict(belief.structured_assertion),
+                **belief_assertion,
             },
             scope_kind=classification.scope_kind,
             scope_ref=classification.scope_ref,
@@ -149,6 +153,7 @@ class MemoryRecordService:
             validation_basis=f"reconciliation:{resolved_reconciliation_ref}",
             last_validated_at=time.time(),
             learned_from_reconciliation_ref=resolved_reconciliation_ref,
+            importance=importance,
         )
         self.store.update_belief(
             belief.belief_id,

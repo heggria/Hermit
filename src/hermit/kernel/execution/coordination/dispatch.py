@@ -38,6 +38,18 @@ class KernelDispatchService:
         )
         self._futures: dict[concurrent.futures.Future[Any], str] = {}
         self._lock = threading.Lock()
+        self._kind_handlers: dict[str, Any] = {}
+
+    def register_kind_handler(self, kind: str, handler: Any) -> None:
+        """Register a custom handler for a step kind.
+
+        When the dispatch loop claims a step attempt whose step has the given
+        ``kind``, it will call ``handler(step_attempt_id)`` instead of the
+        default ``process_claimed_attempt`` agent loop.  This allows non-LLM
+        tasks (e.g. memory promotion) to reuse the same thread pool, heartbeat,
+        and recovery infrastructure.
+        """
+        self._kind_handlers[kind] = handler
 
     def start(self) -> None:
         self._recover_interrupted_attempts()
@@ -128,6 +140,21 @@ class KernelDispatchService:
                             },
                         )
 
+    def _resolve_handler(self, step_attempt_id: str) -> Any:
+        """Return the handler for the given step attempt based on step kind."""
+        if not self._kind_handlers:
+            return self._runner.process_claimed_attempt
+        try:
+            store = self._runner.task_controller.store
+            attempt = store.get_step_attempt(step_attempt_id)
+            if attempt is not None:
+                step = store.get_step(attempt.step_id)
+                if step is not None and step.kind in self._kind_handlers:
+                    return self._kind_handlers[step.kind]
+        except Exception:
+            log.warning("kind_handler_resolve_failed", step_attempt_id=step_attempt_id)
+        return self._runner.process_claimed_attempt
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             self._reap_futures()
@@ -137,8 +164,9 @@ class KernelDispatchService:
                 attempt = self._runner.task_controller.store.claim_next_ready_step_attempt()
                 if attempt is None:
                     break
+                handler = self._resolve_handler(attempt.step_attempt_id)
                 future = self._executor.submit(
-                    self._runner.process_claimed_attempt,
+                    handler,
                     attempt.step_attempt_id,
                 )
                 with self._lock:

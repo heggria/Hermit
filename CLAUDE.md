@@ -42,8 +42,8 @@ the maximum number of independent tasks and submit them all at once.**
 - **Decompose aggressively**: A feature request is not one task — it's research + implementation
   + tests + docs, often with further splits per module. If two pieces don't depend on each
   other, they are separate tasks.
-- **Submit in bulk**: Call `hermit_submit_task` multiple times in a single response. Hermit
-  runs them concurrently under independent governed pipelines.
+- **Submit in bulk**: Call `hermit_submit(tasks=[...])` or multiple `hermit_submit()` calls
+  in a single response. Hermit runs them concurrently under independent governed pipelines.
 - **Monitor with await**: Use `hermit_await_completion(task_ids=[...], timeout=120)` to block
   until tasks finish. Returns as soon as any task completes — no polling loops needed.
   For remaining tasks, chain another `hermit_await_completion` call.
@@ -54,15 +54,15 @@ Example — user says "refactor the memory module and add tests":
 
 ```
 # Submit in parallel — these are independent
-hermit_submit_task("Refactor src/hermit/kernel/context/memory/ ...", policy_profile="autonomous")
-hermit_submit_task("Add unit tests for memory retrieval ...", policy_profile="autonomous")
-hermit_submit_task("Add integration tests for memory governance ...", policy_profile="autonomous")
+hermit_submit(description="Refactor src/hermit/kernel/context/memory/ ...", policy_profile="autonomous")
+hermit_submit(description="Add unit tests for memory retrieval ...", policy_profile="autonomous")
+hermit_submit(description="Add integration tests for memory governance ...", policy_profile="autonomous")
 ```
 
 NOT:
 ```
 # Wrong — one giant task that runs sequentially inside Hermit
-hermit_submit_task("Refactor memory module AND add all tests ...", policy_profile="autonomous")
+hermit_submit(description="Refactor memory module AND add all tests ...", policy_profile="autonomous")
 ```
 
 ### Principles

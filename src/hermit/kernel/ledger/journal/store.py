@@ -17,6 +17,7 @@ from hermit.kernel.execution.competition.store import CompetitionStoreMixin
 from hermit.kernel.ledger.events.store_ledger import KernelLedgerStoreMixin
 from hermit.kernel.ledger.journal.store_records import KernelStoreRecordMixin
 from hermit.kernel.ledger.journal.store_scheduler import KernelSchedulerStoreMixin
+from hermit.kernel.ledger.journal.store_self_iterate import SelfIterateStoreMixin
 from hermit.kernel.ledger.journal.store_support import canonical_json as _canonical_json
 from hermit.kernel.ledger.journal.store_support import (
     canonical_json_from_raw as _canonical_json_from_raw,
@@ -28,7 +29,7 @@ from hermit.kernel.ledger.projections.store_projection import KernelProjectionSt
 from hermit.kernel.signals.store import SignalStoreMixin
 from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 
-_SCHEMA_VERSION = "17"
+_SCHEMA_VERSION = "18"
 _HASH_CACHE_MISS = object()  # sentinel for event-hash cache
 _MIGRATABLE_SCHEMA_VERSIONS = {
     "5",
@@ -43,6 +44,7 @@ _MIGRATABLE_SCHEMA_VERSIONS = {
     "14",
     "15",
     "16",
+    "17",
     _SCHEMA_VERSION,
 }
 _KNOWN_KERNEL_TABLES = {
@@ -81,6 +83,8 @@ _KNOWN_KERNEL_TABLES = {
     "hash_chain_checkpoints",
     "blackboard_entries",
     "observation_tickets",
+    "spec_backlog",
+    "iteration_lessons",
 }
 
 
@@ -98,6 +102,7 @@ class KernelStore(
     SignalStoreMixin,
     CompetitionStoreMixin,
     DelegationStoreMixin,
+    SelfIterateStoreMixin,
 ):
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -946,14 +951,23 @@ class KernelStore(
             self._ensure_column("memory_records", "supersession_reason", "TEXT")
             self._ensure_column("memory_records", "learned_from_reconciliation_ref", "TEXT")
             self._get_conn().execute(
-                "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue ON step_attempts(status, queue_priority DESC, started_at ASC)"
+                "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue "
+                "ON step_attempts(status, queue_priority DESC, started_at ASC)"
             )
             # Phase 4: composite index for claim_next_ready_step_attempt NOT EXISTS subquery.
             self._get_conn().execute(
                 "CREATE INDEX IF NOT EXISTS idx_steps_task_status ON steps(task_id, status)"
             )
+            # Phase 6: covering index for the claim NOT EXISTS subquery on active attempts.
+            self._get_conn().execute(
+                "CREATE INDEX IF NOT EXISTS idx_step_attempts_active "
+                "ON step_attempts(step_id, status)"
+            )
+            # Phase 6: task status index for claim JOIN filter.
+            self._get_conn().execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
             self._ensure_column("memory_records", "freshness_class", "TEXT")
             self._ensure_column("memory_records", "last_accessed_at", "REAL")
+            self._ensure_column("memory_records", "importance", "INTEGER DEFAULT 5")
             self._get_conn().executescript(
                 """
                 CREATE TABLE IF NOT EXISTS memory_embeddings (
@@ -1011,11 +1025,23 @@ class KernelStore(
                     checkpointed_at REAL NOT NULL,
                     PRIMARY KEY (task_key)
                 );
+                CREATE TABLE IF NOT EXISTS entity_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity TEXT NOT NULL,
+                    memory_id TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    UNIQUE(entity, memory_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_entity_links_entity
+                    ON entity_links(entity);
+                CREATE INDEX IF NOT EXISTS idx_entity_links_memory
+                    ON entity_links(memory_id);
                 """
             )
             self._init_signal_schema()
             self._init_competition_schema()
             self._init_delegation_schema()
+            self._init_self_iterate_schema()
             self._migrate_memory_schema_v4()
             self._migrate_dag_schema_v11()
             self._migrate_kernel_convergence_v6()
@@ -1026,6 +1052,7 @@ class KernelStore(
             self._migrate_blackboard_v15()
             self._migrate_observation_tickets_v16()
             self._migrate_budget_v17()
+            self._migrate_self_iterate_v18()
             self._backfill_event_hash_chain()
             self._get_conn().execute(
                 """
@@ -1281,6 +1308,10 @@ class KernelStore(
         """Add budget tracking columns to tasks table."""
         self._ensure_column("tasks", "budget_tokens_used", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("tasks", "budget_tokens_limit", "INTEGER")
+
+    def _migrate_self_iterate_v18(self) -> None:
+        """Create spec_backlog and iteration_lessons tables (safety net for existing DBs)."""
+        self._init_self_iterate_schema()
 
     # ------------------------------------------------------------------
     # Blackboard CRUD
@@ -1675,6 +1706,43 @@ class KernelStore(
         with self._event_chain_lock, conn:
             conn.executescript(ddl)
 
+    def create_entity_links(self, memory_id: str, entities: list[str]) -> None:
+        """Store entity→memory associations in the entity_links table."""
+        if not entities:
+            return
+        now = __import__("time").time()
+        conn = self._get_conn()
+        with conn:
+            for entity in entities:
+                entity = entity.strip()
+                if not entity:
+                    continue
+                conn.execute(
+                    "INSERT OR IGNORE INTO entity_links (entity, memory_id, created_at) VALUES (?, ?, ?)",
+                    (entity.lower(), memory_id, now),
+                )
+
+    def find_memories_by_entity(self, entity: str) -> list[str]:
+        """Find memory IDs linked to a given entity."""
+        rows = (
+            self._get_conn()
+            .execute(
+                "SELECT memory_id FROM entity_links WHERE entity = ? ORDER BY created_at DESC",
+                (entity.lower().strip(),),
+            )
+            .fetchall()
+        )
+        return [str(row["memory_id"]) for row in rows]
+
+    def find_memories_by_entities(self, entities: list[str]) -> dict[str, list[str]]:
+        """Find memory IDs for multiple entities. Returns {entity: [memory_ids]}."""
+        result: dict[str, list[str]] = {}
+        for entity in entities:
+            mids = self.find_memories_by_entity(entity)
+            if mids:
+                result[entity.lower().strip()] = mids
+        return result
+
     def _infer_principal_type(self, value: str) -> str:
         normalized = value.strip().lower()
         if normalized in {"user", "operator", "human"}:
@@ -1745,8 +1813,8 @@ class KernelStore(
         if not raw:
             raw = "kernel"
         # Phase 1: cache hit fast path — actor set is tiny and mapping is immutable.
-        with self._principal_id_cache_lock:
-            cached = self._principal_id_cache.get(raw)
+        # GIL guarantees dict.get is atomic; lock only needed on cache miss (write).
+        cached = self._principal_id_cache.get(raw)
         if cached is not None:
             return cached
         inferred_type = principal_type or self._infer_principal_type(raw)
@@ -1894,12 +1962,13 @@ class KernelStore(
         """
         if task_id is None:
             return self._event_chain_lock
-        with self._task_chain_locks_guard:
-            lock = self._task_chain_locks.get(task_id)
-            if lock is None:
-                lock = threading.Lock()
-                self._task_chain_locks[task_id] = lock
+        # Fast path: GIL-safe dict.get avoids guard lock on the common case.
+        lock = self._task_chain_locks.get(task_id)
+        if lock is not None:
             return lock
+        # Slow path: only taken once per task_id.
+        with self._task_chain_locks_guard:
+            return self._task_chain_locks.setdefault(task_id, threading.Lock())
 
     def _latest_task_event_hash(self, task_id: str | None) -> str | None:
         if not task_id:

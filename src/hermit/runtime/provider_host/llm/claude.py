@@ -15,7 +15,6 @@ from hermit.runtime.provider_host.shared.contracts import (
 )
 from hermit.runtime.provider_host.shared.images import prepare_messages_for_provider
 from hermit.runtime.provider_host.shared.messages import (
-    append_internal_tool_context,
     normalize_block,
     split_internal_tool_context,
 )
@@ -46,16 +45,37 @@ def _set_cache_on_message(messages: list[dict[str, Any]], idx: int) -> None:
 def _inject_cache_control(
     messages: list[dict[str, Any]],
     system_prompt: str | None,
+    *,
+    internal_contexts: list[str] | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     system_payload: Any = system_prompt
     if system_prompt:
-        system_payload = [
+        # Split system prompt into stable base (cacheable) and dynamic contexts (non-cached).
+        # This allows Anthropic to cache the stable prefix across calls even when
+        # internal tool contexts change.
+        blocks: list[dict[str, Any]] = [
             {
                 "type": "text",
                 "text": system_prompt,
                 "cache_control": _CACHE_CONTROL_EPHEMERAL,
             }
         ]
+        if internal_contexts:
+            from hermit.runtime.provider_host.shared.messages import (
+                _INTERNAL_TOOL_CONTEXT_PREAMBLE,
+            )
+
+            internal_section = "\n\n".join(
+                [
+                    "<internal_tool_contexts>",
+                    _INTERNAL_TOOL_CONTEXT_PREAMBLE,
+                    "",
+                    *internal_contexts,
+                    "</internal_tool_contexts>",
+                ]
+            )
+            blocks.append({"type": "text", "text": internal_section})
+        system_payload = blocks
 
     if not messages:
         return system_payload, messages
@@ -156,10 +176,10 @@ class ClaudeProvider(Provider):
         system_prompt = (
             request.system_prompt if request.system_prompt is not None else self.system_prompt
         )
-        system_prompt = append_internal_tool_context(system_prompt, internal_contexts)
         system_payload, cached_messages = _inject_cache_control(
             list(prepared_messages[:-1]),
             system_prompt,
+            internal_contexts=internal_contexts,
         )
         cached_messages = cached_messages + [prepared_messages[-1]] if prepared_messages else []
         if request.thinking_budget > 0:

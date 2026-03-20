@@ -55,7 +55,7 @@ Keep it under 500 words. Hermit reads the codebase itself.
 ### 2. Submit
 
 ```
-hermit_submit_task(
+hermit_submit(
   description="<task description>",
   priority="normal",
   policy_profile="autonomous"
@@ -128,10 +128,10 @@ of independent tasks and submit them all at once.**
 
 ```
 # All independent — submit in ONE response
-hermit_submit_task(description="Refactor error handling in memory/retrieval.py", policy_profile="autonomous")
-hermit_submit_task(description="Add unit tests for memory quality scoring", policy_profile="autonomous")
-hermit_submit_task(description="Fix lint errors in kernel/context/", policy_profile="autonomous")
-hermit_submit_task(description="Update docstrings in memory/governance.py", policy_profile="autonomous")
+hermit_submit(description="Refactor error handling in memory/retrieval.py", policy_profile="autonomous")
+hermit_submit(description="Add unit tests for memory quality scoring", policy_profile="autonomous")
+hermit_submit(description="Fix lint errors in kernel/context/", policy_profile="autonomous")
+hermit_submit(description="Update docstrings in memory/governance.py", policy_profile="autonomous")
 ```
 
 ### Monitor pattern
@@ -192,6 +192,37 @@ waits at join points, handles failure cascade, and produces a unified proof bund
 - Submit tasks one at a time across multiple responses
 - Under-decompose — 3 tasks is almost always better than 1
 - Use DAG when tasks are truly independent — overhead without benefit
+
+## Self-iteration (autonomous improvement)
+
+For continuous, goal-driven improvement tasks, use `hermit_self_iterate` instead of manual delegation:
+
+```
+hermit_self_iterate(
+  iterations=[
+    {"goal": "Improve error handling in store module", "priority": "high"},
+    {"goal": "Add missing type annotations in utils/", "priority": "normal"}
+  ]
+)
+```
+
+**When to use self-iteration vs manual delegation:**
+
+| Use case | Tool | Why |
+|----------|------|-----|
+| One-off task with specific instructions | `hermit_submit_task` | Direct control over what gets done |
+| Multi-step task with dependencies | `hermit_submit_dag_task` | Step ordering and join strategies |
+| Goal-driven improvement (research → plan → implement → review → learn) | `hermit_self_iterate` | Full autonomous pipeline with feedback loops |
+| Continuous code quality improvement | `hermit_self_iterate` | Auto-spawns follow-up specs from lessons learned |
+
+**Monitor self-iteration:**
+```
+hermit_spec_queue(action="list", filters={"status": "pending", "limit": 20})
+```
+
+Self-iteration runs a 10-phase pipeline (PENDING → RESEARCHING → GENERATING_SPEC → SPEC_APPROVAL → DECOMPOSING → IMPLEMENTING → REVIEWING → BENCHMARKING → LEARNING → COMPLETED) with automatic retry on failure and lesson-driven follow-up iterations.
+
+See the `hermit-iterate` skill for full self-iteration details.
 
 ## Error handling
 

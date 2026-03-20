@@ -114,7 +114,7 @@ class MessageCompiler:
             run_opts["planning_mode"] = True
             prompt = prompt + _t("kernel.planner.mode.prompt", pm=self.pm)
 
-        full_prompt = time_ctx + prompt
+        full_prompt = prompt + "\n\n" + time_ctx
         task_goal = (
             _strip_internal_markup(text)
             or _strip_internal_markup(full_prompt)

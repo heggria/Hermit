@@ -332,13 +332,13 @@ def test_kernel_store_accepts_schema_version_5_for_additive_migration(tmp_path: 
 
     reopened = KernelStore(db_path)
     try:
-        assert reopened.schema_version() == "17"
+        assert reopened.schema_version() == "18"
         with sqlite3.connect(db_path) as conn:
             row = conn.execute(
                 "SELECT value FROM kernel_meta WHERE key = 'schema_version'"
             ).fetchone()
         assert row is not None
-        assert row[0] == "17"
+        assert row[0] == "18"
     finally:
         reopened.close()
 

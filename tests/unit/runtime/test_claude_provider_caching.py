@@ -137,8 +137,11 @@ def test_claude_payload_moves_internal_tool_context_into_system_prompt() -> None
 
     payload = provider._payload(request)
 
-    assert "secret" in payload["system"][0]["text"]
-    assert "do not quote" in payload["system"][0]["text"]
+    # Internal tool context is a separate system block to preserve cache alignment.
+    assert len(payload["system"]) == 2
+    assert "secret" not in payload["system"][0]["text"]
+    assert "secret" in payload["system"][1]["text"]
+    assert "do not quote" in payload["system"][1]["text"]
     assert payload["messages"][1]["content"][0]["content"] == "[internal context loaded]"
 
 

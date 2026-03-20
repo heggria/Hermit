@@ -111,11 +111,11 @@ class TestPolicyFor:
         assert policy.scope_kind == "workspace"
         assert policy.static_injection is True
 
-    def test_active_task(self) -> None:
+    def test_active_task_deprecated_falls_back_to_default(self) -> None:
         svc = MemoryGovernanceService()
         policy = svc.policy_for("active_task")
-        assert policy.retention_class == "task_state"
-        assert policy.ttl_seconds is not None
+        # active_task is deprecated; normalize_category maps it to "other"
+        assert policy.retention_class == "volatile_fact"
 
     def test_pitfall_warning(self) -> None:
         svc = MemoryGovernanceService()
@@ -207,10 +207,13 @@ class TestAnalyzeClaim:
         signals = svc.analyze_claim(category="user_preference", claim_text="generic text")
         assert signals.stable_preference is True
 
-    def test_analyze_active_task_category(self) -> None:
+    def test_analyze_active_task_category_deprecated(self) -> None:
+        """active_task is deprecated and mapped to 'other'; task_state signal
+        now depends only on keyword matching, not category name."""
         svc = MemoryGovernanceService()
         signals = svc.analyze_claim(category="active_task", claim_text="generic text")
-        assert signals.task_state is True
+        # No task_state keywords in "generic text" → task_state is False
+        assert signals.task_state is False
 
     def test_analyze_matched_signals_populated(self) -> None:
         svc = MemoryGovernanceService()
@@ -233,10 +236,12 @@ class TestResolveCategory:
         signals = ClaimSignals(stable_preference=True, project_convention=True)
         assert svc.resolve_category(category="other", signals=signals) == "user_preference"
 
-    def test_task_state_without_convention(self) -> None:
+    def test_task_state_without_convention_deprecated(self) -> None:
+        """task_state signal no longer resolves to active_task (deprecated)."""
         svc = MemoryGovernanceService()
         signals = ClaimSignals(task_state=True)
-        assert svc.resolve_category(category="other", signals=signals) == "active_task"
+        # active_task is deprecated; task_state signal alone falls through to original category
+        assert svc.resolve_category(category="other", signals=signals) == "other"
 
     def test_tooling_without_convention(self) -> None:
         svc = MemoryGovernanceService()

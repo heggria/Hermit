@@ -901,6 +901,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         invalidation_reason: str | None = None,
         invalidated_at: float | None = None,
         expires_at: float | None = None,
+        importance: int = 5,
     ) -> MemoryRecord:
         from hermit.kernel.context.memory.governance import MemoryGovernanceService
 
@@ -944,8 +945,8 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     validation_basis, last_validated_at, supersession_reason,
                     learned_from_reconciliation_ref, supersedes_json, supersedes_memory_ids_json,
                     superseded_by_memory_id, source_belief_ref, invalidation_reason,
-                    invalidated_at, expires_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    invalidated_at, expires_at, importance, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     memory_id,
@@ -975,6 +976,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     normalized_reason,
                     invalidated_at,
                     expires_at,
+                    max(1, min(10, importance)),
                     created_at,
                     created_at,
                 ),
@@ -1011,6 +1013,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     "invalidation_reason": normalized_reason,
                     "invalidated_at": invalidated_at,
                     "expires_at": expires_at,
+                    "importance": max(1, min(10, importance)),
                     "created_at": created_at,
                     "updated_at": created_at,
                 },

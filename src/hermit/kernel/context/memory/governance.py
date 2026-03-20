@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 import time
 from collections.abc import Callable
@@ -19,14 +20,17 @@ _TASK_STATE_TTL_SECONDS = 7 * 24 * 60 * 60
 _VOLATILE_FACT_TTL_SECONDS = 24 * 60 * 60
 
 
+@functools.cache
 def _signal_tokens(key: str) -> tuple[str, ...]:
     return tuple(tr_list_all_locales(key))
 
 
-def _claim_stop_tokens() -> set[str]:
-    return set(tr_list_all_locales("kernel.nlp.claim_stop_tokens"))
+@functools.cache
+def _claim_stop_tokens() -> frozenset[str]:
+    return frozenset(tr_list_all_locales("kernel.nlp.claim_stop_tokens"))
 
 
+@functools.cache
 def _subject_hint_patterns() -> tuple[tuple[str, str], ...]:
     raw = tr_list_all_locales("kernel.nlp.subject_hint_patterns")
     result: list[tuple[str, str]] = []
@@ -92,15 +96,12 @@ _CATEGORY_POLICIES: dict[str, MemoryCategoryPolicy] = {
     "tooling_environment": MemoryCategoryPolicy(
         "tooling_environment", "workspace", static_injection=True, retrieval_allowed=True
     ),
-    "active_task": MemoryCategoryPolicy(
-        "task_state",
+    "tech_decision": MemoryCategoryPolicy(
+        "volatile_fact",
         "conversation",
         static_injection=False,
         retrieval_allowed=True,
-        ttl_seconds=_TASK_STATE_TTL_SECONDS,
-    ),
-    "tech_decision": MemoryCategoryPolicy(
-        "volatile_fact", "conversation", static_injection=False, retrieval_allowed=True
+        ttl_seconds=3 * 24 * 60 * 60,  # 3 days — decisions decay but slower than noise
     ),
     "other": MemoryCategoryPolicy(
         "volatile_fact",
@@ -232,7 +233,7 @@ class MemoryGovernanceService:
             sensitive=bool(matched_signals["sensitive"]),
             stable_preference=cat == "user_preference"
             or bool(matched_signals["stable_preference"]),
-            task_state=cat == "active_task" or bool(matched_signals["task_state"]),
+            task_state=bool(matched_signals["task_state"]),
             project_convention=cat == "project_convention"
             or bool(matched_signals["project_convention"]),
             tooling_environment=cat == "tooling_environment"
@@ -246,8 +247,6 @@ class MemoryGovernanceService:
         cat = normalize_category(category)
         if signals.stable_preference:
             return "user_preference"
-        if signals.task_state and not signals.project_convention:
-            return "active_task"
         if signals.tooling_environment and not signals.project_convention:
             return "tooling_environment"
         if signals.tooling_environment and cat in {"other", "tooling_environment", "tech_decision"}:

@@ -381,6 +381,9 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             retention_class=str(row["retention_class"] or "volatile_fact"),
             status=str(row["status"]),
             confidence=float(row["confidence"]),
+            importance=int(row["importance"])
+            if "importance" in keys and row["importance"] is not None
+            else 5,
             trust_tier=str(row["trust_tier"]),
             evidence_refs=list(json_loads(row["evidence_refs_json"])),
             memory_kind=str(row["memory_kind"] or "durable_fact"),

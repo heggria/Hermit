@@ -23,9 +23,11 @@ log = structlog.get_logger()
 
 _MAX_TRANSCRIPT_CHARS = 16000
 _MAX_MSG_CHARS = 800
-_CHECKPOINT_MIN_CHARS = 300
+_MAX_USER_MSG_CHARS = 2000  # Higher limit for user messages to preserve preference signals
+_CHECKPOINT_MIN_CHARS = 800
 _CHECKPOINT_MIN_MESSAGES = 6
-_CHECKPOINT_MIN_USER_MESSAGES = 2
+_CHECKPOINT_MIN_USER_MESSAGES = 3
+_IMPORTANCE_THRESHOLD = 5  # Discard memories with importance < 5
 
 _explicit_memory_re_cache: re.Pattern[str] | None = None
 _decision_signal_re_cache: re.Pattern[str] | None = None
@@ -232,20 +234,38 @@ def extract_memory_payload(
 
     used_keywords: set[str] = set(data.get("used_keywords", []))
     new_entries: list[MemoryEntry] = []
+    skipped_low_importance = 0
     for item in data.get("new_memories", []):
         content = item.get("content", "").strip()
-        if content:
-            new_entries.append(
-                MemoryEntry(
-                    category=item.get("category", "other"),
-                    content=content,
-                    confidence=_infer_confidence(content),
-                )
+        if not content:
+            continue
+        importance = int(item.get("importance", 5))
+        importance = max(1, min(10, importance))
+        if importance < _IMPORTANCE_THRESHOLD:
+            skipped_low_importance += 1
+            continue
+        raw_entities = item.get("entities", [])
+        entities = (
+            [str(e).strip() for e in raw_entities if str(e).strip()]
+            if isinstance(raw_entities, list)
+            else []
+        )
+        if not entities:
+            entities = _extract_entities_fallback(content)
+        new_entries.append(
+            MemoryEntry(
+                category=item.get("category", "other"),
+                content=content,
+                score=importance,
+                confidence=_infer_confidence(content, importance),
+                entities=entities,
             )
+        )
     log.info(
         "memory_extraction_result",
         used_keywords=len(used_keywords),
         new_entries=len(new_entries),
+        skipped_low_importance=skipped_low_importance,
         categories=len({entry.category for entry in new_entries}),
     )
     return {"used_keywords": used_keywords, "new_entries": new_entries}
@@ -275,12 +295,16 @@ def should_checkpoint(messages: list[dict[str, Any]]) -> tuple[bool, str]:
 
 
 def format_transcript(messages: list[dict[str, Any]]) -> str:
-    """Format conversation messages into a transcript string."""
+    """Format conversation messages into a transcript string.
+
+    User messages get a higher character budget (_MAX_USER_MSG_CHARS) to
+    preserve preference signals that would otherwise be truncated.
+    """
     lines: list[str] = []
     total = 0
     for msg in messages:
         role = msg.get("role", "unknown")
-        text = _message_text(msg)
+        text = _message_text(msg, role_hint=role)
         if not text.strip():
             continue
         label = {"user": "User", "assistant": "Assistant"}.get(role, role)
@@ -304,13 +328,46 @@ def memory_entry_payload(entry: MemoryEntry) -> dict[str, Any]:
     }
 
 
-def _infer_confidence(content: str) -> float:
+def _extract_entities_fallback(text: str) -> list[str]:
+    """Extract likely entity names from text using simple heuristics."""
+    entities: list[str] = []
+    # File paths
+    for match in re.findall(r"(?:/[\w./-]+)", text):
+        if len(match) > 3:
+            entities.append(match)
+    # PascalCase or camelCase identifiers (likely class/tool/project names)
+    for match in re.findall(r"\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b", text):
+        entities.append(match)
+    # Quoted terms
+    for match in re.findall(r'["\u201c]([^"\u201d]{2,30})["\u201d]', text):
+        entities.append(match.strip())
+    return list(dict.fromkeys(entities))[:10]  # deduplicate, limit to 10
+
+
+def _infer_confidence(content: str, importance: int = 5) -> float:
+    """5-tier confidence calibration combining importance score with signal keywords."""
     strong_signal = tuple(tr_list_all_locales("kernel.nlp.confidence.strong_signal"))
-    if any(signal in content for signal in strong_signal):
-        return 0.8
-    if len(content) >= 20:
-        return 0.65
-    return 0.55
+    has_strong_signal = any(signal in content for signal in strong_signal)
+
+    # Base confidence from importance (primary signal)
+    if importance >= 9:
+        base = 0.90
+    elif importance >= 7:
+        base = 0.75
+    elif importance >= 5:
+        base = 0.60
+    else:
+        base = 0.45  # Should not reach here due to threshold gate
+
+    # Boost for strong signal keywords
+    if has_strong_signal:
+        base = min(base + 0.10, 0.95)
+
+    # Slight penalty for very short content (likely vague)
+    if len(content) < 15:
+        base = max(base - 0.10, 0.40)
+
+    return round(base, 2)
 
 
 def _pending_messages(
@@ -366,12 +423,14 @@ def _read_state(state_file: Path) -> dict[str, Any]:
     ).read()
 
 
-def _message_text(msg: dict[str, Any]) -> str:
+def _message_text(msg: dict[str, Any], *, role_hint: str = "") -> str:
+    role = role_hint or msg.get("role", "")
+    char_limit = _MAX_USER_MSG_CHARS if role == "user" else _MAX_MSG_CHARS
     content = msg.get("content", "")
     if isinstance(content, str):
-        return content[:_MAX_MSG_CHARS]
+        return content[:char_limit]
     if not isinstance(content, list):
-        return str(content)[:_MAX_MSG_CHARS] if content else ""
+        return str(content)[:char_limit] if content else ""
 
     parts: list[str] = []
     for raw_block in cast(list[Any], content):
@@ -380,7 +439,7 @@ def _message_text(msg: dict[str, Any]) -> str:
         block = cast(dict[str, Any], raw_block)
         btype = str(block.get("type", ""))
         if btype == "text":
-            parts.append(str(block.get("text", ""))[:_MAX_MSG_CHARS])
+            parts.append(str(block.get("text", ""))[:char_limit])
         elif btype == "tool_use":
             inp = json.dumps(block.get("input", {}), ensure_ascii=False)[:120]
             parts.append(f"[Tool: {block.get('name', '')}({inp})]")
@@ -390,7 +449,9 @@ def _message_text(msg: dict[str, Any]) -> str:
 
 
 def _collect_role_text(messages: list[dict[str, Any]], role: str) -> str:
-    return "\n".join(_message_text(msg) for msg in messages if msg.get("role") == role).strip()
+    return "\n".join(
+        _message_text(msg, role_hint=role) for msg in messages if msg.get("role") == role
+    ).strip()
 
 
 __all__ = [

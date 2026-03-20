@@ -442,8 +442,8 @@ def test_fused_id_not_in_memory_map_skipped(tmp_path: Path) -> None:
         svc = HybridRetrievalService()
         original_token_rank = svc._token_overlap_rank
 
-        def patched_rank(query, mems):
-            result = original_token_rank(query, mems)
+        def patched_rank(query, mems, **kwargs):
+            result = original_token_rank(query, mems, **kwargs)
             result.append("phantom-id-not-in-memories")
             return result
 

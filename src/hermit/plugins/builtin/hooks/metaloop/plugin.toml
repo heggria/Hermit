@@ -1,0 +1,29 @@
+[plugin]
+name = "metaloop"
+version = "0.1.0"
+description = "Self-iteration meta-loop orchestrator"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+
+[variables.metaloop_enabled]
+setting = "metaloop_enabled"
+env = ["HERMIT_METALOOP_ENABLED"]
+default = false
+description = "Enable the self-iteration meta-loop on serve"
+
+[variables.metaloop_poll_interval]
+setting = "metaloop_poll_interval"
+default = 5
+description = "Backlog poll interval in seconds"
+
+[variables.metaloop_max_retries]
+setting = "metaloop_max_retries"
+default = 2
+description = "Max retry attempts per iteration phase"
+
+[variables.metaloop_signal_poll_interval]
+setting = "metaloop_signal_poll_interval"
+default = 30
+description = "Signal-to-spec consumer poll interval in seconds"

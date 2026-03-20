@@ -1,0 +1,15 @@
+[plugin]
+name = "decompose"
+version = "0.1.0"
+description = "Intelligent task decomposition and spec generation"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+tools = "tools:register"
+
+[variables.decompose_enabled]
+setting = "decompose_enabled"
+env = ["HERMIT_DECOMPOSE_ENABLED"]
+default = false
+description = "Enable spec generation and task decomposition tools"

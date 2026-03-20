@@ -1,0 +1,14 @@
+[plugin]
+name = "quality"
+version = "0.1.0"
+description = "Governed code review and test skeleton generation"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+
+[variables.quality_enabled]
+setting = "quality_enabled"
+env = ["HERMIT_QUALITY_ENABLED"]
+default = false
+description = "Enable governed reviewer on dispatch results"

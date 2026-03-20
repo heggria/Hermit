@@ -146,8 +146,8 @@ class TestMcpTools:
     ) -> None:
         server, _store = server_with_store
         fn = self._get_tool_fn(server, "hermit_task_status")
-        result = fn(task_id="nonexistent")
-        assert result["error"] == "Task not found"
+        result = fn(task_ids=["nonexistent"])
+        assert result["tasks"][0]["error"] == "Task not found"
 
     def test_hermit_task_status_found(
         self, server_with_store: tuple[HermitMcpServer, KernelStore]
@@ -156,9 +156,9 @@ class TestMcpTools:
         store.ensure_conversation("c1", source_channel="test")
         task = store.create_task(conversation_id="c1", title="t", goal="g", source_channel="test")
         fn = self._get_tool_fn(server, "hermit_task_status")
-        result = fn(task_id=task.task_id)
-        assert result["task"]["task_id"] == task.task_id
-        assert "pending_approvals" in result
+        result = fn(task_ids=[task.task_id])
+        assert result["tasks"][0]["task"]["task_id"] == task.task_id
+        assert "pending_approvals" in result["tasks"][0]
 
     def test_hermit_list_tasks(
         self, server_with_store: tuple[HermitMcpServer, KernelStore]
@@ -175,8 +175,8 @@ class TestMcpTools:
     ) -> None:
         server, _store = server_with_store
         fn = self._get_tool_fn(server, "hermit_cancel_task")
-        result = fn(task_id="nonexistent")
-        assert result["error"] == "Task not found"
+        result = fn(task_ids=["nonexistent"])
+        assert result["results"][0]["error"] == "Task not found"
 
     def test_hermit_cancel_task_terminal_state(
         self, server_with_store: tuple[HermitMcpServer, KernelStore]
@@ -186,8 +186,8 @@ class TestMcpTools:
         task = store.create_task(conversation_id="c1", title="t1", goal="g1", source_channel="test")
         store.update_task_status(task.task_id, "completed")
         fn = self._get_tool_fn(server, "hermit_cancel_task")
-        result = fn(task_id=task.task_id)
-        assert "already in terminal" in result["error"]
+        result = fn(task_ids=[task.task_id])
+        assert "already in terminal" in result["results"][0]["error"]
 
     def test_hermit_cancel_task_success(
         self, server_with_store: tuple[HermitMcpServer, KernelStore]
@@ -196,8 +196,8 @@ class TestMcpTools:
         store.ensure_conversation("c1", source_channel="test")
         task = store.create_task(conversation_id="c1", title="t1", goal="g1", source_channel="test")
         fn = self._get_tool_fn(server, "hermit_cancel_task")
-        result = fn(task_id=task.task_id)
-        assert result["status"] == "cancelled"
+        result = fn(task_ids=[task.task_id])
+        assert result["results"][0]["status"] == "cancelled"
 
     def test_hermit_pending_approvals_empty(
         self, server_with_store: tuple[HermitMcpServer, KernelStore]
@@ -212,22 +212,20 @@ class TestMcpTools:
     ) -> None:
         server, _store = server_with_store
         fn = self._get_tool_fn(server, "hermit_approve")
-        result = fn(approval_id="nonexistent")
-        assert result["error"] == "Approval not found"
+        result = fn(approval_ids=["nonexistent"])
+        assert result["results"][0]["error"] == "Approval not found"
 
     def test_hermit_deny_not_found(
         self, server_with_store: tuple[HermitMcpServer, KernelStore]
     ) -> None:
         server, _store = server_with_store
         fn = self._get_tool_fn(server, "hermit_deny")
-        result = fn(approval_id="nonexistent")
-        assert result["error"] == "Approval not found"
+        result = fn(approval_ids=["nonexistent"])
+        assert result["results"][0]["error"] == "Approval not found"
 
-    def test_hermit_submit_task(
-        self, server_with_store: tuple[HermitMcpServer, KernelStore]
-    ) -> None:
+    def test_hermit_submit(self, server_with_store: tuple[HermitMcpServer, KernelStore]) -> None:
         server, _store = server_with_store
-        fn = self._get_tool_fn(server, "hermit_submit_task")
+        fn = self._get_tool_fn(server, "hermit_submit")
         result = fn(description="do something", priority="high", policy_profile="supervised")
         assert result["status"] == "accepted"
         server._runner.enqueue_ingress.assert_called_once()
@@ -237,5 +235,5 @@ class TestMcpTools:
     ) -> None:
         server, _store = server_with_store
         fn = self._get_tool_fn(server, "hermit_task_proof")
-        result = fn(task_id="nonexistent")
-        assert result["error"] == "Task not found"
+        result = fn(task_ids=["nonexistent"])
+        assert result["proofs"][0]["error"] == "Task not found"

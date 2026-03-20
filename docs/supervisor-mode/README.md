@@ -60,10 +60,11 @@ operations flow without approval friction.
 
 | Tool | Purpose |
 |------|---------|
-| `hermit_submit_task` | Submit a linear task for governed execution |
+| `hermit_submit` | Submit single or batch tasks for governed execution |
 | `hermit_submit_dag_task` | Submit a DAG task with parallel/dependent steps |
 | `hermit_task_status` | Get task status, events, and pending approvals |
 | `hermit_list_tasks` | List recent tasks |
+| `hermit_metrics` | Kernel health, governance, and task metrics |
 | `hermit_pending_approvals` | List all pending approval requests |
 | `hermit_approve` | Approve an approval request |
 | `hermit_deny` | Deny an approval request |
