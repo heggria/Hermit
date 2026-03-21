@@ -30,8 +30,10 @@ class TestTaskDecomposer:
         plan = decomposer.decompose(spec)
         assert isinstance(plan, DecompositionPlan)
         assert plan.spec_id == "test-spec-abc123"
-        # Should have: 1 review step (for criterion) + 1 final check
-        assert len(plan.steps) == 2
+        # Should have: 1 implement_goal step + 1 review step (for criterion) + 1 final check
+        assert len(plan.steps) == 3
+        assert plan.steps[0]["key"] == "implement_goal"
+        assert plan.steps[0]["kind"] == "execute"
         assert plan.steps[-1]["key"] == "final_check"
 
     def test_create_steps(self) -> None:

@@ -23,6 +23,7 @@ class TaskDecomposer:
     - Each file_plan entry with action='create' -> code step
     - Each file_plan entry with action='modify' -> code step
       (depends on create steps it might import from)
+    - If no file_plan entries, generate a primary execute step as fallback
     - Each acceptance_criterion -> review step (depends on all code steps)
     - Final 'make check' -> review step (depends on all review steps)
     """
@@ -43,7 +44,6 @@ class TaskDecomposer:
 
             deps: list[str] = []
             if action == "modify":
-                # Modify steps depend on all create steps (potential imports)
                 deps = list(create_step_keys)
 
             step = {
@@ -59,6 +59,25 @@ class TaskDecomposer:
 
             if action == "create":
                 create_step_keys.append(key)
+
+        # Phase 1b: if no file_plan entries, generate a primary execute step
+        # so the DAG always has at least one implementation step.
+        if not code_step_keys:
+            key = "implement_goal"
+            goal_title = spec.goal.split("\n")[0][:80].strip() or "(implement goal)"
+            step = {
+                "key": key,
+                "kind": "execute",
+                "title": goal_title,
+                "depends_on": [],
+                "metadata": {
+                    "goal": spec.goal[:500],
+                    "constraints": list(spec.constraints),
+                },
+            }
+            steps.append(step)
+            dependency_graph[key] = []
+            code_step_keys.append(key)
 
         # Phase 2: review steps from acceptance_criteria
         review_step_keys: list[str] = []

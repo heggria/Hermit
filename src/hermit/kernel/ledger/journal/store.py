@@ -35,7 +35,7 @@ from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 
 _SCHEMA_VERSION = "18"
 _HASH_CACHE_MISS = object()  # sentinel for event-hash cache
-MAX_CONNECTIONS = 32
+MAX_CONNECTIONS = 96
 _MIGRATABLE_SCHEMA_VERSIONS = {
     "5",
     "6",
@@ -181,14 +181,30 @@ class KernelStore(
         conn = getattr(self._local, "conn", None)
         if conn is None:
             with self._conn_lock:
+                # Prune dead connections from threads that have exited
+                alive = []
+                for c in self._all_conns:
+                    try:
+                        c.execute("SELECT 1")
+                        alive.append(c)
+                    except Exception:
+                        try:
+                            c.close()
+                        except Exception:
+                            pass
+                self._all_conns = alive
+
                 if len(self._all_conns) >= MAX_CONNECTIONS:
                     logging.getLogger(__name__).warning(
                         "Connection pool limit reached (%d); reusing least recently used connection.",
                         MAX_CONNECTIONS,
                     )
                     conn = self._all_conns[0]
-                    # Rotate to back so it becomes "most recently used"
                     self._all_conns.append(self._all_conns.pop(0))
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
                     self._local.conn = conn
                     return conn
                 conn = self._make_conn()

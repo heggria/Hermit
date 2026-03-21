@@ -315,20 +315,32 @@ class MetaLoopOrchestrator:
             phase="researching",
         )
 
-        # Run research pipeline
+        # Run research pipeline — prefer the globally initialized pipeline
+        # (set up at SERVE_START with all 4 strategies: codebase, web, doc,
+        # git_history).  Fall back to local instantiation if not available.
         from hermit.plugins.builtin.hooks.research.pipeline import ResearchPipeline
         from hermit.plugins.builtin.hooks.research.strategies import (
             CodebaseStrategy,
+            DocStrategy,
             GitHistoryStrategy,
+            WebStrategy,
+        )
+        from hermit.plugins.builtin.hooks.research.tools import (
+            _pipeline as global_pipeline,
         )
 
         workspace = self._workspace_root or ""
-        pipeline = ResearchPipeline(
-            [
-                CodebaseStrategy(workspace),
-                GitHistoryStrategy(workspace),
-            ]
-        )
+        if global_pipeline is not None:
+            pipeline = global_pipeline
+        else:
+            pipeline = ResearchPipeline(
+                [
+                    CodebaseStrategy(workspace),
+                    WebStrategy(enabled=True),
+                    DocStrategy(enabled=True),
+                    GitHistoryStrategy(workspace),
+                ]
+            )
         report = _run_async(pipeline.run(goal, hints))
 
         # Serialize report to metadata
@@ -724,17 +736,30 @@ class MetaLoopOrchestrator:
             for step in steps
         ]
         tc = self._runner.task_controller
-        result = tc.start_dag_task(
-            conversation_id=f"metaloop-{state.spec_id}",
-            goal=f"Implement spec {state.spec_id}",
-            source_channel="metaloop",
-            nodes=nodes,
-            policy_profile="autonomous",
-            workspace_root=self._workspace_root,
-        )
+        try:
+            result = tc.start_dag_task(
+                conversation_id=f"metaloop-{state.spec_id}",
+                goal=f"Implement spec {state.spec_id}",
+                source_channel="metaloop",
+                nodes=nodes,
+                policy_profile="autonomous",
+                workspace_root=self._workspace_root,
+            )
+        except Exception as exc:
+            log.exception(
+                "metaloop_dag_creation_failed",
+                spec_id=state.spec_id,
+                step_count=len(nodes),
+            )
+            return self._backlog.mark_failed(
+                state.spec_id,
+                error=f"DAG task creation failed for {len(nodes)} steps: "
+                f"{type(exc).__name__}: {exc}",
+                max_retries=self._max_retries,
+            )
         # start_dag_task may return a tuple (task, ...) or a single object
         task = result[0] if isinstance(result, tuple) else result
-        dag_task_id = task.task_id if hasattr(task, "task_id") else ""
+        dag_task_id = task.task_id if hasattr(task, "task_id") and task.task_id else None
         # Stay at IMPLEMENTING — poller will detect completion via timeout check.
         # on_subtask_complete is also called by the poller when the DAG task
         # reaches a terminal state (see _check_implementing_timeout).
@@ -763,6 +788,11 @@ class MetaLoopOrchestrator:
                 changed_files.append(path)
 
         if not changed_files:
+            self._update_metadata(
+                state.spec_id,
+                "acceptance_criteria_validation",
+                {"total": 0, "validated": 0, "skipped": True},
+            )
             return self._backlog.advance_phase(state.spec_id, IterationPhase.BENCHMARKING)
 
         try:
@@ -815,10 +845,61 @@ class MetaLoopOrchestrator:
         except Exception:
             log.exception("metaloop_review_error", spec_id=state.spec_id)
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.BENCHMARKING)
+        # --- Acceptance criteria validation ---
+        spec_data = metadata.get("generated_spec") or {}
+        criteria = spec_data.get("acceptance_criteria", [])
+        file_plan = spec_data.get("file_plan", [])
+        criteria_results: list[dict[str, object]] = []
 
-    def _handle_benchmarking(self, state: IterationState) -> IterationState | None:
-        entry = self._store.get_spec_entry(spec_id=state.spec_id)
+        for criterion in criteria:
+            if criterion is None:
+                continue
+            result: dict[str, object] = {"criterion": criterion, "validated": False}
+            criterion_lower = str(criterion).lower()
+
+            if "make check" in criterion_lower:
+                result["validated"] = True
+                result["method"] = "deferred_to_benchmark"
+            elif "new files" in criterion_lower or "created and importable" in criterion_lower:
+                plan_paths = {f.get("path", "") for f in file_plan if f.get("action") == "create"}
+                if not plan_paths:
+                    result["method"] = "unverifiable_no_file_plan"
+                else:
+                    found = plan_paths & set(changed_files)
+                    result["validated"] = bool(found)
+                    result["method"] = "file_existence_check"
+                    result["detail"] = f"expected={sorted(plan_paths)}, found={sorted(found)}"
+            elif "modified files" in criterion_lower:
+                plan_paths = {f.get("path", "") for f in file_plan if f.get("action") == "modify"}
+                if not plan_paths:
+                    result["method"] = "unverifiable_no_file_plan"
+                else:
+                    found = plan_paths & set(changed_files)
+                    result["validated"] = bool(found)
+                    result["method"] = "file_modification_check"
+            elif (
+                "approach validated" in criterion_lower
+                or "implementation follows" in criterion_lower
+            ):
+                result["validated"] = True
+                result["method"] = "research_approach_noted"
+            else:
+                result["method"] = "unverifiable_at_review"
+
+            criteria_results.append(result)
+
+        validated_count = sum(1 for r in criteria_results if r.get("validated"))
+        self._update_metadata(
+            state.spec_id,
+            "acceptance_criteria_validation",
+            {
+                "total": len(criteria_results),
+                "validated": validated_count,
+                "results": criteria_results,
+            },
+        )
+
+        return self._backlog.advance_phase(state.spec_id, IterationPhase.BENCHMARKING)
         if entry is None:
             return self._backlog.advance_phase(state.spec_id, IterationPhase.LEARNING)
         data = entry if isinstance(entry, dict) else entry.__dict__
@@ -1044,8 +1125,9 @@ class MetaLoopOrchestrator:
         1. Benchmark must pass (no regression detected)
         2. Review must pass (no blocking findings)
         3. No prior error recorded on the spec entry
-        4. Lessons should not contain 'mistake' category entries indicating
-           broken implementation
+        4. Lessons should not contain 'mistake' category entries
+        5. Acceptance criteria validation must meet minimum threshold
+        6. IterationKernel promotion gate (if available)
         """
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
@@ -1095,7 +1177,33 @@ class MetaLoopOrchestrator:
                 spec_id=state.spec_id,
             )
 
-        # 5. Try the IterationKernel.check_promotion_gate() if available
+        # 5. Acceptance criteria gate
+        _CRITERIA_VALIDATION_THRESHOLD = 0.5
+        criteria_validation = metadata.get("acceptance_criteria_validation") or {}
+        total_criteria = criteria_validation.get("total", 0)
+        validated_criteria = criteria_validation.get("validated", 0)
+        spec_criteria = (metadata.get("generated_spec") or {}).get("acceptance_criteria", [])
+        if total_criteria > 0:
+            validation_ratio = validated_criteria / total_criteria
+            if validation_ratio < _CRITERIA_VALIDATION_THRESHOLD:
+                rejection_reasons.append(
+                    f"Acceptance criteria insufficiently validated: "
+                    f"{validated_criteria}/{total_criteria} "
+                    f"({validation_ratio:.0%})"
+                )
+        elif spec_criteria and not criteria_validation.get("skipped"):
+            rejection_reasons.append(
+                f"Acceptance criteria validation was never run "
+                f"({len(spec_criteria)} criteria defined but no validation recorded)"
+            )
+        log.info(
+            "metaloop_criteria_gate",
+            spec_id=state.spec_id,
+            total=total_criteria,
+            validated=validated_criteria,
+        )
+
+        # 6. Try the IterationKernel.check_promotion_gate() if available
         kernel_gate_passed = False
         try:
             from hermit.kernel.execution.self_modify.iteration_kernel import (
