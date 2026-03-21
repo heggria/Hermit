@@ -137,12 +137,23 @@ class ApprovalService:
         ):
             return str(existing_resolution.get("receipt_ref"))
 
-        self.store.resolve_approval(
+        # Atomic CAS: only update if approval is still in the expected state.
+        # If another thread already resolved it, resolve_approval returns False.
+        updated = self.store.resolve_approval(
             approval_id,
             status=status,
             resolved_by=resolved_by,
             resolution=resolution,
+            expected_status="pending",
         )
+        if not updated:
+            log.info(
+                "approval.resolve_cas_miss",
+                approval_id=approval_id,
+                attempted_status=status,
+                current_status=current_status,
+            )
+            return None
         if (
             not self._governed_resolution
             or self.decisions is None
@@ -326,8 +337,12 @@ class ApprovalService:
             ids.append(aid)
         return ids
 
-    def approve_batch(self, batch_id: str, *, resolved_by: str = "user") -> list[str]:
+    def approve_batch(
+        self, batch_id: str, *, resolved_by: str = "user"
+    ) -> list[str] | dict[str, str]:
         """Approve all pending approvals sharing a batch_id."""
+        if not batch_id or not batch_id.strip():
+            return {"error": "batch_id must be non-empty"}
         approved: list[str] = []
         approvals = self.store.list_approvals(status="pending", limit=1000)
         for a in approvals:
@@ -472,7 +487,9 @@ class ApprovalTimeoutService:
                     task_id=approval.task_id,
                 )
 
-            self.store.resolve_approval(
+            # CAS guard: only deny if still pending (another thread may have
+            # approved it between the list query and now).
+            resolved = self.store.resolve_approval(
                 approval.approval_id,
                 status="denied",
                 resolved_by="system",
@@ -481,7 +498,15 @@ class ApprovalTimeoutService:
                     "mode": "denied",
                     "reason": "approval_timeout",
                 },
+                expected_status="pending",
             )
+            if not resolved:
+                log.info(
+                    "approval.timeout_cas_miss",
+                    approval_id=approval.approval_id,
+                    task_id=approval.task_id,
+                )
+                continue
 
             self.store.append_event(
                 event_type="approval.timed_out",

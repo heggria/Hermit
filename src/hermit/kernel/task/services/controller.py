@@ -1052,7 +1052,13 @@ class TaskController:
                         },
                     )
             except Exception:
-                pass  # Best-effort cleanup; must not break task finalization
+                import structlog
+
+                structlog.get_logger().warning(
+                    "finalize_result_lease_release_failed",
+                    task_id=ctx.task_id,
+                    exc_info=True,
+                )
 
         self.store.update_task_status(ctx.task_id, task_status, payload=payload)
         self._refresh_focus_after_task_status(ctx.conversation_id, ctx.task_id)
@@ -1138,7 +1144,16 @@ class TaskController:
         self.store.update_task_status(task_id, "paused")
         self._refresh_focus_after_task_status(task.conversation_id, task_id)
 
-    def cancel_task(self, task_id: str) -> None:
+    def cancel_task(self, task_id: str, *, _cascaded_from: str | None = None) -> list[str]:
+        """Cancel a task and recursively cascade cancellation to all descendants.
+
+        When *_cascaded_from* is set this is an internal recursive call triggered
+        by a parent cancellation — a ``task.cascade_cancelled`` audit event is
+        emitted instead of a plain cancellation.
+
+        Returns the list of task IDs that were cascade-cancelled (excludes the
+        root task itself and any children already in a terminal state).
+        """
         task = self.store.get_task(task_id)
         if task is None:
             raise KeyError(
@@ -1158,8 +1173,65 @@ class TaskController:
                 target="cancelled",
                 caller="cancel_task",
             )
+
+        # ── Depth-first cascade: cancel all non-terminal descendants first ──
+        cascade_cancelled: list[str] = []
+        children = self.store.list_child_tasks(parent_task_id=task_id)
+        for child in children:
+            if child.status in TERMINAL_TASK_STATUSES:
+                continue
+            # Recurse into grandchildren before cancelling the child itself.
+            grandchild_ids = self.cancel_task(child.task_id, _cascaded_from=task_id)
+            cascade_cancelled.extend(grandchild_ids)
+            cascade_cancelled.append(child.task_id)
+
+        # ── Release workspace leases for *this* task ──
+        if self._workspace_lease_service is not None:
+            try:
+                released = self._workspace_lease_service.release_all_for_task(task_id)
+                if released:
+                    self.store.append_event(
+                        event_type="workspace.task_terminal_cleanup",
+                        entity_type="task",
+                        entity_id=task_id,
+                        task_id=task_id,
+                        actor="kernel",
+                        payload={
+                            "released_lease_ids": released,
+                            "task_status": "cancelled",
+                        },
+                    )
+            except Exception:
+                import structlog
+
+                structlog.get_logger().warning(
+                    "cancel_task_lease_release_failed",
+                    task_id=task_id,
+                    exc_info=True,
+                )
+
+        # ── Cancel the task itself ──
+        # Note: update_task_status will call _cascade_cancel_children internally,
+        # but all children are already terminal so that will be a no-op.
         self.store.update_task_status(task_id, "cancelled")
+
+        # ── Emit cascade audit event when this cancellation was triggered by a parent ──
+        if _cascaded_from is not None:
+            self.store.append_event(
+                event_type="task.cascade_cancelled",
+                entity_type="task",
+                entity_id=task_id,
+                task_id=task_id,
+                actor="kernel",
+                payload={
+                    "cascaded_from": _cascaded_from,
+                    "task_status": "cancelled",
+                    "child_cascade_count": len(cascade_cancelled),
+                },
+            )
+
         self._refresh_focus_after_task_status(task.conversation_id, task_id)
+        return cascade_cancelled
 
     def focus_task(self, conversation_id: str, task_id: str) -> IngressDecision | None:
         task = self.store.get_task(task_id)

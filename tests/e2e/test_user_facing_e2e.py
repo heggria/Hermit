@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -37,6 +38,41 @@ from hermit.runtime.provider_host.shared.contracts import (
     UsageMetrics,
 )
 from hermit.surfaces.cli.main import app
+
+# ---------------------------------------------------------------------------
+# Performance: stub out expensive claim probes that create many temp
+# KernelStore instances during task projection rebuilds.
+# ---------------------------------------------------------------------------
+
+
+def _fast_semantic_probe_results(*, include_expensive_probes: bool = True):
+    """Return pre-computed 'implemented' status for every semantic probe row.
+
+    The real ``_semantic_probe_results`` creates 13+ temporary KernelStore
+    instances, each initialising a full SQLite schema, running verification
+    queries, then cleaning up temp directories.  That adds ~0.8s per call.
+    These E2E tests exercise the governed execution path, not the claim
+    verification probes themselves, so stubbing is safe.
+    """
+    from hermit.kernel.artifacts.lineage.claim_manifest import CLAIM_ROWS
+
+    result: dict[str, dict[str, Any]] = {}
+    for row in CLAIM_ROWS:
+        result[str(row["id"])] = {"status": "implemented", "evaluation": "semantic_probe"}
+    for extra in ("reconciliation_coverage", "proof_chain_complete", "retry_stale_guard"):
+        result[extra] = {"status": "implemented", "evaluation": "semantic_probe"}
+    return result
+
+
+@pytest.fixture(autouse=True)
+def _stub_expensive_claim_probes():
+    """Patch the expensive semantic probe pipeline for all tests in this module."""
+    with patch(
+        "hermit.kernel.artifacts.lineage.claims._semantic_probe_results",
+        side_effect=_fast_semantic_probe_results,
+    ):
+        yield
+
 
 # ---------------------------------------------------------------------------
 # Test doubles

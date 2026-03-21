@@ -127,14 +127,16 @@ def _make_registry(workspace: Path) -> ToolRegistry:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def env(tmp_path: Path) -> dict[str, Any]:
+def _make_env(tmp_path: Path, *, use_memory: bool = True) -> dict[str, Any]:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     base_dir = tmp_path / ".hermit"
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    store = KernelStore(base_dir / "kernel" / "state.db")
+    if use_memory:
+        store = KernelStore(Path(":memory:"))
+    else:
+        store = KernelStore(base_dir / "kernel" / "state.db")
     artifacts = ArtifactStore(base_dir / "kernel" / "artifacts")
     controller = TaskController(store)
     registry = _make_registry(workspace)
@@ -157,6 +159,17 @@ def env(tmp_path: Path) -> dict[str, Any]:
         "registry": registry,
         "executor": executor,
     }
+
+
+@pytest.fixture
+def env(tmp_path: Path) -> dict[str, Any]:
+    return _make_env(tmp_path, use_memory=True)
+
+
+@pytest.fixture
+def env_file_backed(tmp_path: Path) -> dict[str, Any]:
+    """File-backed KernelStore for CLI tests that need disk-based DB access."""
+    return _make_env(tmp_path, use_memory=False)
 
 
 def _build_runner(
@@ -182,7 +195,9 @@ def _build_runner(
         plugin_manager=pm,
         task_controller=env["controller"],
     )
-    runner.start_background_services()
+    # Skip start_background_services() — synchronous runner.handle() does not
+    # require the dispatch/observation polling threads, and stopping them
+    # accounts for most of the test wall-clock time (thread.join timeouts).
     return runner, pm
 
 
@@ -192,12 +207,13 @@ def _build_runner(
 
 
 def test_cli_steer_and_steerings_commands(
-    env: dict[str, Any],
+    env_file_backed: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """hermit task steer issues a directive; hermit task steerings lists it."""
     from hermit.runtime.assembly.config import get_settings
 
+    env = env_file_backed
     base_dir: Path = env["base_dir"]
     store: KernelStore = env["store"]
     controller: TaskController = env["controller"]
@@ -240,12 +256,13 @@ def test_cli_steer_and_steerings_commands(
 
 
 def test_cli_steerings_empty(
-    env: dict[str, Any],
+    env_file_backed: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """hermit task steerings shows empty message when no directives exist."""
     from hermit.runtime.assembly.config import get_settings
 
+    env = env_file_backed
     monkeypatch.setenv("HERMIT_BASE_DIR", str(env["base_dir"]))
     get_settings.cache_clear()
 
@@ -531,8 +548,6 @@ def test_runner_handle_with_steering_in_compiled_context(env: dict[str, Any]) ->
     tasks = store.list_tasks(limit=10)
     assert len(tasks) >= 1
 
-    runner.stop_background_services()
-
 
 # ---------------------------------------------------------------------------
 # 6. Steering reject — rejected directives excluded from context
@@ -675,12 +690,13 @@ def test_steering_evidence_refs_roundtrip(env: dict[str, Any]) -> None:
 
 
 def test_cli_steer_with_evidence(
-    env: dict[str, Any],
+    env_file_backed: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """hermit task steer with --evidence flags stores evidence refs."""
     from hermit.runtime.assembly.config import get_settings
 
+    env = env_file_backed
     monkeypatch.setenv("HERMIT_BASE_DIR", str(env["base_dir"]))
     get_settings.cache_clear()
 

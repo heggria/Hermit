@@ -1484,12 +1484,33 @@ class HermitMcpServer:
                 return {"error": "Self-iterate schema not available"}
 
             try:
-                lessons = store.list_lessons_learned(
-                    applicable_to=applicable_to or [],
-                    categories=categories or [],
-                    iteration_ids=iteration_ids or [],
-                    limit=min(limit, 100),
-                )
+                capped_limit = min(limit, 100)
+                if applicable_to:
+                    # store.list_lessons_learned expects applicable_to: str | None,
+                    # but the MCP tool accepts list[str]. Query per domain and merge.
+                    all_lessons: list[Any] = []
+                    seen_ids: set[str] = set()
+                    for domain in applicable_to:
+                        batch = store.list_lessons_learned(
+                            applicable_to=domain,
+                            categories=categories if categories else None,
+                            iteration_ids=iteration_ids if iteration_ids else None,
+                            limit=capped_limit,
+                        )
+                        for lesson in batch:
+                            entry = lesson if isinstance(lesson, dict) else lesson.__dict__
+                            lid = entry.get("lesson_id", "")
+                            if lid not in seen_ids:
+                                seen_ids.add(lid)
+                                all_lessons.append(lesson)
+                    lessons = all_lessons[:capped_limit]
+                else:
+                    lessons = store.list_lessons_learned(
+                        applicable_to=None,
+                        categories=categories if categories else None,
+                        iteration_ids=iteration_ids if iteration_ids else None,
+                        limit=capped_limit,
+                    )
                 out_lessons: list[dict[str, Any]] = []
                 for lesson in lessons:
                     entry = lesson if isinstance(lesson, dict) else lesson.__dict__
@@ -1540,4 +1561,9 @@ class HermitMcpServer:
     def stop(self) -> None:
         if self._uv_server is not None:
             self._uv_server.should_exit = True
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                _log.warning("mcp_server_thread_still_alive")  # type: ignore[call-arg]
+            self._thread = None
         _log.info("mcp_server_stopped")  # type: ignore[call-arg]

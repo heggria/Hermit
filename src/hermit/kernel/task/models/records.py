@@ -368,6 +368,8 @@ class ExecutionContractRecord:
     rollback_expectation: str | None = None
     selected_template_ref: str | None = None
     superseded_by_contract_id: str | None = None
+    task_family: str | None = None
+    verification_requirements: dict[str, Any] | None = None
     created_at: float | None = None
     updated_at: float | None = None
 

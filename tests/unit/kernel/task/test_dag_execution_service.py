@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.services.dag_execution import DAGExecutionService
 
 
-def _setup(tmp_path: Path) -> tuple[KernelStore, DAGExecutionService]:
-    store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-1", source_channel="chat")
-    svc = DAGExecutionService(store)
-    return store, svc
+def _svc(store: KernelStore) -> DAGExecutionService:
+    return DAGExecutionService(store)
 
 
-def _mk_task(store: KernelStore) -> Any:
+def _mk_task(store: KernelStore, conv_id: str) -> Any:
     return store.create_task(
-        conversation_id="conv-1",
+        conversation_id=conv_id,
         title="DAG Task",
         goal="test",
         source_channel="chat",
@@ -28,29 +24,29 @@ def _mk_task(store: KernelStore) -> Any:
 # ── compute_task_status ─────────────────────────────────────────
 
 
-def test_compute_task_status_all_done_success(tmp_path: Path) -> None:
-    store, svc = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="succeeded")
-    store.update_step(step.step_id, status="succeeded")
+def test_compute_task_status_all_done_success(shared_store: KernelStore, conv_id: str) -> None:
+    svc = _svc(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="succeeded")
+    shared_store.update_step(step.step_id, status="succeeded")
     result = svc.compute_task_status(task_id=task.task_id, step_status="succeeded")
     assert result == "completed"
 
 
-def test_compute_task_status_all_done_failed(tmp_path: Path) -> None:
-    store, svc = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="failed")
-    store.update_step(step.step_id, status="failed")
+def test_compute_task_status_all_done_failed(shared_store: KernelStore, conv_id: str) -> None:
+    svc = _svc(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="failed")
+    shared_store.update_step(step.step_id, status="failed")
     result = svc.compute_task_status(task_id=task.task_id, step_status="failed")
     assert result == "failed"
 
 
-def test_compute_task_status_has_non_terminal(tmp_path: Path) -> None:
-    store, svc = _setup(tmp_path)
-    task = _mk_task(store)
-    store.create_step(task_id=task.task_id, kind="respond", status="running")
-    store.create_step(task_id=task.task_id, kind="respond", status="succeeded")
+def test_compute_task_status_has_non_terminal(shared_store: KernelStore, conv_id: str) -> None:
+    svc = _svc(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    shared_store.create_step(task_id=task.task_id, kind="respond", status="running")
+    shared_store.create_step(task_id=task.task_id, kind="respond", status="succeeded")
     result = svc.compute_task_status(task_id=task.task_id, step_status="succeeded")
     assert result == "running"
 
@@ -106,28 +102,32 @@ def test_compute_depth_unknown_step() -> None:
 # ── _handle_failure ─────────────────────────────────────────────
 
 
-def test_handle_failure_retries(tmp_path: Path) -> None:
-    store, svc = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="running", max_attempts=3)
-    attempt = store.create_step_attempt(
+def test_handle_failure_retries(shared_store: KernelStore, conv_id: str) -> None:
+    svc = _svc(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(
+        task_id=task.task_id, kind="respond", status="running", max_attempts=3
+    )
+    attempt = shared_store.create_step_attempt(
         task_id=task.task_id, step_id=step.step_id, status="running"
     )
-    store.update_step(step.step_id, status="failed")
-    store.update_step_attempt(attempt.step_attempt_id, status="failed")
+    shared_store.update_step(step.step_id, status="failed")
+    shared_store.update_step_attempt(attempt.step_attempt_id, status="failed")
     svc._handle_failure(task_id=task.task_id, step_id=step.step_id)
     # Should have created a retry attempt
-    step_after = store.get_step(step.step_id)
+    step_after = shared_store.get_step(step.step_id)
     assert step_after.attempt >= 1
 
 
-def test_handle_failure_propagates(tmp_path: Path) -> None:
-    store, svc = _setup(tmp_path)
-    task = _mk_task(store)
+def test_handle_failure_propagates(shared_store: KernelStore, conv_id: str) -> None:
+    svc = _svc(shared_store)
+    task = _mk_task(shared_store, conv_id)
     # max_attempts=1 means no retry
-    step = store.create_step(task_id=task.task_id, kind="respond", status="failed", max_attempts=1)
-    store.create_step_attempt(task_id=task.task_id, step_id=step.step_id, status="failed")
-    store.update_step(step.step_id, status="failed")
+    step = shared_store.create_step(
+        task_id=task.task_id, kind="respond", status="failed", max_attempts=1
+    )
+    shared_store.create_step_attempt(task_id=task.task_id, step_id=step.step_id, status="failed")
+    shared_store.update_step(step.step_id, status="failed")
     svc._handle_failure(task_id=task.task_id, step_id=step.step_id)
     # Failure should be propagated (no crash)
 
@@ -135,11 +135,11 @@ def test_handle_failure_propagates(tmp_path: Path) -> None:
 # ── advance: success path ──────────────────────────────────────
 
 
-def test_advance_success(tmp_path: Path) -> None:
-    store, svc = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="succeeded")
-    attempt = store.create_step_attempt(
+def test_advance_success(shared_store: KernelStore, conv_id: str) -> None:
+    svc = _svc(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="succeeded")
+    attempt = shared_store.create_step_attempt(
         task_id=task.task_id, step_id=step.step_id, status="succeeded"
     )
     svc.advance(
@@ -151,11 +151,11 @@ def test_advance_success(tmp_path: Path) -> None:
     # No crash expected
 
 
-def test_advance_skipped(tmp_path: Path) -> None:
-    store, svc = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="skipped")
-    attempt = store.create_step_attempt(
+def test_advance_skipped(shared_store: KernelStore, conv_id: str) -> None:
+    svc = _svc(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="skipped")
+    attempt = shared_store.create_step_attempt(
         task_id=task.task_id, step_id=step.step_id, status="skipped"
     )
     svc.advance(
@@ -166,11 +166,11 @@ def test_advance_skipped(tmp_path: Path) -> None:
     )
 
 
-def test_advance_cancelled(tmp_path: Path) -> None:
-    store, svc = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="cancelled")
-    attempt = store.create_step_attempt(
+def test_advance_cancelled(shared_store: KernelStore, conv_id: str) -> None:
+    svc = _svc(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="cancelled")
+    attempt = shared_store.create_step_attempt(
         task_id=task.task_id, step_id=step.step_id, status="cancelled"
     )
     svc.advance(

@@ -92,19 +92,51 @@ app.add_typer(task_app, name="task")
 app.add_typer(memory_app, name="memory")
 task_app.add_typer(task_capability_app, name="capability")
 
-DIM = "\033[2m"
-CYAN = "\033[36m"
 RESET = "\033[0m"
 
-# Import sub-modules to register commands (Flask blueprint pattern).
-import hermit.surfaces.cli._commands_autostart as _commands_autostart  # noqa: F401  # pyright: ignore[reportUnusedImport]
-import hermit.surfaces.cli._commands_core as _commands_core  # noqa: F401  # pyright: ignore[reportUnusedImport]
-import hermit.surfaces.cli._commands_memory as _commands_memory  # noqa: F401  # pyright: ignore[reportUnusedImport]
-import hermit.surfaces.cli._commands_overnight as _commands_overnight  # noqa: F401  # pyright: ignore[reportUnusedImport]
-import hermit.surfaces.cli._commands_plugin as _commands_plugin  # noqa: F401  # pyright: ignore[reportUnusedImport]
-import hermit.surfaces.cli._commands_schedule as _commands_schedule  # noqa: F401  # pyright: ignore[reportUnusedImport]
-import hermit.surfaces.cli._commands_task as _commands_task  # noqa: F401  # pyright: ignore[reportUnusedImport]
-import hermit.surfaces.cli._serve as _serve  # noqa: F401  # pyright: ignore[reportUnusedImport]
+# ---------------------------------------------------------------------------
+# Deferred command registration — import command modules lazily so that
+# ``from hermit.surfaces.cli.main import app`` does not pull in the entire
+# runtime dependency graph.  The actual imports run once, when this module
+# is first imported (which only happens when the CLI is actually invoked).
+#
+# NOTE: We previously deferred this to ``@app.callback``, but Typer eagerly
+# builds the entire Click Group hierarchy (including sub-apps like
+# ``task_app``) *before* invoking the root callback, so sub-commands were
+# missing.  The fix is to register commands at module-import time — the
+# cost is paid only when ``hermit.surfaces.cli.main`` is imported, not at
+# ``import hermit``.
+# ---------------------------------------------------------------------------
+
+_commands_registered = False
+
+
+def _register_commands() -> None:
+    """Import sub-modules that use Typer decorators to register commands."""
+    global _commands_registered
+    if _commands_registered:
+        return
+    _commands_registered = True
+    import hermit.surfaces.cli._commands_autostart
+    import hermit.surfaces.cli._commands_core
+    import hermit.surfaces.cli._commands_memory
+    import hermit.surfaces.cli._commands_overnight
+    import hermit.surfaces.cli._commands_plugin
+    import hermit.surfaces.cli._commands_schedule
+    import hermit.surfaces.cli._commands_task
+    import hermit.surfaces.cli._serve  # noqa: F401
+
+
+_register_commands()
+
+
+@app.callback(invoke_without_command=True)
+def _main_callback(ctx: typer.Context) -> None:
+    """Handle the no-subcommand case (show help)."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
 
 if __name__ == "__main__":
     app()

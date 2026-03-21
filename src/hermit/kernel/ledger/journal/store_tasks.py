@@ -300,17 +300,26 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
     ) -> None:
         now = time.time()
-        # Soft-validate state transition (log only, do not block).
+        # Block transitions from terminal states; warn on other invalid transitions.
         task = self.get_task(task_id)
         if task is not None and not validate_task_transition(task.status, status):
             import structlog
 
+            if task.status in self._TERMINAL_TASK_STATUSES:
+                structlog.get_logger().warning(
+                    "invalid_task_transition_blocked",
+                    task_id=task_id,
+                    current=task.status,
+                    target=status,
+                )
+                return
             structlog.get_logger().warning(
                 "invalid_task_transition",
                 task_id=task_id,
                 current=task.status,
                 target=status,
             )
+            return
         with self._get_conn():
             self._get_conn().execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
@@ -1724,35 +1733,6 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 },
             )
 
-    def append_event(
-        self,
-        *,
-        event_type: str,
-        entity_type: str,
-        entity_id: str,
-        task_id: str | None,
-        step_id: str | None = None,
-        actor: str = "kernel",
-        payload: dict[str, Any] | None = None,
-        causation_id: str | None = None,
-        correlation_id: str | None = None,
-    ) -> str:
-        event_id = self._id("event")
-        with self._get_conn():
-            self._append_event_tx(
-                event_id=event_id,
-                event_type=event_type,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                task_id=task_id,
-                step_id=step_id,
-                actor=actor,
-                payload=payload,
-                causation_id=causation_id,
-                correlation_id=correlation_id,
-            )
-        return event_id
-
     def list_events(
         self,
         *,
@@ -1939,6 +1919,37 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             (*self._ACTIVE_TASK_STATUSES, limit),
         )
         return [self._task_from_row(row) for row in rows]
+
+    def has_active_task_with_goal(self, goal: str, *, policy_profile: str | None = None) -> bool:
+        """Return True if an active (non-terminal) task with the given goal exists.
+
+        When ``policy_profile`` is specified, only tasks matching that profile
+        are considered.  This is used for deduplication — e.g. preventing
+        multiple memory-promotion tasks from piling up.
+        """
+        placeholders = ",".join("?" * len(self._ACTIVE_TASK_STATUSES))
+        if policy_profile is not None:
+            row = self._row(
+                f"""
+                SELECT 1 FROM tasks
+                WHERE goal = ?
+                  AND status IN ({placeholders})
+                  AND policy_profile = ?
+                LIMIT 1
+                """,
+                (goal, *self._ACTIVE_TASK_STATUSES, policy_profile),
+            )
+        else:
+            row = self._row(
+                f"""
+                SELECT 1 FROM tasks
+                WHERE goal = ?
+                  AND status IN ({placeholders})
+                LIMIT 1
+                """,
+                (goal, *self._ACTIVE_TASK_STATUSES),
+            )
+        return row is not None
 
     def list_terminal_tasks_since(self, *, since: float, limit: int = 500) -> list[TaskRecord]:
         """Return tasks that reached a terminal state after *since* (Unix ts).

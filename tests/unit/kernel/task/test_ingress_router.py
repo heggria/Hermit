@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.models.records import ConversationRecord, TaskRecord
 from hermit.kernel.task.services.ingress_router import (
@@ -13,16 +11,13 @@ from hermit.kernel.task.services.ingress_router import (
 )
 
 
-def _setup(tmp_path: Path) -> tuple[KernelStore, IngressRouter]:
-    store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-1", source_channel="chat")
-    router = IngressRouter(store)
-    return store, router
+def _router(store: KernelStore) -> IngressRouter:
+    return IngressRouter(store)
 
 
-def _mk_task(store: KernelStore, **kwargs) -> TaskRecord:
+def _mk_task(store: KernelStore, conv_id: str, **kwargs) -> TaskRecord:
     defaults = {
-        "conversation_id": "conv-1",
+        "conversation_id": conv_id,
         "title": "Test Task",
         "goal": "Cover gaps",
         "source_channel": "chat",
@@ -73,8 +68,8 @@ def test_normalize() -> None:
 # ── bind: explicit_task_ref ──────────────────────────────────────
 
 
-def test_bind_explicit_task_ref(tmp_path: Path) -> None:
-    _, router = _setup(tmp_path)
+def test_bind_explicit_task_ref(shared_store: KernelStore) -> None:
+    router = _router(shared_store)
     result = router.bind(
         conversation=None,
         open_tasks=[],
@@ -90,8 +85,8 @@ def test_bind_explicit_task_ref(tmp_path: Path) -> None:
 # ── bind: reply_to_task_id ───────────────────────────────────────
 
 
-def test_bind_reply_to_task_id(tmp_path: Path) -> None:
-    _, router = _setup(tmp_path)
+def test_bind_reply_to_task_id(shared_store: KernelStore) -> None:
+    router = _router(shared_store)
     result = router.bind(
         conversation=None,
         open_tasks=[],
@@ -106,8 +101,8 @@ def test_bind_reply_to_task_id(tmp_path: Path) -> None:
 # ── bind: no open tasks ─────────────────────────────────────────
 
 
-def test_bind_no_open_tasks(tmp_path: Path) -> None:
-    _, router = _setup(tmp_path)
+def test_bind_no_open_tasks(shared_store: KernelStore) -> None:
+    router = _router(shared_store)
     result = router.bind(
         conversation=None,
         open_tasks=[],
@@ -120,9 +115,9 @@ def test_bind_no_open_tasks(tmp_path: Path) -> None:
 # ── bind: no candidate match ────────────────────────────────────
 
 
-def test_bind_no_candidate_match(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store, title="specific topic A", goal="specific topic A")
+def test_bind_no_candidate_match(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id, title="specific topic A", goal="specific topic A")
     result = router.bind(
         conversation=None,
         open_tasks=[task],
@@ -183,11 +178,12 @@ def test_normalized_path_normal() -> None:
 # ── bind: branch marker ─────────────────────────────────────────
 
 
-def test_bind_branch_marker_with_focus(tmp_path: Path, monkeypatch) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store, title="Main task")
+def test_bind_branch_marker_with_focus(
+    shared_store: KernelStore, conv_id: str, monkeypatch
+) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id, title="Main task")
     conv = _mk_conversation(focus_task_id=task.task_id)
-    # Monkeypatch to detect branch marker
     monkeypatch.setattr(IngressRouter, "_has_branch_marker", staticmethod(lambda text: True))
     result = router.bind(
         conversation=conv,
@@ -202,9 +198,9 @@ def test_bind_branch_marker_with_focus(tmp_path: Path, monkeypatch) -> None:
 # ── bind: focus followup ────────────────────────────────────────
 
 
-def test_bind_focus_followup(tmp_path: Path, monkeypatch) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store, title="Focused task")
+def test_bind_focus_followup(shared_store: KernelStore, conv_id: str, monkeypatch) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id, title="Focused task")
     conv = _mk_conversation(focus_task_id=task.task_id)
     monkeypatch.setattr(
         IngressRouter, "_looks_like_focus_followup", staticmethod(lambda text: True)
@@ -222,11 +218,10 @@ def test_bind_focus_followup(tmp_path: Path, monkeypatch) -> None:
 # ── _resolve_structural_binding ──────────────────────────────────
 
 
-def test_structural_binding_single_artifact(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
-    # Create an artifact linked to the task
-    artifact = store.create_artifact(
+def test_structural_binding_single_artifact(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    artifact = shared_store.create_artifact(
         task_id=task.task_id,
         step_id="",
         kind="test",
@@ -243,9 +238,9 @@ def test_structural_binding_single_artifact(tmp_path: Path) -> None:
     assert result.chosen_task_id == task.task_id
 
 
-def test_structural_binding_no_refs(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
+def test_structural_binding_no_refs(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
     result = router._resolve_structural_binding(
         open_tasks=[task],
         text="no references here",
@@ -256,17 +251,17 @@ def test_structural_binding_no_refs(tmp_path: Path) -> None:
 # ── _score_task ──────────────────────────────────────────────────
 
 
-def test_score_task_focus_boost(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store, title="Focused task", goal="test goal")
+def test_score_task_focus_boost(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id, title="Focused task", goal="test goal")
     score, reasons = router._score_task(task, "test goal topic", focus_task_id=task.task_id)
     assert score > 0
     assert "focus_task" in reasons
 
 
-def test_score_task_no_focus(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store, title="Some task", goal="topic XYZ")
+def test_score_task_no_focus(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id, title="Some task", goal="topic XYZ")
     score, _reasons = router._score_task(task, "topic XYZ", focus_task_id=None)
     assert score >= 0
 
@@ -274,9 +269,9 @@ def test_score_task_no_focus(tmp_path: Path) -> None:
 # ── _workspace_targets ───────────────────────────────────────────
 
 
-def test_workspace_targets_empty_paths(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
+def test_workspace_targets_empty_paths(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
     targets = router._workspace_targets(open_tasks=[task], text="no paths here")
     assert targets == []
 
@@ -284,18 +279,20 @@ def test_workspace_targets_empty_paths(tmp_path: Path) -> None:
 # ── _task_workspace_root ─────────────────────────────────────────
 
 
-def test_task_workspace_root_empty(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
+def test_task_workspace_root_empty(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
     assert router._task_workspace_root(task.task_id) == ""
 
 
 # ── bind: pending_approval correlation ───────────────────────────
 
 
-def test_bind_pending_approval_correlation(tmp_path: Path, monkeypatch) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
+def test_bind_pending_approval_correlation(
+    shared_store: KernelStore, conv_id: str, monkeypatch
+) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
     monkeypatch.setattr(
         IngressRouter,
         "_looks_like_approval_followup",
@@ -316,5 +313,4 @@ def test_bind_pending_approval_correlation(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_looks_like_approval_followup_negative() -> None:
-    # Normal text should not look like approval
     assert IngressRouter._looks_like_approval_followup("build the feature") is False

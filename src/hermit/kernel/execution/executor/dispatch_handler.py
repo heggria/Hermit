@@ -123,9 +123,6 @@ class DispatchDeniedHandler:
                 result_code_hint="dispatch_denied",
                 authorized_effect_summary=str(error),
             )
-            self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="failed")
-            self.store.update_step(attempt_ctx.step_id, status="failed")
-            self.store.update_task_status(attempt_ctx.task_id, "failed")
 
         return ToolExecutionResult(
             model_content=f"[Capability Denied] {error}",

@@ -434,5 +434,9 @@ class WebhookServer:
     def stop(self) -> None:
         if self._server is not None:
             self._server.should_exit = True
-        self._executor.shutdown(wait=False)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                _log.warning("webhook_server_thread_still_alive")  # type: ignore[call-arg]
+        self._executor.shutdown(wait=True)
         _log.info("webhook_server_stopped")  # type: ignore[call-arg]

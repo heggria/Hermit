@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
+
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.recovery.reconcile import ReconcileOutcome, ReconcileService
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.models.records import ReconciliationRecord
+
+log = structlog.get_logger()
 
 
 class ReconciliationService:
@@ -53,6 +57,19 @@ class ReconciliationService:
             witness=witness,
         )
         result_class = self._result_class(outcome, result_code_hint=result_code_hint)
+        if result_class == "satisfied_with_downgrade":
+            log.warning(
+                "reconciliation.inferred_success",
+                task_id=attempt_ctx.task_id,
+                step_id=attempt_ctx.step_id,
+                action_type=action_type,
+                result_code_hint=result_code_hint,
+                outcome_result_code=outcome.result_code,
+                msg=(
+                    "Reconciliation could not observe side effects but execution "
+                    "succeeded; inferring success."
+                ),
+            )
         recommended_resolution = self._recommended_resolution(result_class)
         reconciliation = self.store.create_reconciliation(
             task_id=attempt_ctx.task_id,
@@ -149,17 +166,27 @@ class ReconciliationService:
             return "drifted"
         if result_code_hint in {"rolled_back", "rollback_succeeded"}:
             return "rolled_back"
-        if outcome.result_code in {"reconciled_applied", "reconciled_observed"}:
+        if outcome.result_code in {
+            "reconciled_applied",
+            "reconciled_observed",
+            "reconciled_inferred",
+        }:
             return "satisfied"
         if outcome.result_code == "reconciled_not_applied":
             return "violated"
+        # When the execution itself succeeded but the reconciliation layer
+        # had no observable targets to verify (e.g. documentation-update
+        # commands, echo, pip install), default to satisfied rather than
+        # partial.  A ``still_unknown`` outcome combined with a successful
+        # execution hint means the *reconciler* lacked evidence — not that
+        # the command failed.
         if outcome.result_code == "still_unknown" and result_code_hint == "succeeded":
-            return "partial"
+            return "satisfied_with_downgrade"
         return "ambiguous"
 
     @staticmethod
     def _recommended_resolution(result_class: str) -> str:
-        if result_class == "satisfied":
+        if result_class in {"satisfied", "satisfied_with_downgrade"}:
             return "promote_learning"
         if result_class == "violated":
             return "gather_more_evidence"
@@ -186,8 +213,13 @@ class ReconciliationService:
 
     @staticmethod
     def _confidence_delta(outcome: ReconcileOutcome) -> float:
-        if outcome.result_code in {"reconciled_applied", "reconciled_observed"}:
+        if outcome.result_code in {
+            "reconciled_applied",
+            "reconciled_observed",
+        }:
             return 0.2
+        if outcome.result_code == "reconciled_inferred":
+            return 0.05
         if outcome.result_code == "reconciled_not_applied":
             return -0.3
         return -0.1

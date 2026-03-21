@@ -555,10 +555,12 @@ class TestWorkspaceLeaseServiceReleaseWithQueue:
         new_lease = _make_lease(lease_id="dequeued", workspace_id="ws-1")
         store.create_workspace_lease.return_value = new_lease
         # First list call: for _process_queue active check (expired mutable)
-        # Second list call: for acquire conflict check (no active, expired gets cleaned)
+        # Second list call: for acquire expire pass (expired gets cleaned)
+        # Third list call: for acquire re-read after expiry (empty — no conflicts)
         store.list_workspace_leases.side_effect = [
             [expired],  # _process_queue check
-            [expired],  # inner acquire conflict check
+            [expired],  # inner acquire expire pass
+            [],  # inner acquire re-read after expiry
         ]
         result = svc._process_queue("ws-1")
         assert result is not None

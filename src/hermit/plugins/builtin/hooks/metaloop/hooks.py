@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import structlog
@@ -19,6 +20,67 @@ log = structlog.get_logger()
 _orchestrator: MetaLoopOrchestrator | None = None
 _poller: SpecBacklogPoller | None = None
 _signal_consumer: SignalToSpecConsumer | None = None
+_worktree_cleaner: _WorktreeCleanerThread | None = None
+
+# Interval for periodic stale worktree cleanup (1 hour).
+_WORKTREE_CLEANUP_INTERVAL = 3600.0
+
+
+class _WorktreeCleanerThread:
+    """Periodically cleans up stale worktrees from terminal iterations."""
+
+    def __init__(
+        self,
+        workspace_root: str,
+        store: Any,
+        *,
+        interval: float = _WORKTREE_CLEANUP_INTERVAL,
+    ) -> None:
+        self._workspace_root = workspace_root
+        self._store = store
+        self._interval = interval
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._loop,
+            daemon=True,
+            name="metaloop-worktree-cleaner",
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+
+    def run_once(self) -> list[str]:
+        """Run a single cleanup pass. Returns cleaned IDs."""
+        try:
+            from hermit.kernel.execution.self_modify.workspace import (
+                cleanup_stale_worktrees,
+            )
+
+            return cleanup_stale_worktrees(self._workspace_root, self._store)
+        except Exception:
+            log.warning("metaloop_worktree_cleanup_error", exc_info=True)
+            return []
+
+    def _loop(self) -> None:
+        # Run once immediately at startup
+        cleaned = self.run_once()
+        if cleaned:
+            log.info("metaloop_startup_worktree_cleanup", cleaned=len(cleaned))
+        while not self._stop_event.is_set():
+            self._stop_event.wait(timeout=self._interval)
+            if self._stop_event.is_set():
+                break
+            self.run_once()
 
 
 def _get_workspace_root(runner: Any) -> str:
@@ -35,7 +97,7 @@ def _get_workspace_root(runner: Any) -> str:
 def _on_serve_start(
     *, settings: Any, runner: Any = None, reload_mode: bool = False, **kw: Any
 ) -> None:
-    global _orchestrator, _poller, _signal_consumer
+    global _orchestrator, _poller, _signal_consumer, _worktree_cleaner
 
     import os
 
@@ -65,14 +127,20 @@ def _on_serve_start(
 
     max_retries = int(getattr(settings, "metaloop_max_retries", 2))
     poll_interval = float(getattr(settings, "metaloop_poll_interval", 5))
+    benchmark_blocking = bool(getattr(settings, "metaloop_benchmark_blocking", True))
 
     workspace_root = _get_workspace_root(runner)
+
+    # Clean up stale worktrees at startup and periodically (every hour)
+    _worktree_cleaner = _WorktreeCleanerThread(workspace_root, store)
+    _worktree_cleaner.start()
 
     _orchestrator = MetaLoopOrchestrator(
         store,
         max_retries=max_retries,
         runner=runner,
         workspace_root=workspace_root,
+        benchmark_blocking=benchmark_blocking,
     )
     backlog = SpecBacklog(store)
 
@@ -94,10 +162,14 @@ def _on_serve_start(
 
 
 def _on_serve_stop(*, reload_mode: bool = False, **kw: Any) -> None:
-    global _orchestrator, _poller, _signal_consumer
+    global _orchestrator, _poller, _signal_consumer, _worktree_cleaner
 
     if reload_mode:
         return
+
+    if _worktree_cleaner is not None:
+        _worktree_cleaner.stop()
+        _worktree_cleaner = None
 
     if _signal_consumer is not None:
         _signal_consumer.stop()

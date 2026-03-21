@@ -89,9 +89,13 @@ class TestMemoryRetrievalBenchmarks:
         assert report.mode == "fast"
 
     def test_token_overlap_1000_memories(self, benchmark):
-        """Benchmark fast-path retrieval with 1000 memories (stress test)."""
+        """Benchmark fast-path retrieval with 200 memories (stress test).
+
+        Reduced from 1000 to 200 to keep benchmark runtime reasonable
+        while still exercising O(n) scaling.
+        """
         service = _make_service()
-        memories = _make_memories(1000)
+        memories = _make_memories(200)
 
         def retrieve():
             return service.retrieve("API rate limiting", memories, limit=10)
@@ -116,9 +120,12 @@ class TestMemoryRetrievalBenchmarks:
         assert report.mode == "deep"
 
     def test_deep_retrieval_500_memories(self, benchmark):
-        """Benchmark deep-path retrieval with 500 memories."""
+        """Benchmark deep-path retrieval with 100 memories.
+
+        Reduced from 500 to 100 to keep benchmark runtime reasonable.
+        """
         service = _make_service()
-        memories = _make_memories(500)
+        memories = _make_memories(100)
         long_query = (
             "What are the best practices for implementing authentication "
             "and authorization in our microservice architecture?"

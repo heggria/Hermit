@@ -109,7 +109,8 @@ Everything not listed above is **internal**. This includes but is not limited to
 - `hermit.kernel.authority` — identity, workspace, grant internals
 - `hermit.runtime` — runner, capability registry, provider host, config assembly
 - `hermit.infra.locking` — file guard internals
-- `hermit.infra.system` — sandbox, i18n, executables
+- `hermit.infra.paths` — workspace path utilities
+- `hermit.infra.system` — i18n, executables
 - `hermit.apps` — macOS companion internals
 - `hermit.plugins.builtin` — built-in plugin implementations
 

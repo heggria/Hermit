@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import atexit
 import concurrent.futures
 import datetime
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
+import structlog
+
 from hermit.infra.system.i18n import resolve_locale, tr
+
+log = structlog.get_logger()
 
 Formatter = Callable[[dict[str, Any]], dict[str, str] | str | None]
 
@@ -47,8 +52,11 @@ class ApprovalCopyService:
         self._executor: concurrent.futures.ThreadPoolExecutor | None = (
             concurrent.futures.ThreadPoolExecutor(max_workers=1) if formatter is not None else None
         )
+        if self._executor is not None:
+            atexit.register(self.close)
 
-    def __del__(self) -> None:
+    def close(self) -> None:
+        """Shut down the background executor cleanly."""
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
@@ -119,7 +127,14 @@ class ApprovalCopyService:
         try:
             future = self._executor.submit(self._formatter, facts)
             payload = future.result(timeout=max(0.001, self._formatter_timeout_ms / 1000))
+        except concurrent.futures.TimeoutError:
+            log.debug(
+                "approval_copy.formatter_timeout",
+                timeout_ms=self._formatter_timeout_ms,
+            )
+            return None
         except Exception:
+            log.debug("approval_copy.formatter_error", exc_info=True)
             return None
         if isinstance(payload, dict):
             return self._copy_from_mapping(payload)

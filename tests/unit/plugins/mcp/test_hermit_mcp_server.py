@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -85,6 +86,12 @@ class FakeStore:
         self.events: list[dict[str, Any]] = [{"type": "task_created", "task_id": "task-1"}]
         self.receipts: list[FakeReceipt] = []
         self.status_updates: list[tuple[str, str, dict[str, Any] | None]] = []
+        self.lessons: list[dict[str, Any]] = []
+        # Event-driven task change notification (avoids 0.5s fallback poll)
+        import threading
+
+        self._task_change_listeners_lock = threading.Lock()
+        self._task_change_listeners: dict[str, list[threading.Event]] = {}
 
     def get_task(self, task_id: str) -> FakeTask | None:
         return self.tasks.get(task_id)
@@ -131,6 +138,24 @@ class FakeStore:
             receipts = [r for r in receipts if r.task_id == task_id]
         return receipts[:limit]
 
+    def list_lessons_learned(
+        self,
+        applicable_to: str | None = None,
+        categories: list[str] | None = None,
+        iteration_ids: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        result = list(self.lessons)
+        if applicable_to is not None:
+            result = [
+                item for item in result if applicable_to in str(item.get("applicable_files", ""))
+            ]
+        if categories:
+            result = [item for item in result if item.get("category") in categories]
+        if iteration_ids:
+            result = [item for item in result if item.get("iteration_id") in iteration_ids]
+        return result[:limit]
+
     def update_task_status(
         self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
     ) -> None:
@@ -138,6 +163,36 @@ class FakeStore:
         task = self.tasks.get(task_id)
         if task:
             task.status = status
+            self._notify_listeners(task_id)
+
+    def register_task_change_listener(
+        self, task_ids: list[str], shared_event: threading.Event
+    ) -> None:
+        with self._task_change_listeners_lock:
+            for tid in task_ids:
+                self._task_change_listeners.setdefault(tid, []).append(shared_event)
+                # Immediately wake if the task is already non-running (blocked/completed/etc.)
+                # This avoids waiting for a full timeout on pre-existing terminal/blocked states.
+                task = self.tasks.get(tid)
+                if task and task.status != "running":
+                    shared_event.set()
+
+    def deregister_task_change_listener(
+        self, task_ids: list[str], shared_event: threading.Event
+    ) -> None:
+        with self._task_change_listeners_lock:
+            for tid in task_ids:
+                lst = self._task_change_listeners.get(tid)
+                if lst is not None:
+                    try:
+                        lst.remove(shared_event)
+                    except ValueError:
+                        pass
+
+    def _notify_listeners(self, task_id: str) -> None:
+        with self._task_change_listeners_lock:
+            for ev in self._task_change_listeners.get(task_id, []):
+                ev.set()
 
 
 class FakeRunner:
@@ -394,8 +449,9 @@ class TestHermitSubmit:
         def complete_task() -> None:
             import time
 
-            time.sleep(0.15)
+            time.sleep(0.02)
             store.tasks["task-ingress-1"].status = "completed"
+            store._notify_listeners("task-ingress-1")
 
         t = threading.Thread(target=complete_task)
         t.start()
@@ -404,13 +460,13 @@ class TestHermitSubmit:
                 server,
                 "hermit_submit",
                 description="Quick task",
-                await_completion=10,
+                await_completion=3,
             )
             assert result["task_ids"] == ["task-ingress-1"]
             assert result["status"] == "completed"
             assert "timed_out" not in result
         finally:
-            t.join(timeout=5)
+            t.join(timeout=3)
 
     def test_await_single_timeout(
         self, server: HermitMcpServer, runner: FakeRunner, store: FakeStore
@@ -443,7 +499,7 @@ class TestHermitSubmit:
             server,
             "hermit_submit",
             description="Blocked task",
-            await_completion=5,
+            await_completion=2,
         )
         assert result["status"] == "blocked"
         assert len(result["pending_approvals"]) >= 1
@@ -467,10 +523,12 @@ class TestHermitSubmit:
         def complete_tasks() -> None:
             import time
 
-            time.sleep(0.1)
+            time.sleep(0.02)
             store.tasks["task-ingress-1"].status = "completed"
-            time.sleep(0.1)
+            store._notify_listeners("task-ingress-1")
+            time.sleep(0.02)
             store.tasks["task-ingress-2"].status = "completed"
+            store._notify_listeners("task-ingress-2")
 
         t = threading.Thread(target=complete_tasks)
         t.start()
@@ -479,14 +537,14 @@ class TestHermitSubmit:
                 server,
                 "hermit_submit",
                 tasks=[{"description": "A"}, {"description": "B"}],
-                await_completion=10,
+                await_completion=3,
             )
             assert result["submitted"] == 2
             assert result["timed_out"] is False
             assert "task-ingress-1" in result["completed"]
             assert "task-ingress-2" in result["completed"]
         finally:
-            t.join(timeout=5)
+            t.join(timeout=3)
 
 
 class TestHermitTaskStatus:
@@ -838,10 +896,12 @@ class TestHermitAwaitCompletionModeAll:
         def complete_sequentially() -> None:
             import time
 
-            time.sleep(0.1)
+            time.sleep(0.02)
             store.tasks["task-1"].status = "completed"
-            time.sleep(0.2)
+            store._notify_listeners("task-1")
+            time.sleep(0.02)
             store.tasks["task-2"].status = "completed"
+            store._notify_listeners("task-2")
 
         t = threading.Thread(target=complete_sequentially)
         t.start()
@@ -850,7 +910,7 @@ class TestHermitAwaitCompletionModeAll:
                 server,
                 "hermit_await_completion",
                 task_ids=["task-1", "task-2"],
-                timeout=10,
+                timeout=3,
                 mode="all",
             )
             assert result["timed_out"] is False
@@ -858,7 +918,7 @@ class TestHermitAwaitCompletionModeAll:
             assert "task-2" in result["completed"]
             assert result["pending"] == []
         finally:
-            t.join(timeout=5)
+            t.join(timeout=3)
 
     def test_await_all_timeout_returns_partial(
         self, server: HermitMcpServer, store: FakeStore
@@ -872,8 +932,9 @@ class TestHermitAwaitCompletionModeAll:
         def complete_one() -> None:
             import time
 
-            time.sleep(0.1)
+            time.sleep(0.02)
             store.tasks["task-1"].status = "completed"
+            store._notify_listeners("task-1")
             # task-2 stays running
 
         t = threading.Thread(target=complete_one)
@@ -891,7 +952,7 @@ class TestHermitAwaitCompletionModeAll:
             pending_ids = [p["task_id"] for p in result["pending"]]
             assert "task-2" in pending_ids
         finally:
-            t.join(timeout=5)
+            t.join(timeout=3)
 
     def test_await_any_still_returns_on_first(
         self, server: HermitMcpServer, store: FakeStore
@@ -905,8 +966,9 @@ class TestHermitAwaitCompletionModeAll:
         def complete_one() -> None:
             import time
 
-            time.sleep(0.1)
+            time.sleep(0.02)
             store.tasks["task-1"].status = "completed"
+            store._notify_listeners("task-1")
 
         t = threading.Thread(target=complete_one)
         t.start()
@@ -915,7 +977,7 @@ class TestHermitAwaitCompletionModeAll:
                 server,
                 "hermit_await_completion",
                 task_ids=["task-1", "task-2"],
-                timeout=10,
+                timeout=3,
                 mode="any",
             )
             assert result["timed_out"] is False
@@ -923,7 +985,7 @@ class TestHermitAwaitCompletionModeAll:
             pending_ids = [p["task_id"] for p in result["pending"]]
             assert "task-2" in pending_ids
         finally:
-            t.join(timeout=5)
+            t.join(timeout=3)
 
 
 class TestHermitSubmitDagTask:
@@ -1198,13 +1260,14 @@ class TestHermitAwaitCompletion:
         def complete_after_delay():
             import time
 
-            time.sleep(0.3)
+            time.sleep(0.02)
             store.tasks["task-1"].status = "completed"
+            store._notify_listeners("task-1")
 
         t = threading.Thread(target=complete_after_delay)
         t.start()
         try:
-            result = _call_tool(server, "hermit_await_completion", task_ids=["task-1"], timeout=10)
+            result = _call_tool(server, "hermit_await_completion", task_ids=["task-1"], timeout=3)
             assert result["timed_out"] is False
             assert "task-1" in result["completed"]
             assert result["completed"]["task-1"]["status"] == "completed"
@@ -1240,8 +1303,9 @@ class TestHermitAwaitCompletion:
         def complete_one():
             import time
 
-            time.sleep(0.3)
+            time.sleep(0.02)
             store.tasks["task-2"].status = "completed"
+            store._notify_listeners("task-2")
 
         t = threading.Thread(target=complete_one)
         t.start()
@@ -1250,7 +1314,7 @@ class TestHermitAwaitCompletion:
                 server,
                 "hermit_await_completion",
                 task_ids=["task-1", "task-2"],
-                timeout=10,
+                timeout=3,
             )
             assert result["timed_out"] is False
             assert "task-2" in result["completed"]
@@ -1808,8 +1872,9 @@ class TestHermitApproveAwaitAfter:
         def complete_task() -> None:
             import time
 
-            time.sleep(0.15)
+            time.sleep(0.02)
             store.tasks["task-1"].status = "completed"
+            store._notify_listeners("task-1")
 
         t = threading.Thread(target=complete_task)
         t.start()
@@ -1818,13 +1883,13 @@ class TestHermitApproveAwaitAfter:
                 server,
                 "hermit_approve",
                 approval_ids=["apr-1"],
-                await_after=10,
+                await_after=3,
             )
             assert result["approved"] == 1
             assert "task_status" in result
             assert "task-1" in result["task_status"]["completed"]
         finally:
-            t.join(timeout=5)
+            t.join(timeout=3)
 
     def test_approve_without_await_after(self, server: HermitMcpServer, runner: FakeRunner) -> None:
         """Default await_after=0 returns immediately without task_status."""
@@ -1843,8 +1908,9 @@ class TestHermitApproveAwaitAfter:
         def fail_task() -> None:
             import time
 
-            time.sleep(0.15)
+            time.sleep(0.02)
             store.tasks["task-1"].status = "failed"
+            store._notify_listeners("task-1")
 
         t = threading.Thread(target=fail_task)
         t.start()
@@ -1854,13 +1920,13 @@ class TestHermitApproveAwaitAfter:
                 "hermit_deny",
                 approval_ids=["apr-1"],
                 reason="Unsafe",
-                await_after=10,
+                await_after=3,
             )
             assert result["denied"] == 1
             assert "task_status" in result
             assert "task-1" in result["task_status"]["completed"]
         finally:
-            t.join(timeout=5)
+            t.join(timeout=3)
 
 
 # ---------------------------------------------------------------------------
@@ -2187,3 +2253,118 @@ class TestResponseSizeBenchmark:
             assert a < b, f"{name}: after ({a}) should be smaller than before ({b})"
             reduction = 1 - a / b
             assert reduction >= 0.3, f"{name}: only {reduction:.0%} reduction, expected >=30%"
+
+
+# ---------------------------------------------------------------------------
+# hermit_lessons_learned tests
+# ---------------------------------------------------------------------------
+
+
+class TestHermitLessonsLearned:
+    """Tests for the hermit_lessons_learned MCP tool — type mismatch fix."""
+
+    def test_no_filter_returns_all(self, server: HermitMcpServer, store: FakeStore) -> None:
+        store.lessons = [
+            {"lesson_id": "l1", "iteration_id": "i1", "category": "perf", "summary": "A"},
+            {"lesson_id": "l2", "iteration_id": "i2", "category": "rel", "summary": "B"},
+        ]
+        result = _call_tool(server, "hermit_lessons_learned")
+        assert result["count"] == 2
+
+    def test_applicable_to_single_domain(self, server: HermitMcpServer, store: FakeStore) -> None:
+        """applicable_to as list[str] with one element correctly filters."""
+        store.lessons = [
+            {
+                "lesson_id": "l1",
+                "iteration_id": "i1",
+                "category": "perf",
+                "summary": "Speed up DB",
+                "applicable_files": '["src/db.py"]',
+            },
+            {
+                "lesson_id": "l2",
+                "iteration_id": "i2",
+                "category": "rel",
+                "summary": "Fix auth",
+                "applicable_files": '["src/auth.py"]',
+            },
+        ]
+        result = _call_tool(server, "hermit_lessons_learned", applicable_to=["src/db.py"])
+        assert result["count"] == 1
+        assert result["lessons"][0]["lesson_id"] == "l1"
+
+    def test_applicable_to_multiple_domains(
+        self, server: HermitMcpServer, store: FakeStore
+    ) -> None:
+        """applicable_to with multiple items merges results from each domain."""
+        store.lessons = [
+            {
+                "lesson_id": "l1",
+                "iteration_id": "i1",
+                "category": "perf",
+                "summary": "A",
+                "applicable_files": '["src/db.py"]',
+            },
+            {
+                "lesson_id": "l2",
+                "iteration_id": "i2",
+                "category": "rel",
+                "summary": "B",
+                "applicable_files": '["src/auth.py"]',
+            },
+            {
+                "lesson_id": "l3",
+                "iteration_id": "i3",
+                "category": "sec",
+                "summary": "C",
+                "applicable_files": '["src/other.py"]',
+            },
+        ]
+        result = _call_tool(
+            server,
+            "hermit_lessons_learned",
+            applicable_to=["src/db.py", "src/auth.py"],
+        )
+        assert result["count"] == 2
+        ids = {item["lesson_id"] for item in result["lessons"]}
+        assert ids == {"l1", "l2"}
+
+    def test_applicable_to_deduplicates(self, server: HermitMcpServer, store: FakeStore) -> None:
+        """Lesson matching multiple domains is only returned once."""
+        store.lessons = [
+            {
+                "lesson_id": "l1",
+                "iteration_id": "i1",
+                "category": "perf",
+                "summary": "Multi",
+                "applicable_files": '["src/db.py", "src/auth.py"]',
+            },
+        ]
+        result = _call_tool(
+            server,
+            "hermit_lessons_learned",
+            applicable_to=["src/db.py", "src/auth.py"],
+        )
+        assert result["count"] == 1
+
+    def test_applicable_to_empty_list_returns_all(
+        self, server: HermitMcpServer, store: FakeStore
+    ) -> None:
+        """Empty applicable_to list is treated as no filter."""
+        store.lessons = [
+            {"lesson_id": "l1", "iteration_id": "i1", "category": "perf", "summary": "A"},
+        ]
+        result = _call_tool(server, "hermit_lessons_learned", applicable_to=[])
+        assert result["count"] == 1
+
+    def test_schema_not_available(self) -> None:
+        """Returns error when store lacks list_lessons_learned."""
+        bare_store = SimpleNamespace()
+        runner = SimpleNamespace(
+            task_controller=SimpleNamespace(store=bare_store),
+        )
+        srv = HermitMcpServer(host="127.0.0.1", port=0)
+        srv._runner = runner
+        result = _call_tool(srv, "hermit_lessons_learned")
+        assert "error" in result
+        assert "not available" in result["error"]

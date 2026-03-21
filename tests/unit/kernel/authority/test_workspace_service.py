@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hermit.kernel.authority.workspaces.models import WorkspaceLeaseRecord
+from hermit.kernel.authority.workspaces.models import WorkspaceLeaseQueueEntry, WorkspaceLeaseRecord
 from hermit.kernel.authority.workspaces.service import (
     WorkspaceLeaseConflict,
     WorkspaceLeaseService,
@@ -117,7 +117,8 @@ class TestWorkspaceLeaseServiceAcquire:
         expired_lease = _make_lease(
             lease_id="old-lease", mode="mutable", expires_at=time.time() - 100
         )
-        store.list_workspace_leases.return_value = [expired_lease]
+        # First call returns expired lease; second call (re-read) returns empty
+        store.list_workspace_leases.side_effect = [[expired_lease], []]
         svc.acquire(
             task_id="t-1",
             step_attempt_id="sa-1",
@@ -131,6 +132,28 @@ class TestWorkspaceLeaseServiceAcquire:
         call_args = store.update_workspace_lease.call_args
         assert call_args[0][0] == "old-lease"
         assert call_args[1]["status"] == "expired"
+
+    def test_acquire_rereads_after_expiry_to_prevent_toctou(self) -> None:
+        """After expiring stale leases, acquire() re-reads the active list
+        so that the conflict check uses fresh state (TOCTOU fix)."""
+        svc, store, _ = _make_service()
+        expired_lease = _make_lease(
+            lease_id="expired-lease", mode="mutable", expires_at=time.time() - 100
+        )
+        # First call: returns the expired lease.
+        # Second call (re-read): returns empty — the expired lease is gone.
+        store.list_workspace_leases.side_effect = [[expired_lease], []]
+        svc.acquire(
+            task_id="t-1",
+            step_attempt_id="sa-1",
+            workspace_id="ws-1",
+            root_path="/tmp",
+            holder_principal_id="p-1",
+            mode="mutable",
+            resource_scope=["*"],
+        )
+        # Should have called list_workspace_leases twice (expire pass + re-read)
+        assert store.list_workspace_leases.call_count == 2
 
     def test_mutable_mode_conflicts_with_active_mutable(self) -> None:
         svc, store, _ = _make_service()
@@ -277,11 +300,33 @@ class TestWorkspaceLeaseServiceValidateActive:
         assert result is lease
 
     def test_no_expires_at_returns_lease(self) -> None:
+        """Active lease with expires_at=None and no acquired_at is still valid."""
         svc, store, _ = _make_service()
         lease = _make_lease(status="active", expires_at=None)
         store.get_workspace_lease.return_value = lease
         result = svc.validate_active("lease-1")
         assert result is lease
+
+    def test_no_expires_at_recent_lease_returns_lease(self) -> None:
+        """Active lease with expires_at=None but recently acquired is valid."""
+        svc, store, _ = _make_service()
+        lease = _make_lease(status="active", expires_at=None, acquired_at=time.time() - 3600)
+        store.get_workspace_lease.return_value = lease
+        result = svc.validate_active("lease-1")
+        assert result is lease
+
+    def test_no_expires_at_old_lease_raises(self) -> None:
+        """Active lease with expires_at=None older than MAX_LEASE_AGE_SECONDS raises."""
+        svc, store, _ = _make_service()
+        # Acquired more than 24 hours ago
+        lease = _make_lease(
+            status="active",
+            expires_at=None,
+            acquired_at=time.time() - 90000,  # 25 hours
+        )
+        store.get_workspace_lease.return_value = lease
+        with pytest.raises(RuntimeError, match="maximum age"):
+            svc.validate_active("lease-1")
 
 
 # ---------------------------------------------------------------------------
@@ -307,3 +352,148 @@ class TestWorkspacesInitGetattr:
 
         with pytest.raises(AttributeError):
             _ = mod.NoSuchThing  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# reap_orphaned_leases
+# ---------------------------------------------------------------------------
+
+
+class TestReapOrphanedLeases:
+    def test_happy_path_terminal_task_lease_gets_released(self) -> None:
+        """Active lease owned by a terminal task should be released."""
+        svc, store, _ = _make_service()
+        active_lease = _make_lease(
+            lease_id="orphan-lease",
+            task_id="t-terminal",
+            workspace_id="ws-1",
+            mode="mutable",
+        )
+        store.list_workspace_leases.return_value = [active_lease]
+        terminal_task = SimpleNamespace(status="completed")
+        store.get_task.return_value = terminal_task
+
+        released = svc.reap_orphaned_leases()
+
+        assert "orphan-lease" in released
+        store.update_workspace_lease.assert_called_once_with(
+            "orphan-lease", status="released", released_at=pytest.approx(time.time(), abs=5)
+        )
+        store.append_event.assert_called_once()
+        event_kwargs = store.append_event.call_args[1]
+        assert event_kwargs["event_type"] == "workspace.orphan_reaped"
+        assert event_kwargs["payload"]["lease_id"] == "orphan-lease"
+
+    def test_workspace_lease_service_is_none_graceful(self) -> None:
+        """When workspace_lease_service is None the caller should handle it;
+        here we verify that a service with no active leases returns empty."""
+        svc, store, _ = _make_service()
+        store.list_workspace_leases.return_value = []
+
+        released = svc.reap_orphaned_leases()
+
+        assert released == []
+
+    def test_store_get_task_returns_none_skip(self) -> None:
+        """If the task owning a lease no longer exists, skip it."""
+        svc, store, _ = _make_service()
+        active_lease = _make_lease(
+            lease_id="orphan-lease",
+            task_id="t-missing",
+            workspace_id="ws-1",
+        )
+        store.list_workspace_leases.return_value = [active_lease]
+        store.get_task.return_value = None
+
+        released = svc.reap_orphaned_leases()
+
+        # Only expire_stale results, if any — no orphan release.
+        store.update_workspace_lease.assert_not_called()
+        # expire_stale is called internally; released may contain stale results.
+        # The orphan-lease should NOT be in released.
+        assert "orphan-lease" not in released
+
+    def test_non_terminal_task_skipped(self) -> None:
+        """Active leases for running tasks should not be reaped."""
+        svc, store, _ = _make_service()
+        active_lease = _make_lease(
+            lease_id="running-lease",
+            task_id="t-running",
+            workspace_id="ws-1",
+        )
+        store.list_workspace_leases.return_value = [active_lease]
+        store.get_task.return_value = SimpleNamespace(status="running")
+
+        released = svc.reap_orphaned_leases()
+
+        assert "running-lease" not in released
+
+
+# ---------------------------------------------------------------------------
+# _drain_terminal_queue_entries
+# ---------------------------------------------------------------------------
+
+
+class TestDrainTerminalQueueEntries:
+    def test_entries_for_terminal_tasks_are_drained(self) -> None:
+        """Pending queue entries whose task is terminal should be marked 'drained'."""
+        svc, store, _ = _make_service()
+        entry = WorkspaceLeaseQueueEntry(
+            queue_entry_id="qe-1",
+            workspace_id="ws-1",
+            task_id="t-done",
+            step_attempt_id="sa-1",
+            root_path="/tmp/ws",
+            holder_principal_id="p-1",
+            mode="mutable",
+            status="pending",
+        )
+        svc._queue["ws-1"] = [entry]
+        store.get_task.return_value = SimpleNamespace(status="completed")
+
+        drained = svc._drain_terminal_queue_entries()
+
+        assert drained == 1
+        assert entry.status == "drained"
+
+    def test_non_pending_entries_are_skipped(self) -> None:
+        """Queue entries that are not 'pending' should be left alone."""
+        svc, store, _ = _make_service()
+        entry = WorkspaceLeaseQueueEntry(
+            queue_entry_id="qe-1",
+            workspace_id="ws-1",
+            task_id="t-done",
+            step_attempt_id="sa-1",
+            root_path="/tmp/ws",
+            holder_principal_id="p-1",
+            mode="mutable",
+            status="granted",
+        )
+        svc._queue["ws-1"] = [entry]
+        store.get_task.return_value = SimpleNamespace(status="completed")
+
+        drained = svc._drain_terminal_queue_entries()
+
+        assert drained == 0
+        assert entry.status == "granted"
+
+    def test_pending_entry_for_running_task_not_drained(self) -> None:
+        """Pending queue entries for non-terminal tasks should not be drained."""
+        svc, store, _ = _make_service()
+        entry = WorkspaceLeaseQueueEntry(
+            queue_entry_id="qe-1",
+            workspace_id="ws-1",
+            task_id="t-running",
+            step_attempt_id="sa-1",
+            root_path="/tmp/ws",
+            holder_principal_id="p-1",
+            mode="mutable",
+            status="pending",
+        )
+        svc._queue["ws-1"] = [entry]
+        store.get_task.return_value = SimpleNamespace(status="running")
+
+        drained = svc._drain_terminal_queue_entries()
+
+        assert drained == 0
+        assert entry.status == "pending"

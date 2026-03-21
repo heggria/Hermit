@@ -143,6 +143,7 @@ class TestToolGovernance:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestCallTool:
     @pytest.fixture
     def manager(self) -> McpClientManager:

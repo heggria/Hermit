@@ -12,16 +12,13 @@ from hermit.kernel.task.services.controller import (
 )
 
 
-def _setup(tmp_path: Path) -> tuple[KernelStore, TaskController]:
-    store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-1", source_channel="chat")
-    ctrl = TaskController(store)
-    return store, ctrl
+def _ctrl(store: KernelStore) -> TaskController:
+    return TaskController(store)
 
 
-def _start_task(ctrl: TaskController, **kwargs) -> TaskExecutionContext:
+def _start_task(ctrl: TaskController, conv_id: str, **kwargs) -> TaskExecutionContext:
     defaults = {
-        "conversation_id": "conv-1",
+        "conversation_id": conv_id,
         "goal": "Test goal",
         "source_channel": "chat",
         "kind": "respond",
@@ -33,34 +30,36 @@ def _start_task(ctrl: TaskController, **kwargs) -> TaskExecutionContext:
 # ── _runtime_snapshot_payload ──────────────────────────────────
 
 
-def test_runtime_snapshot_payload_from_context(tmp_path: Path) -> None:
-    store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
-    attempt = store.get_step_attempt(ctx.step_attempt_id)
+def test_runtime_snapshot_payload_from_context(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
+    attempt = shared_store.get_step_attempt(ctx.step_attempt_id)
     context = dict(attempt.context or {})
     context["runtime_snapshot"] = {"payload": {"key": "value"}}
-    store.update_step_attempt(ctx.step_attempt_id, context=context)
-    attempt = store.get_step_attempt(ctx.step_attempt_id)
+    shared_store.update_step_attempt(ctx.step_attempt_id, context=context)
+    attempt = shared_store.get_step_attempt(ctx.step_attempt_id)
     result = ctrl._runtime_snapshot_payload(attempt)
     assert result == {"key": "value"}
 
 
-def test_runtime_snapshot_payload_empty(tmp_path: Path) -> None:
-    store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
-    attempt = store.get_step_attempt(ctx.step_attempt_id)
+def test_runtime_snapshot_payload_empty(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
+    attempt = shared_store.get_step_attempt(ctx.step_attempt_id)
     result = ctrl._runtime_snapshot_payload(attempt)
     assert result == {}
 
 
-def test_runtime_snapshot_payload_from_resume_ref(tmp_path: Path) -> None:
-    store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_runtime_snapshot_payload_from_resume_ref(
+    shared_store: KernelStore, conv_id: str, tmp_path: Path
+) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     # Create a snapshot file
     snapshot_path = tmp_path / "snapshot.json"
     snapshot_path.write_text(json.dumps({"payload": {"restored": True}}))
     # Create an artifact pointing to it
-    artifact = store.create_artifact(
+    artifact = shared_store.create_artifact(
         task_id=ctx.task_id,
         step_id=ctx.step_id,
         kind="snapshot",
@@ -69,8 +68,7 @@ def test_runtime_snapshot_payload_from_resume_ref(tmp_path: Path) -> None:
         producer="test",
     )
     # Set resume_from_ref on a mock attempt
-    attempt = store.get_step_attempt(ctx.step_attempt_id)
-    # Use SimpleNamespace to add resume_from_ref
+    attempt = shared_store.get_step_attempt(ctx.step_attempt_id)
     from types import SimpleNamespace
 
     mock_attempt = SimpleNamespace(
@@ -81,10 +79,10 @@ def test_runtime_snapshot_payload_from_resume_ref(tmp_path: Path) -> None:
     assert result == {"restored": True}
 
 
-def test_runtime_snapshot_payload_bad_file(tmp_path: Path) -> None:
-    store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
-    artifact = store.create_artifact(
+def test_runtime_snapshot_payload_bad_file(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
+    artifact = shared_store.create_artifact(
         task_id=ctx.task_id,
         step_id=ctx.step_id,
         kind="snapshot",
@@ -105,23 +103,21 @@ def test_runtime_snapshot_payload_bad_file(tmp_path: Path) -> None:
 # ── active_task_for_conversation: blocked with plan confirmation ─
 
 
-def test_active_task_blocked_plan_confirmation(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_active_task_blocked_plan_confirmation(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     ctrl.mark_planning_ready(ctx, plan_artifact_ref="plan-1")
-    # Task should be blocked, and with awaiting_plan_confirmation the active
-    # task should return None
-    active = ctrl.active_task_for_conversation("conv-1")
+    active = ctrl.active_task_for_conversation(conv_id)
     assert active is None
 
 
 # ── decide_ingress: chat_only ───────────────────────────────────
 
 
-def test_decide_ingress_chat_only(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
+def test_decide_ingress_chat_only(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
     decision = ctrl.decide_ingress(
-        conversation_id="conv-1",
+        conversation_id=conv_id,
         source_channel="chat",
         raw_text="hi",
         prompt="hi",
@@ -134,10 +130,10 @@ def test_decide_ingress_chat_only(tmp_path: Path) -> None:
 # ── decide_ingress: explicit new task ───────────────────────────
 
 
-def test_decide_ingress_explicit_new_task(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
+def test_decide_ingress_explicit_new_task(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
     decision = ctrl.decide_ingress(
-        conversation_id="conv-1",
+        conversation_id=conv_id,
         source_channel="chat",
         raw_text="/new build a dashboard",
         prompt="/new build a dashboard",
@@ -149,10 +145,10 @@ def test_decide_ingress_explicit_new_task(tmp_path: Path) -> None:
 # ── decide_ingress: fallback new root (no active tasks) ─────────
 
 
-def test_decide_ingress_no_active_tasks(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
+def test_decide_ingress_no_active_tasks(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
     decision = ctrl.decide_ingress(
-        conversation_id="conv-1",
+        conversation_id=conv_id,
         source_channel="chat",
         raw_text="build a complex feature with many components",
         prompt="build a complex feature with many components",
@@ -164,11 +160,11 @@ def test_decide_ingress_no_active_tasks(tmp_path: Path) -> None:
 # ── decide_ingress: append_note to running task ─────────────────
 
 
-def test_decide_ingress_append_note(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl, goal="fix the database issue")
+def test_decide_ingress_append_note(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id, goal="fix the database issue")
     decision = ctrl.decide_ingress(
-        conversation_id="conv-1",
+        conversation_id=conv_id,
         source_channel="chat",
         raw_text="also fix the database index",
         prompt="also fix the database index",
@@ -180,14 +176,14 @@ def test_decide_ingress_append_note(tmp_path: Path) -> None:
 # ── decide_ingress: fork_child ──────────────────────────────────
 
 
-def test_decide_ingress_fork_child(tmp_path: Path, monkeypatch) -> None:
-    _store, ctrl = _setup(tmp_path)
-    _start_task(ctrl, goal="main feature work")
+def test_decide_ingress_fork_child(shared_store: KernelStore, conv_id: str, monkeypatch) -> None:
+    ctrl = _ctrl(shared_store)
+    _start_task(ctrl, conv_id, goal="main feature work")
     from hermit.kernel.task.services.ingress_router import IngressRouter
 
     monkeypatch.setattr(IngressRouter, "_has_branch_marker", staticmethod(lambda text: True))
     decision = ctrl.decide_ingress(
-        conversation_id="conv-1",
+        conversation_id=conv_id,
         source_channel="chat",
         raw_text="branch this into a subtask for testing",
         prompt="branch this into a subtask for testing",
@@ -198,15 +194,15 @@ def test_decide_ingress_fork_child(tmp_path: Path, monkeypatch) -> None:
 # ── _looks_like_task_followup ───────────────────────────────────
 
 
-def test_looks_like_task_followup_empty(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_looks_like_task_followup_empty(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     assert ctrl._looks_like_task_followup("", task_id=ctx.task_id) is False
 
 
-def test_looks_like_task_followup_with_topic(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl, goal="database migration")
+def test_looks_like_task_followup_with_topic(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id, goal="database migration")
     result = ctrl._looks_like_task_followup(
         "how is the database migration going",
         task_id=ctx.task_id,
@@ -217,16 +213,16 @@ def test_looks_like_task_followup_with_topic(tmp_path: Path) -> None:
 # ── _task_context_texts ─────────────────────────────────────────
 
 
-def test_task_context_texts(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl, goal="deploy feature")
+def test_task_context_texts(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id, goal="deploy feature")
     texts = ctrl._task_context_texts(ctx.task_id)
     assert any("deploy feature" in text for text in texts)
 
 
-def test_task_context_texts_with_notes(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl, goal="build API")
+def test_task_context_texts_with_notes(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id, goal="build API")
     ctrl.append_note(
         task_id=ctx.task_id,
         source_channel="chat",
@@ -240,33 +236,35 @@ def test_task_context_texts_with_notes(tmp_path: Path) -> None:
 # ── _terminal_continuation_tasks ────────────────────────────────
 
 
-def test_terminal_continuation_tasks_empty(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    tasks = ctrl._terminal_continuation_tasks("conv-1")
+def test_terminal_continuation_tasks_empty(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    tasks = ctrl._terminal_continuation_tasks(conv_id)
     assert tasks == []
 
 
-def test_terminal_continuation_tasks_with_completed(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl, goal="completed task")
+def test_terminal_continuation_tasks_with_completed(
+    shared_store: KernelStore, conv_id: str
+) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id, goal="completed task")
     ctrl.finalize_result(ctx, status="completed")
-    tasks = ctrl._terminal_continuation_tasks("conv-1")
+    tasks = ctrl._terminal_continuation_tasks(conv_id)
     assert len(tasks) == 1
 
 
 # ── _continuation_candidate_texts ───────────────────────────────
 
 
-def test_continuation_candidate_texts(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl, goal="implement feature X")
+def test_continuation_candidate_texts(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id, goal="implement feature X")
     ctrl.finalize_result(ctx, status="completed", result_text="Feature X done")
     texts = ctrl._continuation_candidate_texts(ctx.task_id)
     assert any("implement feature X" in text for text in texts)
 
 
-def test_continuation_candidate_texts_nonexistent(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
+def test_continuation_candidate_texts_nonexistent(shared_store: KernelStore) -> None:
+    ctrl = _ctrl(shared_store)
     texts = ctrl._continuation_candidate_texts("nonexistent")
     assert texts == []
 
@@ -274,9 +272,9 @@ def test_continuation_candidate_texts_nonexistent(tmp_path: Path) -> None:
 # ── _continuation_anchor ────────────────────────────────────────
 
 
-def test_continuation_anchor(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl, goal="my task goal")
+def test_continuation_anchor(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id, goal="my task goal")
     ctrl.finalize_result(ctx, status="completed")
     anchor = ctrl._continuation_anchor(ctx.task_id, selection_reason="test_reason")
     assert anchor["anchor_task_id"] == ctx.task_id
@@ -284,8 +282,8 @@ def test_continuation_anchor(tmp_path: Path) -> None:
     assert anchor["selection_reason"] == "test_reason"
 
 
-def test_continuation_anchor_nonexistent(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
+def test_continuation_anchor_nonexistent(shared_store: KernelStore) -> None:
+    ctrl = _ctrl(shared_store)
     anchor = ctrl._continuation_anchor("nonexistent", selection_reason="test")
     assert anchor == {}
 
@@ -293,9 +291,9 @@ def test_continuation_anchor_nonexistent(tmp_path: Path) -> None:
 # ── resolve_continuation_target ─────────────────────────────────
 
 
-def test_resolve_continuation_target_none(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    result = ctrl.resolve_continuation_target(conversation_id="conv-1", raw_text="")
+def test_resolve_continuation_target_none(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    result = ctrl.resolve_continuation_target(conversation_id=conv_id, raw_text="")
     assert result is None
 
 
@@ -310,9 +308,8 @@ def test_texts_overlap_static() -> None:
 # ── _mark_attempt_input_dirty ───────────────────────────────────
 
 
-def test_mark_attempt_input_dirty_no_attempt(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    # No tasks/attempts exist, should be a no-op
+def test_mark_attempt_input_dirty_no_attempt(shared_store: KernelStore) -> None:
+    ctrl = _ctrl(shared_store)
     ctrl._mark_attempt_input_dirty(
         task_id="nonexistent",
         ingress_id=None,
@@ -324,31 +321,29 @@ def test_mark_attempt_input_dirty_no_attempt(tmp_path: Path) -> None:
 # ── mark_suspended with invalid transition ──────────────────────
 
 
-def test_mark_suspended_invalid_transition(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_mark_suspended_invalid_transition(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     ctrl.finalize_result(ctx, status="completed")
-    # Trying to suspend a completed task should log warning but not crash
     ctrl.mark_suspended(ctx, waiting_kind="awaiting_approval")
 
 
 # ── pause_task invalid transition ───────────────────────────────
 
 
-def test_pause_task_invalid_transition(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_pause_task_invalid_transition(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     ctrl.finalize_result(ctx, status="completed")
-    # Should log warning but not crash
     ctrl.pause_task(ctx.task_id)
 
 
 # ── cancel_task invalid transition ──────────────────────────────
 
 
-def test_cancel_task_invalid_transition(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_cancel_task_invalid_transition(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     ctrl.finalize_result(ctx, status="completed")
     ctrl.cancel_task(ctx.task_id)
 
@@ -356,43 +351,40 @@ def test_cancel_task_invalid_transition(tmp_path: Path) -> None:
 # ── _set_focus: noop when already focused ───────────────────────
 
 
-def test_set_focus_noop_same_task(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
-    # Set focus twice - second should be a noop for ingress_bound
-    ctrl._set_focus(conversation_id="conv-1", task_id=ctx.task_id, reason="task_started")
-    ctrl._set_focus(conversation_id="conv-1", task_id=ctx.task_id, reason="ingress_bound")
-    # No crash expected
+def test_set_focus_noop_same_task(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
+    ctrl._set_focus(conversation_id=conv_id, task_id=ctx.task_id, reason="task_started")
+    ctrl._set_focus(conversation_id=conv_id, task_id=ctx.task_id, reason="ingress_bound")
 
 
 # ── _set_focus: clear ───────────────────────────────────────────
 
 
-def test_set_focus_clear(tmp_path: Path) -> None:
-    store, ctrl = _setup(tmp_path)
-    _start_task(ctrl)
-    ctrl._set_focus(conversation_id="conv-1", task_id=None, reason="cleared")
-    conv = store.get_conversation("conv-1")
+def test_set_focus_clear(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    _start_task(ctrl, conv_id)
+    ctrl._set_focus(conversation_id=conv_id, task_id=None, reason="cleared")
+    conv = shared_store.get_conversation(conv_id)
     assert conv.focus_task_id is None
 
 
 # ── _try_upgrade_to_steering: with /steer command ──────────────
 
 
-def test_try_upgrade_to_steering_with_command(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_try_upgrade_to_steering_with_command(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     ctrl._try_upgrade_to_steering(
         task_id=ctx.task_id,
         raw_text="/steer focus on performance only",
         source_channel="chat",
     )
-    # Should not crash; verify a steering was created
 
 
-def test_try_upgrade_to_steering_with_type(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_try_upgrade_to_steering_with_type(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     ctrl._try_upgrade_to_steering(
         task_id=ctx.task_id,
         raw_text="/steer --type priority focus on this first",
@@ -400,9 +392,9 @@ def test_try_upgrade_to_steering_with_type(tmp_path: Path) -> None:
     )
 
 
-def test_try_upgrade_to_steering_type_only(tmp_path: Path) -> None:
-    _store, ctrl = _setup(tmp_path)
-    ctx = _start_task(ctrl)
+def test_try_upgrade_to_steering_type_only(shared_store: KernelStore, conv_id: str) -> None:
+    ctrl = _ctrl(shared_store)
+    ctx = _start_task(ctrl, conv_id)
     ctrl._try_upgrade_to_steering(
         task_id=ctx.task_id,
         raw_text="/steer --type scope",

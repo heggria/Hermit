@@ -41,9 +41,9 @@ Hermit is a local-first governed agent kernel built for durable, inspectable, op
 Current core characteristics:
 
 - task-first kernel records and local ledger state
-- governed execution with approvals, decisions, permits, receipts, and rollback support
+- governed execution with approvals, trust evaluation, permits, receipts, and rollback support
 - artifact-aware context and evidence-bound memory primitives
-- a `plugin.toml`-driven plugin system with CLI, Feishu, scheduler, webhook, and MCP surfaces
+- a `plugin.toml`-driven plugin system with adapters (Feishu, Slack, Telegram), hooks (scheduler, webhook, memory, patrol, etc.), tools, MCP integrations, bundles, and subagents
 
 ## Code Quality
 
@@ -133,33 +133,42 @@ src/hermit/
 ├── infra/                         # Infrastructure primitives
 │   ├── locking/                   #   FileGuard
 │   ├── storage/                   #   JsonStore, atomic_write
-│   └── system/                    #   sandbox, i18n, executables
+│   ├── paths.py                    #   project_root(), project_path() utilities
+│   └── system/                    #   i18n, executables
 │       └── locales/               #   en-US / zh-CN locale files
 ├── kernel/                        # Governed execution kernel
-│   ├── artifacts/                 #   lineage, claims, evidence
+│   ├── analytics/                 #   governance metrics engine, health monitor
+│   ├── artifacts/                 #   blackboard, lineage, models
 │   ├── authority/                 #   grants, identity, workspaces
-│   ├── context/                   #   compiler, injection, memory governance
-│   ├── execution/                 #   controller, executor, recovery, suspension
+│   ├── context/                   #   compiler, injection, memory (20+ modules), models
+│   ├── execution/                 #   controller, executor, recovery, suspension,
+│   │                              #     competition, coordination, self_modify, workers
 │   ├── ledger/                    #   events, journal (SQLite), projections
-│   ├── policy/                    #   approvals, decisions, permits, evaluators, guards
+│   ├── policy/                    #   approvals, evaluators, guards, models, permits, trust
+│   ├── signals/                   #   evidence signals, steering, signal store
 │   ├── task/                      #   models, projections, services, state
-│   └── verification/              #   receipts, proofs, rollbacks
+│   └── verification/              #   benchmark, receipts, proofs, rollbacks
 ├── plugins/                       # Plugin system
 │   └── builtin/                   #   Built-in plugins (see Builtin Plugins below)
-│       ├── adapters/feishu/
+│       ├── adapters/{feishu,slack,telegram}/
 │       ├── bundles/{compact,planner,usage}/
-│       ├── hooks/{image_memory,memory,scheduler,webhook}/
-│       ├── mcp/{github,mcp_loader}/
+│       ├── hooks/{benchmark,decompose,image_memory,memory,metaloop,overnight,patrol,quality,research,scheduler,subtask,trigger,webhook}/
+│       ├── mcp/{github,hermit_server,mcp_loader}/
 │       ├── subagents/orchestrator/
-│       └── tools/{computer_use,grok,web_tools}/
+│       └── tools/{computer_use,file_tools,grok,web_tools}/
 ├── runtime/                       # Runtime / provider layer
 │   ├── assembly/                  #   config, context assembly
-│   ├── capability/                #   contracts, loader, registry, MCP resolver
-│   ├── control/                   #   dispatch, lifecycle, runner
+│   ├── capability/                #   contracts, loader, registry, resolver (MCP client)
+│   ├── control/                   #   runner (orchestration + extracted handlers), lifecycle
 │   ├── observation/               #   logging setup
-│   └── provider_host/             #   LLM providers (Claude, Codex), execution runtime
+│   └── provider_host/             #   LLM providers, shared contracts, execution runtime
+│       ├── llm/                   #     ClaudeProvider, CodexProvider, CodexOAuthProvider
+│       ├── shared/                #     contracts (Provider protocol, data classes), images,
+│       │                          #       messages (block normalization), profiles (ProfileCatalog)
+│       └── execution/             #     AgentRuntime, CommandSandbox, build_provider/build_runtime,
+│                                  #       approval/progress/vision services
 └── surfaces/                      # User-facing entry points
-    └── cli/                       #   Typer CLI dispatcher (main.py)
+    └── cli/                       #   Typer CLI dispatcher (main.py, _commands_*.py, _serve.py, tui/)
 ```
 
 ## CLI Fact Sheet
@@ -171,8 +180,9 @@ Top-level commands:
 - `hermit startup-prompt`
 - `hermit run`
 - `hermit chat`
-- `hermit serve --adapter <adapter>`
-- `hermit reload --adapter <adapter>`
+- `hermit overnight`
+- `hermit serve [ADAPTER]`
+- `hermit reload [ADAPTER]`
 - `hermit sessions`
 - `hermit config ...`
 - `hermit profiles ...`
@@ -189,6 +199,7 @@ Core slash commands in `chat`:
 - `/history`
 - `/help`
 - `/quit`
+- `/task`
 
 Builtin plugin commands:
 
@@ -198,7 +209,7 @@ Builtin plugin commands:
 
 Notes:
 
-- `serve` and `reload` currently use `--adapter`
+- `serve` and `reload` take a positional ADAPTER argument (default: feishu)
 - only `autostart enable/disable/status` uses `--adapter`
 
 ## Config and State Directories
@@ -208,15 +219,24 @@ Default root directory: `~/.hermit`
 Common paths:
 
 - `~/.hermit/.env`
+- `~/.hermit/config.toml` — profile catalog and global settings
 - `~/.hermit/context.md`
 - `~/.hermit/memory/memories.md`
 - `~/.hermit/memory/session_state.json`
+- `~/.hermit/hooks/` — user-defined hook scripts
 - `~/.hermit/plugins/`
 - `~/.hermit/rules/`
 - `~/.hermit/skills/`
 - `~/.hermit/schedules/`
 - `~/.hermit/sessions/`
 - `~/.hermit/image-memory/`
+- `~/.hermit/webhooks.json` — webhook route configuration
+
+Kernel state (task ledger, artifacts, receipts):
+
+- `~/.hermit/kernel/` — kernel state root
+- `~/.hermit/kernel/state.db` — SQLite ledger (tasks, events, artifacts, receipts)
+- `~/.hermit/kernel/artifacts/` — artifact blob storage
 
 You will also see these at runtime:
 
@@ -269,6 +289,8 @@ Current enum values:
 - `SERVE_START`
 - `SERVE_STOP`
 - `DISPATCH_RESULT`
+- `SUBTASK_SPAWN`
+- `SUBTASK_COMPLETE`
 
 Do not use the old name `SCHEDULE_RESULT` anymore.
 
@@ -282,6 +304,7 @@ Current core toolset:
 - `read_hermit_file`
 - `write_hermit_file`
 - `list_hermit_files`
+- `iteration_summary`
 
 In `/plan` mode, only read-only tools remain available and side-effecting tools are disabled.
 
@@ -323,41 +346,121 @@ Do not report “done” before that loop has been fully completed.
 
 ### Execution Flow
 
-The core governed execution path:
-`Task → Step → StepAttempt → Policy → Approval → CapabilityGrant → Execution → Receipt → Proof/Rollback`
+The core governed execution pipeline (`ToolExecutor.execute` in `kernel/execution/executor/executor.py`):
 
-Models propose actions, the kernel authorizes, then the executor runs. No direct model-to-tool execution.
+```
+Task → Step → StepAttempt → ActionRequest → EvidenceEnrichment → PolicyEvaluation
+  → ApprovalMatching (+ drift detection) → StateWitness → ExecutionContract
+  → EvidenceCase → AuthorizationPlan → AdmissibilityCheck → ApprovalGate
+  → WorkspaceLease → CapabilityGrant → RevalidationGate → RollbackPlan
+  → Execution → Observation → Receipt → Reconciliation → PatternLearning
+```
+
+**Phase details:**
+1. **ActionRequest** — `PolicyEngine.build_action_request()` constructs the request from tool + input + context
+2. **EvidenceEnrichment** — `PolicyEvidenceEnricher.enrich()` attaches derived evidence to the request
+3. **PolicyEvaluation** — `PolicyEngine.evaluate()` produces a `PolicyDecision` (allow / deny / require_approval)
+4. **ApprovalMatching** — matches existing approvals; detects drift (supersedes attempt if drifted)
+5. **StateWitness** — `WitnessCapture` snapshots pre-execution state for governed actions
+6. **ExecutionContract + EvidenceCase + AuthorizationPlan** — synthesized via `_synthesize_contract_loop()` for governed actions; checked for expiry and policy-version drift
+7. **AdmissibilityCheck** — `_admissibility_resolution()` validates contract is admissible; blocks if not
+8. **ApprovalGate** — if `require_approval`, creates an `Approval` record and suspends the attempt
+9. **WorkspaceLease** — `WorkspaceLeaseService` ensures exclusive workspace access
+10. **CapabilityGrant** — `CapabilityGrantService.issue()` mints a scoped grant; dispatch denied on failure
+11. **RevalidationGate** — `AuthorizationPlanService.revalidate()` checks policy version hasn't drifted since plan creation
+12. **RollbackPlan** — `_prepare_rollback_plan()` records rollback strategy and artifact refs
+13. **Execution** — `invoke_tool_handler()` runs the tool; uncertain outcomes routed to reconciliation
+14. **Observation** — observation ticket handling for async/deferred results
+15. **Receipt** — `ReceiptService` issues a receipt with result code, rollback info, and evidence refs
+16. **Reconciliation** — `ReconcileService` compares authorized vs observed effects
+17. **PatternLearning** — `TaskPatternLearner` records execution patterns for future contract synthesis
+
+Models propose actions; the kernel authorizes, contracts, and witnesses before the executor runs. No direct model-to-tool execution.
 
 ### Key Layers
 
 **CLI & Surfaces** (`src/hermit/surfaces/cli/`):
-- `main.py` — CLI dispatcher using Typer: `hermit chat`, `hermit run`, `hermit serve`, `hermit task`, `hermit memory`, `hermit config`, etc.
-- `autostart.py` — Autostart management
+- `main.py` — CLI dispatcher using Typer, imports command modules below
+- `_commands_core.py` — Core commands: `hermit run`, `hermit chat`, `hermit setup`, `hermit init`, `hermit sessions`, `hermit config`, `hermit profiles`, `hermit auth`, `hermit startup-prompt`
+- `_serve.py` — `hermit serve` and `hermit reload`
+- `_commands_task.py` — `hermit task` subcommands
+- `_commands_memory.py` — `hermit memory` subcommands
+- `_commands_plugin.py` — `hermit plugin` subcommands
+- `_commands_schedule.py` — `hermit schedule` subcommands
+- `_commands_autostart.py` — `hermit autostart` subcommands
+- `_commands_overnight.py` — `hermit overnight`
+- `autostart.py` — Autostart management (launchd plist generation)
+- `_preflight.py` — Preflight checks (workspace init, env validation)
+- `_helpers.py` — Shared CLI helpers (spinners, formatters)
+- `tui/` — Terminal UI (interactive TUI mode for `hermit chat --tui`)
 
 **Runtime** (`src/hermit/runtime/`):
-- `control/runner/runner.py` — AgentRunner: unified orchestration for CLI and adapters. Manages session + agent + plugin hooks + background services
+- `control/runner/runner.py` — AgentRunner: unified orchestration for CLI and adapters. Manages session + agent + plugin hooks + background services. Delegates to extracted handler modules: `task_executor.py`, `message_compiler.py`, `async_dispatcher.py`, `approval_resolver.py`, `session_context_builder.py`, `control_actions.py`, `utils.py`
 - `control/lifecycle/session.py` — SessionManager for conversation state
-- `control/lifecycle/budgets.py` — Token budget management
+- `control/lifecycle/budgets.py` — Execution budget management (deadlines, timeouts)
 - `capability/registry/manager.py` — PluginManager: plugin discovery, tool registration, hook dispatch, MCP integration
 - `capability/registry/tools.py` — ToolRegistry and tool execution
-- `capability/contracts/base.py` — PluginManifest, HookEvent, SubagentSpec, AdapterSpec
+- `capability/contracts/base.py` — PluginManifest, HookEvent, SubagentSpec, AdapterSpec, McpServerSpec, McpToolGovernance, CommandSpec, PluginVariableSpec, AdapterProtocol, PluginContext
+- `capability/contracts/hooks.py` — HooksEngine: priority-based hook dispatch with signature-adaptive calling
+- `capability/contracts/kernel_services.py` — KernelServiceProvider protocol, KernelServiceRegistry for kernel-plugin decoupling
+- `capability/contracts/rules.py` — Rule file loading from plugin rule directories
+- `capability/contracts/skills.py` — SkillDefinition model, skill loading from plugin skill directories
 - `capability/loader/loader.py` — Plugin discovery and loading
-- `capability/resolver/mcp_client.py` — MCP client resolver
+- `capability/loader/config.py` — Plugin variable resolution and template rendering
+- `capability/registry/skill_loader.py` — SkillLoader: read_skill tool registration and handler
+- `capability/registry/subagent_executor.py` — SubagentExecutor: delegation tool construction and governed subagent execution
+- `capability/registry/system_prompt_builder.py` — SystemPromptBuilder: system prompt assembly with rules, skills, and hooks
+- `capability/resolver/mcp_client.py` — McpClientManager: MCP server connection lifecycle, tool discovery, and governed call routing via background event loop
 - `assembly/config.py` / `context.py` — Config and context assembly
-- `provider_host/` — LLM provider implementations (Claude, Codex), AgentRuntime, services
-
+- `provider_host/llm/` — ClaudeProvider (`claude.py`), CodexProvider + CodexOAuthProvider + CodexOAuthTokenManager (`codex.py`)
+- `provider_host/shared/contracts.py` — Provider protocol, ProviderRequest/Response/Event, UsageMetrics, ToolCall/ToolResult
+- `provider_host/shared/images.py` — Image compression/preparation for provider messages
+- `provider_host/shared/messages.py` — Block normalization, internal tool context handling
+- `provider_host/shared/profiles.py` — ProfileCatalog, ResolvedProfile, TOML config resolution
+- `provider_host/execution/runtime.py` — AgentRuntime, AgentResult
+- `provider_host/execution/sandbox.py` — CommandSandbox for budget-aware subprocess execution
+- `provider_host/execution/services.py` — build_provider, build_runtime, build_background_runtime factories
+- `provider_host/execution/approval_services.py` — LLMApprovalFormatter, build_approval_copy_service
+- `provider_host/execution/progress_services.py` — LLMProgressSummarizer
 **Task Kernel** (`src/hermit/kernel/`):
 - `task/` — TaskRecord models, TaskController, ingress routing, projections, state
-- `ledger/journal/store.py` — KernelStore: SQLite-backed persistent ledger
+- `ledger/` — Persistent ledger with hash-chained event sourcing (schema v18), mixin-based KernelStore
+  - `journal/store.py` — KernelStore: composed of 12 mixins (Task, Ledger, Projection, Scheduler, Record, V2, Signal, Competition, Delegation, SelfIterate, Program, Team)
+  - `journal/store_tasks.py` — KernelTaskStoreMixin: task lifecycle persistence
+  - `journal/store_records.py` — KernelStoreRecordMixin: generic record storage
+  - `journal/store_v2.py` — KernelV2StoreMixin: execution contracts, evidence cases, authorization plans, reconciliations
+  - `journal/store_scheduler.py` — KernelSchedulerStoreMixin: scheduled job persistence
+  - `journal/store_self_iterate.py` — SelfIterateStoreMixin: self-iteration state
+  - `journal/store_programs.py` — ProgramStoreMixin: program/workflow storage
+  - `journal/store_teams.py` — KernelTeamStoreMixin: team coordination
+  - `journal/store_types.py` — KernelStoreTypingBase: shared typing base for all mixins
+  - `journal/store_support.py` — Utility functions (canonical JSON, SHA-256, UNSET sentinel)
+  - `events/store_ledger.py` — KernelLedgerStoreMixin: artifacts, approvals, beliefs, decisions, memories, receipts, rollbacks, capability grants, principals, workspace leases
+  - `projections/store_projection.py` — KernelProjectionStoreMixin: build/cache full task projections from event stream
+- `analytics/` — AnalyticsEngine for governance metrics, health monitor
+- `signals/` — Evidence signals, steering protocol, signal store
 - `execution/executor/executor.py` — ToolExecutor: governed tool execution with policy evaluation
-- `execution/coordination/dispatch.py` — KernelDispatchService for async governed execution
-- `policy/approvals/` — Approval workflow and policy enforcement
+- `execution/coordination/` — KernelDispatchService, join barriers, pool dispatch, prioritizer
+- `execution/competition/` — Competitive candidate evaluation and deliberation
+- `execution/self_modify/` — Self-iteration kernel, workspace isolation, merge verification
+- `execution/workers/` — Worker pool with role-bound slot management
+- `execution/recovery/` — Failure recovery and retry logic
+- `execution/controller/` — ActionContract definitions, SupervisionService, pattern and template learners
+- `execution/suspension/` — Git worktree snapshot for task suspension and resumption
+- `policy/approvals/` — Approval workflow, decision recording, and approval copy rendering
+- `policy/evaluators/` — PolicyEngine, action request derivation, evidence enrichment
+- `policy/guards/` — Guard rules dispatch chain (readonly, filesystem, shell, network, attachment, planning, governance)
+- `policy/models/` — ActionRequest, PolicyDecision, PolicyObligations, PolicyReason, Verdict/ActionClass enums
 - `policy/permits/` — Authorization plans
-- `verification/receipts/` / `proofs/` — Receipt issuance, proof generation and verification
-- `verification/rollbacks/` — Rollback execution for supported receipts
-- `context/compiler/` — Artifact-native context assembly
-- `context/memory/governance.py` — Evidence-bound memory governance
-- `artifacts/` — Artifact lineage, claims, evidence
+- `policy/trust/` — Trust scoring, risk adjustment
+- `verification/benchmark/` — Benchmark models, profile registry, and routing service for verification-driven quality gates
+- `verification/receipts/` — Receipt issuance with HMAC-SHA256 signing
+- `verification/proofs/` — Proof summaries, tiered export (summary/standard/full), Merkle inclusion proofs, DAG proof bundles, proof anchoring (local log, git notes), governance assurance reports, chain completeness analysis
+- `verification/rollbacks/` — Rollback execution, recursive dependency tracking, leaf-first rollback planning
+- `context/compiler/` — ContextCompiler producing ContextPack v3 with hybrid retrieval (semantic + token-index)
+- `context/injection/` — ProviderInputCompiler for LLM provider input assembly
+- `context/memory/` — Full memory subsystem (24 modules): governance, hybrid retrieval, episodic, procedural, knowledge graph, embeddings, decay, consolidation, confidence scoring, reflection, lineage, anti-pattern detection, quality assessment, taxonomy, reranker, token index, working memory
+- `artifacts/` — Artifact blackboard, lineage tracking, models
 - `authority/` — Identity, workspaces, capability grants
 
 **Plugin System** (`src/hermit/plugins/`):
@@ -366,15 +469,28 @@ Models propose actions, the kernel authorizes, then the executor runs. No direct
 
 **Builtin Plugins** (`src/hermit/plugins/builtin/`):
 - `adapters/feishu/` — Feishu messaging adapter
-- `hooks/webhook/` — HTTP webhook receiver with signature verification
-- `hooks/scheduler/` — Scheduled task execution
-- `hooks/memory/` — Memory system with evidence governance
+- `adapters/slack/` — Slack messaging adapter (Socket Mode)
+- `adapters/telegram/` — Telegram messaging adapter
+- `hooks/benchmark/` — Benchmark runner and iteration learner
+- `hooks/decompose/` — Intelligent task decomposition and spec generation
 - `hooks/image_memory/` — Image memory hooks
+- `hooks/memory/` — Memory system with evidence governance
+- `hooks/metaloop/` — Meta-loop lifecycle management and subtask completion
+- `hooks/overnight/` — Overnight dashboard and morning report aggregation
+- `hooks/patrol/` — Scheduled proactive code health checks
+- `hooks/quality/` — Governed code review and test skeleton generation
+- `hooks/research/` — Auto-research across codebase, web, docs, and git history
+- `hooks/scheduler/` — Scheduled task execution
+- `hooks/subtask/` — Subtask spawning support
+- `hooks/trigger/` — Evidence-backed task generation from execution results
+- `hooks/webhook/` — HTTP webhook receiver with signature verification
 - `mcp/github/` — GitHub MCP integration
+- `mcp/hermit_server/` — Hermit MCP server exposing kernel tools via Streamable HTTP for supervisor agents
 - `mcp/mcp_loader/` — MCP server loader
-- `tools/web_tools/` — Web search/scraping
-- `tools/grok/` — Grok search
 - `tools/computer_use/` — Computer use capabilities
+- `tools/file_tools/` — Governed file tools (read_file, glob_files)
+- `tools/grok/` — Grok search
+- `tools/web_tools/` — Web search/scraping
 - `bundles/compact/` — Compact command
 - `bundles/planner/` — Plan command
 - `bundles/usage/` — Usage command
@@ -383,7 +499,8 @@ Models propose actions, the kernel authorizes, then the executor runs. No direct
 **Infrastructure** (`src/hermit/infra/`):
 - `storage/` — JsonStore, atomic_write for file-based JSON persistence
 - `locking/` — FileGuard for file-based locking
-- `system/` — Sandbox, i18n, executables
+- `system/` — i18n, executables
+- `paths.py` — project_root(), project_path() path utilities
 
 **Apps** (`src/hermit/apps/`):
 - `companion/` — macOS menubar companion, app bundle, control

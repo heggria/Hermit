@@ -77,9 +77,9 @@ CLAIM_ROWS: list[dict[str, Any]] = [
 ]
 
 PROFILE_LABELS = {
-    "core": "Hermit Kernel v0.2 Core",
-    "governed": "Hermit Kernel v0.2 Core + Governed",
-    "verifiable": "Hermit Kernel v0.2 Core + Governed + Verifiable",
+    "core": "Hermit Kernel v0.3 Core",
+    "governed": "Hermit Kernel v0.3 Core + Governed",
+    "verifiable": "Hermit Kernel v0.3 Core + Governed + Verifiable",
 }
 
 

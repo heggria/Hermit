@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -61,6 +62,7 @@ def config_path_for_base_dir(base_dir: Path) -> Path:
     return base_dir.expanduser() / "config.toml"
 
 
+@lru_cache(maxsize=8)
 def load_profile_catalog(base_dir: Path) -> ProfileCatalog:
     path = config_path_for_base_dir(base_dir)
     if not path.exists():

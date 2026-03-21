@@ -45,6 +45,7 @@ class ExecutionBudget:
     tool_hard_deadline: float = 600.0
     observation_window: float = 600.0
     observation_poll_interval: float = 5.0
+    reconciliation_probe_timeout: float = 5.0
 
     def tool_deadline(self) -> Deadline:
         return Deadline.start(

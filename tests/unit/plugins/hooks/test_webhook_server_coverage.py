@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -185,8 +184,8 @@ class TestControlEndpointEdgeCases:
     def _sign(body: bytes, secret: str) -> str:
         return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
-    def test_show_task_not_found(self, tmp_path: Path) -> None:
-        store = KernelStore(tmp_path / "state.db")
+    def test_show_task_not_found(self, kernel_store: KernelStore) -> None:
+        store = kernel_store
         config = WebhookConfig(control_secret="sec")
         server = WebhookServer(config, HooksEngine())
         server._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
@@ -197,8 +196,8 @@ class TestControlEndpointEdgeCases:
         )
         assert resp.status_code == 404
 
-    def test_task_events_returns_events(self, tmp_path: Path) -> None:
-        store = KernelStore(tmp_path / "state.db")
+    def test_task_events_returns_events(self, kernel_store: KernelStore) -> None:
+        store = kernel_store
         store.ensure_conversation("c1", source_channel="test")
         task = store.create_task(conversation_id="c1", title="t", goal="g", source_channel="test")
         config = WebhookConfig(control_secret="sec")
@@ -212,8 +211,8 @@ class TestControlEndpointEdgeCases:
         assert resp.status_code == 200
         assert "events" in resp.json()
 
-    def test_rebuild_projections_without_task_id(self, tmp_path: Path) -> None:
-        store = KernelStore(tmp_path / "state.db")
+    def test_rebuild_projections_without_task_id(self, kernel_store: KernelStore) -> None:
+        store = kernel_store
         config = WebhookConfig(control_secret="sec")
         server = WebhookServer(config, HooksEngine())
         server._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
@@ -232,8 +231,8 @@ class TestControlEndpointEdgeCases:
         resp = client.post("/approvals/some-id/approve")
         assert resp.status_code == 503
 
-    def test_deny_approval_not_found(self, tmp_path: Path) -> None:
-        store = KernelStore(tmp_path / "state.db")
+    def test_deny_approval_not_found(self, kernel_store: KernelStore) -> None:
+        store = kernel_store
         config = WebhookConfig()
         server = WebhookServer(config, HooksEngine())
         server._runner = SimpleNamespace(
@@ -244,8 +243,8 @@ class TestControlEndpointEdgeCases:
         resp = client.post("/approvals/nonexistent/deny")
         assert resp.status_code == 404
 
-    def test_receipt_rollback_missing_receipt(self, tmp_path: Path) -> None:
-        store = KernelStore(tmp_path / "state.db")
+    def test_receipt_rollback_missing_receipt(self, kernel_store: KernelStore) -> None:
+        store = kernel_store
         config = WebhookConfig()
         server = WebhookServer(config, HooksEngine())
         server._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
@@ -309,8 +308,8 @@ class TestProcessEdgeCases:
 
 
 class TestVerifyControlRequestNoSecret:
-    def test_no_control_secret_allows_request(self, tmp_path: Path) -> None:
-        store = KernelStore(tmp_path / "state.db")
+    def test_no_control_secret_allows_request(self, kernel_store: KernelStore) -> None:
+        store = kernel_store
         config = WebhookConfig(control_secret=None)
         server = WebhookServer(config, HooksEngine())
         server._runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))

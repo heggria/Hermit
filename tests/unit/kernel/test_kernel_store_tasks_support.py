@@ -18,9 +18,9 @@ def test_store_support_json_loads_handles_empty_and_invalid() -> None:
 
 
 def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_events(
-    tmp_path: Path,
+    fast_store: KernelStore,
 ) -> None:
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
 
     conversation = store.ensure_conversation("conv-1", source_channel="chat", source_ref="thread-1")
     same_conversation = store.ensure_conversation("conv-1", source_channel="chat")
@@ -199,9 +199,9 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
 
 
 def test_kernel_store_tolerates_foreign_object_sentinels_in_optional_task_fields(
-    tmp_path: Path,
+    fast_store: KernelStore,
 ) -> None:
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
     store.ensure_conversation("conv-sentinel", source_channel="scheduler")
 
     task = store.create_task(
@@ -220,9 +220,9 @@ def test_kernel_store_tolerates_foreign_object_sentinels_in_optional_task_fields
 
 
 def test_kernel_store_tolerates_foreign_object_sentinels_in_step_attempt_updates(
-    tmp_path: Path,
+    fast_store: KernelStore,
 ) -> None:
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
     store.ensure_conversation("conv-attempt-sentinel", source_channel="scheduler")
     task = store.create_task(
         conversation_id="conv-attempt-sentinel",
@@ -257,9 +257,9 @@ def test_kernel_store_tolerates_foreign_object_sentinels_in_step_attempt_updates
 
 
 def test_kernel_store_tolerates_foreign_object_sentinels_in_ingress_updates(
-    tmp_path: Path,
+    fast_store: KernelStore,
 ) -> None:
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
     store.ensure_conversation("conv-ingress-sentinel", source_channel="scheduler")
     ingress = store.create_ingress(
         conversation_id="conv-ingress-sentinel",
@@ -343,8 +343,10 @@ def test_kernel_store_accepts_schema_version_5_for_additive_migration(tmp_path: 
         reopened.close()
 
 
-def test_kernel_store_round_trips_canonical_ledger_fields(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "state.db")
+def test_kernel_store_round_trips_canonical_ledger_fields(
+    fast_store: KernelStore, tmp_path: Path
+) -> None:
+    store = fast_store
     store.ensure_conversation("conv-canonical", source_channel="chat")
     task = store.create_task(
         conversation_id="conv-canonical",
@@ -473,8 +475,8 @@ def test_kernel_store_round_trips_canonical_ledger_fields(tmp_path: Path) -> Non
     assert fetched_receipt.signer_ref == "local-hmac"
 
 
-def test_proof_service_detects_tampered_event_chain(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "state.db")
+def test_proof_service_detects_tampered_event_chain(fast_store: KernelStore) -> None:
+    store = fast_store
     store.ensure_conversation("conv-tamper", source_channel="chat")
     task = store.create_task(
         conversation_id="conv-tamper",
@@ -500,133 +502,144 @@ def test_proof_service_detects_tampered_event_chain(tmp_path: Path) -> None:
 
 def test_proof_service_exports_signed_bundles_and_inclusion_proofs(tmp_path: Path) -> None:
     store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-signed", source_channel="chat")
-    task = store.create_task(
-        conversation_id="conv-signed",
-        title="Signed Proof Task",
-        goal="Export signed proof bundle",
-        source_channel="chat",
-    )
-    step = store.create_step(task_id=task.task_id, kind="respond")
-    first_attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
-    second_attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
-    first_receipt = store.create_receipt(
-        task_id=task.task_id,
-        step_id=step.step_id,
-        step_attempt_id=first_attempt.step_attempt_id,
-        action_type="write_local",
-        input_refs=[],
-        environment_ref=None,
-        policy_result={"decision": "allow"},
-        approval_ref=None,
-        output_refs=[],
-        result_summary="first",
-        result_code="succeeded",
-    )
-    second_receipt = store.create_receipt(
-        task_id=task.task_id,
-        step_id=step.step_id,
-        step_attempt_id=second_attempt.step_attempt_id,
-        action_type="write_local",
-        input_refs=[],
-        environment_ref=None,
-        policy_result={"decision": "allow"},
-        approval_ref=None,
-        output_refs=[],
-        result_summary="second",
-        result_code="succeeded",
-    )
+    try:
+        store.ensure_conversation("conv-signed", source_channel="chat")
+        task = store.create_task(
+            conversation_id="conv-signed",
+            title="Signed Proof Task",
+            goal="Export signed proof bundle",
+            source_channel="chat",
+        )
+        step = store.create_step(task_id=task.task_id, kind="respond")
+        first_attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+        second_attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+        first_receipt = store.create_receipt(
+            task_id=task.task_id,
+            step_id=step.step_id,
+            step_attempt_id=first_attempt.step_attempt_id,
+            action_type="write_local",
+            input_refs=[],
+            environment_ref=None,
+            policy_result={"decision": "allow"},
+            approval_ref=None,
+            output_refs=[],
+            result_summary="first",
+            result_code="succeeded",
+        )
+        second_receipt = store.create_receipt(
+            task_id=task.task_id,
+            step_id=step.step_id,
+            step_attempt_id=second_attempt.step_attempt_id,
+            action_type="write_local",
+            input_refs=[],
+            environment_ref=None,
+            policy_result={"decision": "allow"},
+            approval_ref=None,
+            output_refs=[],
+            result_summary="second",
+            result_code="succeeded",
+        )
 
-    service = ProofService(store, signing_secret="proof-secret", signing_key_id="test-key")
-    export = service.export_task_proof(task.task_id)
+        service = ProofService(store, signing_secret="proof-secret", signing_key_id="test-key")
+        export = service.export_task_proof(task.task_id)
 
-    assert export["proof_mode"] == "signed_with_inclusion_proof"
-    assert export["receipt_merkle_root"]
-    assert export["signature"]["key_id"] == "test-key"
-    assert set(export["receipt_inclusion_proofs"]) == {
-        first_receipt.receipt_id,
-        second_receipt.receipt_id,
-    }
-    summary = service.build_proof_summary(task.task_id)
-    assert summary["proof_mode"] == "signed_with_inclusion_proof"
-    assert summary["proof_coverage"]["signature_coverage"]["signed_receipts"] == 2
-    assert summary["proof_coverage"]["inclusion_proof_coverage"]["proved_receipts"] == 2
-    refreshed_first = store.get_receipt(first_receipt.receipt_id)
-    refreshed_second = store.get_receipt(second_receipt.receipt_id)
-    assert (
-        refreshed_first is not None and refreshed_first.proof_mode == "signed_with_inclusion_proof"
-    )
-    assert (
-        refreshed_second is not None
-        and refreshed_second.proof_mode == "signed_with_inclusion_proof"
-    )
+        assert export["proof_mode"] == "signed_with_inclusion_proof"
+        assert export["receipt_merkle_root"]
+        assert export["signature"]["key_id"] == "test-key"
+        assert set(export["receipt_inclusion_proofs"]) == {
+            first_receipt.receipt_id,
+            second_receipt.receipt_id,
+        }
+        summary = service.build_proof_summary(task.task_id)
+        assert summary["proof_mode"] == "signed_with_inclusion_proof"
+        assert summary["proof_coverage"]["signature_coverage"]["signed_receipts"] == 2
+        assert summary["proof_coverage"]["inclusion_proof_coverage"]["proved_receipts"] == 2
+        refreshed_first = store.get_receipt(first_receipt.receipt_id)
+        refreshed_second = store.get_receipt(second_receipt.receipt_id)
+        assert (
+            refreshed_first is not None
+            and refreshed_first.proof_mode == "signed_with_inclusion_proof"
+        )
+        assert (
+            refreshed_second is not None
+            and refreshed_second.proof_mode == "signed_with_inclusion_proof"
+        )
+    finally:
+        store.close()
 
 
-def test_context_manifest_scopes_memory_refs_to_the_task_conversation(tmp_path: Path) -> None:
+def test_context_manifest_scopes_memory_refs_to_the_task_conversation(
+    tmp_path: Path,
+) -> None:
     store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-proof", source_channel="chat")
-    store.ensure_conversation("conv-other", source_channel="chat")
-    task = store.create_task(
-        conversation_id="conv-proof",
-        title="Scoped Proof Task",
-        goal="Export scoped manifest",
-        source_channel="chat",
-    )
-    step = store.create_step(task_id=task.task_id, kind="respond")
-    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
-    receipt = store.create_receipt(
-        task_id=task.task_id,
-        step_id=step.step_id,
-        step_attempt_id=attempt.step_attempt_id,
-        action_type="write_local",
-        input_refs=[],
-        environment_ref=None,
-        policy_result={"decision": "allow"},
-        approval_ref=None,
-        output_refs=[],
-        result_summary="done",
-        result_code="succeeded",
-    )
-    relevant_memory = store.create_memory_record(
-        task_id=task.task_id,
-        conversation_id="conv-proof",
-        category="fact",
-        content="Scoped memory",
-        status="active",
-    )
-    store.create_memory_record(
-        task_id="task_other",
-        conversation_id="conv-other",
-        category="fact",
-        content="Foreign memory",
-        status="active",
-    )
-    store.create_memory_record(
-        task_id=task.task_id,
-        conversation_id="conv-proof",
-        category="fact",
-        content="Expired memory",
-        status="active",
-        expires_at=1.0,
-    )
+    try:
+        store.ensure_conversation("conv-proof", source_channel="chat")
+        store.ensure_conversation("conv-other", source_channel="chat")
+        task = store.create_task(
+            conversation_id="conv-proof",
+            title="Scoped Proof Task",
+            goal="Export scoped manifest",
+            source_channel="chat",
+        )
+        step = store.create_step(task_id=task.task_id, kind="respond")
+        attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+        receipt = store.create_receipt(
+            task_id=task.task_id,
+            step_id=step.step_id,
+            step_attempt_id=attempt.step_attempt_id,
+            action_type="write_local",
+            input_refs=[],
+            environment_ref=None,
+            policy_result={"decision": "allow"},
+            approval_ref=None,
+            output_refs=[],
+            result_summary="done",
+            result_code="succeeded",
+        )
+        relevant_memory = store.create_memory_record(
+            task_id=task.task_id,
+            conversation_id="conv-proof",
+            category="fact",
+            content="Scoped memory",
+            status="active",
+        )
+        store.create_memory_record(
+            task_id="task_other",
+            conversation_id="conv-other",
+            category="fact",
+            content="Foreign memory",
+            status="active",
+        )
+        store.create_memory_record(
+            task_id=task.task_id,
+            conversation_id="conv-proof",
+            category="fact",
+            content="Expired memory",
+            status="active",
+            expires_at=1.0,
+        )
 
-    service = ProofService(store)
-    bundle_ref = service.ensure_receipt_bundle(receipt.receipt_id)
+        service = ProofService(store)
+        bundle_ref = service.ensure_receipt_bundle(receipt.receipt_id)
 
-    bundle_artifact = store.get_artifact(bundle_ref)
-    assert bundle_artifact is not None
-    bundle_payload = json.loads(Path(bundle_artifact.uri).read_text(encoding="utf-8"))
-    context_manifest = store.get_artifact(bundle_payload["context_manifest_ref"])
-    assert context_manifest is not None
-    manifest_payload = json.loads(Path(context_manifest.uri).read_text(encoding="utf-8"))
-    assert manifest_payload["memory_refs"] == [relevant_memory.memory_id]
+        bundle_artifact = store.get_artifact(bundle_ref)
+        assert bundle_artifact is not None
+        bundle_payload = json.loads(Path(bundle_artifact.uri).read_text(encoding="utf-8"))
+        context_manifest = store.get_artifact(bundle_payload["context_manifest_ref"])
+        assert context_manifest is not None
+        manifest_payload = json.loads(Path(context_manifest.uri).read_text(encoding="utf-8"))
+        assert manifest_payload["memory_refs"] == [relevant_memory.memory_id]
+    finally:
+        store.close()
 
 
-def test_try_finalize_step_attempt_is_atomic_and_idempotent(tmp_path: Path) -> None:
+def test_try_finalize_step_attempt_is_atomic_and_idempotent(
+    fast_store: KernelStore,
+) -> None:
     """try_finalize_step_attempt() must behave as a CAS: the first caller wins,
     and a second concurrent caller (or any subsequent call) returns False without
     triggering a second status transition."""
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
 
     conv = store.ensure_conversation("conv-cas", source_channel="chat")
     task = store.create_task(
@@ -663,13 +676,15 @@ def test_try_finalize_step_attempt_is_atomic_and_idempotent(tmp_path: Path) -> N
     assert still_updated.status == "succeeded"
 
 
-def test_try_finalize_step_attempt_rejects_all_terminal_statuses(tmp_path: Path) -> None:
+def test_try_finalize_step_attempt_rejects_all_terminal_statuses(
+    fast_store: KernelStore,
+) -> None:
     """try_finalize_step_attempt() must return False for every terminal status
     ('succeeded', 'completed', 'skipped', 'failed', 'superseded') so that
     no terminal → terminal re-transition is possible."""
     import time
 
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
     conv = store.ensure_conversation("conv-terminals", source_channel="chat")
     task = store.create_task(
         conversation_id=conv.conversation_id,
@@ -705,56 +720,59 @@ def test_try_finalize_step_attempt_rejects_all_terminal_statuses(tmp_path: Path)
 def test_batch_get_artifacts_returns_matching_records_in_single_query(tmp_path: Path) -> None:
     """batch_get_artifacts fetches multiple artifacts in one DB round-trip."""
     store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-batch", source_channel="chat")
-    task = store.create_task(
-        conversation_id="conv-batch",
-        title="Batch Artifact Task",
-        goal="batch_get_artifacts test",
-        source_channel="chat",
-    )
+    try:
+        store.ensure_conversation("conv-batch", source_channel="chat")
+        task = store.create_task(
+            conversation_id="conv-batch",
+            title="Batch Artifact Task",
+            goal="batch_get_artifacts test",
+            source_channel="chat",
+        )
 
-    # Create three artifacts on disk
-    paths = []
-    for i in range(3):
-        p = tmp_path / f"artifact_{i}.txt"
-        p.write_text(f"content-{i}", encoding="utf-8")
-        paths.append(p)
+        # Create three artifacts on disk
+        paths = []
+        for i in range(3):
+            p = tmp_path / f"artifact_{i}.txt"
+            p.write_text(f"content-{i}", encoding="utf-8")
+            paths.append(p)
 
-    a0 = store.create_artifact(
-        task_id=task.task_id,
-        step_id=None,
-        kind="text/plain",
-        uri=str(paths[0]),
-        content_hash="hash-0",
-        producer="test",
-    )
-    a1 = store.create_artifact(
-        task_id=task.task_id,
-        step_id=None,
-        kind="text/plain",
-        uri=str(paths[1]),
-        content_hash="hash-1",
-        producer="test",
-    )
-    a2 = store.create_artifact(
-        task_id=task.task_id,
-        step_id=None,
-        kind="text/plain",
-        uri=str(paths[2]),
-        content_hash="hash-2",
-        producer="test",
-    )
+        a0 = store.create_artifact(
+            task_id=task.task_id,
+            step_id=None,
+            kind="text/plain",
+            uri=str(paths[0]),
+            content_hash="hash-0",
+            producer="test",
+        )
+        a1 = store.create_artifact(
+            task_id=task.task_id,
+            step_id=None,
+            kind="text/plain",
+            uri=str(paths[1]),
+            content_hash="hash-1",
+            producer="test",
+        )
+        a2 = store.create_artifact(
+            task_id=task.task_id,
+            step_id=None,
+            kind="text/plain",
+            uri=str(paths[2]),
+            content_hash="hash-2",
+            producer="test",
+        )
 
-    # Batch-fetch all three by ID
-    result = store.batch_get_artifacts([a0.artifact_id, a1.artifact_id, a2.artifact_id])
-    assert set(result.keys()) == {a0.artifact_id, a1.artifact_id, a2.artifact_id}
-    assert result[a0.artifact_id].uri == str(paths[0])
-    assert result[a1.artifact_id].uri == str(paths[1])
-    assert result[a2.artifact_id].uri == str(paths[2])
+        # Batch-fetch all three by ID
+        result = store.batch_get_artifacts([a0.artifact_id, a1.artifact_id, a2.artifact_id])
+        assert set(result.keys()) == {a0.artifact_id, a1.artifact_id, a2.artifact_id}
+        assert result[a0.artifact_id].uri == str(paths[0])
+        assert result[a1.artifact_id].uri == str(paths[1])
+        assert result[a2.artifact_id].uri == str(paths[2])
 
-    # Missing IDs are silently omitted
-    result_partial = store.batch_get_artifacts([a0.artifact_id, "nonexistent-id"])
-    assert set(result_partial.keys()) == {a0.artifact_id}
+        # Missing IDs are silently omitted
+        result_partial = store.batch_get_artifacts([a0.artifact_id, "nonexistent-id"])
+        assert set(result_partial.keys()) == {a0.artifact_id}
 
-    # Empty input returns empty dict
-    assert store.batch_get_artifacts([]) == {}
+        # Empty input returns empty dict
+        assert store.batch_get_artifacts([]) == {}
+    finally:
+        store.close()

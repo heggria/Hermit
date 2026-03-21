@@ -86,6 +86,7 @@ class McpClientManager:
 
     def __init__(self) -> None:
         self._connections: dict[str, _ServerConnection] = {}
+        self._connections_lock = threading.Lock()
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever,
@@ -118,12 +119,15 @@ class McpClientManager:
             # asyncio.Event must be created inside the target loop
             self._shutdown_event = asyncio.Event()
             try:
+                connected = 0
                 async with AsyncExitStack() as stack:
                     for spec in specs:
                         try:
                             await self._connect_one(spec, stack)
+                            connected += 1
                         except Exception:
                             log.exception("mcp_connect_error", server=spec.name)
+                    log.info("mcp_connect_summary", connected=connected, total=len(specs))
                     # Unblock connect_all_sync — connections are ready
                     ready.set()
                     # Hold all context managers open until shutdown is signalled
@@ -139,7 +143,9 @@ class McpClientManager:
     def get_tool_specs(self) -> list[ToolSpec]:
         """Return ToolSpec instances for all discovered MCP tools."""
         specs: list[ToolSpec] = []
-        for server_name, conn in self._connections.items():
+        with self._connections_lock:
+            connections_snapshot = list(self._connections.items())
+        for server_name, conn in connections_snapshot:
             for tool in conn.tools:
                 full_name = mcp_tool_name(server_name, tool["name"])
                 governance = self._tool_governance(conn.spec, tool["name"])
@@ -179,7 +185,8 @@ class McpClientManager:
     def close_all_sync(self) -> None:
         """Disconnect all servers and shut down the background loop."""
         if not self._loop.is_running():
-            self._connections.clear()
+            with self._connections_lock:
+                self._connections.clear()
             return
 
         # Signal the lifecycle coroutine to exit its AsyncExitStack (same task)
@@ -192,9 +199,12 @@ class McpClientManager:
             except Exception:
                 log.exception("mcp_close_error")
 
-        self._connections.clear()
+        with self._connections_lock:
+            self._connections.clear()
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
+        if self._thread.is_alive():
+            log.warning("mcp_event_loop_thread_did_not_stop")
 
     # ── async internals (run on background loop) ───────────────────
 
@@ -251,7 +261,8 @@ class McpClientManager:
             )
 
         conn = _ServerConnection(spec=spec, session=session, tools=raw_tools)
-        self._connections[spec.name] = conn
+        with self._connections_lock:
+            self._connections[spec.name] = conn
         log.info(
             "mcp_server_connected",
             server=spec.name,
@@ -265,7 +276,8 @@ class McpClientManager:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> Any:
-        conn = self._connections.get(server_name)
+        with self._connections_lock:
+            conn = self._connections.get(server_name)
         if conn is None or conn.session is None:
             return f"Error: MCP server '{server_name}' not connected"
         try:

@@ -6,7 +6,6 @@ _task_summary, lifecycle start/stop, tool registration edge cases.
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -24,11 +23,12 @@ from hermit.plugins.builtin.mcp.hermit_server.server import (
 
 
 class TestTaskSummary:
-    def test_returns_expected_fields(self, tmp_path: Path) -> None:
-        store = KernelStore(tmp_path / "state.db")
-        store.ensure_conversation("c1", source_channel="test")
-        task = store.create_task(conversation_id="c1", title="t1", goal="g1", source_channel="test")
-        result = _task_summary(task, store)
+    def test_returns_expected_fields(self, kernel_store: KernelStore) -> None:
+        kernel_store.ensure_conversation("c1", source_channel="test")
+        task = kernel_store.create_task(
+            conversation_id="c1", title="t1", goal="g1", source_channel="test"
+        )
+        result = _task_summary(task, kernel_store)
         assert result["status"] == task.status
         assert "task" in result
         assert "recent_events" in result
@@ -123,17 +123,16 @@ class TestLifecycle:
 
 class TestMcpTools:
     @pytest.fixture
-    def server_with_store(self, tmp_path: Path) -> tuple[HermitMcpServer, KernelStore]:
-        store = KernelStore(tmp_path / "state.db")
+    def server_with_store(self, kernel_store: KernelStore) -> tuple[HermitMcpServer, KernelStore]:
         server = HermitMcpServer()
         server._runner = SimpleNamespace(
-            task_controller=SimpleNamespace(store=store),
+            task_controller=SimpleNamespace(store=kernel_store),
             _resolve_approval=MagicMock(return_value=SimpleNamespace(text="ok")),
             enqueue_ingress=MagicMock(return_value=SimpleNamespace(task_id="t1")),
             agent=SimpleNamespace(workspace_root="/tmp"),
             wake_dispatcher=MagicMock(),
         )
-        return server, store
+        return server, kernel_store
 
     def _get_tool_fn(self, server: HermitMcpServer, tool_name: str):
         """Extract a registered tool function from FastMCP."""

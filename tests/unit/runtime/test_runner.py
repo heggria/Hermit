@@ -396,6 +396,58 @@ class TestBackgroundServices:
         runner._observation_service = None
         runner.stop_background_services()  # should not raise
 
+    def test_dispatch_mode_flat_uses_kernel_dispatch(self, runner: AgentRunner) -> None:
+        """HERMIT_DISPATCH_MODE=flat uses KernelDispatchService."""
+        with (
+            patch("hermit.runtime.control.runner.runner.ObservationService") as MockObs,
+            patch.dict("os.environ", {"HERMIT_DISPATCH_MODE": "flat"}),
+            patch("hermit.kernel.execution.coordination.dispatch.KernelDispatchService") as MockKDS,
+        ):
+            MockObs.return_value.start = MagicMock()
+            MockKDS.return_value.start = MagicMock()
+            MockKDS.return_value.register_kind_handler = MagicMock()
+            runner._dispatch_service = None
+            runner._observation_service = None
+            runner.start_background_services()
+            MockKDS.assert_called_once()
+            assert runner._dispatch_service is MockKDS.return_value
+
+    def test_dispatch_mode_pool_uses_pool_dispatch(self, runner: AgentRunner) -> None:
+        """HERMIT_DISPATCH_MODE=pool uses PoolAwareDispatchService."""
+        with (
+            patch("hermit.runtime.control.runner.runner.ObservationService") as MockObs,
+            patch.dict("os.environ", {"HERMIT_DISPATCH_MODE": "pool"}),
+            patch(
+                "hermit.kernel.execution.coordination.pool_dispatch.PoolAwareDispatchService"
+            ) as MockPDS,
+        ):
+            MockObs.return_value.start = MagicMock()
+            MockPDS.return_value.start = MagicMock()
+            MockPDS.return_value.register_kind_handler = MagicMock()
+            runner._dispatch_service = None
+            runner._observation_service = None
+            runner.start_background_services()
+            MockPDS.assert_called_once()
+            assert runner._dispatch_service is MockPDS.return_value
+
+    def test_dispatch_mode_invalid_defaults_to_pool(self, runner: AgentRunner) -> None:
+        """Invalid HERMIT_DISPATCH_MODE value defaults to pool (PoolAwareDispatchService)."""
+        with (
+            patch("hermit.runtime.control.runner.runner.ObservationService") as MockObs,
+            patch.dict("os.environ", {"HERMIT_DISPATCH_MODE": "invalid_mode"}),
+            patch(
+                "hermit.kernel.execution.coordination.pool_dispatch.PoolAwareDispatchService"
+            ) as MockPDS,
+        ):
+            MockObs.return_value.start = MagicMock()
+            MockPDS.return_value.start = MagicMock()
+            MockPDS.return_value.register_kind_handler = MagicMock()
+            runner._dispatch_service = None
+            runner._observation_service = None
+            runner.start_background_services()
+            MockPDS.assert_called_once()
+            assert runner._dispatch_service is MockPDS.return_value
+
 
 # ---------------------------------------------------------------------------
 # resume_attempt

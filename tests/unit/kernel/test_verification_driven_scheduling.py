@@ -465,10 +465,18 @@ class TestReceiptSigning:
         """HMAC signature should be populated when HERMIT_PROOF_SIGNING_SECRET is set."""
         monkeypatch.setenv("HERMIT_PROOF_SIGNING_SECRET", "test-secret-key")
         sig = ReceiptService._compute_signature(
-            "receipt_001", "task_001", "step_001", "execute", "succeeded"
+            {
+                "receipt_id": "receipt_001",
+                "task_id": "task_001",
+                "step_id": "step_001",
+                "action_type": "execute",
+                "result_code": "succeeded",
+            }
         )
         assert sig is not None
-        assert len(sig) == 64  # SHA-256 hex digest
+        # v2 format: "v2:" prefix + 64 hex chars
+        assert sig.startswith("v2:")
+        assert len(sig) == 3 + 64
 
     def test_no_signature_without_secret(
         self, store: KernelStore, monkeypatch: pytest.MonkeyPatch
@@ -476,7 +484,13 @@ class TestReceiptSigning:
         """No signature should be returned when no signing secret is configured."""
         monkeypatch.delenv("HERMIT_PROOF_SIGNING_SECRET", raising=False)
         sig = ReceiptService._compute_signature(
-            "receipt_001", "task_001", "step_001", "execute", "succeeded"
+            {
+                "receipt_id": "receipt_001",
+                "task_id": "task_001",
+                "step_id": "step_001",
+                "action_type": "execute",
+                "result_code": "succeeded",
+            }
         )
         assert sig is None
 
@@ -485,12 +499,15 @@ class TestReceiptSigning:
     ) -> None:
         """Same inputs should produce the same signature."""
         monkeypatch.setenv("HERMIT_PROOF_SIGNING_SECRET", "test-secret-key")
-        sig1 = ReceiptService._compute_signature(
-            "receipt_001", "task_001", "step_001", "execute", "succeeded"
-        )
-        sig2 = ReceiptService._compute_signature(
-            "receipt_001", "task_001", "step_001", "execute", "succeeded"
-        )
+        data = {
+            "receipt_id": "receipt_001",
+            "task_id": "task_001",
+            "step_id": "step_001",
+            "action_type": "execute",
+            "result_code": "succeeded",
+        }
+        sig1 = ReceiptService._compute_signature(data)
+        sig2 = ReceiptService._compute_signature(data)
         assert sig1 == sig2
 
     def test_different_inputs_different_signature(
@@ -499,10 +516,22 @@ class TestReceiptSigning:
         """Different inputs should produce different signatures."""
         monkeypatch.setenv("HERMIT_PROOF_SIGNING_SECRET", "test-secret-key")
         sig1 = ReceiptService._compute_signature(
-            "receipt_001", "task_001", "step_001", "execute", "succeeded"
+            {
+                "receipt_id": "receipt_001",
+                "task_id": "task_001",
+                "step_id": "step_001",
+                "action_type": "execute",
+                "result_code": "succeeded",
+            }
         )
         sig2 = ReceiptService._compute_signature(
-            "receipt_002", "task_001", "step_001", "execute", "succeeded"
+            {
+                "receipt_id": "receipt_002",
+                "task_id": "task_001",
+                "step_id": "step_001",
+                "action_type": "execute",
+                "result_code": "succeeded",
+            }
         )
         assert sig1 != sig2
 

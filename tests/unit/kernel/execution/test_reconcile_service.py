@@ -235,6 +235,29 @@ class TestReconcileCommandOrVcs:
             observables={},
             witness={},
         )
+        # When there are no observable targets (no target_paths, no git
+        # witness, no vcs_operation), the reconciler now infers success
+        # rather than returning still_unknown.
+        assert result.result_code == "reconciled_inferred"
+        assert "No observable side-effect targets" in result.summary
+
+    def test_no_observables_with_git_witness_returns_none_fallthrough(
+        self, svc: ReconcileService, mock_git: MagicMock
+    ) -> None:
+        """When a git witness is present but head/dirty unchanged and no
+        target_paths, the method returns None (falls through to still_unknown)
+        because there *was* something to check and nothing changed."""
+        mock_git.snapshot.return_value = GitWorktreeSnapshot(
+            repo_path="/repo", present=True, head="same", dirty=False
+        )
+        result = svc.reconcile(
+            action_type="execute_command",
+            tool_input={},
+            workspace_root="/tmp/ws",
+            observables={},
+            witness={"git": {"head": "same", "dirty": False}},
+        )
+        # git witness was provided and showed no change — falls through
         assert result.result_code == "still_unknown"
 
 
@@ -257,7 +280,7 @@ class TestReconcileRemoteWrite:
     def test_successful_head_request(
         self, mock_budget: MagicMock, mock_urlopen: MagicMock, svc: ReconcileService
     ) -> None:
-        mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+        mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
         response = MagicMock()
         response.status = 200
         response.__enter__ = MagicMock(return_value=response)
@@ -275,7 +298,7 @@ class TestReconcileRemoteWrite:
     def test_404_response(
         self, mock_budget: MagicMock, mock_urlopen: MagicMock, svc: ReconcileService
     ) -> None:
-        mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+        mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
         mock_urlopen.side_effect = urllib.error.HTTPError(
             "https://example.com", 404, "Not Found", {}, None
         )
@@ -291,7 +314,7 @@ class TestReconcileRemoteWrite:
     def test_401_response(
         self, mock_budget: MagicMock, mock_urlopen: MagicMock, svc: ReconcileService
     ) -> None:
-        mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+        mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
         mock_urlopen.side_effect = urllib.error.HTTPError(
             "https://example.com", 401, "Unauthorized", {}, None
         )
@@ -307,7 +330,7 @@ class TestReconcileRemoteWrite:
     def test_403_response(
         self, mock_budget: MagicMock, mock_urlopen: MagicMock, svc: ReconcileService
     ) -> None:
-        mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+        mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
         mock_urlopen.side_effect = urllib.error.HTTPError(
             "https://example.com", 403, "Forbidden", {}, None
         )
@@ -323,7 +346,7 @@ class TestReconcileRemoteWrite:
     def test_405_response(
         self, mock_budget: MagicMock, mock_urlopen: MagicMock, svc: ReconcileService
     ) -> None:
-        mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+        mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
         mock_urlopen.side_effect = urllib.error.HTTPError(
             "https://example.com", 405, "Method Not Allowed", {}, None
         )
@@ -339,7 +362,7 @@ class TestReconcileRemoteWrite:
     def test_500_response_returns_none(
         self, mock_budget: MagicMock, mock_urlopen: MagicMock, svc: ReconcileService
     ) -> None:
-        mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+        mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
         mock_urlopen.side_effect = urllib.error.HTTPError(
             "https://example.com", 500, "Server Error", {}, None
         )
@@ -355,7 +378,7 @@ class TestReconcileRemoteWrite:
     def test_os_error_returns_none(
         self, mock_budget: MagicMock, mock_urlopen: MagicMock, svc: ReconcileService
     ) -> None:
-        mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+        mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
         mock_urlopen.side_effect = OSError("connection refused")
         result = svc.reconcile(
             action_type="network_write",
@@ -371,7 +394,7 @@ class TestReconcileRemoteWrite:
             ) as mock_urlopen,
             patch("hermit.kernel.execution.recovery.reconcile.get_runtime_budget") as mock_budget,
         ):
-            mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+            mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
             response = MagicMock()
             response.status = 200
             response.__enter__ = MagicMock(return_value=response)
@@ -391,7 +414,7 @@ class TestReconcileRemoteWrite:
             ) as mock_urlopen,
             patch("hermit.kernel.execution.recovery.reconcile.get_runtime_budget") as mock_budget,
         ):
-            mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+            mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
             response = MagicMock()
             response.status = 200
             response.__enter__ = MagicMock(return_value=response)
@@ -411,7 +434,7 @@ class TestReconcileRemoteWrite:
             ) as mock_urlopen,
             patch("hermit.kernel.execution.recovery.reconcile.get_runtime_budget") as mock_budget,
         ):
-            mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+            mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
             response = MagicMock()
             response.status = 200
             response.__enter__ = MagicMock(return_value=response)
@@ -431,7 +454,7 @@ class TestReconcileRemoteWrite:
             ) as mock_urlopen,
             patch("hermit.kernel.execution.recovery.reconcile.get_runtime_budget") as mock_budget,
         ):
-            mock_budget.return_value = SimpleNamespace(provider_read_timeout=10)
+            mock_budget.return_value = SimpleNamespace(reconciliation_probe_timeout=10)
             response = MagicMock()
             response.status = 200
             response.__enter__ = MagicMock(return_value=response)

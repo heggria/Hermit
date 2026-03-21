@@ -259,9 +259,11 @@ class TestResultClass:
             ("rollback_succeeded", "reconciled_applied", "rolled_back"),
             ("succeeded", "reconciled_applied", "satisfied"),
             ("succeeded", "reconciled_observed", "satisfied"),
+            ("succeeded", "reconciled_inferred", "satisfied"),
             ("succeeded", "reconciled_not_applied", "violated"),
-            ("succeeded", "still_unknown", "partial"),
+            ("succeeded", "still_unknown", "satisfied_with_downgrade"),
             ("other", "reconciled_applied", "satisfied"),
+            ("other", "reconciled_inferred", "satisfied"),
             ("other", "reconciled_not_applied", "violated"),
             ("other", "other_code", "ambiguous"),
         ],
@@ -281,6 +283,7 @@ class TestRecommendedResolution:
         ("result_class", "expected"),
         [
             ("satisfied", "promote_learning"),
+            ("satisfied_with_downgrade", "promote_learning"),
             ("violated", "gather_more_evidence"),
             ("unauthorized", "request_authority"),
             ("drifted", "reenter_policy"),
@@ -305,6 +308,7 @@ class TestConfidenceDelta:
         [
             ("reconciled_applied", 0.2),
             ("reconciled_observed", 0.2),
+            ("reconciled_inferred", 0.05),
             ("reconciled_not_applied", -0.3),
             ("still_unknown", -0.1),
             ("other", -0.1),

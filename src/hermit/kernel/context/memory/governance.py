@@ -103,6 +103,13 @@ _CATEGORY_POLICIES: dict[str, MemoryCategoryPolicy] = {
         retrieval_allowed=True,
         ttl_seconds=3 * 24 * 60 * 60,  # 3 days — decisions decay but slower than noise
     ),
+    "active_task": MemoryCategoryPolicy(
+        "task_state",
+        "conversation",
+        static_injection=False,
+        retrieval_allowed=True,
+        ttl_seconds=_TASK_STATE_TTL_SECONDS,
+    ),
     "other": MemoryCategoryPolicy(
         "volatile_fact",
         "conversation",
@@ -233,7 +240,7 @@ class MemoryGovernanceService:
             sensitive=bool(matched_signals["sensitive"]),
             stable_preference=cat == "user_preference"
             or bool(matched_signals["stable_preference"]),
-            task_state=bool(matched_signals["task_state"]),
+            task_state=cat == "active_task" or bool(matched_signals["task_state"]),
             project_convention=cat == "project_convention"
             or bool(matched_signals["project_convention"]),
             tooling_environment=cat == "tooling_environment"
@@ -253,6 +260,8 @@ class MemoryGovernanceService:
             return "tooling_environment"
         if signals.project_convention:
             return "project_convention"
+        if signals.task_state:
+            return "active_task"
         return cat
 
     def filter_static_categories(
@@ -280,6 +289,10 @@ class MemoryGovernanceService:
     def retrieval_reason(
         self, memory: MemoryRecord, *, context: TaskExecutionContext
     ) -> str | None:
+        # Enforce retrieval_allowed from classification policy.
+        policy = self.policy_for(memory.category)
+        if not policy.retrieval_allowed:
+            return None
         if memory.retention_class in {"invalidated", "revoked"}:
             return None
         if memory.retention_class == "sensitive_fact":
@@ -430,8 +443,14 @@ class MemoryGovernanceService:
         if scope_kind == "workspace":
             return str(Path(workspace_root).resolve()) if workspace_root else "workspace:default"
         if scope_kind == "entity":
-            return conversation_id or "entity:unknown"
-        return conversation_id or "conversation:unknown"
+            if not conversation_id:
+                return "entity:unknown"
+            return conversation_id
+        if scope_kind == "conversation":
+            if not conversation_id:
+                return "conversation:ephemeral"
+            return conversation_id
+        raise ValueError(f"unrecognized scope_kind: {scope_kind!r}")
 
     def _classification_explanation(
         self,

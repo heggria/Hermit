@@ -191,6 +191,15 @@ def build_runtime(
         pm.discover_and_load(builtin_dir, settings.plugins_dir)
 
     workdir = (cwd or Path.cwd()).resolve()
+    # Ensure workspace-local tmp directory exists so agents never need /tmp/
+    workspace_tmp = workdir / ".hermit" / "tmp"
+    try:
+        workspace_tmp.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        log.warning(
+            "Cannot create workspace tmp directory — permission denied, skipping",
+            path=str(workspace_tmp),
+        )
     budget = _execution_budget(settings)
     configure_runtime_budget(budget)
     sandbox = CommandSandbox(

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,10 @@ from hermit.plugins.builtin.hooks.memory.engine import MemoryEngine
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
 
 log = structlog.get_logger()
+
+# Module-level lock to prevent TOCTOU race between has_active_task_with_goal()
+# and start_task() when multiple threads attempt checkpoint promotion concurrently.
+_PROMOTION_LOCK = threading.Lock()
 
 
 def promote_memories_via_kernel(
@@ -54,16 +60,32 @@ def promote_memories_via_kernel(
 
     store = KernelStore(Path(kernel_db_path))
     try:
-        artifact_store = ArtifactStore(Path(kernel_artifacts_dir))
-        controller = TaskController(store)
-        ctx = controller.start_task(
-            conversation_id=session_id or f"memory-{mode}",
-            goal=f"Promote durable memory ({mode})",
-            source_channel=controller.source_from_session(session_id or "memory"),
-            kind="memory_promotion",
-            policy_profile="memory",
-            workspace_root=str(Path(settings.memory_file).parent),
-        )
+        task_goal = f"Promote durable memory ({mode})"
+
+        # Deduplicate: skip if a checkpoint task with the same goal is already
+        # queued, running, or blocked.  Without this guard, checkpoint tasks
+        # pile up every 10-20 s and consume all active task slots.
+        # The lock prevents a TOCTOU race between the check and task creation.
+        with _PROMOTION_LOCK:
+            if store.has_active_task_with_goal(task_goal, policy_profile="memory"):
+                log.info(
+                    "memory_promotion_deduplicated",
+                    mode=mode,
+                    session_id=session_id,
+                    reason="active_task_exists",
+                )
+                return False
+
+            artifact_store = ArtifactStore(Path(kernel_artifacts_dir))
+            controller = TaskController(store)
+            ctx = controller.start_task(
+                conversation_id=session_id or f"memory-{mode}",
+                goal=task_goal,
+                source_channel=controller.source_from_session(session_id or "memory"),
+                kind="memory_promotion",
+                policy_profile="memory",
+                workspace_root=str(Path(settings.memory_file).parent),
+            )
         policy_engine = PolicyEngine()
         decision_service = DecisionService(store)
         belief_service = BeliefService(store)
@@ -361,6 +383,11 @@ def promote_memories_via_kernel(
                 "result_class": reconciliation.result_class,
             },
         )
+        # GC3: No durable learning without reconciliation.
+        # The reconciliation gate is enforced inside promote_from_belief():
+        # - Durable scope (global/workspace) requires a valid reconciliation_ref.
+        # - Conversation scope allows promotion without reconciliation (ephemeral).
+        # - If a durable-scoped belief has no reconciliation, promotion is blocked.
         for belief in belief_records:
             memory = memory_service.promote_from_belief(
                 belief=belief,
@@ -385,7 +412,7 @@ def promote_memories_via_kernel(
                     mem_record = store.get_memory_record(mem_id)
                     if mem_record is not None:
                         embedding_svc.index_memory(mem_id, mem_record.claim_text, store)
-            except Exception:
+            except (ImportError, OSError, RuntimeError):
                 import structlog as _log
 
                 _log.get_logger().warning(
@@ -417,7 +444,7 @@ def promote_memories_via_kernel(
                     ),
                     confidence=0.7,
                 )
-            except Exception:
+            except (OSError, RuntimeError):
                 log.warning(
                     "enrichment_records_failed_non_critical",
                     memory_ids=promoted_memories,
@@ -487,4 +514,63 @@ def _store_memory_artifact(
     return artifact.artifact_id
 
 
-__all__ = ["promote_memories_via_kernel"]
+def create_memory_promotion_handler(runner: Any) -> Callable[..., Any]:
+    """Factory returning a callable handler for the ``memory_promotion`` step kind.
+
+    The returned handler is registered on the dispatch service via
+    ``register_kind_handler("memory_promotion", handler)`` so that the
+    kernel dispatch loop can execute memory promotion steps.
+
+    Parameters
+    ----------
+    runner:
+        The ``AgentRunner`` instance, used to access plugin settings and
+        the session manager.
+    """
+
+    def _handle_memory_promotion(step_attempt_id: str, **kwargs: Any) -> Any:
+        settings = getattr(getattr(runner, "pm", None), "settings", None)
+        if settings is None:
+            log.warning(
+                "memory_promotion_handler_no_settings",
+                step_attempt_id=step_attempt_id,
+            )
+            return None
+
+        store = getattr(runner, "_get_store", lambda: None)()
+        if store is None:
+            log.warning(
+                "memory_promotion_handler_no_store",
+                step_attempt_id=step_attempt_id,
+            )
+            return None
+
+        # Retrieve step attempt context to find the session and goal metadata
+        attempt = store.get_step_attempt(step_attempt_id)
+        if attempt is None:
+            log.warning(
+                "memory_promotion_handler_attempt_not_found",
+                step_attempt_id=step_attempt_id,
+            )
+            return None
+
+        task = store.get_task(attempt.task_id)
+        session_id = getattr(task, "conversation_id", "") or ""
+        session = runner.session_manager.get_or_create(session_id) if session_id else None
+        messages = list(getattr(session, "messages", [])) if session else []
+
+        engine = MemoryEngine(settings)
+        return promote_memories_via_kernel(
+            engine,
+            settings,
+            session_id=session_id,
+            messages=messages,
+            used_keywords=set(),
+            new_entries=[],
+            mode="dispatch",
+        )
+
+    return _handle_memory_promotion
+
+
+__all__ = ["create_memory_promotion_handler", "promote_memories_via_kernel"]

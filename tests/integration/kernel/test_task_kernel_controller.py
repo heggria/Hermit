@@ -308,6 +308,7 @@ def test_kernel_dispatch_loop_claims_attempts_and_reaps_futures(monkeypatch) -> 
         task_controller=SimpleNamespace(
             store=SimpleNamespace(
                 claim_next_ready_step_attempt=lambda: queued.pop(0) if queued else None,
+                list_step_attempts=lambda status="", limit=500: [],
             )
         ),
         process_claimed_attempt=lambda attempt_id: claimed_attempts.append(attempt_id),

@@ -205,3 +205,85 @@ class SelfModifyWorkspace:
                     iteration_id=iteration_id,
                 )
         return cleaned
+
+
+def cleanup_stale_worktrees(workspace_root: str | Path, store: object) -> list[str]:
+    """Scan for worktrees whose iterations are in a terminal state and remove them.
+
+    Terminal states: completed, failed, accepted, rejected, merge_approved.
+    Also removes worktrees with no matching spec_backlog entry at all (true orphans).
+
+    Called at metaloop startup and periodically (every hour) to prevent
+    disk/branch leaks from crashed or failed iterations.
+
+    Args:
+        workspace_root: Path to the git repository root.
+        store: Kernel store with spec_backlog query methods.
+
+    Returns list of iteration IDs that were cleaned up.
+    """
+    ws = SelfModifyWorkspace(Path(workspace_root))
+    on_disk = ws.list_active()
+    if not on_disk:
+        return []
+
+    _TERMINAL_STATUSES = frozenset(
+        {
+            "completed",
+            "failed",
+            "accepted",
+            "rejected",
+            "merge_approved",
+        }
+    )
+
+    non_terminal_ids: set[str] = set()
+    stale_ids: list[str] = []
+
+    for iteration_id in on_disk:
+        # Look up the spec_backlog entry for this worktree
+        entry = None
+        if hasattr(store, "get_spec_entry"):
+            try:
+                entry = store.get_spec_entry(spec_id=iteration_id)
+            except Exception:
+                pass
+
+        if entry is None:
+            # No matching entry — true orphan, safe to remove
+            stale_ids.append(iteration_id)
+            continue
+
+        data = entry if isinstance(entry, dict) else entry.__dict__
+        status = data.get("status", "")
+
+        if status in _TERMINAL_STATUSES:
+            stale_ids.append(iteration_id)
+        else:
+            non_terminal_ids.add(iteration_id)
+
+    # Remove all stale worktrees
+    cleaned: list[str] = []
+    for iteration_id in stale_ids:
+        try:
+            ws.remove(iteration_id)
+            cleaned.append(iteration_id)
+            logger.info(
+                "self_modify.stale_worktree.cleaned",
+                iteration_id=iteration_id,
+            )
+        except Exception:
+            logger.warning(
+                "self_modify.stale_worktree.cleanup_failed",
+                iteration_id=iteration_id,
+                exc_info=True,
+            )
+
+    if cleaned:
+        logger.info(
+            "self_modify.stale_worktrees.summary",
+            cleaned_count=len(cleaned),
+            remaining_count=len(non_terminal_ids),
+        )
+
+    return cleaned

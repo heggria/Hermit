@@ -99,6 +99,11 @@ class ReceiptHandler:
             if lease is not None and lease.environment_ref:
                 effective_environment_ref = lease.environment_ref
         if effective_environment_ref is None:
+            # Re-use the environment snapshot already captured for this attempt
+            existing_ref = getattr(attempt, "environment_ref", None) if attempt else None
+            if existing_ref:
+                effective_environment_ref = existing_ref
+        if effective_environment_ref is None:
             env_uri, env_hash = self.artifact_store.store_json(
                 capture_execution_environment(cwd=Path(attempt_ctx.workspace_root or "."))
             )

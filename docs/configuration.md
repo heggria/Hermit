@@ -86,9 +86,28 @@ Important current fields include:
 | `HERMIT_MAX_TURNS` | `100` | max tool-loop turns |
 | `HERMIT_TOOL_OUTPUT_LIMIT` | `4000` | tool output truncation |
 | `HERMIT_LOG_LEVEL` | `INFO` | runtime log level |
-| `HERMIT_SANDBOX_MODE` | `l0` | command sandbox mode |
+| `HERMIT_SANDBOX_MODE` | `l0` | command sandbox mode (see below) |
 | `HERMIT_COMMAND_TIMEOUT_SECONDS` | `30` | bash timeout |
 | `HERMIT_SESSION_IDLE_TIMEOUT_SECONDS` | `1800` | session idle timeout |
+
+### Sandbox Mode (`HERMIT_SANDBOX_MODE`)
+
+The sandbox mode controls the command execution environment used by the `bash` tool. Two values are accepted: `l0` and `l1`. Any other value is rejected at startup.
+
+**Current implementation status:** In the current codebase, `l0` and `l1` are both accepted but behave identically. The `CommandSandbox` class validates the mode value but does not branch on it -- both levels execute commands through `subprocess.Popen` with `shell=True`, with no filesystem restrictions, no command allowlists or blocklists, and no syscall filtering.
+
+The sandbox does enforce:
+
+- **Timeout budgets.** Every command runs under a soft deadline (default 30 seconds via `HERMIT_COMMAND_TIMEOUT_SECONDS`) and a hard deadline. Commands that exceed the hard deadline are forcibly killed.
+- **Output observation.** Long-running commands are promoted to observed background jobs with pattern-based progress tracking, ready detection, and failure detection.
+
+**Security implications of the default `l0` setting:**
+
+- All commands run with the full privileges of the Hermit process (the current user).
+- `shell=True` means shell expansion, pipes, redirects, and command chaining are all available. An injected or malformed command string has the same power as a manual shell session.
+- The sandbox itself provides no isolation boundary. Protection against dangerous commands comes entirely from the **upstream policy engine**: the governed execution path (`Task -> Step -> Policy -> Approval -> CapabilityGrant -> Execution -> Receipt`) evaluates and authorizes actions before they reach the sandbox. The sandbox is the executor, not the gatekeeper.
+
+In short, `HERMIT_SANDBOX_MODE` is a placeholder for future differentiation between execution restriction levels. Today, the security boundary is the kernel's policy and approval layer, not the sandbox mode value.
 
 ## Provider Fields
 

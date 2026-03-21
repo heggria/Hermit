@@ -28,6 +28,7 @@ Commands currently exposed by the CLI include:
 - `auth`
 - `task`
 - `memory`
+- `overnight`
 
 ## Basic Interactive Commands
 
@@ -66,15 +67,16 @@ Slash commands available in `chat` include:
 - `/history`
 - `/help`
 - `/quit`
+- `/task`
 - `/compact`
 - `/plan`
 - `/usage`
 
 ## Service Lifecycle
 
-### `hermit serve --adapter feishu`
+### `hermit serve feishu`
 
-Starts the long-running service using the `feishu` adapter.
+Starts the long-running service using the `feishu` adapter. The adapter name is a positional argument (default: `feishu`).
 
 Current startup flow:
 
@@ -85,9 +87,9 @@ Current startup flow:
 5. start the adapter
 6. activate service hooks such as scheduler and webhook support
 
-### `hermit reload --adapter feishu`
+### `hermit reload feishu`
 
-Triggers a graceful reload for the running adapter process.
+Triggers a graceful reload for the running adapter process. The adapter name is a positional argument (default: `feishu`).
 
 Use this when you want to rebuild configuration, plugins, and tools without treating the change as a full source-code hot reload.
 
@@ -122,11 +124,14 @@ hermit task explain <task_id>
 hermit task proof <task_id>
 hermit task proof-export <task_id>
 hermit task approve <approval_id>
-hermit task approve-always-directory <approval_id>
+hermit task approve-mutable-workspace <approval_id>
 hermit task deny <approval_id> --reason "not safe"
 hermit task resume <approval_id>
 hermit task rollback <receipt_id>
 hermit task projections-rebuild --all
+hermit task steer <task_id> "directive text" --type scope
+hermit task steerings <task_id>
+hermit task claim-status [<task_id>]
 ```
 
 Capability-grant commands:
@@ -148,6 +153,7 @@ hermit memory inspect --claim-text "Use uv for local Python workflows"
 hermit memory list --status active
 hermit memory status
 hermit memory rebuild
+hermit memory export [--output <path>]
 ```
 
 Use these when you want to inspect evidence-bound memory behavior rather than generic conversation memory.
@@ -203,7 +209,21 @@ hermit autostart disable --adapter feishu
 hermit autostart status
 ```
 
-Like `serve` and `reload`, these commands currently use `--adapter`.
+These commands use the `--adapter` flag.
+
+> **Note:** `serve` and `reload` take the adapter name as a positional argument (e.g. `hermit serve feishu`). Only `autostart` uses the `--adapter` flag.
+
+## Overnight Report
+
+Generate an activity report summarizing kernel events from the past hours:
+
+```bash
+hermit overnight
+hermit overnight --lookback 24
+hermit overnight --json
+```
+
+The command reads the kernel ledger database and produces a summary of task completions, failures, approvals, and other notable events within the lookback window (default: 12 hours). Use `--json` for machine-readable output suitable for dashboards or downstream tooling.
 
 ## Sessions
 
@@ -220,7 +240,7 @@ Session persistence is still present in the broader runtime, even as task semant
 The service entrypoint in containerized setups should match the actual CLI:
 
 ```bash
-hermit serve --adapter feishu
+hermit serve feishu
 ```
 
 ## Practical Operator Flow

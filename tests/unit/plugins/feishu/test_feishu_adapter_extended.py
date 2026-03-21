@@ -1859,6 +1859,7 @@ class TestSyncCompatProgressCallbacks:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestStopExtended:
     async def test_stop_cancels_timers(self) -> None:
         adapter = _make_adapter()

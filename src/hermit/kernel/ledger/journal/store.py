@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import threading
 import time
 import uuid
+import weakref
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,6 +17,7 @@ if TYPE_CHECKING:
 from hermit.kernel.authority.identity.models import PrincipalRecord
 from hermit.kernel.execution.competition.store import CompetitionStoreMixin
 from hermit.kernel.ledger.events.store_ledger import KernelLedgerStoreMixin
+from hermit.kernel.ledger.journal.store_programs import ProgramStoreMixin
 from hermit.kernel.ledger.journal.store_records import KernelStoreRecordMixin
 from hermit.kernel.ledger.journal.store_scheduler import KernelSchedulerStoreMixin
 from hermit.kernel.ledger.journal.store_self_iterate import SelfIterateStoreMixin
@@ -24,6 +27,7 @@ from hermit.kernel.ledger.journal.store_support import (
 )
 from hermit.kernel.ledger.journal.store_support import sha256_hex as _sha256_hex
 from hermit.kernel.ledger.journal.store_tasks import KernelTaskStoreMixin
+from hermit.kernel.ledger.journal.store_teams import KernelTeamStoreMixin
 from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
 from hermit.kernel.signals.store import SignalStoreMixin
@@ -31,6 +35,7 @@ from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 
 _SCHEMA_VERSION = "18"
 _HASH_CACHE_MISS = object()  # sentinel for event-hash cache
+MAX_CONNECTIONS = 32
 _MIGRATABLE_SCHEMA_VERSIONS = {
     "5",
     "6",
@@ -83,8 +88,11 @@ _KNOWN_KERNEL_TABLES = {
     "hash_chain_checkpoints",
     "blackboard_entries",
     "observation_tickets",
+    "programs",
     "spec_backlog",
     "iteration_lessons",
+    "teams",
+    "milestones",
 }
 
 
@@ -103,6 +111,8 @@ class KernelStore(
     CompetitionStoreMixin,
     DelegationStoreMixin,
     SelfIterateStoreMixin,
+    ProgramStoreMixin,
+    KernelTeamStoreMixin,
 ):
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -116,7 +126,9 @@ class KernelStore(
         # independent hash chains, so they can commit concurrently without
         # forking each other's chain.  The global lock is kept only for events
         # with task_id=None (rare system-level events).
-        self._task_chain_locks: dict[str, threading.Lock] = {}
+        self._task_chain_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._task_chain_locks_guard = threading.Lock()
         # Registry of all per-thread file-backed connections for proper cleanup
         self._all_conns: list[sqlite3.Connection] = []
@@ -133,6 +145,9 @@ class KernelStore(
         # Phase 5: Shared listeners for hermit_await_completion parallel wait.
         self._task_change_listeners: dict[str, list[threading.Event]] = {}
         self._task_change_listeners_lock = threading.Lock()
+        # WAL checkpoint counter — trigger checkpoint after every N appended events.
+        self._wal_event_counter: int = 0
+        self._wal_counter_lock = threading.Lock()
         # For :memory: databases (tests), all threads must share one connection
         # since each new connection gets a separate empty database.
         self._shared_conn: sqlite3.Connection | None
@@ -149,6 +164,9 @@ class KernelStore(
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA synchronous=NORMAL")  # WAL-safe, reduces fsync
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA cache_size=-64000")  # ~64MB cache
         return conn
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -162,9 +180,19 @@ class KernelStore(
             return self._shared_conn
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = self._make_conn()
-            self._local.conn = conn
             with self._conn_lock:
+                if len(self._all_conns) >= MAX_CONNECTIONS:
+                    logging.getLogger(__name__).warning(
+                        "Connection pool limit reached (%d); reusing least recently used connection.",
+                        MAX_CONNECTIONS,
+                    )
+                    conn = self._all_conns[0]
+                    # Rotate to back so it becomes "most recently used"
+                    self._all_conns.append(self._all_conns.pop(0))
+                    self._local.conn = conn
+                    return conn
+                conn = self._make_conn()
+                self._local.conn = conn
                 self._all_conns.append(conn)
         return conn
 
@@ -624,6 +652,8 @@ class KernelStore(
                     rollback_expectation TEXT,
                     selected_template_ref TEXT,
                     superseded_by_contract_id TEXT,
+                    task_family TEXT,
+                    verification_requirements_json TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -814,6 +844,9 @@ class KernelStore(
                 CREATE INDEX IF NOT EXISTS idx_ingresses_chosen_task ON ingresses(chosen_task_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_ingresses_status ON ingresses(status, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, event_seq);
+                CREATE INDEX IF NOT EXISTS idx_events_task_hash
+                    ON events(task_id, event_seq DESC)
+                    WHERE event_hash IS NOT NULL AND event_hash != '';
                 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, requested_at);
                 CREATE INDEX IF NOT EXISTS idx_receipts_task ON receipts(task_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_decisions_task ON decisions(task_id, created_at);
@@ -1038,10 +1071,66 @@ class KernelStore(
                     ON entity_links(memory_id);
                 """
             )
+            self._get_conn().executescript(
+                """
+                CREATE TABLE IF NOT EXISTS teams (
+                    team_id TEXT PRIMARY KEY,
+                    program_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    role_assembly_json TEXT NOT NULL DEFAULT '{}',
+                    context_boundary_json TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL,
+                    updated_at REAL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS idx_teams_program
+                    ON teams(program_id);
+                CREATE TABLE IF NOT EXISTS milestones (
+                    milestone_id TEXT PRIMARY KEY,
+                    team_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    dependency_ids_json TEXT NOT NULL DEFAULT '[]',
+                    acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL,
+                    completed_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS idx_milestones_team
+                    ON milestones(team_id);
+                CREATE INDEX IF NOT EXISTS idx_milestones_status
+                    ON milestones(status);
+                CREATE TABLE IF NOT EXISTS programs (
+                    program_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    goal TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    description TEXT NOT NULL DEFAULT '',
+                    priority TEXT NOT NULL DEFAULT 'normal',
+                    program_contract_ref TEXT,
+                    budget_limits_json TEXT NOT NULL DEFAULT '{}',
+                    milestone_ids_json TEXT NOT NULL DEFAULT '[]',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_programs_status
+                    ON programs(status);
+                CREATE INDEX IF NOT EXISTS idx_programs_priority
+                    ON programs(priority);
+                CREATE INDEX IF NOT EXISTS idx_programs_created_at
+                    ON programs(created_at);
+                CREATE INDEX IF NOT EXISTS idx_teams_status
+                    ON teams(status);
+                """
+            )
             self._init_signal_schema()
             self._init_competition_schema()
             self._init_delegation_schema()
             self._init_self_iterate_schema()
+            self._ensure_program_column("program_contract_ref", "TEXT")
             self._migrate_memory_schema_v4()
             self._migrate_dag_schema_v11()
             self._migrate_kernel_convergence_v6()
@@ -1053,6 +1142,7 @@ class KernelStore(
             self._migrate_observation_tickets_v16()
             self._migrate_budget_v17()
             self._migrate_self_iterate_v18()
+            self._migrate_contract_verification_fields()
             self._backfill_event_hash_chain()
             self._get_conn().execute(
                 """
@@ -1312,6 +1402,11 @@ class KernelStore(
     def _migrate_self_iterate_v18(self) -> None:
         """Create spec_backlog and iteration_lessons tables (safety net for existing DBs)."""
         self._init_self_iterate_schema()
+
+    def _migrate_contract_verification_fields(self) -> None:
+        """Add task_family and verification_requirements_json to execution_contracts."""
+        self._ensure_column("execution_contracts", "task_family", "TEXT")
+        self._ensure_column("execution_contracts", "verification_requirements_json", "TEXT")
 
     # ------------------------------------------------------------------
     # Blackboard CRUD
@@ -1852,6 +1947,18 @@ class KernelStore(
                 payload={"priority": priority},
             )
 
+    def _ensure_wal_checkpoint(self) -> None:
+        """Checkpoint WAL if the -wal file exceeds 100 MB."""
+        if self._in_memory:
+            return
+        wal_path = Path(str(self.db_path) + "-wal")
+        try:
+            if wal_path.exists() and wal_path.stat().st_size > 100 * 1024 * 1024:
+                conn = self._get_conn()
+                conn.execute("PRAGMA wal_checkpoint(RESTART)")
+        except OSError:
+            pass  # Non-critical; skip if stat/checkpoint fails
+
     def _append_event_tx(
         self,
         *,
@@ -1871,6 +1978,12 @@ class KernelStore(
         occurred_at = time.time()
         # Use a per-task lock so different tasks can commit concurrently.
         # Events with task_id=None (rare) fall back to the global lock.
+        #
+        # Both hash computation AND the INSERT+commit must happen inside the
+        # lock.  If the INSERT were outside, two threads on the same task
+        # could compute correct hashes in sequence but commit in the wrong
+        # order, making event_seq ordering diverge from the hash chain and
+        # breaking verification.
         lock = self._get_task_chain_lock(task_id)
         with lock:
             prev_event_hash = self._latest_task_event_hash(task_id)
@@ -1888,39 +2001,54 @@ class KernelStore(
                 correlation_id=correlation_id,
                 prev_event_hash=prev_event_hash,
             )
-            conn = self._get_conn()
-            conn.execute(
-                """
-                INSERT INTO events (
-                    event_id, task_id, step_id, entity_type, entity_id, event_type,
-                    actor_principal_id, payload_json, occurred_at, causation_id, correlation_id,
-                    event_hash, prev_event_hash, hash_chain_algo
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id,
-                    task_id,
-                    step_id,
-                    entity_type,
-                    entity_id,
-                    event_type,
-                    actor_principal_id,
-                    payload_json,
-                    occurred_at,
-                    causation_id,
-                    correlation_id,
-                    event_hash,
-                    prev_event_hash,
-                    "sha256-v1",
-                ),
-            )
-            # Commit inside the lock so the next thread's SELECT sees this INSERT.
-            # Per-thread connections in file-backed mode have independent transaction
-            # snapshots; without this commit, the chain would fork.
-            conn.commit()
-            # Phase 2: update hash cache while still holding per-task lock.
+            try:
+                conn = self._get_conn()
+                conn.execute(
+                    """
+                    INSERT INTO events (
+                        event_id, task_id, step_id, entity_type, entity_id, event_type,
+                        actor_principal_id, payload_json, occurred_at, causation_id,
+                        correlation_id, event_hash, prev_event_hash, hash_chain_algo
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        task_id,
+                        step_id,
+                        entity_type,
+                        entity_id,
+                        event_type,
+                        actor_principal_id,
+                        payload_json,
+                        occurred_at,
+                        causation_id,
+                        correlation_id,
+                        event_hash,
+                        prev_event_hash,
+                        "sha256-v1",
+                    ),
+                )
+                conn.commit()
+            except Exception:
+                # Roll back the cache to maintain consistency on INSERT failure.
+                if task_id is not None:
+                    if prev_event_hash is not None:
+                        self._latest_event_hash_cache[task_id] = prev_event_hash
+                    else:
+                        self._latest_event_hash_cache.pop(task_id, None)
+                raise
+            # Update hash cache after successful commit so the next caller on
+            # the same task chain sees the correct prev_hash immediately.
             if task_id is not None:
                 self._latest_event_hash_cache[task_id] = event_hash
+        # Periodic WAL checkpoint outside the chain lock.
+        with self._wal_counter_lock:
+            self._wal_event_counter += 1
+            should_checkpoint = self._wal_event_counter >= 1000
+            if should_checkpoint:
+                self._wal_event_counter = 0
+        if should_checkpoint:
+            self._ensure_wal_checkpoint()
         return event_id
 
     def append_event(
@@ -1962,11 +2090,6 @@ class KernelStore(
         """
         if task_id is None:
             return self._event_chain_lock
-        # Fast path: GIL-safe dict.get avoids guard lock on the common case.
-        lock = self._task_chain_locks.get(task_id)
-        if lock is not None:
-            return lock
-        # Slow path: only taken once per task_id.
         with self._task_chain_locks_guard:
             return self._task_chain_locks.setdefault(task_id, threading.Lock())
 
@@ -2031,41 +2154,45 @@ class KernelStore(
         if needs_backfill and int(needs_backfill["cnt"]) == 0:
             return
 
-        # Slow path: full backfill needed
+        # Slow path: full backfill needed — wrap all UPDATEs in a single
+        # transaction so a crash mid-backfill cannot leave a partially
+        # updated hash chain.
         rows = self._rows("SELECT * FROM events ORDER BY event_seq ASC")
         previous_by_task: dict[str, str] = {}
-        for row in rows:
-            task_key = str(row["task_id"]) if row["task_id"] is not None else ""
-            stored_hash = str(row["event_hash"] or "").strip()
-            stored_prev = str(row["prev_event_hash"] or "").strip()
-            stored_algo = str(row["hash_chain_algo"] or "").strip()
-            prev_event_hash = previous_by_task.get(task_key) if task_key else None
-            if not stored_hash or (not stored_prev and prev_event_hash) or not stored_algo:
-                event_hash = self._compute_event_hash(
-                    event_id=str(row["event_id"]),
-                    task_id=row["task_id"],
-                    step_id=row["step_id"],
-                    entity_type=str(row["entity_type"]),
-                    entity_id=str(row["entity_id"]),
-                    event_type=str(row["event_type"]),
-                    actor=str(row["actor_principal_id"]),
-                    payload_json=str(row["payload_json"]),
-                    occurred_at=float(row["occurred_at"]),
-                    causation_id=row["causation_id"],
-                    correlation_id=row["correlation_id"],
-                    prev_event_hash=prev_event_hash,
-                )
-                self._get_conn().execute(
-                    """
-                    UPDATE events
-                    SET event_hash = ?, prev_event_hash = ?, hash_chain_algo = ?
-                    WHERE event_seq = ?
-                    """,
-                    (event_hash, prev_event_hash, "sha256-v1", int(row["event_seq"])),
-                )
-                stored_hash = event_hash
-            if task_key and stored_hash:
-                previous_by_task[task_key] = stored_hash
+        conn = self._get_conn()
+        with conn:
+            for row in rows:
+                task_key = str(row["task_id"]) if row["task_id"] is not None else "__system__"
+                stored_hash = str(row["event_hash"] or "").strip()
+                stored_prev = str(row["prev_event_hash"] or "").strip()
+                stored_algo = str(row["hash_chain_algo"] or "").strip()
+                prev_event_hash = previous_by_task.get(task_key)
+                if not stored_hash or (not stored_prev and prev_event_hash) or not stored_algo:
+                    event_hash = self._compute_event_hash(
+                        event_id=str(row["event_id"]),
+                        task_id=row["task_id"],
+                        step_id=row["step_id"],
+                        entity_type=str(row["entity_type"]),
+                        entity_id=str(row["entity_id"]),
+                        event_type=str(row["event_type"]),
+                        actor=str(row["actor_principal_id"]),
+                        payload_json=str(row["payload_json"]),
+                        occurred_at=float(row["occurred_at"]),
+                        causation_id=row["causation_id"],
+                        correlation_id=row["correlation_id"],
+                        prev_event_hash=prev_event_hash,
+                    )
+                    conn.execute(
+                        """
+                        UPDATE events
+                        SET event_hash = ?, prev_event_hash = ?, hash_chain_algo = ?
+                        WHERE event_seq = ?
+                        """,
+                        (event_hash, prev_event_hash, "sha256-v1", int(row["event_seq"])),
+                    )
+                    stored_hash = event_hash
+                if stored_hash:
+                    previous_by_task[task_key] = stored_hash
 
 
 __all__ = ["KernelSchemaError", "KernelStore"]

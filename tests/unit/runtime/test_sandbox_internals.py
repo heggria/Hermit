@@ -21,6 +21,12 @@ from hermit.runtime.provider_host.execution.sandbox import (
 # ── CommandSandbox init ───────────────────────────────────────────
 
 
+@pytest.fixture
+def sandbox(sandbox_l0: CommandSandbox) -> CommandSandbox:
+    """Alias the shared l0 sandbox fixture for brevity."""
+    return sandbox_l0
+
+
 def test_sandbox_init_default_l0(tmp_path: Path) -> None:
     sandbox = CommandSandbox(mode="l0", cwd=tmp_path)
     assert sandbox.mode == "l0"
@@ -52,27 +58,23 @@ def test_sandbox_init_timeout_overrides_budget(tmp_path: Path) -> None:
 # ── _normalize_payload ────────────────────────────────────────────
 
 
-def test_normalize_payload_string() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_payload_string(sandbox: CommandSandbox) -> None:
     payload = sandbox._normalize_payload("echo hello")
     assert payload == {"command": "echo hello"}
 
 
-def test_normalize_payload_dict() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_payload_dict(sandbox: CommandSandbox) -> None:
     payload = sandbox._normalize_payload({"command": "ls", "display_name": "List"})
     assert payload["command"] == "ls"
     assert payload["display_name"] == "List"
 
 
-def test_normalize_payload_empty_raises() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_payload_empty_raises(sandbox: CommandSandbox) -> None:
     with pytest.raises(ValueError, match="non-empty command"):
         sandbox._normalize_payload({"command": ""})
 
 
-def test_normalize_payload_whitespace_raises() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_payload_whitespace_raises(sandbox: CommandSandbox) -> None:
     with pytest.raises(ValueError, match="non-empty command"):
         sandbox._normalize_payload({"command": "   "})
 
@@ -80,26 +82,22 @@ def test_normalize_payload_whitespace_raises() -> None:
 # ── _default_display_name ─────────────────────────────────────────
 
 
-def test_default_display_name_short() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_default_display_name_short(sandbox: CommandSandbox) -> None:
     assert sandbox._default_display_name("echo hello") == "echo hello"
 
 
-def test_default_display_name_multiline() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_default_display_name_multiline(sandbox: CommandSandbox) -> None:
     name = sandbox._default_display_name("echo hello\necho world")
     assert name == "echo hello"
 
 
-def test_default_display_name_long() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_default_display_name_long(sandbox: CommandSandbox) -> None:
     long_cmd = "a" * 200
     name = sandbox._default_display_name(long_cmd)
     assert len(name) <= 80
 
 
-def test_default_display_name_single_word() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_default_display_name_single_word(sandbox: CommandSandbox) -> None:
     name = sandbox._default_display_name("ls")
     assert name == "ls"
 
@@ -107,21 +105,18 @@ def test_default_display_name_single_word() -> None:
 # ── _normalize_pattern_rules ──────────────────────────────────────
 
 
-def test_normalize_pattern_rules_none() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_pattern_rules_none(sandbox: CommandSandbox) -> None:
     assert sandbox._normalize_pattern_rules(None) == []
 
 
-def test_normalize_pattern_rules_strings() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_pattern_rules_strings(sandbox: CommandSandbox) -> None:
     rules = sandbox._normalize_pattern_rules(["READY", "STARTED"])
     assert len(rules) == 2
     assert rules[0] == {"pattern": "READY"}
     assert rules[1] == {"pattern": "STARTED"}
 
 
-def test_normalize_pattern_rules_dicts() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_pattern_rules_dicts(sandbox: CommandSandbox) -> None:
     rules = sandbox._normalize_pattern_rules(
         [
             {"pattern": r"READY (?P<url>\S+)", "summary": "Ready at {url}"},
@@ -131,14 +126,12 @@ def test_normalize_pattern_rules_dicts() -> None:
     assert rules[0]["pattern"] == r"READY (?P<url>\S+)"
 
 
-def test_normalize_pattern_rules_empty_string_skipped() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_pattern_rules_empty_string_skipped(sandbox: CommandSandbox) -> None:
     rules = sandbox._normalize_pattern_rules(["", "  ", "OK"])
     assert len(rules) == 1
 
 
-def test_normalize_pattern_rules_dict_empty_pattern_skipped() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_pattern_rules_dict_empty_pattern_skipped(sandbox: CommandSandbox) -> None:
     rules = sandbox._normalize_pattern_rules([{"pattern": ""}, {"pattern": "OK"}])
     assert len(rules) == 1
 
@@ -146,19 +139,16 @@ def test_normalize_pattern_rules_dict_empty_pattern_skipped() -> None:
 # ── _normalize_progress_rules ─────────────────────────────────────
 
 
-def test_normalize_progress_rules_none() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_progress_rules_none(sandbox: CommandSandbox) -> None:
     assert sandbox._normalize_progress_rules(None) == []
 
 
-def test_normalize_progress_rules_non_dict_skipped() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_progress_rules_non_dict_skipped(sandbox: CommandSandbox) -> None:
     rules = sandbox._normalize_progress_rules(["not a dict"])
     assert len(rules) == 0
 
 
-def test_normalize_progress_rules_valid() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_progress_rules_valid(sandbox: CommandSandbox) -> None:
     rules = sandbox._normalize_progress_rules(
         [
             {"pattern": r"Step (\d+)", "phase": "running"},
@@ -167,8 +157,7 @@ def test_normalize_progress_rules_valid() -> None:
     assert len(rules) == 1
 
 
-def test_normalize_progress_rules_empty_pattern_skipped() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_normalize_progress_rules_empty_pattern_skipped(sandbox: CommandSandbox) -> None:
     rules = sandbox._normalize_progress_rules([{"pattern": "", "phase": "x"}])
     assert len(rules) == 0
 
@@ -176,32 +165,27 @@ def test_normalize_progress_rules_empty_pattern_skipped() -> None:
 # ── _pattern_match ────────────────────────────────────────────────
 
 
-def test_pattern_match_valid() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_pattern_match_valid(sandbox: CommandSandbox) -> None:
     match = sandbox._pattern_match({"pattern": r"READY"}, "Server READY on port 3000")
     assert match is not None
 
 
-def test_pattern_match_no_match() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_pattern_match_no_match(sandbox: CommandSandbox) -> None:
     match = sandbox._pattern_match({"pattern": r"READY"}, "Still booting...")
     assert match is None
 
 
-def test_pattern_match_empty_pattern() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_pattern_match_empty_pattern(sandbox: CommandSandbox) -> None:
     match = sandbox._pattern_match({"pattern": ""}, "anything")
     assert match is None
 
 
-def test_pattern_match_invalid_regex() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_pattern_match_invalid_regex(sandbox: CommandSandbox) -> None:
     match = sandbox._pattern_match({"pattern": "[invalid"}, "test")
     assert match is None
 
 
-def test_pattern_match_no_pattern_key() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_pattern_match_no_pattern_key(sandbox: CommandSandbox) -> None:
     match = sandbox._pattern_match({}, "test")
     assert match is None
 
@@ -209,24 +193,21 @@ def test_pattern_match_no_pattern_key() -> None:
 # ── _render_text ──────────────────────────────────────────────────
 
 
-def test_render_text_no_template() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_render_text_no_template(sandbox: CommandSandbox) -> None:
     result = sandbox._render_text(
         None, match=None, line="hello", stream_name="stdout", display_name="cmd"
     )
     assert result == "hello"
 
 
-def test_render_text_empty_template() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_render_text_empty_template(sandbox: CommandSandbox) -> None:
     result = sandbox._render_text(
         "", match=None, line="hello", stream_name="stdout", display_name="cmd"
     )
     assert result == "hello"
 
 
-def test_render_text_with_fields() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_render_text_with_fields(sandbox: CommandSandbox) -> None:
     result = sandbox._render_text(
         "{display_name} on {stream}",
         match=None,
@@ -237,8 +218,7 @@ def test_render_text_with_fields() -> None:
     assert result == "Server on stderr"
 
 
-def test_render_text_with_match_groups() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_render_text_with_match_groups(sandbox: CommandSandbox) -> None:
     m = re.search(r"port (?P<port>\d+)", "Listening on port 3000")
     result = sandbox._render_text(
         "Ready on port {port}",
@@ -250,8 +230,7 @@ def test_render_text_with_match_groups() -> None:
     assert result == "Ready on port 3000"
 
 
-def test_render_text_format_error_returns_template() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_render_text_format_error_returns_template(sandbox: CommandSandbox) -> None:
     result = sandbox._render_text(
         "{missing_var}",
         match=None,
@@ -279,8 +258,7 @@ def _make_observed_process(**kwargs: Any) -> _ObservedProcess:
     return _ObservedProcess(**defaults)
 
 
-def test_progress_from_rule_basic() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_progress_from_rule_basic(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     rule = {"phase": "building", "summary": "Building..."}
 
@@ -297,8 +275,7 @@ def test_progress_from_rule_basic() -> None:
     assert progress["summary"] == "Building..."
 
 
-def test_progress_from_rule_defaults() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_progress_from_rule_defaults(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     rule = {}
 
@@ -315,8 +292,7 @@ def test_progress_from_rule_defaults() -> None:
     assert progress["summary"] == "default summary"
 
 
-def test_progress_from_rule_progress_percent() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_progress_from_rule_progress_percent(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     rule = {"progress_percent": 50}
 
@@ -332,8 +308,7 @@ def test_progress_from_rule_progress_percent() -> None:
     assert progress["progress_percent"] == 50
 
 
-def test_progress_from_rule_invalid_percent() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_progress_from_rule_invalid_percent(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     rule = {"progress_percent": "not_a_number"}
 
@@ -349,8 +324,7 @@ def test_progress_from_rule_invalid_percent() -> None:
     assert progress["progress_percent"] is None
 
 
-def test_progress_from_rule_ready_flag() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_progress_from_rule_ready_flag(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     rule = {}
 
@@ -370,8 +344,7 @@ def test_progress_from_rule_ready_flag() -> None:
 # ── _match_output_rules ───────────────────────────────────────────
 
 
-def test_match_output_rules_failure_pattern() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_match_output_rules_failure_pattern(sandbox: CommandSandbox) -> None:
     job = _make_observed_process(
         failure_patterns=[{"pattern": r"ERROR"}],
     )
@@ -381,8 +354,7 @@ def test_match_output_rules_failure_pattern() -> None:
     assert result["failed"] is True
 
 
-def test_match_output_rules_ready_pattern() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_match_output_rules_ready_pattern(sandbox: CommandSandbox) -> None:
     job = _make_observed_process(
         ready_patterns=[{"pattern": r"READY"}],
     )
@@ -392,8 +364,7 @@ def test_match_output_rules_ready_pattern() -> None:
     assert result["ready"] is True
 
 
-def test_match_output_rules_progress_pattern() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_match_output_rules_progress_pattern(sandbox: CommandSandbox) -> None:
     job = _make_observed_process(
         progress_patterns=[{"pattern": r"Step \d+", "phase": "running"}],
     )
@@ -403,8 +374,7 @@ def test_match_output_rules_progress_pattern() -> None:
     assert result["progress"]["phase"] == "running"
 
 
-def test_match_output_rules_no_match() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_match_output_rules_no_match(sandbox: CommandSandbox) -> None:
     job = _make_observed_process(
         failure_patterns=[{"pattern": r"FATAL"}],
         ready_patterns=[{"pattern": r"READY"}],
@@ -414,8 +384,7 @@ def test_match_output_rules_no_match() -> None:
     assert result is None
 
 
-def test_match_output_rules_failure_takes_priority() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_match_output_rules_failure_takes_priority(sandbox: CommandSandbox) -> None:
     job = _make_observed_process(
         failure_patterns=[{"pattern": r"ERROR"}],
         ready_patterns=[{"pattern": r"ERROR"}],
@@ -472,8 +441,7 @@ def test_poll_nonexistent_job(tmp_path: Path) -> None:
 # ── _coarse_running_progress ──────────────────────────────────────
 
 
-def test_coarse_running_progress() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_coarse_running_progress(sandbox: CommandSandbox) -> None:
     job = _make_observed_process(display_name="My Process")
     progress = sandbox._coarse_running_progress(job)
     assert progress["phase"] == "running"
@@ -483,8 +451,7 @@ def test_coarse_running_progress() -> None:
 # ── _observing_payload ────────────────────────────────────────────
 
 
-def test_observing_payload() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_observing_payload(sandbox: CommandSandbox) -> None:
     job = _make_observed_process(display_name="Server")
     progress = {"phase": "running", "summary": "Server is starting"}
     payload = sandbox._observing_payload(job, progress=progress, poll_after_seconds=5.0)
@@ -493,8 +460,7 @@ def test_observing_payload() -> None:
     assert payload["topic_summary"] == "Server is starting"
 
 
-def test_observing_payload_empty_summary() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_observing_payload_empty_summary(sandbox: CommandSandbox) -> None:
     job = _make_observed_process(display_name="Server")
     progress = {"phase": "running", "summary": ""}
     payload = sandbox._observing_payload(job, progress=progress, poll_after_seconds=5.0)
@@ -504,21 +470,18 @@ def test_observing_payload_empty_summary() -> None:
 # ── _has_observation_output ───────────────────────────────────────
 
 
-def test_has_observation_output_empty() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_has_observation_output_empty(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     assert sandbox._has_observation_output(job) is False
 
 
-def test_has_observation_output_with_events() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_has_observation_output_with_events(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.pending_events.append(("stdout", "line"))
     assert sandbox._has_observation_output(job) is True
 
 
-def test_has_observation_output_with_stdout() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_has_observation_output_with_stdout(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.stdout_chunks.append("data")
     assert sandbox._has_observation_output(job) is True
@@ -527,8 +490,7 @@ def test_has_observation_output_with_stdout() -> None:
 # ── _should_extend_coarse_observation ─────────────────────────────
 
 
-def test_should_extend_coarse_observation_with_progress() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_should_extend_coarse_observation_with_progress(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     # When matched_progress is set, should not extend
     result = sandbox._should_extend_coarse_observation(
@@ -541,8 +503,7 @@ def test_should_extend_coarse_observation_with_progress() -> None:
     assert result is False
 
 
-def test_should_extend_coarse_observation_already_emitted() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_should_extend_coarse_observation_already_emitted(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.coarse_observation_emitted = True
     result = sandbox._should_extend_coarse_observation(
@@ -555,8 +516,7 @@ def test_should_extend_coarse_observation_already_emitted() -> None:
     assert result is False
 
 
-def test_should_extend_coarse_observation_has_output() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_should_extend_coarse_observation_has_output(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.stdout_chunks.append("data")
     result = sandbox._should_extend_coarse_observation(
@@ -572,8 +532,7 @@ def test_should_extend_coarse_observation_has_output() -> None:
 # ── _should_briefly_wait_for_completion ───────────────────────────
 
 
-def test_should_briefly_wait_not_emitted() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_should_briefly_wait_not_emitted(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.coarse_observation_emitted = False
     result = sandbox._should_briefly_wait_for_completion(
@@ -585,8 +544,7 @@ def test_should_briefly_wait_not_emitted() -> None:
     assert result is False
 
 
-def test_should_briefly_wait_with_progress() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_should_briefly_wait_with_progress(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.coarse_observation_emitted = True
     result = sandbox._should_briefly_wait_for_completion(
@@ -598,8 +556,7 @@ def test_should_briefly_wait_with_progress() -> None:
     assert result is False
 
 
-def test_should_briefly_wait_with_output() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_should_briefly_wait_with_output(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.coarse_observation_emitted = True
     job.stdout_chunks.append("data")
@@ -612,8 +569,7 @@ def test_should_briefly_wait_with_output() -> None:
     assert result is False
 
 
-def test_should_briefly_wait_true() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_should_briefly_wait_true(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.coarse_observation_emitted = True
     result = sandbox._should_briefly_wait_for_completion(
@@ -656,8 +612,7 @@ def test_prune_expired_terminal_results(tmp_path: Path) -> None:
 # ── _terminate_job ────────────────────────────────────────────────
 
 
-def test_terminate_job_graceful() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_terminate_job_graceful(sandbox: CommandSandbox) -> None:
     proc = MagicMock()
     proc.wait.return_value = None
     proc.poll.return_value = 0
@@ -669,8 +624,7 @@ def test_terminate_job_graceful() -> None:
     assert job.returncode == 0
 
 
-def test_terminate_job_force() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_terminate_job_force(sandbox: CommandSandbox) -> None:
     proc = MagicMock()
     proc.poll.return_value = -9
     job = _make_observed_process(proc=proc)
@@ -680,8 +634,7 @@ def test_terminate_job_force() -> None:
     assert job.completed is True
 
 
-def test_terminate_job_oserror() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_terminate_job_oserror(sandbox: CommandSandbox) -> None:
     proc = MagicMock()
     proc.terminate.side_effect = OSError("already dead")
     proc.poll.return_value = None
@@ -695,8 +648,7 @@ def test_terminate_job_oserror() -> None:
 # ── _output_text ──────────────────────────────────────────────────
 
 
-def test_output_text() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_output_text(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.stdout_chunks = ["hello\n", "world\n"]
     job.stderr_chunks = ["err\n"]
@@ -709,8 +661,7 @@ def test_output_text() -> None:
 # ── _drain_pending_events ─────────────────────────────────────────
 
 
-def test_drain_pending_events() -> None:
-    sandbox = CommandSandbox(mode="l0")
+def test_drain_pending_events(sandbox: CommandSandbox) -> None:
     job = _make_observed_process()
     job.pending_events = [("stdout", "line1"), ("stderr", "line2")]
 
@@ -907,9 +858,8 @@ def test_poll_cached_terminal_result(tmp_path: Path) -> None:
     assert result["status"] == "completed"
 
 
-def test_terminate_job_graceful_with_timeout(tmp_path: Path) -> None:
+def test_terminate_job_graceful_with_timeout(sandbox: CommandSandbox) -> None:
     """Test terminate with graceful terminate that then times out, forcing kill."""
-    sandbox = CommandSandbox(mode="l0")
     proc = MagicMock()
     proc.terminate.return_value = None
     proc.wait.side_effect = subprocess.TimeoutExpired("cmd", 0.2)

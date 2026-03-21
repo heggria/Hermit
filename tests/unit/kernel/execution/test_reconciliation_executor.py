@@ -458,6 +458,7 @@ class TestRecordReconciliation:
             authorized_effect_summary="test",
         )
         contract_call = mock_store.update_execution_contract.call_args
+        # satisfied_with_downgrade maps to "partially_satisfied"
         assert contract_call[1].get("status") == "partially_satisfied"
 
     def test_contract_status_mapping_satisfied_sets_closed(
@@ -658,8 +659,8 @@ class TestReconciliationExecutionStatus:
         ("result_class", "expected"),
         [
             ("satisfied", "succeeded"),
-            ("partial", "reconciling"),
             ("satisfied_with_downgrade", "reconciling"),
+            ("partial", "reconciling"),
             ("ambiguous", "needs_attention"),
             ("unauthorized", "needs_attention"),
             ("violated", "failed"),

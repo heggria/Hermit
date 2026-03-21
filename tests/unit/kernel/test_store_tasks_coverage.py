@@ -752,3 +752,59 @@ def test_list_step_attempts_filters(tmp_path: Path) -> None:
 
     by_status = store.list_step_attempts(status="running")
     assert any(a.step_attempt_id == a1.step_attempt_id for a in by_status)
+
+
+# ── has_active_task_with_goal ───────────────────────────────────
+
+
+def test_has_active_task_with_goal_active_match(tmp_path: Path) -> None:
+    """Active (running) task with matching goal returns True."""
+    store = _setup(tmp_path)
+    _mk_task(store, goal="promote checkpoint", status="running")
+
+    assert store.has_active_task_with_goal("promote checkpoint") is True
+
+
+def test_has_active_task_with_goal_terminal_returns_false(tmp_path: Path) -> None:
+    """Completed task with matching goal should return False (terminal)."""
+    store = _setup(tmp_path)
+    task = _mk_task(store, goal="promote checkpoint", status="running")
+    store.update_task_status(task.task_id, "completed")
+
+    assert store.has_active_task_with_goal("promote checkpoint") is False
+
+
+def test_has_active_task_with_goal_no_tasks(tmp_path: Path) -> None:
+    """No tasks at all returns False."""
+    store = _setup(tmp_path)
+
+    assert store.has_active_task_with_goal("anything") is False
+
+
+def test_has_active_task_with_goal_policy_profile_filter(tmp_path: Path) -> None:
+    """With policy_profile filter, only matching tasks are considered."""
+    store = _setup(tmp_path)
+    _mk_task(store, goal="promote checkpoint", status="running", policy_profile="autonomous")
+
+    assert (
+        store.has_active_task_with_goal("promote checkpoint", policy_profile="autonomous") is True
+    )
+    assert (
+        store.has_active_task_with_goal("promote checkpoint", policy_profile="supervised") is False
+    )
+
+
+def test_has_active_task_with_goal_empty_goal(tmp_path: Path) -> None:
+    """Empty goal string should only match tasks with empty goal."""
+    store = _setup(tmp_path)
+    _mk_task(store, goal="some real goal", status="running")
+
+    assert store.has_active_task_with_goal("") is False
+
+
+def test_has_active_task_with_goal_queued_matches(tmp_path: Path) -> None:
+    """Queued tasks are non-terminal and should match."""
+    store = _setup(tmp_path)
+    _mk_task(store, goal="queued job", status="queued")
+
+    assert store.has_active_task_with_goal("queued job") is True

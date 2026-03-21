@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import time
 
+import structlog
+
 from hermit.kernel.analytics.models import ActionRiskEntry, GovernanceMetrics
 from hermit.kernel.ledger.journal.store import KernelStore
+
+_log = structlog.get_logger()
 
 
 class AnalyticsEngine:
@@ -23,7 +27,7 @@ class AnalyticsEngine:
         window_start: float | None = None,
         window_end: float | None = None,
         task_id: str | None = None,
-        limit: int = 500,
+        limit: int = 2000,
     ) -> GovernanceMetrics:
         """Compute governance metrics over the given time window.
 
@@ -34,6 +38,10 @@ class AnalyticsEngine:
                 Defaults to now.
             task_id: Optional task ID to scope metrics to a single task.
             limit: Maximum number of records to query per entity type.
+                Set higher than the expected record count in the window
+                to avoid silent truncation before Python-side time
+                filtering.  The store layer should eventually support
+                native time-window parameters to eliminate this issue.
 
         Returns:
             GovernanceMetrics with aggregated statistics.
@@ -44,26 +52,58 @@ class AnalyticsEngine:
         if window_start is None:
             window_start = window_end - 86400.0
 
-        receipts = self._store.list_receipts(task_id=task_id, limit=limit)
+        # TODO(perf): Push time-window filtering into the store layer (SQL WHERE
+        # clauses) so the limit applies *after* the time predicate.  Until then,
+        # `limit` must be set high enough to avoid silently dropping records that
+        # fall inside the window but beyond the LIMIT cutoff.
+
+        raw_receipts = self._store.list_receipts(task_id=task_id, limit=limit)
         receipts = [
             r
-            for r in receipts
+            for r in raw_receipts
             if r.created_at is not None and window_start <= r.created_at <= window_end
         ]
+        if len(raw_receipts) >= limit:
+            _log.warning(
+                "analytics_possible_truncation",
+                entity="receipts",
+                limit=limit,
+                window_start=window_start,
+                window_end=window_end,
+                hint="increase limit or push time filtering to SQL",
+            )
 
-        approvals = self._store.list_approvals(task_id=task_id, limit=limit)
+        raw_approvals = self._store.list_approvals(task_id=task_id, limit=limit)
         approvals = [
             a
-            for a in approvals
+            for a in raw_approvals
             if a.requested_at is not None and window_start <= a.requested_at <= window_end
         ]
+        if len(raw_approvals) >= limit:
+            _log.warning(
+                "analytics_possible_truncation",
+                entity="approvals",
+                limit=limit,
+                window_start=window_start,
+                window_end=window_end,
+                hint="increase limit or push time filtering to SQL",
+            )
 
-        decisions = self._store.list_decisions(task_id=task_id, limit=limit)
+        raw_decisions = self._store.list_decisions(task_id=task_id, limit=limit)
         decisions = [
             d
-            for d in decisions
+            for d in raw_decisions
             if d.created_at is not None and window_start <= d.created_at <= window_end
         ]
+        if len(raw_decisions) >= limit:
+            _log.warning(
+                "analytics_possible_truncation",
+                entity="decisions",
+                limit=limit,
+                window_start=window_start,
+                window_end=window_end,
+                hint="increase limit or push time filtering to SQL",
+            )
 
         reconciliations = self._store.list_reconciliations(task_id=task_id, limit=limit)
         reconciliations = [

@@ -18,6 +18,8 @@
   "prompt.context.self_configuration.line_3": "- For code tasks, inspect the codebase first and make concrete changes when appropriate.",
   "prompt.context.self_configuration.line_4": "- Keep user-facing responses concise, accurate, and collaborative.",
   "prompt.context.self_configuration.line_5": "- If your changes need a running local service to take effect, restart the relevant development environment before reporting completion.",
+  "prompt.context.workspace_boundary.line_1": "- NEVER write files to /tmp/, /private/tmp/, or any path outside the workspace directory. All file operations MUST stay within the workspace root shown in <hermit_runtime>.",
+  "prompt.context.workspace_boundary.line_2": "- For temporary or scratch files, use the .hermit/tmp/ subdirectory inside the workspace (create it if needed). Writing outside the workspace will be blocked by the governance layer.",
   "prompt.runtime.max_turns_exceeded": "You have reached the maximum turn limit. Stop using tools and provide the best possible final answer based on the work completed so far.",
   "prompt.runtime.final_summary_failed": "Reached the maximum turn limit ({max_turns}) and the final summary request failed: {error}. Respond with a brief explanation of what was completed and what remains blocked.",
   "prompt.available_skills.read_skill.description": "Load a skill's full instructions into context. Use when a task matches a skill's description from the catalog.",

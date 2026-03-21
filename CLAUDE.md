@@ -10,42 +10,48 @@
 - When modifying existing files, read them first before suggesting changes
 - Follow Ruff formatting — do not manually adjust style beyond what Ruff enforces
 
-## Claude ↔ Hermit Division of Labor
+## Architecture at a Glance
 
-Claude = bridge between user and Hermit. Reads, analyzes, decides, orchestrates.
-Hermit = autonomous executor. Runs tasks under governed policy with receipts and rollback.
+Hermit is a **kernel-first governed agent runtime**. The core layers are:
 
-### Claude does directly
+```
+Surfaces (CLI)  +  Adapters (Feishu, Slack, Telegram)  +  Hooks (Scheduler, Webhook)
+    → AgentRunner (runtime/control/)
+        → PluginManager + Task Controller
+            → Policy Engine → Approval → WorkspaceLease → CapabilityGrant → Executor
+                → Artifacts, Receipts, Proofs, Rollback
+                    → Kernel Ledger (SQLite event journal + projections)
+```
 
-- Read and analyze code
-- Answer questions, explain architecture
-- Git operations (commit, branch, PR)
-- Quick validation (`make check`, `uv run pytest`)
+**Key packages:**
+- `src/hermit/kernel/` — governed execution kernel (task, policy, execution, ledger, verification, signals, analytics, context, authority, artifacts, errors)
+- `src/hermit/runtime/` — assembly, capability (registry, resolver, contracts, loader), control (lifecycle, runner), observation (logging), provider_host (LLM providers: claude, codex; execution services: approval, progress, sandbox, vision)
+- `src/hermit/plugins/builtin/` — adapters (feishu, slack, telegram), hooks (scheduler, webhook, memory, image_memory, patrol, research, benchmark, decompose, metaloop, overnight, quality, subtask, trigger), tools (computer_use, file_tools, grok, web_tools), MCP servers (github, hermit_server, mcp_loader), subagents (orchestrator), bundles (compact, planner, usage)
+- `src/hermit/infra/` — storage, locking, paths, system (i18n, executables, locales)
+- `src/hermit/surfaces/cli/` — Typer CLI dispatcher (commands for core, task, memory, schedule, plugin, autostart, overnight, serve), TUI (Textual-based interactive chat with widgets)
+- `src/hermit/apps/` — companion app
 
-### Hermit does (delegate via hermit-delegate skill)
+### Key Design Decisions
 
-- **All file writes and code modifications** — Hermit handles these autonomously
-- **All shell commands with side effects** — builds, installs, deployments
-- **Multi-step implementations** — features, refactors, migrations
-- **Any task the user describes** — default to delegating, not doing directly
+- **Task-first:** All meaningful work flows through durable Task → Step → StepAttempt objects
+- **Governed execution:** Every mutation follows Approval → WorkspaceLease → CapabilityGrant → Execution → Receipt. No direct model-to-tool execution.
+- **Event sourcing:** Durable state derived from append-only event logs in SQLite ledger
+- **Artifact-native context:** Context compiled from kernel artifacts, not just message history
+- **Evidence-bound memory:** Memory promotion requires evidence references
+- **Scoped authority:** CapabilityGrants + WorkspaceLeases for least-privilege execution
+- **Receipt-aware:** Every action produces receipts and hash-chained proof bundles
+- **Kernel is synchronous:** Kernel methods are sync; async only at surface boundaries
+- **Plugin architecture:** Adapters, hooks, tools, MCP servers, subagents, and bundles are all plugins loaded via PluginManager
 
-### Default: delegate to Hermit
+## Using Hermit via MCP
 
-When in doubt, delegate. Use `policy_profile="autonomous"` so Hermit runs with minimal friction.
-Claude only does things directly when it's pure read/analysis or the user explicitly asks Claude to do it.
+### Task Submission
 
-### Maximize parallelism — Hermit's core strength
+Submit atomic tasks — each should have a single clear objective.
 
-Hermit is built for high-concurrency governed execution. **Always decompose work into
-the maximum number of independent tasks and submit them all at once.**
-
-- **Decompose aggressively**: A feature request is not one task — it's research + implementation
-  + tests + docs, often with further splits per module. If two pieces don't depend on each
-  other, they are separate tasks.
-- **Submit in bulk**: Call `hermit_submit(tasks=[...])` or multiple `hermit_submit()` calls
-  in a single response. Hermit runs them concurrently under independent governed pipelines.
-- **Monitor with await**: Use `hermit_await_completion(task_ids=[...], timeout=120)` to block
-  until tasks finish. Returns as soon as any task completes — no polling loops needed.
+- `hermit_submit(description, policy_profile)` — submit a single task
+- `hermit_submit_dag_task(description, steps, policy_profile)` — submit a DAG of dependent steps
+- `hermit_await_completion(task_id)` — block until task completes — no polling loops needed.
   For remaining tasks, chain another `hermit_await_completion` call.
 - **Pipeline dependent work**: When task B depends on task A's output, submit A first,
   then submit B once A completes. Keep independent tasks flowing in the meantime.
@@ -64,6 +70,25 @@ NOT:
 # Wrong — one giant task that runs sequentially inside Hermit
 hermit_submit(description="Refactor memory module AND add all tests ...", policy_profile="autonomous")
 ```
+
+### Self-Iteration
+
+Hermit supports governed self-improvement via `hermit_submit_iteration`. This pipeline:
+spec → parse → branch → execute → proof-export → PR. Every mutation is authorized by
+the policy engine, granted scoped capabilities, receipted, and verifiable via hash-chained
+proof bundles. Use `hermit_iteration_status` and `hermit_spec_queue` to monitor.
+
+### Available MCP Tools
+
+Core task tools: `hermit_submit`, `hermit_submit_dag_task`, `hermit_task_status`,
+`hermit_list_tasks`, `hermit_await_completion`, `hermit_cancel_task`, `hermit_task_output`,
+`hermit_task_proof`
+
+Approval flow: `hermit_pending_approvals`, `hermit_approve`, `hermit_deny`
+
+Self-iteration: `hermit_submit_iteration`, `hermit_spec_queue`, `hermit_iteration_status`
+
+Observability: `hermit_metrics`, `hermit_benchmark_results`, `hermit_lessons_learned`
 
 ### Principles
 

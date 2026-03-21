@@ -56,6 +56,7 @@ def build_base_context(settings: Settings, working_dir: Path) -> str:
     separately by PluginManager.build_system_prompt().
     """
     locale = resolve_locale(getattr(settings, "locale", None))
+    workspace_tmp_dir = working_dir / ".hermit" / "tmp"
     sections = [
         "<hermit_runtime>",
         f"- current_working_directory: {working_dir}",
@@ -75,7 +76,13 @@ def build_base_context(settings: Settings, working_dir: Path) -> str:
         f"- max_tokens: {settings.max_tokens}",
         f"- max_turns: {settings.max_turns}",
         f"- sandbox_mode: {settings.sandbox_mode}",
+        f"- workspace_tmp_dir: {workspace_tmp_dir}",
         "</hermit_runtime>",
+        "",
+        "<workspace_boundary>",
+        tr("prompt.context.workspace_boundary.line_1", locale=locale),
+        tr("prompt.context.workspace_boundary.line_2", locale=locale),
+        "</workspace_boundary>",
         "",
         "<self_configuration>",
         tr("prompt.context.self_configuration.line_1", locale=locale),

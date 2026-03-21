@@ -280,8 +280,8 @@ class HybridRetrievalService:
             results = self._embeddings.search(query, store, limit=len(memories))
             memory_ids = {m.memory_id for m in memories}
             return [mid for mid, _ in results if mid in memory_ids]
-        except Exception:
-            log.debug("semantic_rank_fallback")
+        except (ImportError, OSError, RuntimeError) as exc:
+            log.warning("semantic_rank_failed", error=str(exc))
             return []
 
     def _graph_rank(
@@ -333,7 +333,8 @@ class HybridRetrievalService:
                     if mid in memory_id_set and mid not in ranked:
                         ranked.append(mid)
             return ranked
-        except Exception:
+        except (ImportError, RuntimeError) as exc:
+            structlog.get_logger().warning("procedural_rank_failed", error=str(exc))
             return []
 
     @staticmethod
@@ -364,7 +365,8 @@ class HybridRetrievalService:
                 return []
             ranked = sorted(hit_counts, key=lambda mid: hit_counts[mid], reverse=True)
             return ranked
-        except Exception:
+        except (OSError, RuntimeError) as exc:
+            structlog.get_logger().warning("entity_rank_failed", error=str(exc))
             return []
 
     @staticmethod
@@ -379,7 +381,7 @@ class HybridRetrievalService:
         scored: list[tuple[str, float]] = []
         for m in memories:
             effective_conf = self._confidence.compute_confidence(m, now=now)
-            recency = (m.updated_at or m.created_at or 0.0) / 1e12
+            recency = (m.updated_at or m.created_at or 0.0) / now if now > 0 else 0.0
             scored.append((m.memory_id, effective_conf + recency))
         scored.sort(key=lambda x: x[1], reverse=True)
         return [mid for mid, _ in scored]

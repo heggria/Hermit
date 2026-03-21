@@ -151,6 +151,7 @@ class TestConfigureUnbufferedStdio:
 # ---------------------------------------------------------------------------
 # _serve_with_signals (async)
 # ---------------------------------------------------------------------------
+@pytest.mark.asyncio
 class TestServeWithSignals:
     async def test_adapter_finishes_normally(self) -> None:
         async def fake_start(runner):
@@ -398,6 +399,7 @@ class TestServeCommand:
 # ---------------------------------------------------------------------------
 # _serve_with_signals — SIGHUP / SIGTERM paths
 # ---------------------------------------------------------------------------
+@pytest.mark.asyncio
 class TestServeWithSignalsReload:
     async def test_reload_event_triggers_reload_result(self) -> None:
         """Test SIGHUP-like reload path by triggering the reload event."""
@@ -413,7 +415,7 @@ class TestServeWithSignalsReload:
                     reload_event_ref = self
 
         async def slow_start(runner):
-            await asyncio.sleep(10)
+            await asyncio.sleep(0.05)  # just needs to outlive the event trigger
 
         async def fake_stop():
             return None
@@ -453,7 +455,7 @@ class TestServeWithSignalsReload:
                 events_created.append(self)
 
         async def slow_start(runner):
-            await asyncio.sleep(10)
+            await asyncio.sleep(0.05)  # just needs to outlive the event trigger
 
         async def fake_stop():
             return None

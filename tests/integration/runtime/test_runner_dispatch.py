@@ -389,6 +389,7 @@ def test_runner_messages_can_render_zh_cn(monkeypatch) -> None:
 
 def test_runner_background_services_start_stop_and_wake(monkeypatch) -> None:
     runner, _agent, _session_manager, _plugin_manager, _controller = _make_runner()
+    monkeypatch.setenv("HERMIT_DISPATCH_MODE", "flat")
     started: list[str] = []
     stopped: list[str] = []
     wakes: list[str] = []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -171,9 +172,10 @@ class ContextCompiler:
                     if m.memory_id not in result_ids:
                         excluded_reasons[m.memory_id] = "hybrid_rank_cutoff"
                 used_hybrid = True
-            except Exception:
+            except (AttributeError, TypeError, RuntimeError) as exc:
                 structlog.get_logger().warning(
                     "hybrid_retrieval_fallback",
+                    error=str(exc),
                     exc_info=True,
                 )
 
@@ -330,15 +332,16 @@ class ContextCompiler:
     def _retrieval_score(
         self, memory: MemoryRecord, *, context: TaskExecutionContext, query: str
     ) -> float:
+        now = time.time()
         score = 0.0
         if self.governance.scope_matches(memory.scope_kind, memory.scope_ref, context=context):
             score += 100.0
         if memory.expires_at is not None:
-            score += max(0.0, memory.expires_at) / 1_000_000_000_000.0
+            score += max(0.0, memory.expires_at) / now if now > 0 else 0.0
         if shares_topic(memory.claim_text, query):
             score += 10.0
         score += 5.0 if memory.trust_tier == "durable" else 0.0
-        score += float(memory.updated_at or 0.0) / 1_000_000_000_000.0
+        score += float(memory.updated_at or 0.0) / now if now > 0 else 0.0
         return score
 
     @staticmethod

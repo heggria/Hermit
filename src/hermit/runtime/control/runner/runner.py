@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime  # noqa: F401 — used by test monkeypatching (runner_module.datetime)
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,7 @@ from hermit.runtime.provider_host.execution.runtime import (
 
 if TYPE_CHECKING:
     from hermit.runtime.capability.registry.manager import PluginManager
+    from hermit.runtime.control.runner.message_compiler import MessageCompiler
 
 from hermit.runtime.control.runner.utils import (
     DispatchResult,
@@ -105,12 +107,51 @@ class AgentRunner:
             self._observation_service = ObservationService(self)
         self._observation_service.start()
         if self._dispatch_service is None:
-            from hermit.kernel.execution.coordination.dispatch import KernelDispatchService
-
-            worker_count = int(
-                getattr(getattr(self.pm, "settings", None), "kernel_dispatch_worker_count", 4) or 4
+            dispatch_mode = (
+                (
+                    os.environ.get("HERMIT_DISPATCH_MODE")
+                    or str(
+                        getattr(
+                            getattr(self.pm, "settings", None),
+                            "kernel_dispatch_mode",
+                            "pool",
+                        )
+                        or "pool"
+                    )
+                )
+                .strip()
+                .lower()
             )
-            self._dispatch_service = KernelDispatchService(self, worker_count=worker_count)
+
+            if dispatch_mode not in ("flat", "pool"):
+                import structlog as _slog
+
+                _slog.get_logger().warning(
+                    "invalid_dispatch_mode",
+                    dispatch_mode=dispatch_mode,
+                    defaulting_to="pool",
+                )
+                dispatch_mode = "pool"
+
+            if dispatch_mode == "flat":
+                from hermit.kernel.execution.coordination.dispatch import KernelDispatchService
+
+                worker_count = int(
+                    getattr(
+                        getattr(self.pm, "settings", None),
+                        "kernel_dispatch_worker_count",
+                        4,
+                    )
+                    or 4
+                )
+                self._dispatch_service = KernelDispatchService(self, worker_count=worker_count)
+            else:
+                from hermit.kernel.execution.coordination.pool_dispatch import (
+                    PoolAwareDispatchService,
+                )
+
+                self._dispatch_service = PoolAwareDispatchService(self)
+
             self._register_kind_handlers(self._dispatch_service)
             self._dispatch_service.start()
 
@@ -135,8 +176,13 @@ class AgentRunner:
                 "memory_promotion",
                 create_memory_promotion_handler(self),
             )
-        except Exception:
-            pass  # memory plugin not available
+        except Exception as exc:
+            import structlog as _slog
+
+            _slog.get_logger().warning(
+                "memory_promotion_handler_unavailable",
+                error=str(exc),
+            )
 
     # ------------------------------------------------------------------
     # Command registration
@@ -192,10 +238,11 @@ class AgentRunner:
         """Retrieve the kernel store from the task controller, or None."""
         return getattr(self.task_controller, "store", None)
 
-    def _prepare_prompt_context(self, session_id, text, *, source_channel):
+    def _make_compiler(self) -> MessageCompiler:
+        """Create a MessageCompiler wired to the current runner state."""
         from hermit.runtime.control.runner.message_compiler import MessageCompiler
 
-        compiler = MessageCompiler(
+        return MessageCompiler(
             pm=self.pm,
             session_manager=self.session_manager,
             store=self._get_store(),
@@ -203,7 +250,9 @@ class AgentRunner:
             observation_service=self._observation_service,
             artifact_store=getattr(self.agent, "artifact_store", None),
         )
-        return compiler.prepare_prompt_context(
+
+    def _prepare_prompt_context(self, session_id, text, *, source_channel):
+        return self._make_compiler().prepare_prompt_context(
             session_id,
             text,
             source_channel=source_channel,
@@ -212,28 +261,10 @@ class AgentRunner:
         )
 
     def _provider_input_compiler(self):
-        from hermit.runtime.control.runner.message_compiler import MessageCompiler
-
-        compiler = MessageCompiler(
-            pm=self.pm,
-            session_manager=self.session_manager,
-            store=self._get_store(),
-            task_controller=self.task_controller,
-            artifact_store=getattr(self.agent, "artifact_store", None),
-        )
-        return compiler.provider_input_compiler()
+        return self._make_compiler().provider_input_compiler()
 
     def _compile_provider_input(self, *, task_ctx, prompt, raw_text, session_messages=None):
-        from hermit.runtime.control.runner.message_compiler import MessageCompiler
-
-        compiler = MessageCompiler(
-            pm=self.pm,
-            session_manager=self.session_manager,
-            store=self._get_store(),
-            task_controller=self.task_controller,
-            artifact_store=getattr(self.agent, "artifact_store", None),
-        )
-        return compiler.compile_provider_input(
+        return self._make_compiler().compile_provider_input(
             task_ctx=task_ctx,
             prompt=prompt,
             raw_text=raw_text,
@@ -241,16 +272,7 @@ class AgentRunner:
         )
 
     def _append_note_context(self, session_id, task_id, source_channel):
-        from hermit.runtime.control.runner.message_compiler import MessageCompiler
-
-        compiler = MessageCompiler(
-            pm=self.pm,
-            session_manager=self.session_manager,
-            store=self._get_store(),
-            task_controller=self.task_controller,
-            artifact_store=getattr(self.agent, "artifact_store", None),
-        )
-        return compiler.append_note_context(session_id, task_id, source_channel)
+        return self._make_compiler().append_note_context(session_id, task_id, source_channel)
 
     def _run_existing_task(self, task_ctx, prompt, **kwargs):
         from hermit.runtime.control.runner.task_executor import RunnerTaskExecutor

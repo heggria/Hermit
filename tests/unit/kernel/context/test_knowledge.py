@@ -196,6 +196,7 @@ class TestMemoryRecordService:
         belief = _make_belief()
         reconciliation = SimpleNamespace(reconciliation_id="rec-1", result_class="satisfied")
         store.list_reconciliations.return_value = [reconciliation]
+        store.get_reconciliation.return_value = reconciliation
         svc = MemoryRecordService(store)
 
         result = svc.promote_from_belief(
@@ -209,6 +210,8 @@ class TestMemoryRecordService:
     def test_promote_from_belief_with_explicit_reconciliation_ref(self) -> None:
         store = _mock_store()
         belief = _make_belief()
+        reconciliation = SimpleNamespace(reconciliation_id="explicit-rec", result_class="satisfied")
+        store.get_reconciliation.return_value = reconciliation
         svc = MemoryRecordService(store)
 
         result = svc.promote_from_belief(
@@ -271,6 +274,7 @@ class TestMemoryRecordService:
         store.list_memory_records.return_value = [existing]
         reconciliation = SimpleNamespace(reconciliation_id="rec-1", result_class="satisfied")
         store.list_reconciliations.return_value = [reconciliation]
+        store.get_reconciliation.return_value = reconciliation
         svc = MemoryRecordService(store)
 
         result = svc.promote_from_belief(
@@ -295,6 +299,7 @@ class TestMemoryRecordService:
         store.list_memory_records.return_value = [old_memory]
         reconciliation = SimpleNamespace(reconciliation_id="rec-1", result_class="satisfied")
         store.list_reconciliations.return_value = [reconciliation]
+        store.get_reconciliation.return_value = reconciliation
         svc = MemoryRecordService(store)
 
         svc.promote_from_belief(
@@ -448,3 +453,156 @@ class TestMemoryRecordService:
         result = svc._issue_memory_invalidate_receipt("mem-nonexistent")
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# GC3: Reconciliation gate for durable memory promotion
+# ---------------------------------------------------------------------------
+
+
+class TestReconciliationGate:
+    """GC3: No durable learning without reconciliation.
+
+    Durable-scoped memories (global/workspace) require a valid reconciliation_ref.
+    Conversation-scoped memories are allowed without reconciliation.
+    """
+
+    def test_durable_promotion_blocked_without_reconciliation(self) -> None:
+        """Durable scope (global) promotion without reconciliation_ref is blocked."""
+        store = _mock_store()
+        # Belief classifies as user_preference -> scope=global (durable)
+        belief = _make_belief(
+            category="user_preference",
+            claim_text="User prefers dark mode",
+        )
+        store.list_reconciliations.return_value = []
+        svc = MemoryRecordService(store)
+
+        result = svc.promote_from_belief(
+            belief=belief,
+            conversation_id="conv-1",
+        )
+
+        assert result is None
+        store.create_memory_record.assert_not_called()
+        # Belief should be marked as blocked
+        call_kwargs = store.update_belief.call_args[1]
+        assert call_kwargs["promotion_candidate"] is False
+        assert "promotion_blocked" in call_kwargs["validation_basis"]
+
+    def test_durable_promotion_succeeds_with_valid_reconciliation(self) -> None:
+        """Durable scope (global) promotion with valid reconciliation_ref succeeds."""
+        store = _mock_store()
+        belief = _make_belief(
+            category="user_preference",
+            claim_text="User prefers dark mode",
+        )
+        reconciliation = SimpleNamespace(
+            reconciliation_id="rec-1",
+            result_class="satisfied",
+        )
+        store.get_reconciliation.return_value = reconciliation
+        svc = MemoryRecordService(store)
+
+        result = svc.promote_from_belief(
+            belief=belief,
+            conversation_id="conv-1",
+            reconciliation_ref="rec-1",
+        )
+
+        assert result is not None
+        store.create_memory_record.assert_called_once()
+        call_kwargs = store.create_memory_record.call_args[1]
+        assert call_kwargs["trust_tier"] == "durable"
+        assert call_kwargs["learned_from_reconciliation_ref"] == "rec-1"
+
+    def test_conversation_scope_without_reconciliation_allowed(self) -> None:
+        """Conversation-scoped memory promotion is allowed without reconciliation."""
+        store = _mock_store()
+        # tech_decision classifies as scope=conversation (ephemeral)
+        belief = _make_belief(
+            belief_id="belief-conv",
+            category="tech_decision",
+            claim_text="Using PostgreSQL for this project",
+            confidence=0.8,
+        )
+        store.list_reconciliations.return_value = []
+        svc = MemoryRecordService(store)
+
+        result = svc.promote_from_belief(
+            belief=belief,
+            conversation_id="conv-1",
+        )
+
+        assert result is not None
+        store.create_memory_record.assert_called_once()
+        call_kwargs = store.create_memory_record.call_args[1]
+        assert call_kwargs["trust_tier"] == "observed"
+        assert call_kwargs["validation_basis"] == "ephemeral_working_memory"
+        assert call_kwargs["learned_from_reconciliation_ref"] is None
+
+    def test_durable_promotion_blocked_with_violated_reconciliation(self) -> None:
+        """Durable promotion is blocked when reconciliation_ref points to violated record."""
+        store = _mock_store()
+        belief = _make_belief(
+            category="user_preference",
+            claim_text="User prefers dark mode",
+        )
+        violated_rec = SimpleNamespace(
+            reconciliation_id="rec-violated",
+            result_class="violated",
+        )
+        store.get_reconciliation.return_value = violated_rec
+        svc = MemoryRecordService(store)
+
+        result = svc.promote_from_belief(
+            belief=belief,
+            conversation_id="conv-1",
+            reconciliation_ref="rec-violated",
+        )
+
+        assert result is None
+        store.create_memory_record.assert_not_called()
+        call_kwargs = store.update_belief.call_args[1]
+        assert "reconciliation_violated" in call_kwargs["validation_basis"]
+
+    def test_durable_promotion_blocked_with_nonexistent_reconciliation(self) -> None:
+        """Durable promotion is blocked when reconciliation_ref doesn't exist."""
+        store = _mock_store()
+        belief = _make_belief(
+            category="user_preference",
+            claim_text="User prefers dark mode",
+        )
+        store.get_reconciliation.return_value = None
+        svc = MemoryRecordService(store)
+
+        result = svc.promote_from_belief(
+            belief=belief,
+            conversation_id="conv-1",
+            reconciliation_ref="rec-nonexistent",
+        )
+
+        assert result is None
+        store.create_memory_record.assert_not_called()
+        call_kwargs = store.update_belief.call_args[1]
+        assert "reconciliation_not_found" in call_kwargs["validation_basis"]
+
+    def test_workspace_scope_requires_reconciliation(self) -> None:
+        """Workspace-scoped (durable) promotion requires reconciliation."""
+        store = _mock_store()
+        # project_convention classifies as scope=workspace (durable)
+        belief = _make_belief(
+            category="project_convention",
+            claim_text="Always use ruff for formatting",
+        )
+        store.list_reconciliations.return_value = []
+        svc = MemoryRecordService(store)
+
+        result = svc.promote_from_belief(
+            belief=belief,
+            conversation_id="conv-1",
+            workspace_root="/project",
+        )
+
+        assert result is None
+        store.create_memory_record.assert_not_called()

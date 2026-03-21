@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS iteration_lessons (
     iteration_id TEXT NOT NULL,
     category TEXT NOT NULL,
     summary TEXT NOT NULL,
+    evidence_ref TEXT,
     trigger_condition TEXT,
     resolution TEXT,
     applicable_files TEXT,
@@ -89,6 +90,7 @@ class SelfIterateStoreMixin(KernelStoreTypingBase):
         # Migration: add columns introduced after initial DDL
         self._ensure_column("spec_backlog", "attempt", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("spec_backlog", "error", "TEXT")
+        self._ensure_column("iteration_lessons", "evidence_ref", "TEXT")
 
     # ------------------------------------------------------------------
     # spec_backlog CRUD
@@ -239,9 +241,10 @@ class SelfIterateStoreMixin(KernelStoreTypingBase):
         return int(row["cnt"]) if row else 0
 
     def count_active_specs(self) -> int:
-        """Return the count of spec entries NOT in a terminal state (completed/failed)."""
+        """Return the count of spec entries NOT in a terminal state."""
         row = self._row(
-            "SELECT COUNT(*) AS cnt FROM spec_backlog WHERE status NOT IN ('completed', 'failed')",
+            "SELECT COUNT(*) AS cnt FROM spec_backlog "
+            "WHERE status NOT IN ('completed', 'failed', 'accepted', 'rejected')",
             (),
         )
         return int(row["cnt"]) if row else 0
@@ -251,7 +254,7 @@ class SelfIterateStoreMixin(KernelStoreTypingBase):
         row = self._row(
             "SELECT * FROM spec_backlog "
             "WHERE json_extract(metadata, '$.goal_hash') = ? "
-            "AND status NOT IN ('completed', 'failed') "
+            "AND status NOT IN ('completed', 'failed', 'accepted', 'rejected') "
             "LIMIT 1",
             (goal_hash,),
         )
@@ -317,6 +320,7 @@ class SelfIterateStoreMixin(KernelStoreTypingBase):
         resolution: str | None = None,
         applicable_files: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        evidence_ref: str | None = None,
     ) -> dict:
         """Insert a new iteration lesson. Returns the created row as a dict."""
         now = _now_iso()
@@ -325,14 +329,15 @@ class SelfIterateStoreMixin(KernelStoreTypingBase):
             conn.execute(
                 """INSERT INTO iteration_lessons (
                     lesson_id, iteration_id, category, summary,
-                    trigger_condition, resolution, applicable_files,
-                    metadata, created_at
-                ) VALUES (?,?,?,?,?,?,?,?,?)""",
+                    evidence_ref, trigger_condition, resolution,
+                    applicable_files, metadata, created_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (
                     lesson_id,
                     iteration_id,
                     category,
                     summary,
+                    evidence_ref,
                     trigger_condition,
                     resolution,
                     _json(applicable_files) if applicable_files is not None else None,

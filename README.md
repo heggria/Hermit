@@ -1,350 +1,237 @@
-# Hermit
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/hermit-icon-white.svg">
     <source media="(prefers-color-scheme: light)" srcset="./docs/assets/hermit-macos-icon.svg">
-    <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit macOS menu bar icon" width="96" height="96">
+    <img src="./docs/assets/hermit-macos-icon.svg" alt="Hermit" width="120" height="120">
   </picture>
 </p>
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+<h1 align="center">Hermit</h1>
 
-[![CI](https://github.com/heggria/Hermit/actions/workflows/ci.yml/badge.svg)](https://github.com/heggria/Hermit/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-black)](./LICENSE)
-[![Docs](https://img.shields.io/badge/docs-github%20pages-0F172A)](https://heggria.github.io/Hermit/)
-[![PyPI](https://img.shields.io/pypi/v/hermit-agent)](https://pypi.org/project/hermit-agent/)
-[![Downloads](https://img.shields.io/pypi/dm/hermit-agent)](https://pypi.org/project/hermit-agent/)
-[![Discord](https://img.shields.io/discord/1483353136834936924?logo=discord&logoColor=white&label=Discord)](https://discord.gg/XCYqF3SN)
-[![Discussions](https://img.shields.io/github/discussions/heggria/Hermit)](https://github.com/heggria/Hermit/discussions)
+<p align="center">
+  <strong>The first operating system for AI tasks.</strong><br>
+  <sub>Process management. Permission model. Audit log. Transaction safety.<br>Not another agent framework — the first operating system for AI tasks.</sub>
+</p>
 
-> **Hermit is a local-first governed agent kernel for durable, inspectable AI work.**
->
-> Same model loop. Different operator contract: approve before side effects, inspect receipts after execution, and roll back supported actions when needed.
+<p align="center">
+  <a href="https://github.com/heggria/Hermit/actions/workflows/ci.yml"><img src="https://github.com/heggria/Hermit/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white" alt="Python 3.13+"></a>
+  <a href="https://pypi.org/project/hermit-agent/"><img src="https://img.shields.io/pypi/v/hermit-agent?color=blue" alt="PyPI"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="License: MIT"></a>
+  <a href="https://pypi.org/project/hermit-agent/"><img src="https://img.shields.io/pypi/dm/hermit-agent" alt="Downloads"></a>
+  <a href="https://discord.gg/XCYqF3SN"><img src="https://img.shields.io/discord/1483353136834936924?logo=discord&logoColor=white&label=Discord" alt="Discord"></a>
+  <a href="https://heggria.github.io/Hermit/"><img src="https://img.shields.io/badge/docs-github%20pages-0F172A" alt="Docs"></a>
+</p>
 
-Hermit is for people who want agent work to remain visible after the model stops talking.
+<p align="center">
+  <a href="./README.md">English</a> | <a href="./README.zh-CN.md">简体中文</a>
+</p>
 
-It gives you:
+---
 
-- approvals before consequential actions
-- durable task, step, and ledger state under `~/.hermit`
-- receipts, proof summaries, and proof export after execution
-- rollback-aware recovery for supported governed receipt classes
-- plugin-driven ingress and automation surfaces for CLI, adapters, scheduler, webhook, MCP, and tools
+AI agents are doing real work — writing code, managing infrastructure, running deployments. But they're running without an OS. No process management. No permission model. No audit log. No rollback. Hermit is the operating system that AI tasks have been missing.
 
-Docs site: [heggria.github.io/Hermit](https://heggria.github.io/Hermit/)
+**Hermit treats AI task execution the way an OS kernel treats process execution:** every action requires authorization, every mutation produces a signed receipt, every session generates a cryptographic proof bundle, and any governed action can be rolled back.
 
-## Same Model Loop, Different Operator Contract
-
-![Hermit vs generic agent](./docs/assets/hermit-vs-generic-agent.svg)
-
-Most agent tools optimize for “felt useful in the moment.” Hermit optimizes for “still inspectable afterward.”
-
-That means the runtime is centered on durable task records, governed execution, and operator review instead of only transient chat output.
-
-## What Hermit Actually Ships Today
-
-Hermit is already a real beta codebase, not just a design doc.
-
-Current shipped areas include:
-
-- task ledger and core records
-- governed execution with policy, approvals, and scoped authority
-- receipts, proof summaries, and proof export
-- reconciliation and contract-sensitive retries
-- rollback with scoped coverage
-- local-first CLI workflows
-- Feishu, Slack, and Telegram adapter support in the runtime surface
-- scheduler and webhook hooks
-- evidence-bound memory governance and image memory hooks
-- plugin manifests via `plugin.toml`
-- a separate macOS menu bar companion
-
-For a more explicit “what is stable vs still converging” view, see [docs/status-and-compatibility.md](./docs/status-and-compatibility.md).
-
-## Install
-
-### One-command install on macOS
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/heggria/Hermit/main/install-macos.sh | bash
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Hermit — AI Task OS                          │
+│                                                                     │
+│  Agent proposes action                                              │
+│       │                                                             │
+│       ▼                                                             │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌────────────────┐   │
+│  │Permission │─▶│  Access   │─▶│ Process   │─▶│ Capability-    │   │
+│  │ Model     │  │ Control   │  │ Isolation │  │ Based Security │   │
+│  └───────────┘  └───────────┘  └───────────┘  └───────┬────────┘   │
+│                                                         │           │
+│                                                         ▼           │
+│                                              ┌──────────────────┐   │
+│                                              │  System Call     │   │
+│                                              │  Handler         │   │
+│                                              └────────┬─────────┘   │
+│                                                       │             │
+│       ┌───────────────────────────────────────────────┼──────┐      │
+│       ▼                    ▼                          ▼      │      │
+│  ┌───────────┐   ┌────────────────┐        ┌──────────────┐  │      │
+│  │ Audit Log │   │    Kernel      │        │   Rollback   │  │      │
+│  │  Entry    │   │  Attestation   │        │  (if needed) │  │      │
+│  │  (HMAC)   │   │  (hash-chain)  │        └──────────────┘  │      │
+│  └───────────┘   └────────────────┘                          │      │
+│       └──────────────────────────────────────────────────────┘      │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │              SQLite Event-Sourced Ledger                      │  │
+│  │   Tasks · Steps · Receipts · Proofs · Artifacts · Approvals   │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-This path installs Hermit, initializes `~/.hermit`, and sets up the optional macOS companion tooling used by the project’s local-first workflow.
+**No action bypasses the kernel.** Agents propose, the OS authorizes, the syscall handler runs, the ledger records.
 
-### Repository install
+## Key Features
 
-```bash
-make install
-```
+**Process Management for AI** — Tasks are first-class kernel objects with full lifecycle state machines, event sourcing, and durable step-level tracking. Not ephemeral chat — inspectable process records.
 
-Or manually:
+**Permission Model** — Every agent action goes through the same authorization path: Approval -> Lease -> Grant -> Execute -> Receipt -> Proof. No direct model-to-tool execution. Ever.
 
-```bash
-uv sync --group dev --group typecheck --group docs --group security --group release
-uv run hermit init
-```
+**System Audit Log** — Every action produces HMAC-SHA256 signed receipts. Sessions generate hash-chained, Merkle-anchored proof bundles. Auditable AI execution, not "trust the transcript."
 
-### Requirements
+**Transaction Safety** — Recursive dependency tracking with leaf-first rollback planning. Any governed action can be rolled back, like filesystem journaling.
 
-- Python `3.13+`
-- [`uv`](https://docs.astral.sh/uv/) recommended
-- a configured provider profile such as `claude`, `codex`, or `codex-oauth`
+**Self-Upgrading OS** — Hermit can improve itself through governed `spec -> implement -> benchmark -> learn` pipelines. Every self-modification is policy-authorized, receipted, and provable.
 
-Optional extras:
+**System API (MCP-Native)** — Exposes kernel tools via Model Context Protocol. Claude Code, Cursor, or any MCP client connects as a supervisor via the system API, like userspace programs connect via syscalls.
 
-- `rumps` / `--extra macos` for the macOS menu bar companion
-- Feishu / Slack / Telegram credentials if you want long-running adapter ingress
+**Evidence-Bound Memory** — Memory promotion requires evidence references. No hallucinated memories — only facts backed by execution artifacts.
+
+**Plugin Architecture** — Adapters (Feishu, Slack, Telegram), hooks (scheduler, webhook, patrol, research, quality), tools, MCP servers, subagents — all loaded via `plugin.toml` manifests.
 
 ## Quick Start
 
-### 1) Set up or inspect configuration
+Install the OS. Run your first governed task.
 
-Interactive first-run setup:
+**Prerequisites:** Python `3.13+`, [uv](https://github.com/astral-sh/uv)
 
-```bash
-hermit setup
-```
-
-Or inspect the resolved local config:
+**1. Install**
 
 ```bash
-hermit config show
-hermit profiles list
-hermit profiles resolve
-hermit auth status
+# macOS one-liner
+curl -fsSL https://raw.githubusercontent.com/heggria/Hermit/main/install-macos.sh | bash
+
+# or from source
+git clone https://github.com/heggria/Hermit.git && cd Hermit && make install
+
+# development install (all dependency groups)
+uv sync --group dev --group typecheck --group docs --group security --group release
 ```
 
-### 2) Run Hermit
-
-One-shot task:
+**2. Configure**
 
 ```bash
-hermit run "Summarize the current repository"
+hermit setup        # interactive first-run setup
+hermit auth status  # verify provider credentials
 ```
 
-Interactive session:
+**3. Run**
 
 ```bash
-hermit chat
+hermit run "Refactor the auth module and add tests"   # one-shot governed task
+hermit chat                                            # interactive session
+hermit serve feishu                                    # long-running adapter service
 ```
 
-Start a long-running adapter service:
+**4. Inspect**
 
 ```bash
-hermit serve --adapter feishu
+hermit task list                    # see all governed tasks
+hermit task show <task_id>          # full task state + steps
+hermit task receipts --task-id <id> # HMAC-signed execution receipts
+hermit task proof-export <id>       # export cryptographic proof bundle
+hermit task rollback <receipt_id>   # undo a governed action
 ```
 
-Other useful control commands:
+## MCP Integration
 
-```bash
-hermit reload --adapter feishu
-hermit sessions
+Hermit exposes its kernel as an MCP server — the system API for the AI Task OS. Any MCP-compatible supervisor (Claude Code, Cursor, custom agents) gets governed execution for free:
+
+```jsonc
+// claude_desktop_config.json or .mcp.json
+{
+  "mcpServers": {
+    "hermit": {
+      "url": "http://localhost:8322/mcp"  // Streamable HTTP
+    }
+  }
+}
 ```
 
-### 3) Inspect the task kernel
+> **Note:** Enable the MCP server first: `export HERMIT_MCP_SERVER_ENABLED=true` then run `hermit serve`
 
-```bash
-hermit task list
-hermit task show <task_id>
-hermit task events <task_id>
-hermit task receipts --task-id <task_id>
-hermit task proof <task_id>
-hermit task proof-export <task_id>
+Then from your supervisor agent:
+
+```python
+# MCP tool calls (as invoked by a supervisor like Claude Code, Cursor, etc.)
+# Submit parallel governed tasks
+hermit_submit(description="Refactor the database layer", policy_profile="autonomous")
+hermit_submit(description="Add integration tests for auth", policy_profile="autonomous")
+
+# Wait for completion — no polling needed
+hermit_await_completion(task_ids=["task_01", "task_02"])
+
+# Inspect results
+hermit_task_output(task_ids=["task_01"])
+hermit_task_proof(task_ids=["task_01"])   # cryptographic proof bundle
 ```
 
-### 4) Approve, deny, resume, or roll back
+Available MCP tools: `hermit_submit`, `hermit_submit_dag_task`, `hermit_await_completion`, `hermit_task_status`, `hermit_task_output`, `hermit_task_proof`, `hermit_pending_approvals`, `hermit_approve`, `hermit_deny`, `hermit_submit_iteration`, `hermit_metrics`, `hermit_lessons_learned`, and more.
 
-```bash
-hermit task approve <approval_id>
-hermit task deny <approval_id> --reason "not safe"
-hermit task resume <task_id>
-hermit task rollback <receipt_id>
+## Why Hermit?
+
+| | Agent Frameworks (No OS) | Hermit (AI Task OS) |
+|---|---|---|
+| **Metaphor** | Script runner | Operating system |
+| **Execution model** | Model calls tools directly | Kernel authorizes every action |
+| **Audit trail** | Chat transcript (if saved) | HMAC-signed receipts + hash-chained proofs |
+| **Rollback** | Manual cleanup | Governed rollback with dependency tracking |
+| **Task state** | Ephemeral session | Durable kernel objects with event sourcing |
+| **Memory** | Vector store (anything goes) | Evidence-bound, governance-gated promotion |
+| **Authority model** | Ambient permissions | Scoped capability grants + workspace leases |
+| **Self-improvement** | Uncontrolled | Governed spec -> implement -> benchmark -> learn |
+| **Multi-agent** | Trust the orchestrator | Every agent action governed independently |
+
+## Architecture
+
+```
+Surfaces (CLI, TUI)  +  Adapters (Feishu, Slack, Telegram)  +  Hooks (Scheduler, Webhook)
+    -> AgentRunner (runtime/control/)
+        -> PluginManager + Task Controller
+            -> Permission Model -> Access Control -> Process Isolation -> Capability-Based Security -> System Call Handler
+                -> Artifacts, Audit Log, Kernel Attestation, Rollback
+                    -> Kernel Ledger (SQLite event journal + projections)
 ```
 
-Additional operator commands available in the current CLI:
-
-```bash
-hermit task explain <task_id>
-hermit task case <task_id>
-hermit task claim-status <task_id>
-hermit task projections-rebuild
-hermit task approve-mutable-workspace <task_id>
-hermit task steer <task_id> --message "focus on receipts"
-hermit task steerings <task_id>
-hermit task capability list <task_id>
-hermit task capability revoke <grant_id>
+```
+src/hermit/
+├── kernel/       # Governed execution kernel: task, policy, execution, ledger,
+│                 #   verification, signals, analytics, context, authority, artifacts
+├── runtime/      # Runner, provider host, capability registry, assembly
+├── plugins/      # Adapters, hooks, tools, MCP servers, subagents, bundles
+├── infra/        # Storage, locking, paths, i18n
+├── surfaces/     # CLI + TUI
+└── apps/         # macOS menu bar companion
 ```
 
-### 5) Memory, scheduling, plugins, and autostart
+Full architecture: [docs/architecture.md](./docs/architecture.md) | Repository layout: [docs/repository-layout.md](./docs/repository-layout.md)
 
-```bash
-hermit memory status
-hermit memory inspect <memory_id>
-hermit memory list
-hermit schedule list
-hermit plugin list
-hermit autostart status
-```
+## Documentation
 
-## Why It Feels Different
+| Getting Started | Core Concepts | Operations |
+|---|---|---|
+| [Quick Start](./docs/getting-started.md) | [Architecture](./docs/architecture.md) | [CLI & Operations](./docs/cli-and-operations.md) |
+| [Configuration](./docs/configuration.md) | [Governance](./docs/governance.md) | [Operator Guide](./docs/operator-guide.md) |
+| [Why Hermit](./docs/why-hermit.md) | [Receipts & Proofs](./docs/receipts-and-proofs.md) | [Task Lifecycle](./docs/task-lifecycle.md) |
+| [Design Philosophy](./docs/design-philosophy.md) | [Memory Model](./docs/memory-model.md) | [Desktop Companion](./docs/desktop-companion.md) |
 
-Hermit is not mainly trying to be a chat shell with tools attached.
-
-Its center of gravity is:
-
-- durable tasks instead of ephemeral sessions only
-- governed side effects instead of implicit tool execution
-- receipts and proofs instead of “trust the transcript”
-- scoped authority instead of ambient permissions
-- local operator control instead of a remote-only control plane
-
-## Architecture At A Glance
-
-![Hermit architecture overview](./docs/assets/hermit-architecture-overview.svg)
-
-The repository is organized around a few clear boundaries:
-
-- `src/hermit/kernel/` — governed execution kernel, ledger, authority, artifacts, context, and recovery
-- `src/hermit/runtime/` — runner, provider host, capability registry, config assembly, observation, scheduler plumbing
-- `src/hermit/plugins/builtin/` — adapters, hooks, bundles, tools, subagents, MCP integrations
-- `src/hermit/infra/` — storage, locking, sandbox, i18n, executables
-- `src/hermit/apps/companion/` — macOS menu bar companion and app bundle tooling
-- `tests/` — unit, integration, scenario, and e2e coverage
-- `scripts/` — local environment, watcher, release, wiki, and operational scripts
-
-For the fuller repo map, see [docs/repository-layout.md](./docs/repository-layout.md).
-
-## Core Interfaces In The Current Repo
-
-### CLI entrypoints
-
-Installed console scripts from `pyproject.toml`:
-
-- `hermit`
-- `hermit-menubar`
-- `hermit-menubar-install-app`
-
-Main CLI areas currently exposed:
-
-- top-level: `setup`, `init`, `startup-prompt`, `run`, `chat`, `serve`, `reload`, `sessions`, `overnight`
-- config and identity: `config show`, `profiles list`, `profiles resolve`, `auth status`
-- task operations: `list`, `show`, `events`, `receipts`, `explain`, `case`, `proof`, `proof-export`, `claim-status`, `rollback`, `approve`, `deny`, `resume`, `steer`, `steerings`
-- task capability operations: `task capability list`, `task capability revoke`
-- memory operations: `inspect`, `list`, `status`, `rebuild`, `export`
-- scheduling operations: `list`, `add`, `remove`, `enable`, `disable`, `history`
-- plugin operations: `list`, `install`, `remove`, `info`
-- autostart operations: `enable`, `disable`, `status`
-
-### Plugin and adapter surfaces
-
-The builtin plugin tree includes support for:
-
-- Feishu adapter
-- webhook hook with signature verification
-- scheduler hook for timed execution
-- memory and image memory hooks
-- computer-use tools
-- web and Grok search tools
-- MCP integrations and MCP loader
-- slash-command bundles such as compact, planner, and usage
-- subagent orchestration
-
-### Desktop companion
-
-The menu bar companion is documented as a separate module, not part of the plugin system. It controls `hermit serve`, `launchd` autostart, logs, settings, and login-item behavior on macOS.
-
-See [docs/desktop-companion.md](./docs/desktop-companion.md).
-
-## State And Storage
-
-Hermit is local-first by default. Common state lives under `~/.hermit`, including:
-
-- `.env`
-- `config.toml`
-- `kernel/state.db`
-- `sessions/`
-- `memory/`
-- `schedules/`
-- `plugins/`
-- logs, artifacts, and related runtime state
-
-That local store is where Hermit keeps task, step, approval, receipt, proof, conversation, and memory-related state.
-
-## Use Cases
-
-Hermit is a good fit when you want agent work to be:
-
-- reviewable before consequential actions
-- inspectable after execution
-- durable across sessions
-- recoverable through receipts and rollback where supported
-- operated locally, with adapters and automation plugged in around the kernel
-
-Common evaluation paths:
-
-- governed local coding and repo operations
-- operator-reviewed automation
-- chat-to-task ingress from Feishu, Slack, or Telegram
-- scheduled recurring agent jobs
-- inbound webhook-triggered task execution
-- artifact-heavy and memory-aware workflows
-
-## Documentation Map
-
-Start here if you are evaluating the repo today:
-
-- [Getting Started](./docs/getting-started.md)
-- [Why Hermit](./docs/why-hermit.md)
-- [Design Philosophy](./docs/design-philosophy.md)
-- [Architecture](./docs/architecture.md)
-- [Status and Compatibility](./docs/status-and-compatibility.md)
-- [CLI and Operations](./docs/cli-and-operations.md)
-- [Configuration](./docs/configuration.md)
-- [Providers and Profiles](./docs/providers-and-profiles.md)
-- [Governance](./docs/governance.md)
-- [Receipts and Proofs](./docs/receipts-and-proofs.md)
-- [Task Lifecycle](./docs/task-lifecycle.md)
-- [Memory Model](./docs/memory-model.md)
-- [Operator Guide](./docs/operator-guide.md)
-- [Repository Layout](./docs/repository-layout.md)
-- [Desktop Companion](./docs/desktop-companion.md)
-- [FAQ](./docs/faq.md)
-- [Roadmap](./docs/roadmap.md)
-
-Spec and conformance references:
-
-- [Kernel spec v0.1](./docs/kernel-spec-v0.1.md)
-- [Kernel spec v0.2](./docs/hermit-kernel-spec-v0.2.md)
-- [Kernel conformance matrix v0.1](./docs/kernel-conformance-matrix-v0.1.md)
-- [Kernel conformance matrix v0.2 core](./docs/kernel-conformance-matrix-v0.2-core.md)
+Specs: [Kernel Spec v0.1](./docs/kernel-spec-v0.1.md) | [Kernel Spec v0.2](./docs/hermit-kernel-spec-v0.2.md) | [Conformance Matrix](./docs/kernel-conformance-matrix-v0.1.md) | [Roadmap](./docs/roadmap.md)
 
 ## Contributing
 
-Hermit is still early enough that architecture-sensitive contributions matter.
+Hermit is converging toward the definitive AI Task OS. Contributions that strengthen kernel semantics are especially welcome:
 
-Good contribution areas:
+- Task lifecycle and state machines
+- Policy, approval, and trust flows
+- Receipt coverage and proof export
+- Rollback and recovery
+- Artifact and context handling
+- Memory governance
 
-- task kernel semantics
-- governance and approval flow
-- receipts, proof export, and rollback coverage
-- artifact and context handling
-- memory governance
-- docs that clarify current implementation vs target architecture
-
-Start with:
-
-- [CONTRIBUTING.md](./CONTRIBUTING.md)
-- [AGENTS.md](./AGENTS.md)
-- [docs/architecture.md](./docs/architecture.md)
-- [docs/status-and-compatibility.md](./docs/status-and-compatibility.md)
-- [docs/roadmap.md](./docs/roadmap.md)
+Start with [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md).
 
 ## Community
 
 - [Discord](https://discord.gg/XCYqF3SN) — real-time chat and support
-- [GitHub Discussions](https://github.com/heggria/Hermit/discussions) — questions, ideas, and general conversation
+- [GitHub Discussions](https://github.com/heggria/Hermit/discussions) — questions, ideas, architecture talk
 - [Issues](https://github.com/heggria/Hermit/issues) — bug reports and feature requests
 
 ## License

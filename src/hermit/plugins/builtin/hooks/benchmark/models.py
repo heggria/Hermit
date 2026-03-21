@@ -21,6 +21,7 @@ class BenchmarkResult:
     duration_seconds: float = 0.0
     regression_detected: bool = False
     compared_to_baseline: dict[str, Any] = field(default_factory=dict)
+    statistical_analysis: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

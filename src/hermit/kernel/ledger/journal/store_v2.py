@@ -42,6 +42,8 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
         rollback_expectation: str | None = None,
         selected_template_ref: str | None = None,
         superseded_by_contract_id: str | None = None,
+        task_family: str | None = None,
+        verification_requirements: dict[str, Any] | None = None,
     ) -> ExecutionContractRecord:
         contract_id = self._id("contract")
         created_at = time.time()
@@ -56,8 +58,12 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
                     fallback_contract_refs_json, operator_summary, risk_budget_json,
                     expected_artifact_shape_json, contract_version, action_contract_refs_json,
                     state_witness_ref, rollback_expectation, selected_template_ref,
-                    superseded_by_contract_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    superseded_by_contract_id, task_family, verification_requirements_json,
+                    created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?
+                )
                 """,
                 (
                     contract_id,
@@ -85,6 +91,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
                     rollback_expectation,
                     selected_template_ref,
                     superseded_by_contract_id,
+                    task_family,
+                    json.dumps(dict(verification_requirements or {}), ensure_ascii=False)
+                    if verification_requirements
+                    else None,
                     created_at,
                     created_at,
                 ),
@@ -120,6 +130,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
                     "rollback_expectation": rollback_expectation,
                     "selected_template_ref": selected_template_ref,
                     "superseded_by_contract_id": superseded_by_contract_id,
+                    "task_family": task_family,
+                    "verification_requirements": dict(verification_requirements or {})
+                    if verification_requirements
+                    else None,
                 },
             )
         contract = self.get_execution_contract(contract_id)

@@ -303,6 +303,155 @@ class TestGovernedPromotion:
 
 
 # ===========================================================================
+# Phase 4b: GC3 reconciliation gate — durable vs ephemeral scope
+# ===========================================================================
+
+
+class TestReconciliationGateE2E:
+    """E2E: Verify GC3 reconciliation gate for durable memory promotion.
+
+    Durable-scoped memories (global/workspace) require reconciliation.
+    Conversation-scoped memories are allowed without reconciliation.
+    """
+
+    def test_durable_promotion_with_reconciliation_succeeds(self, tmp_path: Path) -> None:
+        """Full governed path creates reconciliation -> durable promotion succeeds."""
+        settings = _make_settings(tmp_path)
+        engine = MemoryEngine(settings.memory_file)
+
+        from hermit.plugins.builtin.hooks.memory.hooks_promotion import (
+            promote_memories_via_kernel,
+        )
+
+        # user_preference -> global scope (durable), promotion should succeed
+        # because promote_memories_via_kernel creates a reconciliation internally
+        result = promote_memories_via_kernel(
+            engine,
+            settings,
+            session_id="sess-gc3-durable",
+            messages=_make_messages(
+                [
+                    ("user", "I always prefer dark mode in my editors."),
+                    ("assistant", "Noted: dark mode preference."),
+                ]
+            ),
+            used_keywords={"dark", "mode"},
+            new_entries=[
+                MemoryEntry(
+                    category="user_preference",
+                    content="User prefers dark mode in editors.",
+                    confidence=0.9,
+                ),
+            ],
+            mode="session_end",
+        )
+        assert result is True
+
+        # Verify durable memory was created with reconciliation reference
+        store = KernelStore(Path(settings.kernel_db_path))
+        try:
+            memories = store.list_memory_records(status="active", limit=100)
+            durable_mems = [m for m in memories if m.learned_from_reconciliation_ref is not None]
+            assert len(durable_mems) >= 1
+        finally:
+            store.close()
+
+    def test_conversation_scope_without_reconciliation_allowed(self, tmp_path: Path) -> None:
+        """Conversation-scoped memory created via promote_from_belief without reconciliation."""
+        settings = _make_settings(tmp_path)
+
+        from hermit.kernel.context.memory.knowledge import BeliefService, MemoryRecordService
+
+        store = KernelStore(Path(settings.kernel_db_path))
+        try:
+            belief_service = BeliefService(store)
+            memory_service = MemoryRecordService(store)
+
+            # Create a task so we have valid task_id
+            store.ensure_conversation("conv-gc3", source_channel="test")
+            task = store.create_task(
+                conversation_id="conv-gc3",
+                title="GC3 test",
+                goal="Test reconciliation gate",
+                source_channel="test",
+                status="running",
+                policy_profile="memory",
+            )
+
+            # tech_decision -> conversation scope (ephemeral)
+            belief = belief_service.record(
+                task_id=task.task_id,
+                conversation_id="conv-gc3",
+                scope_kind="conversation",
+                scope_ref="conv-gc3",
+                category="tech_decision",
+                content="Using SQLite for local state",
+                confidence=0.8,
+                evidence_refs=["ev-gc3"],
+            )
+
+            # No reconciliation provided -> should still succeed for conversation scope
+            memory = memory_service.promote_from_belief(
+                belief=belief,
+                conversation_id="conv-gc3",
+            )
+
+            assert memory is not None
+            assert memory.learned_from_reconciliation_ref is None
+            assert memory.validation_basis == "ephemeral_working_memory"
+        finally:
+            store.close()
+
+    def test_durable_promotion_blocked_without_reconciliation_e2e(self, tmp_path: Path) -> None:
+        """Durable-scoped belief without reconciliation -> promotion blocked."""
+        settings = _make_settings(tmp_path)
+
+        from hermit.kernel.context.memory.knowledge import BeliefService, MemoryRecordService
+
+        store = KernelStore(Path(settings.kernel_db_path))
+        try:
+            belief_service = BeliefService(store)
+            memory_service = MemoryRecordService(store)
+
+            store.ensure_conversation("conv-gc3-block", source_channel="test")
+            task = store.create_task(
+                conversation_id="conv-gc3-block",
+                title="GC3 block test",
+                goal="Test reconciliation gate blocks durable",
+                source_channel="test",
+                status="running",
+                policy_profile="memory",
+            )
+
+            # user_preference -> global scope (durable)
+            belief = belief_service.record(
+                task_id=task.task_id,
+                conversation_id="conv-gc3-block",
+                scope_kind="conversation",
+                scope_ref="conv-gc3-block",
+                category="user_preference",
+                content="User prefers vim keybindings",
+                confidence=0.9,
+                evidence_refs=["ev-gc3-block"],
+            )
+
+            # No reconciliation available -> durable promotion should be blocked
+            memory = memory_service.promote_from_belief(
+                belief=belief,
+                conversation_id="conv-gc3-block",
+            )
+
+            assert memory is None
+            # Belief should be marked as blocked
+            updated_belief = store.get_belief(belief.belief_id)
+            assert updated_belief is not None
+            assert updated_belief.promotion_candidate is False
+            assert "promotion_blocked" in str(updated_belief.validation_basis or "")
+        finally:
+            store.close()
+
+
+# ===========================================================================
 # Phase 5: Hook registration wiring
 # ===========================================================================
 
@@ -406,19 +555,24 @@ class TestPostPromotionEnrichment:
             [("user", "Always use vim keybindings, remember this."), ("assistant", "Noted.")]
         )
 
-        # First enqueue succeeds
-        result1 = promote_memories_via_kernel(
-            engine,
-            settings,
-            session_id="sess-dup",
-            messages=messages,
-            used_keywords={"vim"},
-            new_entries=[entry],
-            mode="session_end",
-        )
-        assert result1 is True
+        # Simulate a still-running checkpoint task by inserting one into the store
+        # before the second call.  This mirrors the real-world scenario where
+        # checkpoint tasks pile up because the previous one hasn't finished.
+        store = KernelStore(Path(settings.kernel_db_path))
+        try:
+            store.ensure_conversation("sess-dup", source_channel="chat")
+            store.create_task(
+                conversation_id="sess-dup",
+                title="Promote durable memory (session_end)",
+                goal="Promote durable memory (session_end)",
+                source_channel="chat",
+                status="running",
+                policy_profile="memory",
+            )
+        finally:
+            store.close()
 
-        # Second enqueue for same conversation should be skipped
+        # Promotion should be skipped because a task with the same goal is active
         result2 = promote_memories_via_kernel(
             engine,
             settings,

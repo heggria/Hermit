@@ -15,6 +15,7 @@ _INFLIGHT_STATUSES = frozenset(
     {
         "running",
         "dispatching",
+        "executing",
         "reconciling",
         "observing",
         "contracting",
@@ -250,6 +251,83 @@ class KernelDispatchService:
         """
         if step_attempt_id:
             self._wake.set()
+
+    def _check_deliberation_needed(self, step_attempt_id: str) -> bool:
+        """Check if a step attempt requires deliberation before dispatch.
+
+        Reads risk_band from the attempt context and step_kind from the step,
+        then delegates to ``DeliberationService.check_deliberation_needed``.
+        When deliberation is required the attempt and step are moved to
+        ``deliberation_pending`` status and a ledger event is recorded.
+
+        Returns True when deliberation is required, False otherwise.
+        """
+        from hermit.kernel.execution.competition.deliberation_service import (
+            DeliberationService,
+        )
+
+        store = self._runner.task_controller.store
+        attempt = store.get_step_attempt(step_attempt_id)
+        if attempt is None:
+            return False
+
+        ctx = attempt.context or {}
+        risk_band = ctx.get("risk_band", "low")
+
+        step = store.get_step(attempt.step_id)
+        step_kind = step.kind if step else "execute"
+
+        if not DeliberationService.check_deliberation_needed(
+            risk_band=risk_band, step_kind=step_kind
+        ):
+            return False
+
+        # Move attempt to deliberation_pending.
+        now = time.time()
+        updated_ctx = dict(ctx)
+        updated_ctx["deliberation_risk_band"] = risk_band
+        updated_ctx["deliberation_step_kind"] = step_kind
+        updated_ctx["deliberation_pending_at"] = now
+        store.update_step_attempt(
+            step_attempt_id,
+            status="deliberation_pending",
+            context=updated_ctx,
+            waiting_reason="deliberation_required",
+        )
+        store.update_step(attempt.step_id, status="deliberation_pending")
+
+        # Record ledger event.
+        store.append_event(
+            event_type="dispatch.deliberation_required",
+            entity_type="step_attempt",
+            entity_id=step_attempt_id,
+            task_id=attempt.task_id,
+            step_id=attempt.step_id,
+            payload={
+                "risk_band": risk_band,
+                "step_kind": step_kind,
+            },
+        )
+        log.info(
+            "dispatch.deliberation_required",
+            step_attempt_id=step_attempt_id,
+            risk_band=risk_band,
+            step_kind=step_kind,
+        )
+        return True
+
+    def _reaper_loop(self) -> None:
+        """Background loop that periodically checks for expired leases.
+
+        Runs as a daemon thread alongside the main dispatch loop.  Checks
+        heartbeat timeouts on a slower cadence than the main dispatch poll.
+        """
+        while not self._stop.is_set():
+            try:
+                self.check_heartbeat_timeouts()
+            except Exception:
+                log.exception("lease_reaper_error")
+            self._stop.wait(2.0)
 
     def _recover_interrupted_attempts(self) -> None:
         store = self._runner.task_controller.store

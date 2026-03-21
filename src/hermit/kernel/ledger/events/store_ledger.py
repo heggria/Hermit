@@ -1441,27 +1441,53 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         status: str,
         resolved_by: str,
         resolution: dict[str, Any],
-    ) -> None:
+        expected_status: str | None = None,
+    ) -> bool:
+        """Resolve an approval.  Returns True if the row was updated.
+
+        When *expected_status* is given the UPDATE uses a CAS guard
+        (``WHERE status = ?``) so that concurrent resolvers cannot
+        double-resolve the same approval.
+        """
         now = time.time()
         approval = self.get_approval(approval_id)
         if approval is None:
-            return
+            return False
         resolved_by_principal_id = self._ensure_principal_id(resolved_by)
         with self._get_conn():
-            self._get_conn().execute(
-                """
-                UPDATE approvals
-                SET status = ?, resolved_at = ?, resolved_by_principal_id = ?, resolution_json = ?
-                WHERE approval_id = ?
-                """,
-                (
-                    status,
-                    now,
-                    resolved_by_principal_id,
-                    json.dumps(resolution, ensure_ascii=False),
-                    approval_id,
-                ),
-            )
+            if expected_status is not None:
+                cursor = self._get_conn().execute(
+                    """
+                    UPDATE approvals
+                    SET status = ?, resolved_at = ?, resolved_by_principal_id = ?, resolution_json = ?
+                    WHERE approval_id = ? AND status = ?
+                    """,
+                    (
+                        status,
+                        now,
+                        resolved_by_principal_id,
+                        json.dumps(resolution, ensure_ascii=False),
+                        approval_id,
+                        expected_status,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    return False
+            else:
+                self._get_conn().execute(
+                    """
+                    UPDATE approvals
+                    SET status = ?, resolved_at = ?, resolved_by_principal_id = ?, resolution_json = ?
+                    WHERE approval_id = ?
+                    """,
+                    (
+                        status,
+                        now,
+                        resolved_by_principal_id,
+                        json.dumps(resolution, ensure_ascii=False),
+                        approval_id,
+                    ),
+                )
             self._append_event_tx(
                 event_id=self._id("event"),
                 event_type=f"approval.{status}",
@@ -1477,6 +1503,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     "resolution": resolution,
                 },
             )
+        return True
 
     def update_approval_resolution(self, approval_id: str, resolution: dict[str, Any]) -> None:
         approval = self.get_approval(approval_id)
@@ -1556,8 +1583,9 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         rollback_artifact_refs: list[str] | None = None,
         observed_effect_summary: str | None = None,
         reconciliation_required: bool = False,
+        receipt_id: str | None = None,
     ) -> ReceiptRecord:
-        receipt_id = self._id("receipt")
+        receipt_id = receipt_id or self._id("receipt")
         created_at = time.time()
         receipt_class = receipt_class or action_type
         policy_result_ref = policy_result_ref or policy_ref

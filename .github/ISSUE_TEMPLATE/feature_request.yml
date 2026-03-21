@@ -1,33 +1,115 @@
-name: Feature request
-description: Suggest an improvement to Hermit.
+name: Feature Request
+description: Suggest a new feature or improvement for Hermit.
 title: "[Feature] "
 labels:
   - enhancement
 body:
-  - type: textarea
-    id: problem
+  - type: markdown
     attributes:
-      label: Problem
-      description: What problem are you trying to solve?
+      value: |
+        Thank you for suggesting an improvement. Please provide as much detail as
+        possible so we can evaluate and prioritize the request.
+
+  - type: textarea
+    id: problem-statement
+    attributes:
+      label: Problem Statement
+      description: |
+        Describe the problem you are trying to solve or the limitation you are
+        experiencing. Focus on the "why" rather than the "what".
+      placeholder: "I'm frustrated when ..."
     validations:
       required: true
 
   - type: textarea
-    id: proposal
+    id: proposed-solution
     attributes:
-      label: Proposed solution
-      description: Describe the behavior, UX, or configuration you want.
+      label: Proposed Solution
+      description: |
+        Describe the behavior, API, UX, or configuration you would like to see.
+        Include code snippets, CLI examples, or config fragments if helpful.
     validations:
       required: true
 
   - type: textarea
-    id: alternatives
+    id: alternatives-considered
     attributes:
-      label: Alternatives considered
-      description: What have you tried or ruled out already?
+      label: Alternatives Considered
+      description: |
+        What other approaches have you considered or tried? Why were they
+        insufficient?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: affected-layer
+    attributes:
+      label: Affected Layer
+      description: Which layer of Hermit would this feature primarily change?
+      options:
+        - "Kernel (task, policy, execution, ledger, verification)"
+        - "Runtime (assembly, capability, control, provider_host)"
+        - "Plugin (adapter, hook, tool, MCP, bundle, subagent)"
+        - "Surface (CLI, TUI)"
+        - "Infrastructure (storage, locking, paths, i18n)"
+        - "Documentation"
+        - "Multiple layers / Cross-cutting"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: How large is the expected change?
+      options:
+        - "Small — isolated change to a single module"
+        - "Medium — touches a few modules within one layer"
+        - "Large — spans multiple layers or requires new subsystem"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: breaking-change
+    attributes:
+      label: Breaking Change
+      description: Would this feature introduce a breaking change?
+      options:
+        - "No"
+        - "Yes — CLI interface change"
+        - "Yes — API / protocol change"
+        - "Yes — config format change"
+        - "Yes — ledger / schema migration"
+        - "Unsure"
+    validations:
+      required: true
 
   - type: textarea
-    id: context
+    id: use-case
     attributes:
-      label: Extra context
-      description: Add examples, links, or constraints that matter.
+      label: Use Case / Example
+      description: |
+        Provide a concrete scenario or workflow where this feature would be
+        used. Include example commands, config, or expected output.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any references, related issues, screenshots, research links, or
+        design documents that support this request.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and discussions for duplicates.
+          required: true
+        - label: I have reviewed the project roadmap (`docs/roadmap.md`) for related plans.
+          required: false

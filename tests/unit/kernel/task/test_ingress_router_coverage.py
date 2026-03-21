@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.models.records import ConversationRecord, TaskRecord
 from hermit.kernel.task.services.ingress_router import (
@@ -11,16 +9,13 @@ from hermit.kernel.task.services.ingress_router import (
 )
 
 
-def _setup(tmp_path: Path) -> tuple[KernelStore, IngressRouter]:
-    store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-1", source_channel="chat")
-    router = IngressRouter(store)
-    return store, router
+def _router(store: KernelStore) -> IngressRouter:
+    return IngressRouter(store)
 
 
-def _mk_task(store: KernelStore, **kwargs) -> TaskRecord:
+def _mk_task(store: KernelStore, conv_id: str, **kwargs) -> TaskRecord:
     defaults = {
-        "conversation_id": "conv-1",
+        "conversation_id": conv_id,
         "title": "Test Task",
         "goal": "Cover gaps",
         "source_channel": "chat",
@@ -44,19 +39,20 @@ def _mk_conversation(
 # ── _score_task with continue/ambiguous markers ─────────────────
 
 
-def test_score_task_continue_marker(tmp_path: Path, monkeypatch) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store, title="data pipeline", goal="build data pipeline")
-    # Use text with a continue marker keyword
+def test_score_task_continue_marker(shared_store: KernelStore, conv_id: str, monkeypatch) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id, title="data pipeline", goal="build data pipeline")
     score, _reasons = router._score_task(
         task, "continue with the data pipeline", focus_task_id=None
     )
     assert score > 0
 
 
-def test_score_task_token_overlap(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store, title="database migration", goal="migrate postgres schema")
+def test_score_task_token_overlap(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(
+        shared_store, conv_id, title="database migration", goal="migrate postgres schema"
+    )
     score, _reasons = router._score_task(task, "postgres migration status", focus_task_id=None)
     assert score > 0
 
@@ -64,11 +60,11 @@ def test_score_task_token_overlap(tmp_path: Path) -> None:
 # ── _resolve_structural_binding with conflicting refs ───────────
 
 
-def test_structural_binding_conflicting_artifacts(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task1 = _mk_task(store, title="Task A", goal="A")
-    task2 = _mk_task(store, title="Task B", goal="B")
-    art1 = store.create_artifact(
+def test_structural_binding_conflicting_artifacts(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task1 = _mk_task(shared_store, conv_id, title="Task A", goal="A")
+    task2 = _mk_task(shared_store, conv_id, title="Task B", goal="B")
+    art1 = shared_store.create_artifact(
         task_id=task1.task_id,
         step_id="",
         kind="test",
@@ -76,7 +72,7 @@ def test_structural_binding_conflicting_artifacts(tmp_path: Path) -> None:
         content_hash="ha",
         producer="test",
     )
-    art2 = store.create_artifact(
+    art2 = shared_store.create_artifact(
         task_id=task2.task_id,
         step_id="",
         kind="test",
@@ -96,12 +92,11 @@ def test_structural_binding_conflicting_artifacts(tmp_path: Path) -> None:
 # ── _workspace_targets with matching path ───────────────────────
 
 
-def test_workspace_targets_matching_path(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
-    # Create a step attempt with workspace_root set
-    step = store.create_step(task_id=task.task_id, kind="respond", status="running")
-    store.create_step_attempt(
+def test_workspace_targets_matching_path(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="running")
+    shared_store.create_step_attempt(
         task_id=task.task_id,
         step_id=step.step_id,
         status="running",
@@ -116,13 +111,13 @@ def test_workspace_targets_matching_path(tmp_path: Path) -> None:
     assert targets[0][1] > 0.8
 
 
-def test_workspace_targets_multiple_matching(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task1 = _mk_task(store, title="Task A", goal="A")
-    task2 = _mk_task(store, title="Task B", goal="B")
+def test_workspace_targets_multiple_matching(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task1 = _mk_task(shared_store, conv_id, title="Task A", goal="A")
+    task2 = _mk_task(shared_store, conv_id, title="Task B", goal="B")
     for task, ws in [(task1, "/home/user/proj-a"), (task2, "/home/user/proj-a/sub")]:
-        step = store.create_step(task_id=task.task_id, kind="respond", status="running")
-        store.create_step_attempt(
+        step = shared_store.create_step(task_id=task.task_id, kind="respond", status="running")
+        shared_store.create_step_attempt(
             task_id=task.task_id,
             step_id=step.step_id,
             status="running",
@@ -132,21 +127,20 @@ def test_workspace_targets_multiple_matching(tmp_path: Path) -> None:
         open_tasks=[task1, task2],
         text="edit /home/user/proj-a/sub/file.py",
     )
-    # Both tasks should match since the path is under both workspace roots
     assert len(targets) == 2
 
 
 # ── _task_references_receipt ────────────────────────────────────
 
 
-def test_task_references_receipt(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="running")
-    attempt = store.create_step_attempt(
+def test_task_references_receipt(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="running")
+    attempt = shared_store.create_step_attempt(
         task_id=task.task_id, step_id=step.step_id, status="running"
     )
-    receipt = store.create_receipt(
+    receipt = shared_store.create_receipt(
         task_id=task.task_id,
         step_id=step.step_id,
         step_attempt_id=attempt.step_attempt_id,
@@ -165,11 +159,11 @@ def test_task_references_receipt(tmp_path: Path) -> None:
 # ── _task_matches_workspace_path ────────────────────────────────
 
 
-def test_task_matches_workspace_path(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="running")
-    store.create_step_attempt(
+def test_task_matches_workspace_path(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="running")
+    shared_store.create_step_attempt(
         task_id=task.task_id,
         step_id=step.step_id,
         status="running",
@@ -184,17 +178,18 @@ def test_task_matches_workspace_path(tmp_path: Path) -> None:
 # ── bind: high confidence single candidate ─────────────────────
 
 
-def test_bind_high_confidence_single_match(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store, title="database migration", goal="migrate the database schema")
-    step = store.create_step(task_id=task.task_id, kind="respond", status="running")
-    store.create_step_attempt(
+def test_bind_high_confidence_single_match(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(
+        shared_store, conv_id, title="database migration", goal="migrate the database schema"
+    )
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="running")
+    shared_store.create_step_attempt(
         task_id=task.task_id,
         step_id=step.step_id,
         status="running",
         context={"workspace_root": "/home/user/db-migrate"},
     )
-    # Use workspace path matching for high confidence
     result = router.bind(
         conversation=None,
         open_tasks=[task],
@@ -207,18 +202,16 @@ def test_bind_high_confidence_single_match(tmp_path: Path) -> None:
 # ── bind: pending_disambiguation (ambiguous top candidates) ────
 
 
-def test_bind_pending_disambiguation(tmp_path: Path, monkeypatch) -> None:
-    store, router = _setup(tmp_path)
-    task1 = _mk_task(store, title="Task Alpha Alpha", goal="alpha alpha work")
-    task2 = _mk_task(store, title="Task Alpha Beta", goal="alpha beta work")
+def test_bind_pending_disambiguation(shared_store: KernelStore, conv_id: str, monkeypatch) -> None:
+    router = _router(shared_store)
+    task1 = _mk_task(shared_store, conv_id, title="Task Alpha Alpha", goal="alpha alpha work")
+    task2 = _mk_task(shared_store, conv_id, title="Task Alpha Beta", goal="alpha beta work")
     conv = _mk_conversation()
-    # Both tasks score similarly on "alpha"
     result = router.bind(
         conversation=conv,
         open_tasks=[task1, task2],
         normalized_text="alpha work status",
     )
-    # Result depends on scoring; just verify it doesn't crash
     assert result.resolution in (
         "append_note",
         "start_new_root",
@@ -231,7 +224,6 @@ def test_bind_pending_disambiguation(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_normalized_path_os_error(monkeypatch) -> None:
-    # Path that triggers OSError on resolve
     result = IngressRouter._normalized_path("/some/valid/path")
     assert "some" in result
 
@@ -239,11 +231,11 @@ def test_normalized_path_os_error(monkeypatch) -> None:
 # ── _task_workspace_root ────────────────────────────────────────
 
 
-def test_task_workspace_root_found(tmp_path: Path) -> None:
-    store, router = _setup(tmp_path)
-    task = _mk_task(store)
-    step = store.create_step(task_id=task.task_id, kind="respond", status="running")
-    store.create_step_attempt(
+def test_task_workspace_root_found(shared_store: KernelStore, conv_id: str) -> None:
+    router = _router(shared_store)
+    task = _mk_task(shared_store, conv_id)
+    step = shared_store.create_step(task_id=task.task_id, kind="respond", status="running")
+    shared_store.create_step_attempt(
         task_id=task.task_id,
         step_id=step.step_id,
         status="running",

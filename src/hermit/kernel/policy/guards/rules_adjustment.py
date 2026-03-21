@@ -178,8 +178,14 @@ def evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
 
     sensitive_paths = list(request.derived.get("sensitive_paths", []))
     outside_workspace = bool(request.derived.get("outside_workspace"))
+    cmd_flags = dict(request.derived.get("command_flags", {}))
+    writes_disk = bool(cmd_flags.get("writes_disk"))
+    deletes_files = bool(cmd_flags.get("deletes_files"))
     if (
-        request.action_class in {"write_local", "patch_file"}
+        (
+            request.action_class in {"write_local", "patch_file"}
+            or (request.action_class == "execute_command" and (writes_disk or deletes_files))
+        )
         and sensitive_paths
         and outside_workspace
     ):
@@ -197,9 +203,48 @@ def evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
             )
         ]
 
+    # Outside-workspace shell writes/deletes require approval even in autonomous mode
+    if (
+        request.action_class == "execute_command"
+        and outside_workspace
+        and (writes_disk or deletes_files)
+        and not sensitive_paths  # sensitive paths already denied above
+    ):
+        target_paths = list(request.derived.get("target_paths", []))
+        outside_roots = list(request.derived.get("outside_workspace_roots", []))
+        return [
+            RuleOutcome(
+                verdict="approval_required",
+                reasons=[
+                    PolicyReason(
+                        "outside_workspace_shell",
+                        "Shell command writes/deletes outside the workspace; "
+                        "requires approval even in autonomous mode.",
+                        "warning",
+                    )
+                ],
+                obligations=PolicyObligations(
+                    require_receipt=True,
+                    require_preview=True,
+                    require_approval=True,
+                    approval_risk_level="critical",
+                ),
+                normalized_constraints={"allowed_paths": target_paths},
+                approval_packet={
+                    "title": "Approve out-of-workspace shell write (autonomous)",
+                    "summary": (
+                        f"Shell command targets paths outside the workspace: "
+                        f"{', '.join(outside_roots) or 'unknown'}."
+                    ),
+                    "risk_level": "critical",
+                },
+                risk_level="critical",
+            )
+        ]
+
     # Kernel self-modification guard (applies even in autonomous mode)
     kernel_paths = list(request.derived.get("kernel_paths", []))
-    if request.action_class in {"write_local", "patch_file"} and kernel_paths:
+    if request.action_class in {"write_local", "patch_file", "execute_command"} and kernel_paths:
         from pathlib import Path as _Path
 
         return [

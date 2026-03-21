@@ -18,12 +18,16 @@ class IterationPhase(StrEnum):
     REVIEWING = "reviewing"
     BENCHMARKING = "benchmarking"
     LEARNING = "learning"
+    RECONCILING = "reconciling"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
 # Ordered phase transitions for the state machine.
-# Terminal phases (COMPLETED, FAILED) are not included.
+# Terminal phases (COMPLETED, FAILED, ACCEPTED, REJECTED) are not in the
+# main linear sequence except as reachable from RECONCILING.
 PHASE_ORDER: tuple[IterationPhase, ...] = (
     IterationPhase.PENDING,
     IterationPhase.RESEARCHING,
@@ -34,10 +38,19 @@ PHASE_ORDER: tuple[IterationPhase, ...] = (
     IterationPhase.REVIEWING,
     IterationPhase.BENCHMARKING,
     IterationPhase.LEARNING,
+    IterationPhase.RECONCILING,
+    IterationPhase.ACCEPTED,
     IterationPhase.COMPLETED,
 )
 
-TERMINAL_PHASES = frozenset({IterationPhase.COMPLETED, IterationPhase.FAILED})
+TERMINAL_PHASES = frozenset(
+    {
+        IterationPhase.COMPLETED,
+        IterationPhase.FAILED,
+        IterationPhase.ACCEPTED,
+        IterationPhase.REJECTED,
+    }
+)
 
 
 @dataclass(frozen=True)

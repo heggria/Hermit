@@ -741,7 +741,7 @@ def test_kernel_dispatch_service_start_and_stop_cover_thread_lifecycle(monkeypat
     service.stop()
 
     assert recover_calls == ["recover"]
-    assert thread_starts == ["kernel-dispatch-loop"]
-    assert joins == [5]
+    assert thread_starts == ["kernel-dispatch-loop", "lease-reaper"]
+    assert joins == [5, 5]
     assert shutdowns == [(False, True)]
     assert wake_sets == ["wake"]

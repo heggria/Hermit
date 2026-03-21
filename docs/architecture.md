@@ -1,285 +1,360 @@
 ---
-description: "Hermit architecture overview: kernel, runtime, plugin system, CLI surfaces, task lifecycle, and governed execution path from task to receipt."
+description: "Hermit architecture overview: a governed agent kernel with task-first execution, policy-gated side effects, receipt-aware verification, and event-sourced durability."
 ---
 
 # Hermit Architecture
 
-This document describes the implementation that exists in the current repository. It does not treat the `v0.1` kernel spec as fully shipped.
+Hermit's architecture mirrors a traditional operating system kernel. Just as Linux mediates between user processes and hardware, Hermit mediates between AI agents and the resources they modify. It is a **governed agent kernel** -- not a framework for building agents, but a kernel that enforces governance at the lowest level of agent execution. Models propose actions. The kernel decides whether, how, and under what authority those actions run. Every consequential mutation is policy-evaluated, scoped, receipted, and verifiable after the fact.
 
-Hermit's current architecture has two visible layers:
+This document is written for engineers evaluating Hermit for the first time. It covers the conceptual model, the layer structure, the governance pipeline, the plugin system, key design decisions, and extension points. It assumes familiarity with LLM-based agent systems but no prior knowledge of Hermit.
 
-1. a runtime layer that exposes CLI, chat, `serve`, scheduler, webhook, and adapters
-2. a task kernel layer that introduces first-class records, governance, receipts, proofs, and rollback-aware execution
+## How Hermit Differs from Typical Agent Frameworks
 
-The important change is not just that Hermit has more features. The important change is that the runtime is being re-centered around kernel semantics, and the most sensitive execution paths now fail closed when governance metadata is ambiguous.
+Most agent frameworks focus on **composition**: how to wire a model to tools, manage prompts, and orchestrate multi-step workflows. The fundamental unit of work is a chat turn or a graph node. Tool calls execute under the ambient authority of the host process. Accountability is reconstructed from logs.
 
-## Executive Summary
+Hermit focuses on **governance**: how to scope authority, gate side effects, record decisions, and make execution verifiable. The fundamental unit of work is a durable **Task**. Tool calls execute only after the kernel evaluates policy, issues scoped grants, and acquires workspace leases. Accountability is built into the execution path, not bolted on afterward.
 
-Hermit is best understood today as:
+| Concern | Typical Framework | Hermit |
+|---|---|---|
+| Unit of work | Chat turn / graph node | Durable Task with lifecycle |
+| Tool execution | Direct, under process authority | Policy-gated, scoped, receipted |
+| State durability | In-memory, lost on crash | Event-sourced SQLite ledger |
+| Audit trail | Logs (unstructured, after the fact) | Receipts + proof bundles (structured, inline) |
+| Authority model | Ambient (whatever the process can do) | Scoped (CapabilityGrants + WorkspaceLeases) |
+| Rollback | Manual cleanup | Structured, receipt-linked reversal |
+| Memory | Free-form text snippets | Evidence-bound, governed artifacts |
 
-- a **kernel-first local runtime**
-- with a **real task kernel**
-- converging toward a **governed agent kernel architecture**
+This is a deliberate trade-off. Hermit is not optimized for rapid prototyping or casual experimentation. It is built for work that is long-running, approval-sensitive, worth auditing, and operated by someone who needs trust without continuous supervision.
 
-That means two things are true at once:
+## OS Mapping
 
-- the repo already contains durable kernel objects and operator surfaces
-- the broader runtime still includes pre-kernel paths and compatibility layers
+The analogy between Hermit and a traditional operating system is not superficial -- it is structural. Each kernel concept has a direct counterpart:
 
-## Kernel-First Hard Cut
-
-Several boundaries are intentionally stricter than older runtime-era Hermit:
-
-- mutable tools must declare `action_class`, `risk_hint`, and `requires_receipt` explicitly
-- readonly tools must declare `action_class` explicitly and are fixed to `requires_receipt = false`
-- delegation tools and MCP tools no longer rely on name-based governance inference
-- approval grant and deny transitions now create decision + receipt records with proof bundles
-- dispatcher restart recovery no longer forces interrupted async governed attempts into terminal failure by default
-- operator surfaces now expose claim status and durable re-entry summaries directly from cached task projections
-- proof export can upgrade to signed bundles plus receipt inclusion proofs when local signing is configured
-
-This does not mean the full `v0.1` target is shipped. It means the repo now prefers refusing ambiguous execution over preserving permissive legacy behavior.
-
-## Current System Shape
-
-```text
-CLI / Chat / Feishu / Scheduler / Webhook
-                  |
-                  v
-             AgentRunner
-                  |
-      +-----------+-----------+
-      |                       |
-      v                       v
-  PluginManager         Task Controller
-      |                       |
-      v                       v
-  tools / hooks / MCP   Task -> Step -> StepAttempt
-                              |
-                              v
-                   Context Compiler + Policy Engine
-                              |
-           Approval / Decision / WorkspaceLease / CapabilityGrant
-                              |
-                              v
-                         Tool Executor
-                              |
-                              v
-                Artifact / Receipt / Proof / Rollback
-                              |
-                              v
-                    Kernel Ledger + Projections
+```
+Traditional OS          →  Hermit (AI Task OS)
+─────────────────────────────────────────────
+Process                 →  Task
+System call             →  Action Request
+Permission check        →  Policy Engine evaluation
+File descriptor / fd    →  Capability Grant
+Process isolation       →  Workspace Lease
+Kernel audit log        →  Receipt (HMAC-signed)
+/proc + dmesg           →  Kernel Ledger (SQLite)
+Kernel module           →  Plugin (adapter/hook/tool)
+Shell                   →  CLI surface
+IPC / pipes             →  Artifact blackboard
+Signal (SIGTERM etc)    →  Steering signal
+Filesystem journal      →  Event-sourced ledger
 ```
 
-The runtime surfaces are still important, but the kernel is now the part that gives Hermit its identity.
+This mapping is intentional. OS kernels solved the problem of mediating untrusted user-space programs and shared hardware decades ago. Hermit applies the same structural discipline to a new class of untrusted principal: autonomous AI agents operating on shared resources (files, APIs, databases). The kernel boundary exists for the same reason -- to ensure that no agent can bypass governance and act with unscoped authority.
 
-## Runtime Surfaces
+## Layer Architecture
 
-Hermit currently exposes work through:
+Hermit is organized in four layers. Each layer has a clear responsibility and a strict dependency direction: upper layers depend on lower layers, never the reverse.
 
-- CLI commands such as `chat`, `run`, `serve`, `schedule`, and `task`
-- long-running `serve` mode
-- Feishu ingress
-- scheduler-triggered work
-- webhook-triggered work
+```
+ ┌─────────────────────────────────────────────────────────┐
+ │              SURFACES  (User Space)                     │
+ │  CLI (chat, run, task)  Adapters (Feishu, Slack, ...)   │
+ │  TUI    Scheduler    Webhook    MCP Server              │
+ └────────────────────────┬────────────────────────────────┘
+                          │
+ ┌────────────────────────▼────────────────────────────────┐
+ │              RUNTIME  (System Libraries)                │
+ │  AgentRunner    PluginManager    LLM Providers          │
+ │  SessionManager    ToolRegistry    MCP Client           │
+ │  SystemPromptBuilder    ProfileCatalog                  │
+ └────────────────────────┬────────────────────────────────┘
+                          │
+ ┌────────────────────────▼────────────────────────────────┐
+ │              KERNEL  (Ring 0)                           │
+ │  TaskController    PolicyEngine    ToolExecutor          │
+ │  ContextCompiler   Memory (24 modules)   Artifacts      │
+ │  Authority (Grants, Leases)   Verification (Receipts,   │
+ │  Proofs, Rollback, Benchmark)   Signals   Analytics     │
+ └────────────────────────┬────────────────────────────────┘
+                          │
+ ┌────────────────────────▼────────────────────────────────┐
+ │              LEDGER  (Block Device)                     │
+ │  SQLite event journal    Hash-chained events            │
+ │  Projection rebuild     Mixin-based KernelStore         │
+ └─────────────────────────────────────────────────────────┘
+```
 
-These surfaces are converging on shared task semantics instead of remaining independent session shells.
+**Surfaces** are entry points. They accept user intent (a CLI command, a chat message, an adapter webhook) and translate it into kernel operations. Surfaces are thin -- they do not contain business logic.
 
-## Core Runtime Modules
+**Runtime** handles orchestration. It manages the LLM provider loop, discovers and loads plugins, assembles system prompts, resolves capabilities, and coordinates sessions. It is the bridge between user-facing surfaces and the kernel.
 
-### `src/hermit/surfaces/cli/main.py`
+**Kernel** is where governance lives. It owns the task lifecycle, evaluates policy, issues authority grants, compiles context, manages memory, executes tools under scoped authority, and produces receipts. The kernel is the part that gives Hermit its identity.
 
-Responsibilities:
+**Ledger** is the durable truth. An append-only SQLite event journal with hash-chained entries. All kernel state is derived from this journal. Projections are materialized views that can be rebuilt from the event stream at any time.
 
-- CLI entrypoints
-- workspace setup
-- runtime assembly
-- task inspection and approval commands
-- service lifecycle
+## The Governance Pipeline
 
-### `src/hermit/runtime/control/runner/runner.py`
+Every consequential action in Hermit passes through a structured pipeline. This is not a suggestion or a best practice -- it is the only path the kernel provides for effectful execution. This pipeline is the AI equivalent of a system call path. Just as `write()` goes through VFS -> filesystem -> block device, a Hermit action goes through Policy -> Approval -> Lease -> Grant -> Execute -> Receipt.
 
-Responsibilities:
+```
+  ┌──────────┐
+  │  Model   │  "I want to write to /src/app.py"
+  │ proposes │
+  └────┬─────┘
+       │
+       ▼
+  ┌──────────────────┐
+  │  Action Request   │  Derive action class, risk level, target
+  └────────┬─────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │  Policy Engine    │  Evaluate rules, trust score, guard chain
+  │                   │  Verdict: auto-approve / require-approval / deny
+  └────────┬─────────┘
+           │
+      ┌────┴────┐
+      │ Needs   │──── yes ──▶ ┌──────────────┐
+      │approval?│             │  Approval     │  Task parks. Operator
+      └────┬────┘             │  Workflow     │  reviews and decides.
+           │ no               └──────┬───────┘
+           │◀─────────────────────────┘
+           ▼
+  ┌──────────────────┐
+  │ Workspace Lease   │  Acquire scoped access to target paths
+  └────────┬─────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │ Capability Grant  │  Issue time-bound, scope-limited authority
+  └────────┬─────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │  Tool Executor    │  Execute under granted authority
+  └────────┬─────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │  Receipt          │  Record inputs, outputs, authority chain,
+  │                   │  result, rollback metadata
+  └────────┬─────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │  Proof / Rollback │  Hash-chain into proof bundle;
+  │                   │  enable structured reversal if needed
+  └──────────────────┘
+```
 
-- shared orchestration across CLI and service surfaces
-- session handling
-- hook dispatch
-- integration between provider runtime and task kernel paths
+Key properties of this pipeline:
 
-### `src/hermit/runtime/capability/registry/manager.py`
+- **Fail-closed.** If governance metadata is ambiguous, execution is refused. The kernel prefers refusing work over permitting unscoped side effects.
+- **Durable.** Every stage produces a kernel record. The full authorization chain is preserved in the ledger, not just the final outcome.
+- **Inspectable.** An operator can examine any task after the fact and trace the complete path from proposal to execution to receipt.
+- **Reversible.** For supported actions, receipts carry the metadata needed for structured rollback without manual cleanup.
 
-Responsibilities:
+## Task Lifecycle
 
-- plugin discovery
-- tool registration
-- hook loading
-- subagent and adapter assembly
-- MCP startup and shutdown
+The task is Hermit's fundamental unit of work. Unlike a chat turn that vanishes when the session ends, a task is a durable commitment that survives pauses, crashes, restarts, and approvals.
 
-### `src/hermit/runtime/provider_host/`
+```
+  Task
+   ├── Step 1
+   │    ├── StepAttempt 1  →  (failed, recoverable)
+   │    └── StepAttempt 2  →  Receipt + Proof
+   ├── Step 2
+   │    └── StepAttempt 1  →  Receipt + Proof
+   └── Step 3 (pending approval)
+        └── ... (parked until approved)
+```
 
-Responsibilities:
+A **Task** tracks a named objective. It has ingress (where the request came from), steps (what needs to happen), and a lifecycle (created, running, suspended, completed, failed, cancelled).
 
-- provider-facing tool loop
-- streaming and non-streaming behavior
-- execution handoff into task-scoped tool execution
+A **Step** is a unit of execution within a task. Steps can run sequentially or in parallel (fork-join).
 
-## Task Kernel Modules
+A **StepAttempt** is a single try at completing a step. Failed attempts are preserved -- the kernel does not discard history. Recovery logic can retry with a new attempt.
 
-The kernel is implemented under `src/hermit/kernel/` with the following layered sub-packages:
+Tasks are first-class kernel objects with their own projections (materialized views). Operator surfaces like `hermit task show`, `hermit task receipts`, and `hermit task proof-export` query these projections directly.
 
-- `task/` — TaskRecord models, TaskController, ingress routing, projections, state
-- `ledger/` — KernelStore (SQLite-backed journal), event store, projections
-- `execution/` — ToolExecutor, execution contracts, coordination (dispatch, observation), recovery
-- `policy/` — approvals, decisions, permits, evaluators, guards
-- `verification/` — receipts, proofs, rollbacks
-- `context/` — context compiler, provider input injection, memory governance
-- `artifacts/` — artifact models, lineage, claims, evidence
-- `authority/` — identity, workspaces, capability grants
+## Plugin Architecture
 
-## First-Class Kernel Objects
+Hermit uses a plugin system for extensibility. Everything outside the kernel core -- adapters, tools, hooks, MCP integrations, subagents -- is a plugin loaded through a uniform discovery and registration mechanism.
 
-Hermit already defines first-class records for:
+```
+  ┌─────────────────────────────────────────────────┐
+  │                 PluginManager                    │
+  │                                                  │
+  │  Discovery:  builtin/ dir  +  ~/.hermit/plugins/ │
+  │  Manifest:   plugin.toml per plugin              │
+  └───┬──────┬──────┬──────┬──────┬──────┬──────────┘
+      │      │      │      │      │      │
+      ▼      ▼      ▼      ▼      ▼      ▼
+   Tools  Hooks  Adapters  MCP  Subagents  Bundles
 
-- `TaskRecord`
-- `StepRecord`
-- `StepAttemptRecord`
-- `ApprovalRecord`
-- `DecisionRecord`
-- `PrincipalRecord`
-- `CapabilityGrantRecord`
-- `WorkspaceLeaseRecord`
-- `ArtifactRecord`
-- `ReceiptRecord`
-- `BeliefRecord`
-- `MemoryRecord`
-- `RollbackRecord`
-- `ConversationRecord`
-- `IngressRecord`
+   Examples:
+   ├── tools/file_tools     — governed file read/write
+   ├── hooks/memory         — evidence-bound memory promotion
+   ├── hooks/scheduler      — cron-like task scheduling
+   ├── hooks/patrol         — proactive code health checks
+   ├── adapters/feishu      — Feishu messaging integration
+   ├── adapters/slack       — Slack adapter (Socket Mode)
+   ├── mcp/hermit_server    — expose kernel via MCP protocol
+   └── subagents/orchestrator — delegated sub-task execution
+```
 
-These are not just names in the spec. They exist in the current codebase and are persisted through the kernel store.
+Each plugin declares its entry points in a `plugin.toml` manifest:
 
-## Ledger And Projections
+```toml
+[plugin]
+name = "my-plugin"
+version = "0.1.0"
 
-Hermit's kernel store is local and durable.
+[entry]
+tools = "tools:register"
+hooks = "hooks:register"
+```
 
-The current implementation includes:
+**Plugin categories:**
 
-- a local SQLite-backed kernel database
-- a dedicated `events` table
-- task-related tables for principals, approvals, decisions, capability grants, workspace leases, receipts, beliefs, memory records, and rollbacks
-- projection rebuild paths
-- event hash chaining for verification-oriented proof work
+| Category | Purpose | Governance |
+|---|---|---|
+| **Tools** | Actions the agent can take | Subject to full governance pipeline |
+| **Hooks** | React to lifecycle events (session start, dispatch result, etc.) | Dispatched by priority with signature-adaptive calling |
+| **Adapters** | Messaging platform integrations (Feishu, Slack, Telegram) | Surface-level; route into kernel tasks |
+| **MCP** | Model Context Protocol servers and clients | MCP tools governed identically to builtin tools |
+| **Subagents** | Delegated execution with governed tool access | Run under kernel authority with receipts |
+| **Bundles** | Slash-command groupings (`/compact`, `/plan`, `/usage`) | Command-level; no direct side effects |
 
-This is why "event-backed truth" is a fair description of the kernel direction, even though the entire repo should not yet be described as uniformly event-sourced.
+Plugins are discovered from two paths:
+1. `src/hermit/plugins/builtin/` -- ships with Hermit
+2. `~/.hermit/plugins/` -- user-installed extensions
 
-## Execution Path
+## Design Decision Rationale
 
-For governed execution, the interesting path is:
+### Why event sourcing?
 
-1. an ingress or operator action lands as task-scoped work
-2. the task controller creates or resumes a task, step, and step attempt
-3. context is compiled from working state, beliefs, memories, and artifacts
-4. the policy engine evaluates the proposed action
-5. if needed, the kernel creates a decision and requests approval
-6. if authorized, the kernel acquires a workspace lease and issues a scoped capability grant
-7. the executor performs the action
-8. the kernel stores artifacts and issues a receipt
-9. proof and rollback services can later inspect or act on the result
+The kernel ledger is an append-only event journal, not a mutable database. All state -- tasks, approvals, grants, receipts -- is derived from this journal.
 
-This matters because important actions are no longer reducible to "tool call happened."
+This gives Hermit three properties that mutable state cannot:
 
-## Governance Layer
+1. **Auditability.** The journal is a complete history. You can answer "what was the state at time T?" by replaying events up to T. Mutable state only tells you the current state.
+2. **Verifiability.** Events are hash-chained. Each event includes a hash of the previous event, forming a tamper-evident chain. If any event is modified or deleted, the chain breaks.
+3. **Rebuildability.** Projections (materialized views) can be rebuilt from the journal at any time. If a projection is corrupted, `hermit task projections-rebuild` regenerates it from the event stream. The journal is the source of truth; projections are caches.
 
-The governance path is primarily visible through:
+The cost is storage growth and query indirection. Hermit accepts this because, for governed execution, knowing *how you got here* is as important as knowing *where you are*.
 
-- policy evaluation
-- approval records and approval copy generation
-- decision records
-- capability grants
-- workspace leases
-- witness and drift handling
+### Why a synchronous kernel?
 
-Hermit's executor already uses these concepts to distinguish read-like actions from consequential effectful actions.
+Kernel methods are synchronous. Async only exists at surface boundaries (CLI, adapters, MCP server).
 
-See [governance.md](./governance.md) for the deeper model.
+This is a deliberate simplification, and the same reason OS kernels are synchronous in the system call path -- deterministic evaluation of security-critical decisions:
 
-## Context And Memory Layer
+- **Predictable execution order.** Policy evaluation, grant issuance, and receipt recording happen in a deterministic sequence. No race conditions between governance stages.
+- **Simpler reasoning.** The kernel's state transitions are sequential. You can read the code and know exactly what happens in what order.
+- **Async where it matters.** The LLM provider loop, adapter ingress, and MCP server are async because they involve I/O. The kernel itself does not need to be.
 
-Hermit treats context as more than transcript replay.
+The kernel is fast enough synchronously because its operations are local (SQLite, file I/O). Network I/O happens outside the kernel boundary.
 
-The current codebase already includes:
+### Why receipt-aware execution?
 
-- context packs
-- task-scoped working state snapshots
-- belief selection
-- memory retrieval and static injection rules
-- memory classification, retention, and invalidation logic
+Most agent runtimes stop their accountability story at the tool loop: the tool ran, here is the return value, move on. Hermit takes a stronger position: **an important action is not complete until a receipt is issued.**
 
-This is the practical expression of Hermit's artifact-native and evidence-bound direction.
+A receipt ties together:
+- What was requested (action class, target, parameters)
+- What authority allowed it (policy decision, approval, capability grant, workspace lease)
+- What happened (result code, output references)
+- How to reverse it (rollback metadata, when supported)
 
-See:
+This is not about distrust. It is about operating in a regime where agents act with real authority -- writing files, running commands, calling APIs -- and the operator needs structured oversight without watching every action in real time.
 
-- [context-model.md](./context-model.md)
-- [memory-model.md](./memory-model.md)
+### Why local-first?
 
-## Receipts, Proofs, And Rollback
+All kernel state lives in `~/.hermit/`. The ledger is a local SQLite database. No cloud dependency for core operation. The LLM provider is a separate concern; the kernel itself is fully local.
 
-Hermit already contains:
+This means the operator has physical custody of their execution history, approval records, and memory. The trust boundary is the operator's own machine, not a cloud provider's security practices. For work that involves sensitive code, credentials, or compliance-sensitive decisions, this is the right default.
 
-- receipt issuance
-- receipt bundles
-- proof summaries
-- proof export
-- rollback execution for supported receipts
+## Extension Points
 
-This is enough to say the repo has meaningful verifiable-execution primitives. It is not enough to say the full verifiable story is done. The current proof baseline is hash-linked events plus sealed receipt bundles; stronger signed receipts and inclusion-proof exports are available only when local signing is configured, and are surfaced as conditional capability plus task-level proof coverage or missing proof coverage rather than implied completeness.
+Developers can extend Hermit at several levels:
 
-See [receipts-and-proofs.md](./receipts-and-proofs.md).
+### 1. Plugins (most common)
 
-## Operator Surface
+Create a directory under `~/.hermit/plugins/` with a `plugin.toml` manifest. Register tools, hooks, adapters, MCP servers, subagents, or commands. Tools registered through plugins are automatically subject to the full governance pipeline -- no extra work needed.
 
-Hermit's seriousness is visible not just in internal modules, but in the operator-facing CLI:
+### 2. Hook events
 
-- `hermit task list`
-- `hermit task show`
-- `hermit task events`
-- `hermit task receipts`
-- `hermit task proof`
-- `hermit task proof-export`
-- `hermit task approve`
-- `hermit task rollback`
+Subscribe to lifecycle events to inject behavior at specific points:
 
-These commands give the operator direct access to the kernel ledger and its control surfaces.
+- `SYSTEM_PROMPT` -- modify the system prompt before it reaches the model
+- `REGISTER_TOOLS` -- dynamically add or modify available tools
+- `SESSION_START` / `SESSION_END` -- run setup or teardown logic
+- `PRE_RUN` / `POST_RUN` -- intercept before and after execution
+- `DISPATCH_RESULT` -- react to completed governed execution
+- `SUBTASK_SPAWN` / `SUBTASK_COMPLETE` -- coordinate sub-task workflows
 
-## Current Implementation Vs Target Architecture
+### 3. MCP integration
 
-The boundary is important:
+Hermit can act as both an MCP client (connecting to external MCP servers) and an MCP server (exposing kernel tools to supervisor agents via `hermit_server`). External MCP tools are governed identically to builtin tools -- they pass through the same policy engine and produce the same receipts.
 
-- this document describes the current repository structure and behavior
-- the `v0.1` spec defines the target architecture and invariants
+### 4. Policy profiles
 
-Current implementation:
+Define named policy profiles that control governance strictness:
 
-- real kernel objects
-- real policy and approval flow
-- real receipts and proof primitives
-- real rollback support for selected actions
-- kernel-first hard gates for builtin, delegation, and MCP tool governance
-- mixed runtime and kernel-era surfaces
-- an explicit [kernel conformance matrix](./kernel-conformance-matrix-v0.1.md) plus claim gate surfaces that are checked against machine-readable claim rows
+- `autonomous` -- high autonomy, most actions auto-approved
+- `default` -- balanced, consequential actions require approval
+- `supervised` -- low autonomy, most actions require approval
+- `readonly` -- no mutations permitted
 
-Target architecture:
+Profiles are selected per-task, allowing different governance levels for different workloads.
 
-- deeper task-first unification across all ingress paths
-- stricter governance coverage
-- broader receipt and rollback semantics
-- stronger artifact-native context and evidence discipline everywhere
+### 5. LLM providers
 
-Read next:
+The provider host layer supports pluggable LLM backends. Current implementations include Claude and Codex. Adding a new provider means implementing the `Provider` protocol defined in `runtime/provider_host/shared/contracts.py`.
 
-- [why-hermit.md](./why-hermit.md)
-- [kernel-spec-v0.1.md](./kernel-spec-v0.1.md)
-- [kernel-conformance-matrix-v0.1.md](./kernel-conformance-matrix-v0.1.md)
-- [governance.md](./governance.md)
-- [roadmap.md](./roadmap.md)
+## Source Layout
+
+```
+src/hermit/
+├── kernel/             # Governed execution kernel
+│   ├── task/           #   Task models, controller, projections, state
+│   ├── policy/         #   Approvals, evaluators, guards, trust scoring
+│   ├── execution/      #   Executor, coordination, recovery, workers
+│   ├── ledger/         #   SQLite journal, event store, projections
+│   ├── verification/   #   Receipts, proofs, rollback, benchmarks
+│   ├── context/        #   Context compiler, memory (24 modules)
+│   ├── artifacts/      #   Artifact models, lineage, claims
+│   ├── authority/      #   Identity, workspaces, capability grants
+│   ├── analytics/      #   Governance metrics, health monitoring
+│   └── signals/        #   Steering signals, evidence, signal store
+├── runtime/            # Orchestration and provider layer
+│   ├── control/        #   AgentRunner, session manager, budgets
+│   ├── capability/     #   PluginManager, tool registry, MCP client
+│   ├── provider_host/  #   LLM providers, sandbox, profiles
+│   ├── assembly/       #   Config and context assembly
+│   └── observation/    #   Logging
+├── plugins/builtin/    # Shipped plugins
+│   ├── adapters/       #   Feishu, Slack, Telegram
+│   ├── hooks/          #   Memory, scheduler, patrol, research, ...
+│   ├── tools/          #   File tools, web tools, computer use, ...
+│   ├── mcp/            #   GitHub, Hermit MCP server, MCP loader
+│   ├── subagents/      #   Orchestrator
+│   └── bundles/        #   Compact, planner, usage
+├── surfaces/cli/       # CLI entrypoints and TUI
+├── infra/              # Storage, locking, i18n, paths
+└── apps/               # macOS companion app
+```
+
+## Further Reading
+
+- [Why Hermit](./why-hermit.md) -- the thesis in shorter form
+- [Design Philosophy](./design-philosophy.md) -- deeper reasoning behind each design choice
+- [Governance](./governance.md) -- the governance model in detail
+- [Receipts and Proofs](./receipts-and-proofs.md) -- receipt semantics, proof bundles, rollback
+- [Context Model](./context-model.md) -- how context is compiled from artifacts
+- [Memory Model](./memory-model.md) -- evidence-bound memory subsystem
+- [Getting Started](./getting-started.md) -- installation and first run
+- [Configuration](./configuration.md) -- profiles, plugins, and environment setup
+- [MCP Integration](./mcp-integration.md) -- MCP Integration Guide
+- [Plugin Development](./plugin-development.md) -- Plugin Development Guide
+- [Use Cases](./use-cases.md) -- Use Cases and Scenarios
+- [FAQ](./faq.md) -- FAQ and Positioning
+- [Roadmap](./roadmap.md) -- Roadmap

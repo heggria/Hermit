@@ -164,6 +164,24 @@ class ReconcileService:
                 summary="Observed command target paths remain unchanged after dispatch.",
                 observed_refs=[str(path) for path in observables.get("target_paths", [])],
             )
+
+        # Fallback: no target_paths, no git witness, and no vcs_operation —
+        # the reconciliation layer simply has nothing to check.  Return an
+        # inferred-success so the caller can combine it with the execution
+        # hint instead of falling through to ``still_unknown``.
+        has_target_paths = bool(observables.get("target_paths"))
+        has_git_witness = isinstance(witness, dict) and bool(witness.get("git"))
+        has_vcs_op = bool(str(observables.get("vcs_operation", "")).strip())
+        if not has_target_paths and not has_git_witness and not has_vcs_op:
+            return ReconcileOutcome(
+                result_code="reconciled_inferred",
+                summary=(
+                    f"No observable side-effect targets for {action_type}; "
+                    "inferring success from execution result."
+                ),
+                observed_refs=[],
+            )
+
         return None
 
     def _reconcile_remote_write(self, *, tool_input: dict[str, Any]) -> ReconcileOutcome | None:
@@ -178,7 +196,7 @@ class ReconcileService:
         request = urllib.request.Request(probe_url, method="HEAD")
         try:
             with urllib.request.urlopen(
-                request, timeout=get_runtime_budget().provider_read_timeout
+                request, timeout=get_runtime_budget().reconciliation_probe_timeout
             ) as response:
                 status = getattr(response, "status", 200)
         except urllib.error.HTTPError as exc:

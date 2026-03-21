@@ -113,6 +113,20 @@ def derive_request(request: ActionRequest) -> ActionRequest:
         command = str(tool_input.get("command", "")).strip()
         if command:
             derived.update(derive_command_observables(command, workspace_root=workspace_root))
+            # Workspace boundary enforcement for shell command target paths
+            cmd_target_paths: list[str] = list(derived.get("target_paths", []))  # type: ignore[arg-type]
+            if workspace_root and cmd_target_paths:
+                outside_paths = [
+                    p for p in cmd_target_paths if not _inside_workspace(p, workspace_root)
+                ]
+                if outside_paths:
+                    derived["outside_workspace"] = True
+                    derived["outside_workspace_roots"] = list(
+                        dict.fromkeys(_outside_workspace_root(p) for p in outside_paths)
+                    )
+                    derived["sensitive_paths"] = [
+                        p for p in outside_paths if _is_sensitive_path(p, workspace_root)
+                    ]
     request.derived = derived
     return request
 

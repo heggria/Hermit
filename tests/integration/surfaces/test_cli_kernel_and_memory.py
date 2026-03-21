@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,61 @@ from typer.testing import CliRunner
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.verification.proofs.proofs import ProofService
 from hermit.surfaces.cli.main import app
+
+
+def _seed_claim_cache(base_dir: Path) -> None:
+    """Write a minimal valid repository-claim-status.json so that task_claim_status
+    never falls through to the expensive repository_claim_status() live probes.
+    Tests that specifically exercise claim probes set up their own environment and
+    are not affected by this helper.
+    """
+    from hermit.kernel.artifacts.lineage.claim_manifest import CLAIM_ROWS, PROFILE_LABELS
+
+    rows = []
+    for row in CLAIM_ROWS:
+        computed = dict(row)
+        if str(row["id"]) == "signed_proofs":
+            computed.update({"status": "conditional", "evaluation": "conditional_capability"})
+        else:
+            computed.update({"status": "implemented", "evaluation": "semantic_probe"})
+        rows.append(computed)
+    profiles = {
+        profile: {"claimable": True, "label": label, "blockers": []}
+        for profile, label in PROFILE_LABELS.items()
+    }
+    payload = {
+        "rows": rows,
+        "profiles": profiles,
+        "claimable_profiles": list(PROFILE_LABELS.values()),
+        "blockers": [],
+        "conditional_capabilities": {
+            "signing_configured": False,
+            "strong_signed_proofs_available": False,
+            "baseline_verifiable_available": True,
+        },
+        "cache": {
+            "schema_version": "repository-claims-v1",
+            "generated_at": time.time(),
+            "include_expensive_probes": True,
+            "status": "fresh",
+        },
+    }
+    cache_path = base_dir / "kernel" / "repository-claim-status.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _parse_json_output(output: str) -> dict:
+    """Parse JSON from CLI output, skipping any structlog lines before the JSON."""
+    # Find the first line that starts with '{' or '[' (the JSON body).
+    lines = output.split("\n")
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            return json.loads("\n".join(lines[i:]))
+    return json.loads(output)
 
 
 def test_task_help_uses_locale_at_import_time(monkeypatch) -> None:
@@ -37,6 +93,7 @@ def test_task_list_show_and_receipts_commands_read_kernel_state(tmp_path, monkey
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
     get_settings.cache_clear()
+    _seed_claim_cache(base_dir)
 
     store = KernelStore(base_dir / "kernel" / "state.db")
     store.ensure_conversation("cli-task", source_channel="chat")
@@ -246,7 +303,7 @@ def test_task_explain_command_summarizes_authority_chain(tmp_path, monkeypatch) 
     result = runner.invoke(app, ["task", "explain", task.task_id])
 
     assert result.exit_code == 0
-    payload = json.loads(result.output)
+    payload = _parse_json_output(result.output)
     assert payload["task"]["task_id"] == task.task_id
     assert payload["operator_answers"]["why_execute"] == "Policy allowed this write."
     assert (
@@ -382,12 +439,12 @@ def test_task_claim_status_command_reports_repo_and_task_gates(tmp_path, monkeyp
     task_result = runner.invoke(app, ["task", "claim-status", task.task_id])
 
     assert repo_result.exit_code == 0
-    repo_payload = json.loads(repo_result.output)
+    repo_payload = _parse_json_output(repo_result.output)
     assert repo_payload["profiles"]["verifiable"]["claimable"] is True
-    assert repo_payload["profiles"]["core"]["label"] == "Hermit Kernel v0.2 Core"
+    assert repo_payload["profiles"]["core"]["label"] == "Hermit Kernel v0.3 Core"
 
     assert task_result.exit_code == 0
-    task_payload = json.loads(task_result.output)
+    task_payload = _parse_json_output(task_result.output)
     assert task_payload["task_id"] == task.task_id
     assert task_payload["task_gate"]["verifiable_ready"] is True
     assert task_payload["task_gate"]["strong_verifiable_ready"] is True
@@ -403,6 +460,7 @@ def test_task_show_reports_contract_loop_summary(tmp_path, monkeypatch) -> None:
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
     get_settings.cache_clear()
+    _seed_claim_cache(base_dir)
 
     store = KernelStore(base_dir / "kernel" / "state.db")
     store.ensure_conversation("cli-show-contracts", source_channel="chat")
@@ -519,14 +577,14 @@ def test_task_claim_status_reports_conditional_strong_proofs_without_signing(
     task_result = runner.invoke(app, ["task", "claim-status", task.task_id])
 
     assert repo_result.exit_code == 0
-    repo_payload = json.loads(repo_result.output)
+    repo_payload = _parse_json_output(repo_result.output)
     assert repo_payload["profiles"]["verifiable"]["claimable"] is True
     assert repo_payload["conditional_capabilities"]["strong_signed_proofs_available"] is False
     signed_row = next(row for row in repo_payload["rows"] if row["id"] == "signed_proofs")
     assert signed_row["status"] == "conditional"
 
     assert task_result.exit_code == 0
-    task_payload = json.loads(task_result.output)
+    task_payload = _parse_json_output(task_result.output)
     assert task_payload["task_gate"]["verifiable_ready"] is True
     assert task_payload["task_gate"]["strong_verifiable_ready"] is False
 
@@ -772,7 +830,7 @@ def test_task_case_and_projection_rebuild_commands(tmp_path, monkeypatch) -> Non
     rebuild_result = runner.invoke(app, ["task", "projections-rebuild", task.task_id])
 
     assert case_result.exit_code == 0
-    case_payload = json.loads(case_result.output)
+    case_payload = _parse_json_output(case_result.output)
     assert case_payload["operator_answers"]["why_execute"] == "Policy allowed this write."
     assert (
         case_payload["operator_answers"]["claims"]["repository"]["profiles"]["core"]["claimable"]
@@ -800,7 +858,7 @@ def test_task_case_and_projection_rebuild_commands(tmp_path, monkeypatch) -> Non
         == "pending_disambiguation"
     )
     assert rebuild_result.exit_code == 0
-    assert json.loads(rebuild_result.output)["task"]["task_id"] == task.task_id
+    assert _parse_json_output(rebuild_result.output)["task"]["task_id"] == task.task_id
 
 
 def test_memory_export_command_writes_export_only_mirror(tmp_path, monkeypatch) -> None:
@@ -901,6 +959,7 @@ def test_task_show_displays_approval_canonical_summary(monkeypatch, tmp_path) ->
     base_dir = tmp_path / ".hermit"
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
     get_settings.cache_clear()
+    _seed_claim_cache(base_dir)
 
     store = KernelStore(base_dir / "kernel" / "state.db")
     store.ensure_conversation("cli-task-show", source_channel="chat")
@@ -943,6 +1002,7 @@ def test_task_list_and_show_use_localized_cli_copy(monkeypatch, tmp_path) -> Non
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
     monkeypatch.setenv("HERMIT_LOCALE", "zh-CN")
     get_settings.cache_clear()
+    _seed_claim_cache(base_dir)
 
     store = KernelStore(base_dir / "kernel" / "state.db")
     store.ensure_conversation("cli-task-list", source_channel="chat")

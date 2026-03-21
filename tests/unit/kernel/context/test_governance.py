@@ -111,11 +111,12 @@ class TestPolicyFor:
         assert policy.scope_kind == "workspace"
         assert policy.static_injection is True
 
-    def test_active_task_deprecated_falls_back_to_default(self) -> None:
+    def test_active_task_has_task_state_policy(self) -> None:
         svc = MemoryGovernanceService()
         policy = svc.policy_for("active_task")
-        # active_task is deprecated; normalize_category maps it to "other"
-        assert policy.retention_class == "volatile_fact"
+        assert policy.retention_class == "task_state"
+        assert policy.scope_kind == "conversation"
+        assert policy.ttl_seconds is not None
 
     def test_pitfall_warning(self) -> None:
         svc = MemoryGovernanceService()
@@ -207,13 +208,12 @@ class TestAnalyzeClaim:
         signals = svc.analyze_claim(category="user_preference", claim_text="generic text")
         assert signals.stable_preference is True
 
-    def test_analyze_active_task_category_deprecated(self) -> None:
-        """active_task is deprecated and mapped to 'other'; task_state signal
-        now depends only on keyword matching, not category name."""
+    def test_analyze_active_task_category_sets_task_state(self) -> None:
+        """active_task category forces task_state signal True, consistent with
+        how user_preference forces stable_preference."""
         svc = MemoryGovernanceService()
         signals = svc.analyze_claim(category="active_task", claim_text="generic text")
-        # No task_state keywords in "generic text" → task_state is False
-        assert signals.task_state is False
+        assert signals.task_state is True
 
     def test_analyze_matched_signals_populated(self) -> None:
         svc = MemoryGovernanceService()
@@ -236,12 +236,11 @@ class TestResolveCategory:
         signals = ClaimSignals(stable_preference=True, project_convention=True)
         assert svc.resolve_category(category="other", signals=signals) == "user_preference"
 
-    def test_task_state_without_convention_deprecated(self) -> None:
-        """task_state signal no longer resolves to active_task (deprecated)."""
+    def test_task_state_signal_resolves_to_active_task(self) -> None:
+        """task_state signal resolves category to active_task."""
         svc = MemoryGovernanceService()
         signals = ClaimSignals(task_state=True)
-        # active_task is deprecated; task_state signal alone falls through to original category
-        assert svc.resolve_category(category="other", signals=signals) == "other"
+        assert svc.resolve_category(category="other", signals=signals) == "active_task"
 
     def test_tooling_without_convention(self) -> None:
         svc = MemoryGovernanceService()
@@ -544,7 +543,38 @@ class TestKeyHelpers:
     def test_scope_ref_for_conversation_no_id(self) -> None:
         svc = MemoryGovernanceService()
         ref = svc._scope_ref_for(scope_kind="conversation", conversation_id=None, workspace_root="")
-        assert ref == "conversation:unknown"
+        assert ref == "conversation:ephemeral"
+
+    def test_scope_ref_for_conversation_empty_string(self) -> None:
+        svc = MemoryGovernanceService()
+        ref = svc._scope_ref_for(scope_kind="conversation", conversation_id="", workspace_root="")
+        assert ref == "conversation:ephemeral"
+
+    def test_scope_ref_for_conversation_valid_id(self) -> None:
+        svc = MemoryGovernanceService()
+        ref = svc._scope_ref_for(
+            scope_kind="conversation", conversation_id="conv-42", workspace_root=""
+        )
+        assert ref == "conv-42"
+
+    def test_scope_ref_for_conversation_cli_oneshot(self) -> None:
+        svc = MemoryGovernanceService()
+        ref = svc._scope_ref_for(
+            scope_kind="conversation", conversation_id="cli-oneshot", workspace_root=""
+        )
+        assert ref == "cli-oneshot"
+
+    def test_scope_ref_for_entity_empty_string(self) -> None:
+        svc = MemoryGovernanceService()
+        ref = svc._scope_ref_for(scope_kind="entity", conversation_id="", workspace_root="")
+        assert ref == "entity:unknown"
+
+    def test_scope_ref_for_unrecognized_scope_raises(self) -> None:
+        import pytest
+
+        svc = MemoryGovernanceService()
+        with pytest.raises(ValueError, match="unrecognized scope_kind"):
+            svc._scope_ref_for(scope_kind="bogus", conversation_id="conv-1", workspace_root="")
 
 
 # ---------------------------------------------------------------------------

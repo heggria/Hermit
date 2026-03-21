@@ -71,16 +71,66 @@ class MetaLoopOrchestrator:
         max_retries: int = 3,
         runner: Any = None,
         workspace_root: str = "",
+        benchmark_blocking: bool = True,
     ) -> None:
         self._backlog = SpecBacklog(store)
         self._store = store
         self._max_retries = max_retries
         self._runner = runner
         self._workspace_root = workspace_root
+        self._benchmark_blocking = benchmark_blocking
 
     def set_runner(self, runner: Any) -> None:
         """Update the runner reference (for hot-reload)."""
         self._runner = runner
+
+    def _query_relevant_lessons(self, goal: str, limit: int = 10) -> list[dict]:
+        """Query stored lessons relevant to the current iteration goal.
+
+        Relevance scoring: count keyword overlap between lesson summary
+        and goal text. Return top-N by relevance score (descending).
+        """
+        if not hasattr(self._store, "list_lessons"):
+            return []
+        try:
+            all_lessons = self._store.list_lessons(limit=50)
+        except Exception:
+            log.debug("metaloop_lessons_query_failed")
+            return []
+        if not all_lessons:
+            return []
+
+        # Tokenise goal into lowercase keywords (>= 3 chars to skip noise)
+        goal_keywords = {w for w in goal.lower().split() if len(w) >= 3}
+        if not goal_keywords:
+            # Fallback: return most recent lessons if goal has no usable keywords
+            return all_lessons[:limit]
+
+        scored: list[tuple[float, dict]] = []
+        for lesson in all_lessons:
+            summary = (
+                lesson.get("summary", "")
+                if isinstance(lesson, dict)
+                else getattr(lesson, "summary", "")
+            )
+            category = (
+                lesson.get("category", "")
+                if isinstance(lesson, dict)
+                else getattr(lesson, "category", "")
+            )
+            summary_keywords = {w for w in summary.lower().split() if len(w) >= 3}
+            overlap = len(goal_keywords & summary_keywords)
+            # Boost actionable categories (mistakes and rollback patterns)
+            category_boost = 1.0
+            if category in ("mistake", "rollback_pattern"):
+                category_boost = 1.5
+            score = overlap * category_boost
+            if score > 0:
+                scored.append((score, lesson))
+
+        # Sort by score descending, take top-N
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [lesson for _, lesson in scored[:limit]]
 
     def _update_metadata(self, spec_id: str, key: str, value: dict) -> dict:
         """Merge *value* under *key* in the spec's metadata and persist."""
@@ -134,7 +184,12 @@ class MetaLoopOrchestrator:
     def on_subtask_complete(
         self, task_id: str, *, success: bool = True, error: str | None = None
     ) -> IterationState | None:
-        """Handle DAG subtask completion — advance IMPLEMENTING to REVIEWING."""
+        """Handle DAG subtask completion — advance IMPLEMENTING to REVIEWING.
+
+        On success, stores the worktree branch info for later PR creation
+        instead of merging directly to main. The actual merge only happens
+        after explicit approval via the IterationBridge.
+        """
         if not task_id:
             return None
 
@@ -157,24 +212,30 @@ class MetaLoopOrchestrator:
         worktree_path = impl_info.get("worktree_path")
 
         if success:
-            # Merge worktree if present
+            # Do NOT merge to main. Store branch info for PR creation instead.
+            # The worktree branch will be used later by create_iteration_pr()
+            # after the iteration passes review, benchmarking, and reconciliation.
             if worktree_path and self._workspace_root:
-                try:
-                    from hermit.kernel.execution.self_modify.workspace import (
-                        SelfModifyWorkspace,
-                    )
-
-                    ws = SelfModifyWorkspace(self._workspace_root)
-                    ws.merge_to_main(spec_id)
-                    ws.remove(spec_id)
-                except Exception:
-                    log.exception("metaloop_worktree_merge_failed", spec_id=spec_id)
-
-            log.info(
-                "metaloop_subtask_complete",
-                task_id=task_id,
-                spec_id=spec_id,
-            )
+                self._update_metadata(
+                    spec_id,
+                    "pr_pending",
+                    {
+                        "worktree_path": worktree_path,
+                        "branch": f"self-modify/{spec_id}",
+                        "ready_for_review": True,
+                    },
+                )
+                log.info(
+                    "metaloop_subtask_complete_pr_pending",
+                    task_id=task_id,
+                    spec_id=spec_id,
+                )
+            else:
+                log.info(
+                    "metaloop_subtask_complete",
+                    task_id=task_id,
+                    spec_id=spec_id,
+                )
             return self._backlog.advance_phase(spec_id, IterationPhase.REVIEWING)
 
         # Failure path — clean up worktree without merging
@@ -226,19 +287,33 @@ class MetaLoopOrchestrator:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Inject prior lessons as hints
-        if hasattr(self._store, "list_lessons"):
-            try:
-                for lesson in self._store.list_lessons():
-                    summary = (
-                        lesson.get("summary", "")
-                        if isinstance(lesson, dict)
-                        else getattr(lesson, "summary", "")
-                    )
-                    if summary:
-                        hints.append(f"Prior lesson: {summary}")
-            except Exception:
-                log.debug("metaloop_lessons_inject_failed", spec_id=state.spec_id)
+        # Query and inject relevance-filtered prior lessons as hints
+        prior_lessons = self._query_relevant_lessons(goal)
+        for lesson in prior_lessons:
+            summary = (
+                lesson.get("summary", "")
+                if isinstance(lesson, dict)
+                else getattr(lesson, "summary", "")
+            )
+            category = (
+                lesson.get("category", "")
+                if isinstance(lesson, dict)
+                else getattr(lesson, "category", "")
+            )
+            if summary:
+                prefix = {
+                    "mistake": "AVOID (prior mistake)",
+                    "rollback_pattern": "CAUTION (prior rollback)",
+                    "success_pattern": "PREFER (proven pattern)",
+                    "optimization": "TIP (optimization)",
+                }.get(category, "Prior lesson")
+                hints.append(f"{prefix}: {summary}")
+        log.info(
+            "metaloop_lessons_applied",
+            spec_id=state.spec_id,
+            lessons_found=len(prior_lessons),
+            phase="researching",
+        )
 
         # Run research pipeline
         from hermit.plugins.builtin.hooks.research.pipeline import ResearchPipeline
@@ -279,6 +354,26 @@ class MetaLoopOrchestrator:
                 "duration_seconds": report.duration_seconds,
                 "count": len(findings_dicts),
                 "sources": sorted({f.source for f in report.findings}),
+                "prior_lessons": [
+                    {
+                        "lesson_id": (
+                            ls.get("lesson_id", "")
+                            if isinstance(ls, dict)
+                            else getattr(ls, "lesson_id", "")
+                        ),
+                        "category": (
+                            ls.get("category", "")
+                            if isinstance(ls, dict)
+                            else getattr(ls, "category", "")
+                        ),
+                        "summary": (
+                            ls.get("summary", "")
+                            if isinstance(ls, dict)
+                            else getattr(ls, "summary", "")
+                        ),
+                    }
+                    for ls in prior_lessons
+                ],
             },
         )
 
@@ -319,10 +414,34 @@ class MetaLoopOrchestrator:
             duration_seconds=research_data.get("duration_seconds", 0.0),
         )
 
-        # Generate spec
+        # Build lesson-derived constraints from prior lessons
+        lesson_constraints: list[str] = []
+        prior_lessons = research_data.get("prior_lessons", [])
+        for ls in prior_lessons:
+            cat = ls.get("category", "")
+            summary = ls.get("summary", "")
+            if not summary:
+                continue
+            if cat in ("mistake", "rollback_pattern"):
+                lesson_constraints.append(f"AVOID: {summary}")
+            elif cat == "success_pattern":
+                lesson_constraints.append(f"PREFER: {summary}")
+        if lesson_constraints:
+            log.info(
+                "metaloop_lessons_applied",
+                spec_id=state.spec_id,
+                constraint_count=len(lesson_constraints),
+                phase="generating_spec",
+            )
+
+        # Generate spec with lesson constraints
         from hermit.plugins.builtin.hooks.decompose.spec_generator import SpecGenerator
 
-        spec = SpecGenerator().generate(goal, research_report=report)
+        spec = SpecGenerator().generate(
+            goal,
+            research_report=report,
+            constraints=tuple(lesson_constraints) if lesson_constraints else None,
+        )
 
         # Serialize to metadata
         self._update_metadata(
@@ -343,6 +462,12 @@ class MetaLoopOrchestrator:
         return self._backlog.advance_phase(state.spec_id, IterationPhase.SPEC_APPROVAL)
 
     def _handle_spec_approval(self, state: IterationState) -> IterationState | None:
+        """Evaluate spec approval based on policy_profile and risk_budget.
+
+        - autonomous: auto-approve if risk_budget <= medium
+        - supervised: always create an approval request via the kernel
+        - default: auto-approve low risk, request approval for medium+
+        """
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
             return state
@@ -356,7 +481,139 @@ class MetaLoopOrchestrator:
                 max_retries=self._max_retries,
             )
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.DECOMPOSING)
+        spec_data = metadata.get("generated_spec", {})
+
+        # Determine risk level from the generated spec or metadata
+        risk_budget = metadata.get("risk_budget", {})
+        risk_band = risk_budget.get("band", "")
+        if not risk_band:
+            # Infer from trust_zone in spec
+            trust_zone = spec_data.get("trust_zone", "normal")
+            risk_band = {"strict": "high", "normal": "medium", "relaxed": "low"}.get(
+                trust_zone, "medium"
+            )
+
+        # Determine policy_profile: check metadata, then fall back to source
+        policy_profile = metadata.get("policy_profile", "")
+        if not policy_profile:
+            source = data.get("source", "")
+            if source == "self-iterate":
+                policy_profile = "autonomous"
+            else:
+                policy_profile = "default"
+
+        # Decision logic
+        needs_approval = False
+
+        if policy_profile == "autonomous":
+            # Auto-approve low and medium risk; require approval for high
+            needs_approval = risk_band in ("high", "critical")
+        elif policy_profile == "supervised":
+            # Always require human approval
+            needs_approval = True
+        else:
+            # "default": auto-approve low, require approval for medium+
+            needs_approval = risk_band not in ("low",)
+
+        if not needs_approval:
+            log.info(
+                "metaloop_spec_auto_approved",
+                spec_id=state.spec_id,
+                policy_profile=policy_profile,
+                risk_band=risk_band,
+            )
+            self._update_metadata(
+                state.spec_id,
+                "spec_approval_decision",
+                {
+                    "approved": True,
+                    "method": "auto",
+                    "policy_profile": policy_profile,
+                    "risk_band": risk_band,
+                    "decided_at": time.time(),
+                },
+            )
+            return self._backlog.advance_phase(state.spec_id, IterationPhase.DECOMPOSING)
+
+        # Create an approval request via the kernel approval system
+        approval_created = False
+        if self._runner is not None and hasattr(self._runner, "task_controller"):
+            tc = self._runner.task_controller
+            store = tc.store
+            if hasattr(store, "create_approval"):
+                try:
+                    # Find or create a task_id context for the approval
+                    task_id = metadata.get("dag_task_id", f"metaloop-{state.spec_id}")
+                    store.create_approval(
+                        task_id=task_id,
+                        step_id=f"spec-approval-{state.spec_id}",
+                        step_attempt_id=f"attempt-{state.spec_id}",
+                        approval_type="spec_approval",
+                        requested_action={
+                            "action": "approve_iteration_spec",
+                            "spec_id": state.spec_id,
+                            "title": spec_data.get("title", ""),
+                            "goal": spec_data.get("goal", ""),
+                            "risk_band": risk_band,
+                            "policy_profile": policy_profile,
+                            "file_count": len(spec_data.get("file_plan", [])),
+                            "constraints": spec_data.get("constraints", []),
+                        },
+                        request_packet_ref=None,
+                    )
+                    approval_created = True
+                    log.info(
+                        "metaloop_spec_approval_requested",
+                        spec_id=state.spec_id,
+                        policy_profile=policy_profile,
+                        risk_band=risk_band,
+                    )
+                except Exception:
+                    log.warning(
+                        "metaloop_spec_approval_create_failed",
+                        spec_id=state.spec_id,
+                        exc_info=True,
+                    )
+
+        if not approval_created:
+            # Fallback: if we cannot create a kernel approval, auto-approve
+            # with a warning to avoid blocking the pipeline indefinitely
+            log.warning(
+                "metaloop_spec_approval_fallback_auto",
+                spec_id=state.spec_id,
+                reason="approval system unavailable",
+            )
+            self._update_metadata(
+                state.spec_id,
+                "spec_approval_decision",
+                {
+                    "approved": True,
+                    "method": "fallback_auto",
+                    "policy_profile": policy_profile,
+                    "risk_band": risk_band,
+                    "reason": "approval system unavailable",
+                    "decided_at": time.time(),
+                },
+            )
+            return self._backlog.advance_phase(state.spec_id, IterationPhase.DECOMPOSING)
+
+        # Approval request created — stay at SPEC_APPROVAL.
+        # The approval resolution hook will advance us when approved/denied.
+        self._update_metadata(
+            state.spec_id,
+            "spec_approval_decision",
+            {
+                "approved": False,
+                "method": "pending_kernel_approval",
+                "policy_profile": policy_profile,
+                "risk_band": risk_band,
+                "requested_at": time.time(),
+            },
+        )
+        return self._backlog.advance_phase(
+            state.spec_id,
+            IterationPhase.SPEC_APPROVAL,
+        )
 
     def _handle_decomposing(self, state: IterationState) -> IterationState | None:
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
@@ -366,11 +623,53 @@ class MetaLoopOrchestrator:
         metadata = _parse_metadata(data.get("metadata"))
         spec_data = metadata.get("generated_spec") or {}
 
+        # Collect lesson-referenced files for priority boosting
+        research_data = metadata.get("research") or {}
+        lesson_files: set[str] = set()
+        prior_lessons = research_data.get("prior_lessons", [])
+        for ls in prior_lessons:
+            # Fetch full lesson data to get applicable_files
+            lesson_id = ls.get("lesson_id", "")
+            if lesson_id and hasattr(self._store, "get_lesson"):
+                try:
+                    full = self._store.get_lesson(lesson_id)
+                    if full:
+                        raw_files = full.get("applicable_files")
+                        if isinstance(raw_files, str):
+                            try:
+                                parsed = json.loads(raw_files)
+                                if isinstance(parsed, list):
+                                    lesson_files.update(str(f) for f in parsed)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                        elif isinstance(raw_files, list):
+                            lesson_files.update(str(f) for f in raw_files)
+                except Exception:
+                    pass
+
         # Reconstruct GeneratedSpec from metadata
         from hermit.plugins.builtin.hooks.decompose.models import GeneratedSpec
         from hermit.plugins.builtin.hooks.decompose.task_decomposer import TaskDecomposer
 
         file_plan_raw = spec_data.get("file_plan", [])
+
+        # Boost lesson-referenced files by prepending them to file_plan if not present
+        existing_paths = {e.get("path", "") for e in file_plan_raw}
+        boosted_entries: list[dict] = []
+        for lf in sorted(lesson_files):
+            if lf and lf not in existing_paths:
+                boosted_entries.append(
+                    {"path": lf, "action": "modify", "reason": "Lesson-referenced file"}
+                )
+        if boosted_entries:
+            file_plan_raw = boosted_entries + list(file_plan_raw)
+            log.info(
+                "metaloop_lessons_applied",
+                spec_id=state.spec_id,
+                boosted_files=len(boosted_entries),
+                phase="decomposing",
+            )
+
         spec = GeneratedSpec(
             spec_id=spec_data.get("spec_id", state.spec_id),
             title=spec_data.get("title", ""),
@@ -492,9 +791,20 @@ class MetaLoopOrchestrator:
             )
 
             if not report.passed:
+                blocking = [f for f in report.findings if f.severity == "blocking"]
+                detail_lines = [
+                    f"  - [{f.category}] {f.file_path}:{f.line}: {f.message}" for f in blocking
+                ]
+                detail = "\n".join(detail_lines) if detail_lines else "(no detail)"
+                log.warning(
+                    "metaloop_review_blocked",
+                    spec_id=state.spec_id,
+                    blocking_count=len(blocking),
+                    total_findings=len(report.findings),
+                )
                 return self._backlog.mark_failed(
                     state.spec_id,
-                    error="Review found BLOCKING findings",
+                    error=f"Review blocked: {len(blocking)} BLOCKING finding(s):\n{detail}",
                     max_retries=self._max_retries,
                 )
         except ImportError:
@@ -522,29 +832,72 @@ class MetaLoopOrchestrator:
             runner = BenchmarkRunner(self._store)
             result = _run_async(runner.run(state.spec_id, state.spec_id, worktree_path))
 
+            benchmark_data = {
+                "check_passed": result.check_passed,
+                "test_total": result.test_total,
+                "test_passed": result.test_passed,
+                "coverage": result.coverage,
+                "lint_violations": result.lint_violations,
+                "duration_seconds": result.duration_seconds,
+                "regression_detected": result.regression_detected,
+                "compared_to_baseline": dict(result.compared_to_baseline),
+            }
+            self._update_metadata(state.spec_id, "benchmark", benchmark_data)
+
+            # Gate: block iteration on benchmark failure when blocking is enabled
+            if self._benchmark_blocking:
+                if not result.check_passed:
+                    error_msg = "Benchmark failed: make check returned non-zero"
+                    log.warning(
+                        "metaloop_benchmark_check_failed",
+                        spec_id=state.spec_id,
+                        test_passed=result.test_passed,
+                        test_total=result.test_total,
+                    )
+                    return self._backlog.mark_failed(
+                        state.spec_id,
+                        error=error_msg,
+                        max_retries=self._max_retries,
+                    )
+
+                if result.regression_detected:
+                    compared = result.compared_to_baseline
+                    regression_details = (
+                        "; ".join(f"{k}: {v}" for k, v in sorted(compared.items()))
+                        if compared
+                        else "details unavailable"
+                    )
+                    error_msg = f"Benchmark regression detected: {regression_details}"
+                    log.warning(
+                        "metaloop_benchmark_regression",
+                        spec_id=state.spec_id,
+                        regressions=regression_details,
+                    )
+                    return self._backlog.mark_failed(
+                        state.spec_id,
+                        error=error_msg,
+                        max_retries=self._max_retries,
+                    )
+        except Exception:
+            log.warning(
+                "metaloop_benchmark_error",
+                spec_id=state.spec_id,
+                exc_info=True,
+            )
+            # Infrastructure failure — don't block, but record that benchmark
+            # was skipped so downstream phases have visibility.
             self._update_metadata(
                 state.spec_id,
                 "benchmark",
-                {
-                    "check_passed": result.check_passed,
-                    "test_total": result.test_total,
-                    "test_passed": result.test_passed,
-                    "coverage": result.coverage,
-                    "lint_violations": result.lint_violations,
-                    "duration_seconds": result.duration_seconds,
-                    "regression_detected": result.regression_detected,
-                    "compared_to_baseline": dict(result.compared_to_baseline),
-                },
+                {"benchmark_skipped": True, "reason": "BenchmarkRunner raised an exception"},
             )
-        except Exception:
-            log.exception("metaloop_benchmark_error", spec_id=state.spec_id)
 
         return self._backlog.advance_phase(state.spec_id, IterationPhase.LEARNING)
 
     def _handle_learning(self, state: IterationState) -> IterationState | None:
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.COMPLETED)
+            return self._backlog.advance_phase(state.spec_id, IterationPhase.RECONCILING)
         data = entry if isinstance(entry, dict) else entry.__dict__
         metadata = _parse_metadata(data.get("metadata"))
         benchmark_data = metadata.get("benchmark") or {}
@@ -682,7 +1035,115 @@ class MetaLoopOrchestrator:
             except Exception:
                 log.exception("metaloop_learning_error", spec_id=state.spec_id)
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.COMPLETED)
+        return self._backlog.advance_phase(state.spec_id, IterationPhase.RECONCILING)
+
+    def _handle_reconciling(self, state: IterationState) -> IterationState | None:
+        """Evaluate the promotion gate and transition to ACCEPTED or REJECTED.
+
+        Promotion criteria:
+        1. Benchmark must pass (no regression detected)
+        2. Review must pass (no blocking findings)
+        3. No prior error recorded on the spec entry
+        4. Lessons should not contain 'mistake' category entries indicating
+           broken implementation
+        """
+        entry = self._store.get_spec_entry(spec_id=state.spec_id)
+        if entry is None:
+            return self._backlog.advance_phase(state.spec_id, IterationPhase.REJECTED)
+        data = entry if isinstance(entry, dict) else entry.__dict__
+        metadata = _parse_metadata(data.get("metadata"))
+
+        rejection_reasons: list[str] = []
+
+        # 1. Benchmark gate
+        benchmark_data = metadata.get("benchmark") or {}
+        if not benchmark_data:
+            rejection_reasons.append("No benchmark results available")
+        else:
+            if benchmark_data.get("regression_detected"):
+                rejection_reasons.append("Benchmark regression detected")
+            if not benchmark_data.get("check_passed", False):
+                rejection_reasons.append("Benchmark check did not pass")
+
+        # 2. Review gate
+        review_data = metadata.get("review") or {}
+        if review_data and not review_data.get("passed", True):
+            rejection_reasons.append(
+                f"Review found blocking findings ({review_data.get('finding_count', 0)} issues)"
+            )
+
+        # 3. DAG step completion gate — check for prior failures
+        error = data.get("error")
+        if error:
+            rejection_reasons.append(f"Prior error recorded: {error}")
+
+        # 4. Lessons gate — 'mistake' lessons indicate broken implementation
+        try:
+            if hasattr(self._store, "list_lessons"):
+                lessons = self._store.list_lessons(
+                    iteration_ids=[state.spec_id],
+                    categories=["mistake"],
+                )
+                if lessons:
+                    summaries = [
+                        ls.get("summary", "") if isinstance(ls, dict) else str(ls) for ls in lessons
+                    ]
+                    rejection_reasons.append(f"Mistake lessons found: {'; '.join(summaries[:3])}")
+        except Exception:
+            log.debug(
+                "metaloop_reconciling_lessons_check_failed",
+                spec_id=state.spec_id,
+            )
+
+        # 5. Try the IterationKernel.check_promotion_gate() if available
+        kernel_gate_passed = False
+        try:
+            from hermit.kernel.execution.self_modify.iteration_kernel import (
+                IterationKernel,
+            )
+
+            kernel = IterationKernel(self._store)
+            kernel_gate_passed = kernel.check_promotion_gate(state.spec_id)
+        except (KeyError, ImportError):
+            # KeyError = iteration not found in kernel's model (expected when
+            # the iteration was created via metaloop, not IterationKernel.admit).
+            # ImportError = iteration_kernel module unavailable.
+            # Fall through to local criteria.
+            pass
+        except Exception:
+            log.debug(
+                "metaloop_reconciling_kernel_gate_error",
+                spec_id=state.spec_id,
+            )
+
+        # Build the promotion decision
+        promoted = len(rejection_reasons) == 0 or kernel_gate_passed
+        decision = {
+            "promoted": promoted,
+            "kernel_gate_passed": kernel_gate_passed,
+            "rejection_reasons": rejection_reasons,
+            "decided_at": time.time(),
+        }
+        self._update_metadata(state.spec_id, "promotion_decision", decision)
+
+        if promoted:
+            log.info(
+                "metaloop_promotion_accepted",
+                spec_id=state.spec_id,
+                kernel_gate=kernel_gate_passed,
+            )
+            return self._backlog.advance_phase(state.spec_id, IterationPhase.ACCEPTED)
+
+        log.warning(
+            "metaloop_promotion_rejected",
+            spec_id=state.spec_id,
+            reasons=rejection_reasons,
+        )
+        return self._backlog.advance_phase(
+            state.spec_id,
+            IterationPhase.REJECTED,
+            error=f"Promotion gate failed: {'; '.join(rejection_reasons)}",
+        )
 
 
 class SpecBacklogPoller:
@@ -744,10 +1205,72 @@ class SpecBacklogPoller:
                 log.exception("metaloop_poller_tick_error")
             self._stop_event.wait(timeout=self._current_interval())
 
+    def _cleanup_worktree(self, spec_id: str) -> None:
+        """Best-effort cleanup of the worktree for a spec on timeout/failure."""
+        workspace_root = self._orchestrator._workspace_root
+        if not workspace_root:
+            return
+        try:
+            from hermit.kernel.execution.self_modify.workspace import SelfModifyWorkspace
+
+            ws = SelfModifyWorkspace(workspace_root)
+            ws.remove(spec_id)
+            log.info("metaloop_worktree_timeout_cleanup", spec_id=spec_id)
+        except Exception:
+            log.warning(
+                "metaloop_worktree_timeout_cleanup_failed",
+                spec_id=spec_id,
+                exc_info=True,
+            )
+
+    def _check_dag_task_terminal(self, spec_id: str, dag_task_id: str) -> bool | None:
+        """Check if a DAG task reached a terminal state and handle it.
+
+        Returns True if terminal and handled, False if still running,
+        None if the task could not be checked (no runner / lookup error).
+        """
+        if not self._orchestrator._runner:
+            return None
+        try:
+            tc = self._orchestrator._runner.task_controller
+            task = tc.store.get_task(dag_task_id)
+            if task is None:
+                return None
+            if task.status == "completed":
+                log.info(
+                    "metaloop_implementing_task_completed",
+                    spec_id=spec_id,
+                    dag_task_id=dag_task_id,
+                )
+                self._orchestrator.on_subtask_complete(dag_task_id, success=True)
+                return True
+            if task.status in ("failed", "cancelled"):
+                log.warning(
+                    "metaloop_implementing_task_failed",
+                    spec_id=spec_id,
+                    dag_task_id=dag_task_id,
+                    task_status=task.status,
+                )
+                self._orchestrator.on_subtask_complete(
+                    dag_task_id,
+                    success=False,
+                    error=f"DAG task {task.status}",
+                )
+                return True
+            return False  # still running
+        except Exception:
+            log.exception("metaloop_implementing_check_error", spec_id=spec_id)
+            return None
+
     def _check_implementing_timeout(self, entry: dict) -> bool:
-        """Check if an IMPLEMENTING spec has timed out (Fix 1).
+        """Check if an IMPLEMENTING spec has timed out.
 
         Returns True if work was done (spec advanced or failed).
+
+        Before timeout: checks whether the DAG task finished early.
+        After timeout: if the DAG task is terminal, advances normally;
+        if still running, cancels it and fails the spec with worktree
+        cleanup.  Never extends the timeout indefinitely.
         """
         spec_id = entry["spec_id"]
         metadata = _parse_metadata(entry.get("metadata"))
@@ -755,67 +1278,51 @@ class SpecBacklogPoller:
         dag_task_id = entry.get("dag_task_id")
 
         if started_at is None:
-            # No timestamp — write one now for future checks
             self._orchestrator._update_metadata(spec_id, "implementing_started_at", time.time())
             return False
 
         elapsed = time.time() - float(started_at)
+
+        # Before timeout: check if DAG task finished early
         if elapsed < PHASE_TIMEOUT_IMPLEMENT:
-            return False  # not timed out yet
+            if dag_task_id:
+                result = self._check_dag_task_terminal(spec_id, dag_task_id)
+                if result is True:
+                    return True
+            return False
 
-        # Check if the DAG task has completed/failed
-        if dag_task_id and self._orchestrator._runner is not None:
-            try:
-                tc = self._orchestrator._runner.task_controller
-                task = tc.store.get_task(dag_task_id)
-                if task is not None:
-                    if task.status == "completed":
-                        log.info(
-                            "metaloop_implementing_task_completed",
-                            spec_id=spec_id,
-                            dag_task_id=dag_task_id,
-                        )
-                        self._orchestrator.on_subtask_complete(dag_task_id, success=True)
-                        return True
-                    elif task.status in ("failed", "cancelled"):
-                        log.warning(
-                            "metaloop_implementing_task_failed",
-                            spec_id=spec_id,
-                            dag_task_id=dag_task_id,
-                            task_status=task.status,
-                        )
-                        self._orchestrator.on_subtask_complete(
-                            dag_task_id,
-                            success=False,
-                            error=f"DAG task {task.status}",
-                        )
-                        return True
-                    else:
-                        # Task still running — extend timeout
-                        self._orchestrator._update_metadata(
-                            spec_id,
-                            "implementing_started_at",
-                            time.time(),
-                        )
-                        log.debug(
-                            "metaloop_implementing_extended",
-                            spec_id=spec_id,
-                            dag_task_id=dag_task_id,
-                            task_status=task.status,
-                        )
-                        return False
-            except Exception:
-                log.exception(
-                    "metaloop_implementing_check_error",
+        # Timeout exceeded — check DAG task one last time
+        if dag_task_id:
+            result = self._check_dag_task_terminal(spec_id, dag_task_id)
+            if result is True:
+                return True  # terminal — handled normally
+            if result is False:
+                # Task still running past hard timeout — cancel it
+                log.warning(
+                    "metaloop_implementing_timeout_cancel",
                     spec_id=spec_id,
+                    dag_task_id=dag_task_id,
+                    elapsed_seconds=int(elapsed),
                 )
+                try:
+                    tc = self._orchestrator._runner.task_controller
+                    tc.cancel_task(dag_task_id, reason="implementation timeout exceeded")
+                except Exception:
+                    log.warning(
+                        "metaloop_implementing_cancel_failed",
+                        spec_id=spec_id,
+                        dag_task_id=dag_task_id,
+                        exc_info=True,
+                    )
 
-        # No task controller or task not found — mark failed
+        # Hard timeout — clean up worktree and fail
         log.warning(
             "metaloop_implementing_timeout",
             spec_id=spec_id,
-            elapsed_seconds=elapsed,
+            elapsed_seconds=int(elapsed),
+            dag_task_id=dag_task_id,
         )
+        self._cleanup_worktree(spec_id)
         self._backlog.mark_failed(
             spec_id,
             error=f"IMPLEMENTING timed out after {int(elapsed)}s (dag_task_id={dag_task_id})",
@@ -869,6 +1376,7 @@ class SpecBacklogPoller:
                 "reviewing",
                 "benchmarking",
                 "learning",
+                "reconciling",
             ):
                 active = self._backlog._store.list_spec_backlog(status=status, limit=1)
                 if active:

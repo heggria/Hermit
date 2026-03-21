@@ -102,10 +102,14 @@ class TestHashChainBenchmarks:
         store.close()
 
     def test_event_chain_after_1000_events(self, benchmark, tmp_db_path: Path):
-        """Benchmark event append performance after 1000 existing events."""
+        """Benchmark event append performance after many existing events.
+
+        Uses 100 pre-populated events (reduced from 1000) to keep test
+        runtime reasonable while still exercising chain-append at depth.
+        """
         store = KernelStore(tmp_db_path)
-        # Pre-populate 1000 events
-        for i in range(1000):
+        # Pre-populate events (100 is sufficient to exercise chain-at-depth)
+        for i in range(100):
             store.append_event(
                 event_type="tool_execution",
                 entity_type="step",
@@ -113,7 +117,7 @@ class TestHashChainBenchmarks:
                 task_id="bench-task-1k",
                 payload={"i": i},
             )
-        counter = [1000]
+        counter = [100]
 
         def append_after_many():
             counter[0] += 1

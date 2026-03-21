@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import shutil
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -180,6 +182,15 @@ def ensure_workspace(settings: Settings) -> None:
         settings.kernel_artifacts_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True)
+    # Ensure workspace-local tmp directory exists so agents never need /tmp/
+    workspace_tmp = Path.cwd().resolve() / ".hermit" / "tmp"
+    try:
+        workspace_tmp.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        logging.getLogger(__name__).warning(
+            "Cannot create workspace tmp directory %s — permission denied, skipping",
+            workspace_tmp,
+        )
     try:
         ensure_default_context_file(settings.context_file, locale=getattr(settings, "locale", None))
     except TypeError:

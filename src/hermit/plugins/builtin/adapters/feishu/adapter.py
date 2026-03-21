@@ -294,7 +294,7 @@ class FeishuAdapter:
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._ws_exited = threading.Event()
         self._ws_error: BaseException | None = None
-        self._approval_copy = ApprovalCopyService()
+        self._approval_copy = ApprovalCopyService(locale=getattr(settings, "locale", None))
 
     def _locale(self) -> str:
         return resolve_locale(getattr(self._settings, "locale", None))

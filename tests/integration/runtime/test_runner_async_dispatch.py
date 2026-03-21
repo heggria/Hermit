@@ -218,6 +218,7 @@ def test_runner_uses_controller_auto_parent_sentinel() -> None:
 
 def test_runner_start_stop_background_services_and_wake(monkeypatch) -> None:
     runner, _agent, _session_manager, _pm, _controller, _store = _make_runner()
+    monkeypatch.setenv("HERMIT_DISPATCH_MODE", "flat")
 
     observation_calls: list[str] = []
     dispatch_calls: list[tuple[str, int | None]] = []

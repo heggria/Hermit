@@ -77,6 +77,10 @@ class TaskHealthMonitor:
         for t in active_records:
             if t.status not in active_statuses:
                 continue
+            # NOTE: Known N+1 query — count_steps_by_status is called once per
+            # active task. This is acceptable for the typical active-task count
+            # (<50) but should be replaced with a single batch query if the
+            # number of concurrent active tasks grows significantly.
             step_counts = self._store.count_steps_by_status(task_id=t.task_id)
             total_steps = sum(step_counts.values())
             failed_steps = step_counts.get("failed", 0) + step_counts.get("error", 0)

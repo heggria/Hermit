@@ -15,6 +15,8 @@ def evaluate_shell_rules(request: ActionRequest) -> list[RuleOutcome] | None:
 
     outcomes: list[RuleOutcome] = []
     flags = dict(request.derived.get("command_flags", {}))
+    outside_workspace = bool(request.derived.get("outside_workspace"))
+    sensitive_paths = list(request.derived.get("sensitive_paths", []))
 
     # Dangerous patterns are always denied
     if flags.get("sudo") or flags.get("curl_pipe_sh"):
@@ -24,6 +26,61 @@ def evaluate_shell_rules(request: ActionRequest) -> list[RuleOutcome] | None:
                 reasons=[
                     PolicyReason("dangerous_shell", "Dangerous shell pattern is denied.", "error")
                 ],
+                risk_level="critical",
+            )
+        )
+        return outcomes
+
+    # Shell writes to sensitive paths outside workspace: hard deny
+    if sensitive_paths and outside_workspace and flags.get("writes_disk"):
+        outcomes.append(
+            RuleOutcome(
+                verdict="deny",
+                reasons=[
+                    PolicyReason(
+                        "protected_path_shell",
+                        "Shell command targets protected system or credential paths "
+                        "outside the workspace.",
+                        "error",
+                    )
+                ],
+                obligations=PolicyObligations(require_receipt=False),
+                normalized_constraints={"denied_paths": sensitive_paths},
+                risk_level="critical",
+            )
+        )
+        return outcomes
+
+    # Shell writes outside workspace: require approval
+    if outside_workspace and (flags.get("writes_disk") or flags.get("deletes_files")):
+        target_paths = list(request.derived.get("target_paths", []))
+        outside_roots = list(request.derived.get("outside_workspace_roots", []))
+        outcomes.append(
+            RuleOutcome(
+                verdict="approval_required",
+                reasons=[
+                    PolicyReason(
+                        "outside_workspace_shell",
+                        "Shell command writes outside the task workspace and "
+                        "requires explicit approval.",
+                        "warning",
+                    )
+                ],
+                obligations=PolicyObligations(
+                    require_receipt=True,
+                    require_preview=True,
+                    require_approval=True,
+                    approval_risk_level="critical",
+                ),
+                normalized_constraints={"allowed_paths": target_paths},
+                approval_packet={
+                    "title": "Approve out-of-workspace shell write",
+                    "summary": (
+                        f"Shell command targets paths outside the workspace: "
+                        f"{', '.join(outside_roots) or 'unknown'}."
+                    ),
+                    "risk_level": "critical",
+                },
                 risk_level="critical",
             )
         )

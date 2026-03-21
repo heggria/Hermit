@@ -242,7 +242,9 @@ class TestCommandAndVcsReconciliation:
             observables={},
             witness={},
         )
-        assert outcome.result_code == "still_unknown"
+        # With no observable targets, the reconciler now returns
+        # reconciled_inferred instead of still_unknown.
+        assert outcome.result_code == "reconciled_inferred"
 
     def test_vcs_mutation_not_applied_when_git_unchanged(self, tmp_path: Path) -> None:
         service = ReconcileService()

@@ -7,7 +7,7 @@ name = "hermit-agent"
 version = "0.2.5"
 description = "Local-first governed agent kernel for durable and inspectable AI work."
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -39,6 +39,8 @@ classifiers = [
   "Operating System :: MacOS",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: Implementation :: CPython",
@@ -161,7 +163,7 @@ managed = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration", "tests/scenario", "tests/e2e"]
-asyncio_mode = "auto"
+asyncio_mode = "strict"
 addopts = [
   "--strict-config",
   "--strict-markers",
@@ -171,6 +173,29 @@ addopts = [
   "-n", "auto",
   "--dist", "worksteal",
   "-ra",
+  "-p", "no:benchmark",
+]
+norecursedirs = [
+  ".hermit",
+  ".git",
+  ".hypothesis",
+  ".ruff_cache",
+  ".mypy_cache",
+  "__pycache__",
+  "node_modules",
+  "docs",
+  "scripts",
+  "site",
+  "specs",
+  "artifacts",
+  "Formula",
+  "examples",
+  "fixtures",
+  "benchmark",
+  ".claude",
+  ".agents",
+  ".venv",
+  ".tox",
 ]
 markers = [
   "integration: exercises multi-component flows or external-process interactions",
@@ -179,6 +204,9 @@ markers = [
   "slow: takes noticeably longer than the default suite",
   "trustloop_bench: TrustLoop-Bench v0.2 exit criterion #12 tests",
   "benchmark: performance benchmark tests requiring pytest-benchmark",
+]
+filterwarnings = [
+  "ignore::pytest.PytestCollectionWarning",
 ]
 
 [tool.coverage.run]
@@ -199,11 +227,11 @@ exclude_also = [
 
 [tool.pyright]
 include = ["src/hermit"]
-pythonVersion = "3.13"
+pythonVersion = "3.11"
 typeCheckingMode = "standard"
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py311"
 line-length = 100
 extend-exclude = [
   "scripts/generate_codex_token_dashboard.py",

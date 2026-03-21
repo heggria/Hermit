@@ -447,6 +447,17 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             rollback_expectation=row["rollback_expectation"],
             selected_template_ref=row["selected_template_ref"],
             superseded_by_contract_id=row["superseded_by_contract_id"],
+            task_family=(
+                row["task_family"]
+                if "task_family" in row.keys()  # noqa: SIM118
+                else None
+            ),
+            verification_requirements=(
+                dict(json_loads(row["verification_requirements_json"] or "{}"))
+                if "verification_requirements_json" in row.keys()  # noqa: SIM118
+                and row["verification_requirements_json"]
+                else None
+            ),
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import os
-import weakref
+from collections import deque
 from pathlib import Path
 
 import pytest
@@ -12,8 +12,13 @@ import pytest
 # ---------------------------------------------------------------------------
 # Lazy KernelStore tracking — deferred to avoid importing the entire kernel
 # tree during collection.
+#
+# Uses a deque of direct refs populated per-test via _current_test_stores.
+# After each test the fixture drains the deque and closes every store.
+# Using direct refs + deque.popleft() avoids the overhead of weakref
+# dereferencing and list iteration over dead references.
 # ---------------------------------------------------------------------------
-_all_stores: list[weakref.ref] = []
+_current_test_stores: deque = deque()
 _patched = False
 
 
@@ -27,7 +32,7 @@ def _ensure_patched() -> None:
 
     def _tracking_init(self: KernelStore, *args: object, **kwargs: object) -> None:
         _original_init(self, *args, **kwargs)  # type: ignore[arg-type]
-        _all_stores.append(weakref.ref(self))
+        _current_test_stores.append(self)
 
     KernelStore.__init__ = _tracking_init  # type: ignore[assignment]
     _patched = True
@@ -35,17 +40,19 @@ def _ensure_patched() -> None:
 
 @pytest.fixture(autouse=True)
 def _auto_close_kernel_stores() -> None:
-    """Close all KernelStore connections opened during a test."""
-    _ensure_patched()
+    """Close all KernelStore connections opened during a test.
+
+    The monkey-patch is applied once via ``pytest_sessionstart``; this fixture
+    only performs the cleanup sweep after each test.  Uses a deque for O(1)
+    popleft and only processes stores created during the current test.
+    """
     yield
-    for ref in _all_stores:
-        store = ref()
-        if store is not None:
-            try:
-                store.close()
-            except Exception:
-                pass
-    _all_stores.clear()
+    while _current_test_stores:
+        store = _current_test_stores.popleft()
+        try:
+            store.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +71,6 @@ def _default_locale() -> None:
 @pytest.fixture
 def kernel_store():
     """Provide a fresh in-memory KernelStore that is auto-closed after the test."""
-    _ensure_patched()
     from hermit.kernel.ledger.journal.store import KernelStore
 
     return KernelStore(Path(":memory:"))
@@ -81,6 +87,9 @@ def pytest_configure(config: pytest.Config) -> None:
     global _lock_file
     # xdist workers have workerinput; skip lock for them
     if hasattr(config, "workerinput"):
+        return
+    # Allow skipping lock for benchmarking / CI environments
+    if os.environ.get("_HERMIT_SKIP_TEST_LOCK"):
         return
     lock_path = Path.home() / ".hermit" / ".test-suite.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,12 +111,31 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Auto-marking hook — apply markers based on test directory.
+# Session start — apply the KernelStore tracking monkey-patch once.
 # ---------------------------------------------------------------------------
+def pytest_sessionstart(session: pytest.Session) -> None:
+    _ensure_patched()
+
+
+# ---------------------------------------------------------------------------
+# Auto-marking hook — apply markers based on test directory.
+# Pre-compute marker objects to avoid creating them per-item.
+# ---------------------------------------------------------------------------
+_integration_marker = pytest.mark.integration
+_e2e_marker = pytest.mark.e2e
+_SEP = os.sep
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    integration_marker = _integration_marker
+    e2e_marker = _e2e_marker
+    sep = _SEP
+    int_segment = f"{sep}integration{sep}"
+    e2e_segment = f"{sep}e2e{sep}"
+
     for item in items:
-        path = str(item.path)
-        if "/integration/" in path:
-            item.add_marker(pytest.mark.integration)
-        elif "/e2e/" in path:
-            item.add_marker(pytest.mark.e2e)
+        path_str = os.fspath(item.path)
+        if int_segment in path_str:
+            item.add_marker(integration_marker)
+        elif e2e_segment in path_str:
+            item.add_marker(e2e_marker)

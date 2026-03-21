@@ -27,3 +27,9 @@ description = "Max retry attempts per iteration phase"
 setting = "metaloop_signal_poll_interval"
 default = 30
 description = "Signal-to-spec consumer poll interval in seconds"
+
+[variables.metaloop_benchmark_blocking]
+setting = "metaloop_benchmark_blocking"
+env = ["HERMIT_METALOOP_BENCHMARK_BLOCKING"]
+default = true
+description = "Block iteration pipeline when benchmark fails or detects regression"

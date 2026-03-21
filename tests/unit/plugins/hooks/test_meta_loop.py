@@ -123,7 +123,11 @@ class FakeStore:
         return None
 
     def count_active_specs(self) -> int:
-        return sum(1 for s in self._specs.values() if s["status"] not in ("completed", "failed"))
+        return sum(
+            1
+            for s in self._specs.values()
+            if s["status"] not in ("completed", "failed", "accepted", "rejected")
+        )
 
     def find_spec_by_goal_hash(self, goal_hash: str) -> dict[str, Any] | None:
         import json as _json
@@ -138,7 +142,7 @@ class FakeStore:
             if (
                 isinstance(meta, dict)
                 and meta.get("goal_hash") == goal_hash
-                and spec["status"] not in ("completed", "failed")
+                and spec["status"] not in ("completed", "failed", "accepted", "rejected")
             ):
                 return spec
         return None
@@ -151,6 +155,12 @@ class FakeStore:
 
     def list_lessons(self, **kwargs: Any) -> list[dict[str, Any]]:
         return list(self._lessons)
+
+    def get_lesson(self, lesson_id: str) -> dict[str, Any] | None:
+        for lesson in self._lessons:
+            if lesson.get("lesson_id") == lesson_id:
+                return lesson
+        return None
 
     def actionable_signals(self, limit: int = 50) -> list[dict[str, Any]]:
         return [
@@ -190,7 +200,7 @@ class TestIterationState:
 
     def test_next_phase_from_learning(self) -> None:
         state = IterationState(spec_id="s1", phase=IterationPhase.LEARNING)
-        assert state.next_phase() == IterationPhase.COMPLETED
+        assert state.next_phase() == IterationPhase.RECONCILING
 
     def test_next_phase_terminal(self) -> None:
         state = IterationState(spec_id="s1", phase=IterationPhase.COMPLETED)
@@ -208,7 +218,9 @@ class TestIterationState:
             state.phase = IterationPhase.RESEARCHING  # type: ignore[misc]
 
     def test_phase_order_covers_all_non_terminal(self) -> None:
-        non_terminal = {p for p in IterationPhase if p not in {IterationPhase.FAILED}}
+        non_terminal = {
+            p for p in IterationPhase if p not in {IterationPhase.FAILED, IterationPhase.REJECTED}
+        }
         assert set(PHASE_ORDER) == non_terminal
 
 
@@ -263,15 +275,20 @@ class TestMetaLoopOrchestrator:
                 return_value=mock_bench,
             ),
         ):
-            # Walk through all phases
-            for expected_phase in PHASE_ORDER[1:]:  # skip PENDING (initial)
+            # Walk through phases until we hit a terminal state
+            phases_seen = [IterationPhase.PENDING]
+            for _ in range(20):  # safety limit
                 result = orchestrator.advance("s1")
                 assert result is not None
-                assert result.phase == expected_phase
-            # After COMPLETED, should not advance further
+                phases_seen.append(result.phase)
+                if result.is_terminal:
+                    break
+            # Should reach ACCEPTED (promotion gate passes with good benchmark)
+            assert result.phase == IterationPhase.ACCEPTED
+            # After ACCEPTED (terminal), should not advance further
             result = orchestrator.advance("s1")
             assert result is not None
-            assert result.phase == IterationPhase.COMPLETED
+            assert result.phase == IterationPhase.ACCEPTED
 
     def test_advance_nonexistent_spec(self, orchestrator: MetaLoopOrchestrator) -> None:
         result = orchestrator.advance("nonexistent")
@@ -335,7 +352,7 @@ class TestSpecBacklogPoller:
         poller = SpecBacklogPoller(orchestrator, backlog, poll_interval=0.05)
         poller.start()
         # Wait for at least one tick
-        time.sleep(0.2)
+        time.sleep(0.08)
         poller.stop()
         # The spec should have been claimed and advanced past PENDING
         entry = fake_store.get_spec_entry(spec_id="s1")
@@ -346,7 +363,7 @@ class TestSpecBacklogPoller:
         """Poller should not error when backlog is empty."""
         poller = SpecBacklogPoller(orchestrator, backlog, poll_interval=0.05)
         poller.start()
-        time.sleep(0.1)
+        time.sleep(0.08)
         poller.stop()
         assert not poller.is_running
 
@@ -681,9 +698,8 @@ class TestSubtaskMergeAndCleanup:
         self,
         fake_store: FakeStore,
     ) -> None:
-        """When metadata has worktree info, merge is attempted."""
+        """When metadata has worktree info, PR info is stored (no direct merge)."""
         import json
-        from unittest.mock import MagicMock, patch
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, workspace_root="/tmp/test-repo")
         fake_store.create_spec_entry(spec_id="s1", goal="test")
@@ -701,20 +717,21 @@ class TestSubtaskMergeAndCleanup:
             ),
         )
 
-        # Mock SelfModifyWorkspace to verify merge is called
-        with patch(
-            "hermit.kernel.execution.self_modify.workspace.SelfModifyWorkspace"
-        ) as MockWorkspace:
-            mock_ws = MagicMock()
-            mock_ws.merge_to_main.return_value = "abc123def"
-            MockWorkspace.return_value = mock_ws
-
-            result = orch.on_subtask_complete("dag-merge", success=True)
+        result = orch.on_subtask_complete("dag-merge", success=True)
 
         assert result is not None
         assert result.phase == IterationPhase.REVIEWING
-        mock_ws.merge_to_main.assert_called_once_with("s1")
-        mock_ws.remove.assert_called_once_with("s1")
+
+        # Verify PR pending metadata was stored instead of merging
+        entry = fake_store.get_spec_entry("s1")
+        metadata = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        assert "pr_pending" in metadata
+        assert metadata["pr_pending"]["ready_for_review"] is True
+        assert metadata["pr_pending"]["branch"] == "self-modify/s1"
 
     def test_subtask_failure_cleans_worktree(
         self,
@@ -764,15 +781,28 @@ class TestLessonsFeedbackLoop:
         self,
         fake_store: FakeStore,
     ) -> None:
-        """Prior lessons are injected as hints during research."""
+        """Prior lessons are injected as hints during research (relevance-filtered)."""
         from unittest.mock import patch
 
         fake_store._lessons = [
-            {"category": "mistake", "summary": "Always run ruff before commit"},
-            {"category": "optimization", "summary": "Use parallel strategies"},
+            {
+                "lesson_id": "L1",
+                "category": "mistake",
+                "summary": "Always run quality checks before commit",
+            },
+            {
+                "lesson_id": "L2",
+                "category": "optimization",
+                "summary": "Use parallel strategies for speed",
+            },
+            {
+                "lesson_id": "L3",
+                "category": "success_pattern",
+                "summary": "Unrelated database migration tip",
+            },
         ]
         orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="improve quality")
+        fake_store.create_spec_entry(spec_id="s1", goal="improve quality checks")
         # Advance from PENDING to RESEARCHING
         orch.advance("s1")
 
@@ -794,13 +824,15 @@ class TestLessonsFeedbackLoop:
         assert result is not None
         assert result.phase == IterationPhase.GENERATING_SPEC
 
-        # Verify lessons were injected as hints
+        # Verify relevant lessons were injected as hints with category prefixes
         assert len(captured_hints) == 1
         injected = captured_hints[0]
-        assert any("Always run ruff before commit" in h for h in injected)
-        assert any("Use parallel strategies" in h for h in injected)
+        # L1 matches "quality" and "checks" — should be included with AVOID prefix
+        assert any("AVOID (prior mistake)" in h and "quality checks" in h for h in injected)
+        # L3 has no keyword overlap — should NOT be included
+        assert not any("database migration" in h for h in injected)
 
-        # Verify research metadata was stored
+        # Verify research metadata includes prior_lessons
         entry = fake_store.get_spec_entry("s1")
         assert entry is not None
         import json
@@ -811,6 +843,115 @@ class TestLessonsFeedbackLoop:
             else entry["metadata"]
         )
         assert "research" in metadata
+        assert "prior_lessons" in metadata["research"]
+        lesson_summaries = [ls["summary"] for ls in metadata["research"]["prior_lessons"]]
+        assert any("quality checks" in s for s in lesson_summaries)
+
+    def test_query_relevant_lessons_filters_by_keyword_overlap(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """_query_relevant_lessons scores by keyword overlap and returns top-N."""
+        fake_store._lessons = [
+            {"lesson_id": "L1", "category": "mistake", "summary": "auth module failed tests"},
+            {
+                "lesson_id": "L2",
+                "category": "success_pattern",
+                "summary": "cache module passed all tests",
+            },
+            {"lesson_id": "L3", "category": "optimization", "summary": "unrelated database work"},
+        ]
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+
+        # Goal about "auth module tests"
+        result = orch._query_relevant_lessons("fix auth module tests", limit=5)
+        summaries = [r["summary"] for r in result]
+        # L1 and L2 overlap on "module" and "tests"; L3 has no overlap
+        assert any("auth" in s for s in summaries)
+        assert any("cache" in s for s in summaries)
+        assert not any("database" in s for s in summaries)
+        # Mistake category gets boosted, so L1 should rank first
+        assert result[0]["category"] == "mistake"
+
+    def test_query_relevant_lessons_empty_store(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Returns empty list when no lessons exist."""
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        result = orch._query_relevant_lessons("anything")
+        assert result == []
+
+    def test_query_relevant_lessons_no_store_support(self) -> None:
+        """Returns empty list when store lacks list_lessons."""
+        bare_store = SimpleNamespace()
+        orch = MetaLoopOrchestrator(bare_store, max_retries=2)
+        result = orch._query_relevant_lessons("anything")
+        assert result == []
+
+    def test_generating_spec_adds_lesson_constraints(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Mistake lessons become AVOID constraints; success_pattern become PREFER."""
+        import json
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="improve quality")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.GENERATING_SPEC.value,
+            metadata=json.dumps(
+                {
+                    "research": {
+                        "goal": "improve quality",
+                        "findings": [],
+                        "knowledge_gaps": [],
+                        "query_count": 0,
+                        "duration_seconds": 0.1,
+                        "count": 0,
+                        "sources": [],
+                        "prior_lessons": [
+                            {
+                                "lesson_id": "L1",
+                                "category": "mistake",
+                                "summary": "check failed due to lint",
+                            },
+                            {
+                                "lesson_id": "L2",
+                                "category": "success_pattern",
+                                "summary": "high coverage works",
+                            },
+                            {
+                                "lesson_id": "L3",
+                                "category": "optimization",
+                                "summary": "fast build",
+                            },
+                        ],
+                    },
+                }
+            ),
+        )
+
+        state = IterationState(spec_id="s1", phase=IterationPhase.GENERATING_SPEC)
+        result = orch._handle_generating_spec(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.SPEC_APPROVAL
+
+        entry = fake_store.get_spec_entry("s1")
+        metadata = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        constraints = metadata["generated_spec"]["constraints"]
+        # Mistake lesson → AVOID constraint
+        assert any("AVOID" in c and "lint" in c for c in constraints)
+        # Success pattern → PREFER constraint
+        assert any("PREFER" in c and "coverage" in c for c in constraints)
+        # Optimization is not turned into a constraint
+        assert not any("fast build" in c for c in constraints)
 
     def test_learning_spawns_followup_for_mistake_lesson(
         self,
@@ -864,7 +1005,7 @@ class TestLessonsFeedbackLoop:
             result = orch._handle_learning(state)
 
         assert result is not None
-        assert result.phase == IterationPhase.COMPLETED
+        assert result.phase == IterationPhase.RECONCILING
 
         # Check that a followup spec was created
         all_specs = list(fake_store._specs.keys())
@@ -1175,6 +1316,177 @@ class TestWiredPhaseHandlers:
         assert metadata["benchmark"]["test_total"] == 50
         assert metadata["benchmark"]["coverage"] == 92.5
 
+    def test_benchmarking_blocks_on_check_failed(self, fake_store: FakeStore) -> None:
+        """When check_passed=False and blocking enabled, benchmark fails the iteration."""
+        import json
+        from unittest.mock import AsyncMock, patch
+
+        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+
+        bench_result = BenchmarkResult(
+            iteration_id="s1",
+            spec_id="s1",
+            check_passed=False,
+            test_total=50,
+            test_passed=40,
+            coverage=80.0,
+            lint_violations=5,
+            duration_seconds=30.0,
+            regression_detected=False,
+            compared_to_baseline={},
+        )
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
+        fake_store.create_spec_entry(spec_id="s1", goal="test bench fail")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.BENCHMARKING.value,
+        )
+
+        with patch(
+            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+            new_callable=AsyncMock,
+            return_value=bench_result,
+        ):
+            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
+            result = orch._handle_benchmarking(state)
+
+        assert result is not None
+        # First attempt: should retry (PENDING with attempt 2)
+        assert result.phase == IterationPhase.PENDING
+        assert result.attempt == 2
+        assert result.error is not None
+        assert "make check returned non-zero" in result.error
+
+        # Verify benchmark data was still stored in metadata
+        entry = fake_store.get_spec_entry("s1")
+        metadata = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        assert "benchmark" in metadata
+        assert metadata["benchmark"]["check_passed"] is False
+
+    def test_benchmarking_blocks_on_regression(self, fake_store: FakeStore) -> None:
+        """When regression_detected=True and blocking enabled, benchmark fails the iteration."""
+        from unittest.mock import AsyncMock, patch
+
+        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+
+        bench_result = BenchmarkResult(
+            iteration_id="s1",
+            spec_id="s1",
+            check_passed=True,
+            test_total=50,
+            test_passed=50,
+            coverage=85.0,
+            lint_violations=0,
+            duration_seconds=30.0,
+            regression_detected=True,
+            compared_to_baseline={"coverage_delta": -5.0, "test_delta": -3},
+        )
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
+        fake_store.create_spec_entry(spec_id="s1", goal="test regression")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.BENCHMARKING.value,
+        )
+
+        with patch(
+            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+            new_callable=AsyncMock,
+            return_value=bench_result,
+        ):
+            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
+            result = orch._handle_benchmarking(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.PENDING
+        assert result.attempt == 2
+        assert result.error is not None
+        assert "regression detected" in result.error.lower()
+        assert "coverage_delta" in result.error
+
+    def test_benchmarking_nonblocking_advances_on_failure(self, fake_store: FakeStore) -> None:
+        """When benchmark_blocking=False, failures advance to LEARNING regardless."""
+        from unittest.mock import AsyncMock, patch
+
+        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+
+        bench_result = BenchmarkResult(
+            iteration_id="s1",
+            spec_id="s1",
+            check_passed=False,
+            test_total=50,
+            test_passed=30,
+            coverage=60.0,
+            lint_violations=10,
+            duration_seconds=30.0,
+            regression_detected=True,
+            compared_to_baseline={"coverage_delta": -20.0},
+        )
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=False)
+        fake_store.create_spec_entry(spec_id="s1", goal="test nonblocking")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.BENCHMARKING.value,
+        )
+
+        with patch(
+            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+            new_callable=AsyncMock,
+            return_value=bench_result,
+        ):
+            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
+            result = orch._handle_benchmarking(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.LEARNING
+
+    def test_benchmarking_exception_advances_with_skip_metadata(
+        self, fake_store: FakeStore
+    ) -> None:
+        """When BenchmarkRunner raises, advance to LEARNING with benchmark_skipped metadata."""
+        import json
+        from unittest.mock import AsyncMock, patch
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
+        fake_store.create_spec_entry(spec_id="s1", goal="test exception")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.BENCHMARKING.value,
+        )
+
+        with patch(
+            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("infra failure"),
+        ):
+            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
+            result = orch._handle_benchmarking(state)
+
+        assert result is not None
+        # Should still advance to LEARNING (don't block on infra failure)
+        assert result.phase == IterationPhase.LEARNING
+
+        # Verify benchmark_skipped metadata
+        entry = fake_store.get_spec_entry("s1")
+        metadata = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        assert "benchmark" in metadata
+        assert metadata["benchmark"]["benchmark_skipped"] is True
+
+    def test_benchmarking_default_blocking_is_true(self, fake_store: FakeStore) -> None:
+        """Default benchmark_blocking should be True."""
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        assert orch._benchmark_blocking is True
+
     def test_spec_approval_fails_without_generated_spec(
         self,
         fake_store: FakeStore,
@@ -1194,3 +1506,255 @@ class TestWiredPhaseHandlers:
         # Should fail (retry) since no generated_spec exists
         assert result.phase == IterationPhase.PENDING
         assert result.attempt == 2
+
+
+# ---------------------------------------------------------------------------
+# Promotion gate (reconciling) tests
+# ---------------------------------------------------------------------------
+
+
+class TestPromotionGate:
+    def test_accepted_is_terminal(self) -> None:
+        state = IterationState(spec_id="s1", phase=IterationPhase.ACCEPTED)
+        assert state.is_terminal
+        assert state.next_phase() is None
+
+    def test_rejected_is_terminal(self) -> None:
+        state = IterationState(spec_id="s1", phase=IterationPhase.REJECTED)
+        assert state.is_terminal
+        assert state.next_phase() is None
+
+    def test_reconciling_next_phase_is_accepted(self) -> None:
+        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
+        assert state.next_phase() == IterationPhase.ACCEPTED
+
+    def test_reconciling_accepts_when_benchmark_passes(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Promotion gate passes when benchmark passes with no regression."""
+        import json
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test promotion")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.RECONCILING.value,
+            metadata=json.dumps(
+                {
+                    "benchmark": {
+                        "check_passed": True,
+                        "regression_detected": False,
+                        "test_total": 50,
+                        "test_passed": 50,
+                    },
+                }
+            ),
+        )
+
+        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
+        result = orch._handle_reconciling(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.ACCEPTED
+
+        # Verify promotion decision metadata was stored
+        entry = fake_store.get_spec_entry("s1")
+        metadata = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        assert "promotion_decision" in metadata
+        assert metadata["promotion_decision"]["promoted"] is True
+
+    def test_reconciling_rejects_when_benchmark_regression(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Promotion gate fails when benchmark detects regression."""
+        import json
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test regression")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.RECONCILING.value,
+            metadata=json.dumps(
+                {
+                    "benchmark": {
+                        "check_passed": False,
+                        "regression_detected": True,
+                        "test_total": 50,
+                        "test_passed": 40,
+                    },
+                }
+            ),
+        )
+
+        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
+        result = orch._handle_reconciling(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.REJECTED
+
+        # Verify rejection reasons are stored
+        entry = fake_store.get_spec_entry("s1")
+        metadata = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        assert "promotion_decision" in metadata
+        assert metadata["promotion_decision"]["promoted"] is False
+        reasons = metadata["promotion_decision"]["rejection_reasons"]
+        assert any("regression" in r.lower() for r in reasons)
+
+    def test_reconciling_rejects_when_no_benchmark(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Promotion gate fails when no benchmark results exist."""
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test no bench")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.RECONCILING.value,
+        )
+
+        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
+        result = orch._handle_reconciling(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.REJECTED
+
+    def test_reconciling_rejects_when_review_failed(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Promotion gate fails when review found blocking findings."""
+        import json
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test review fail")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.RECONCILING.value,
+            metadata=json.dumps(
+                {
+                    "benchmark": {
+                        "check_passed": True,
+                        "regression_detected": False,
+                    },
+                    "review": {
+                        "passed": False,
+                        "finding_count": 3,
+                    },
+                }
+            ),
+        )
+
+        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
+        result = orch._handle_reconciling(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.REJECTED
+
+    def test_reconciling_rejects_with_prior_error(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Promotion gate fails when spec entry has a prior error."""
+        import json
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test prior error")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.RECONCILING.value,
+            error="some earlier failure",
+            metadata=json.dumps(
+                {
+                    "benchmark": {
+                        "check_passed": True,
+                        "regression_detected": False,
+                    },
+                }
+            ),
+        )
+
+        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
+        result = orch._handle_reconciling(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.REJECTED
+
+    def test_reconciling_rejects_with_mistake_lessons(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Promotion gate fails when mistake lessons exist for the iteration."""
+        import json
+
+        fake_store._lessons = [
+            {
+                "lesson_id": "L1",
+                "iteration_id": "s1",
+                "category": "mistake",
+                "summary": "Broke the build",
+            },
+        ]
+        # Override list_lessons to filter by iteration_ids and categories
+        original_list = fake_store.list_lessons
+
+        def filtered_list_lessons(iteration_ids=None, categories=None, **kwargs):
+            results = original_list(**kwargs)
+            if iteration_ids:
+                results = [r for r in results if r.get("iteration_id") in iteration_ids]
+            if categories:
+                results = [r for r in results if r.get("category") in categories]
+            return results
+
+        fake_store.list_lessons = filtered_list_lessons
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test mistake lessons")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.RECONCILING.value,
+            metadata=json.dumps(
+                {
+                    "benchmark": {
+                        "check_passed": True,
+                        "regression_detected": False,
+                    },
+                }
+            ),
+        )
+
+        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
+        result = orch._handle_reconciling(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.REJECTED
+
+    def test_learning_transitions_to_reconciling(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Learning handler now transitions to RECONCILING, not COMPLETED."""
+        import json
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test transition")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=IterationPhase.LEARNING.value,
+            metadata=json.dumps({"benchmark": {}}),
+        )
+
+        state = IterationState(spec_id="s1", phase=IterationPhase.LEARNING)
+        result = orch._handle_learning(state)
+
+        assert result is not None
+        assert result.phase == IterationPhase.RECONCILING

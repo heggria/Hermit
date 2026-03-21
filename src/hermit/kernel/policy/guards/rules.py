@@ -87,21 +87,41 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
     from hermit.kernel.policy.guards.rules_shell import evaluate_shell_rules
 
     evaluators = [
+        evaluate_planning_rules,
         evaluate_readonly_rules,
         evaluate_filesystem_rules,
         evaluate_shell_rules,
         evaluate_network_rules,
         evaluate_attachment_rules,
-        evaluate_planning_rules,
         evaluate_governance_rules,
     ]
 
+    # Verdict restrictiveness: higher = more restrictive.
+    _VERDICT_PRIORITY: dict[str, int] = {
+        "allow": 0,
+        "allow_with_receipt": 1,
+        "preview_required": 2,
+        "approval_required": 3,
+        "require_approval": 3,
+        "deny": 4,
+    }
+
+    # Collect results from ALL evaluators so a later deny is never skipped.
+    all_outcomes: list[RuleOutcome] = []
     for evaluator in evaluators:
         result = evaluator(request)
         if result is not None:
             result = _apply_policy_suggestion(request, result)
             result = _apply_task_pattern(request, result)
-            return result
+            all_outcomes.extend(result)
+
+    if all_outcomes:
+        # Return the single most restrictive outcome.
+        all_outcomes.sort(
+            key=lambda o: _VERDICT_PRIORITY.get(o.verdict, 2),
+            reverse=True,
+        )
+        return [all_outcomes[0]]
 
     # Unclassified mutable action: default to approval
     return [

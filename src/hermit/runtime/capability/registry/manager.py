@@ -146,18 +146,28 @@ class PluginManager:
         self._subagent_executor._tool_output_limit = runtime.tool_output_limit
         self._subagent_executor._on_tool_call = on_tool_call
 
+    @property
+    def _prompt_builder(self) -> SystemPromptBuilder:
+        """Return a cached SystemPromptBuilder, lazily created once."""
+        builder = getattr(self, "_cached_prompt_builder", None)
+        if builder is None:
+            builder = SystemPromptBuilder(
+                all_skills=self._all_skills,
+                all_rules_parts=self._all_rules_parts,
+                hooks=self.hooks,
+                settings=self.settings,
+            )
+            self._cached_prompt_builder = builder
+        return builder
+
     def build_system_prompt(
         self,
         base_prompt: str,
         preloaded_skills: list[str] | None = None,
     ) -> str:
-        builder = SystemPromptBuilder(
-            all_skills=self._all_skills,
-            all_rules_parts=self._all_rules_parts,
-            hooks=self.hooks,
-            settings=self.settings,
+        return self._prompt_builder.build_system_prompt(
+            base_prompt, preloaded_skills=preloaded_skills
         )
-        return builder.build_system_prompt(base_prompt, preloaded_skills=preloaded_skills)
 
     def on_session_start(self, session_id: str) -> None:
         self.hooks.fire(HookEvent.SESSION_START, session_id=session_id)

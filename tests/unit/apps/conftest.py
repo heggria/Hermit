@@ -15,4 +15,6 @@ def _clean_hermit_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
     yield
-    get_settings.cache_clear()
+    # Post-clear removed: monkeypatch restores env vars automatically and the
+    # next test's pre-clear ensures a fresh cache.  Skipping the redundant call
+    # saves one lru_cache invalidation per test.

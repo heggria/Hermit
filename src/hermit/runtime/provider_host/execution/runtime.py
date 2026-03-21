@@ -194,7 +194,7 @@ class AgentRuntime:
         return ProviderRequest(
             model=self.model,
             max_tokens=self.max_tokens,
-            messages=normalize_messages(messages),
+            messages=messages,
             system_prompt=self.system_prompt,
             tools=tools,
             thinking_budget=thinking_budget,

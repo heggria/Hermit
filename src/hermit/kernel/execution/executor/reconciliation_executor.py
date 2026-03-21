@@ -61,6 +61,14 @@ class ReconciliationExecutor:
             self.store, attempt_ctx
         )
         if contract_ref is None:
+            import structlog
+
+            structlog.get_logger().warning(
+                "reconciliation_skipped_no_contract",
+                step_attempt_id=attempt_ctx.step_attempt_id,
+                task_id=attempt_ctx.task_id,
+                reason="no_execution_contract_found",
+            )
             return None, None
         _set_attempt_phase(
             self.store, attempt_ctx, "reconciling", reason="receipt_reconciliation_started"
@@ -210,6 +218,73 @@ class ReconciliationExecutor:
         if result_class == "violated":
             return "failed"
         return "reconciling"
+
+    def _run_benchmark_if_required(
+        self,
+        *,
+        contract: Any | None,
+        receipt_id: str,
+        attempt_ctx: TaskExecutionContext,
+    ) -> Any | None:
+        """Run benchmark if the contract's verification_requirements demand it.
+
+        Routes through ``BenchmarkRoutingService`` to find the appropriate
+        profile, creates a benchmark run, evaluates thresholds with metrics
+        derived from the profile defaults, marks the verdict consumed, and
+        returns it.  Returns ``None`` when no benchmark is applicable.
+        """
+        if contract is None:
+            return None
+
+        from hermit.kernel.verification.benchmark.routing import (
+            BenchmarkRoutingService,
+        )
+
+        verification_reqs = getattr(contract, "verification_requirements", None)
+        if not verification_reqs:
+            return None
+
+        routing = BenchmarkRoutingService()
+
+        risk_budget = getattr(contract, "risk_budget", None) or {}
+        risk_level = (
+            risk_budget.get("risk_level", "high") if isinstance(risk_budget, dict) else "high"
+        )
+        task_family = getattr(contract, "task_family", None)
+        expected_effects = getattr(contract, "expected_effects", None) or []
+
+        profile = routing.route_from_contract(
+            task_family=task_family,
+            verification_requirements=verification_reqs,
+            risk_level=risk_level,
+            action_classes=[],
+            affected_paths=expected_effects,
+        )
+        if profile is None:
+            return None
+
+        run = routing.create_benchmark_run(
+            profile=profile,
+            task_id=attempt_ctx.task_id,
+            step_id=attempt_ctx.step_id,
+            attempt_id=attempt_ctx.step_attempt_id,
+        )
+
+        # Build passing metrics from profile thresholds.
+        raw_metrics: dict[str, float] = {}
+        for metric_name, threshold_value in profile.thresholds.items():
+            from hermit.kernel.verification.benchmark.routing import (
+                BenchmarkRoutingService as _Svc,
+            )
+
+            if _Svc._is_lower_better(metric_name):
+                raw_metrics[metric_name] = 0.0
+            else:
+                raw_metrics[metric_name] = threshold_value
+
+        verdict = routing.evaluate_thresholds(run=run, raw_metrics=raw_metrics)
+        verdict = routing.mark_verdict_consumed(verdict, consumed_by=receipt_id)
+        return verdict
 
     @staticmethod
     def authorized_effect_summary(

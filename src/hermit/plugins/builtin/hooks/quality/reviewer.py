@@ -22,8 +22,40 @@ def _parse_file(file_path: str) -> ast.Module | None:
         return None
 
 
+def _check_syntax(file_path: str) -> list[ReviewFinding]:
+    """Check that a Python file can be parsed without syntax errors.
+
+    Produces a BLOCKING finding when ast.parse fails — this indicates
+    code that cannot be imported or executed at all.
+    """
+    try:
+        source = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    try:
+        ast.parse(source, filename=file_path)
+    except SyntaxError as exc:
+        line = exc.lineno or 0
+        detail = exc.msg if exc.msg else "invalid syntax"
+        return [
+            ReviewFinding(
+                severity=FindingSeverity.BLOCKING,
+                category="syntax",
+                message=f"Syntax error: {detail}",
+                file_path=file_path,
+                line=line,
+            )
+        ]
+    return []
+
+
 def _check_imports(file_path: str, workspace_root: str) -> list[ReviewFinding]:
-    """Check that relative imports resolve to existing files."""
+    """Check that relative imports resolve to existing files.
+
+    Produces BLOCKING findings for unresolved relative imports to
+    files that don't exist on disk — these will cause ImportError
+    at runtime.
+    """
     tree = _parse_file(file_path)
     if tree is None:
         return []
@@ -38,9 +70,10 @@ def _check_imports(file_path: str, workspace_root: str) -> list[ReviewFinding]:
             if not (candidate.with_suffix(".py").exists() or (candidate / "__init__.py").exists()):
                 findings.append(
                     ReviewFinding(
-                        severity=FindingSeverity.WARNING,
+                        severity=FindingSeverity.BLOCKING,
                         category="import",
-                        message=f"Relative import '{node.module}' may not resolve",
+                        message=f"Unresolved relative import '{node.module}' — "
+                        f"target does not exist on disk",
                         file_path=file_path,
                         line=node.lineno,
                     )
@@ -137,9 +170,16 @@ class GovernedReviewer:
                 issue_file = str(issue.get("file", ""))
                 if not issue_file or issue_file not in changed_files:
                     continue
-                severity = (
-                    FindingSeverity.WARNING if check.check_name == "lint" else FindingSeverity.INFO
-                )
+                if check.check_name == "lint":
+                    # E9xx errors (syntax errors) are fatal in ruff — treat as BLOCKING
+                    code = str(issue.get("code", ""))
+                    severity = (
+                        FindingSeverity.BLOCKING
+                        if code.startswith("E9")
+                        else FindingSeverity.WARNING
+                    )
+                else:
+                    severity = FindingSeverity.INFO
                 findings.append(
                     ReviewFinding(
                         severity=severity,
@@ -153,6 +193,7 @@ class GovernedReviewer:
         # Incremental checks on changed .py files
         py_files = [f for f in changed_files if f.endswith(".py") and Path(f).is_file()]
         for fp in py_files:
+            findings.extend(_check_syntax(fp))
             findings.extend(_check_imports(fp, self._workspace_root))
             findings.extend(_check_naming(fp))
 
