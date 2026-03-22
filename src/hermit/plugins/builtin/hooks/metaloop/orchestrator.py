@@ -32,6 +32,7 @@ log = structlog.get_logger()
 MAX_FOLLOWUP_DEPTH = 3
 MAX_FOLLOWUP_FANOUT = 2
 MAX_QUEUE_DEPTH = 100
+MAX_BENCHMARK_REPAIR_CYCLES = 2
 PHASE_TIMEOUT_IMPLEMENT = 900  # 15 minutes
 POLL_INTERVAL_ACTIVE = 10.0  # seconds
 POLL_INTERVAL_IDLE = 60.0  # seconds
@@ -948,36 +949,37 @@ class MetaLoopOrchestrator:
 
         # --- Benchmark ---
         benchmark_passed = True
+        benchmark_result = None
         try:
             from hermit.plugins.builtin.hooks.benchmark.runner import BenchmarkRunner
 
             runner = BenchmarkRunner(self._store)
-            result = _run_async(runner.run(state.spec_id, state.spec_id, worktree_path))
+            benchmark_result = _run_async(runner.run(state.spec_id, state.spec_id, worktree_path))
 
             benchmark_data: dict[str, Any] = {
-                "check_passed": result.check_passed,
-                "test_total": result.test_total,
-                "test_passed": result.test_passed,
-                "coverage": result.coverage,
-                "lint_violations": result.lint_violations,
-                "duration_seconds": result.duration_seconds,
-                "regression_detected": result.regression_detected,
-                "compared_to_baseline": dict(result.compared_to_baseline),
+                "check_passed": benchmark_result.check_passed,
+                "test_total": benchmark_result.test_total,
+                "test_passed": benchmark_result.test_passed,
+                "coverage": benchmark_result.coverage,
+                "lint_violations": benchmark_result.lint_violations,
+                "duration_seconds": benchmark_result.duration_seconds,
+                "regression_detected": benchmark_result.regression_detected,
+                "compared_to_baseline": dict(benchmark_result.compared_to_baseline),
             }
             self._update_metadata(state.spec_id, "benchmark", benchmark_data)
 
             if self._benchmark_blocking:
-                if not result.check_passed:
+                if not benchmark_result.check_passed:
                     benchmark_passed = False
                     log.warning(
                         "metaloop_benchmark_check_failed",
                         spec_id=state.spec_id,
-                        test_passed=result.test_passed,
-                        test_total=result.test_total,
+                        test_passed=benchmark_result.test_passed,
+                        test_total=benchmark_result.test_total,
                     )
-                elif result.regression_detected:
+                elif benchmark_result.regression_detected:
                     benchmark_passed = False
-                    compared = result.compared_to_baseline
+                    compared = benchmark_result.compared_to_baseline
                     regression_details = (
                         "; ".join(f"{k}: {v}" for k, v in sorted(compared.items()))
                         if compared
@@ -1008,6 +1010,23 @@ class MetaLoopOrchestrator:
 
         # --- Final decision ---
         if not benchmark_passed:
+            # Attempt benchmark self-repair before giving up
+            repair_cycle = int(metadata.get("benchmark_repair_cycle", 0))
+            if repair_cycle < MAX_BENCHMARK_REPAIR_CYCLES and benchmark_result is not None:
+                repair_goal = self._build_repair_goal(benchmark_result)
+                if repair_goal:
+                    log.info(
+                        "metaloop_benchmark_repair_start",
+                        spec_id=state.spec_id,
+                        repair_cycle=repair_cycle + 1,
+                        max_cycles=MAX_BENCHMARK_REPAIR_CYCLES,
+                    )
+                    return self._start_benchmark_repair(
+                        state.spec_id,
+                        repair_goal,
+                        metadata,
+                    )
+
             return self._backlog.mark_failed(
                 state.spec_id,
                 error="Benchmark failed or regression detected",
@@ -1016,6 +1035,133 @@ class MetaLoopOrchestrator:
 
         log.info("metaloop_accepted", spec_id=state.spec_id)
         return self._backlog.advance_phase(state.spec_id, PipelinePhase.ACCEPTED)
+
+    # ------------------------------------------------------------------
+    # Benchmark self-repair helpers
+    # ------------------------------------------------------------------
+
+    def _build_repair_goal(self, result: Any) -> str:
+        """Build a targeted repair goal from benchmark error details.
+
+        Reads BenchmarkResult.error_details to identify error categories
+        (typecheck, test_failure, lint) and constructs a goal string with
+        specific file paths and error summaries (truncated).
+
+        Returns an empty string if no actionable errors can be identified.
+        """
+        parts: list[str] = []
+
+        error_details = getattr(result, "error_details", ()) or ()
+        for detail in error_details:
+            category = getattr(detail, "category", "")
+            count = getattr(detail, "count", 0)
+            file_paths = getattr(detail, "file_paths", ())
+            summary = getattr(detail, "summary", "")
+
+            if category == "typecheck":
+                files_str = ", ".join(file_paths[:10]) if file_paths else "see output"
+                parts.append(f"Fix {count} typecheck error(s) in: {files_str}.")
+                if summary:
+                    parts.append(f"Errors:\n{summary[:300]}")
+
+            elif category == "test_failure":
+                test_names = ", ".join(file_paths[:10]) if file_paths else "see output"
+                parts.append(f"Fix {count} failing test(s): {test_names}.")
+                if summary:
+                    parts.append(f"Failures:\n{summary[:300]}")
+
+            elif category == "lint":
+                files_str = ", ".join(file_paths[:10]) if file_paths else "see output"
+                parts.append(f"Fix {count} lint violation(s) in: {files_str}.")
+                if summary:
+                    parts.append(f"Violations:\n{summary[:300]}")
+
+        # Fallback: use raw_output if no structured errors were parsed
+        if not parts:
+            raw = getattr(result, "raw_output", "") or ""
+            if raw:
+                parts.append(f"Fix benchmark failures. Output:\n{raw[:500]}")
+
+        if not parts:
+            return ""
+
+        goal = "Benchmark repair: " + " ".join(parts)
+        goal += "\n\nRun `make check` to verify all fixes pass."
+        return goal
+
+    def _start_benchmark_repair(
+        self,
+        spec_id: str,
+        repair_goal: str,
+        metadata: dict,
+    ) -> IterationState | None:
+        """Create a repair DAG and transition back to IMPLEMENTING.
+
+        Builds a simple two-step DAG: a repair step that fixes the errors
+        and a verify step that re-runs `make check`.
+        """
+        repair_cycle = int(metadata.get("benchmark_repair_cycle", 0)) + 1
+
+        # Persist repair metadata and clear implementing_started_at for re-entry
+        entry = self._store.get_spec_entry(spec_id=spec_id)
+        if entry is None:
+            return self._backlog.mark_failed(
+                spec_id,
+                error="Spec entry not found during benchmark repair",
+                max_retries=self._max_retries,
+            )
+        data = entry if isinstance(entry, dict) else entry.__dict__
+        meta = _parse_metadata(data.get("metadata"))
+        meta["benchmark_repair_cycle"] = repair_cycle
+        meta["benchmark_repair_goal"] = repair_goal
+        meta.pop("implementing_started_at", None)
+
+        # Build a repair decomposition plan with two steps:
+        # 1. repair — apply fixes for the benchmark errors
+        # 2. verify — re-run make check to confirm
+        meta["decomposition_plan"] = {
+            "spec_id": spec_id,
+            "steps": [
+                {
+                    "key": "repair",
+                    "kind": "execute",
+                    "title": f"Benchmark repair (cycle {repair_cycle})",
+                    "depends_on": [],
+                    "metadata": {
+                        "goal": repair_goal,
+                        "repair_cycle": repair_cycle,
+                    },
+                },
+                {
+                    "key": "verify",
+                    "kind": "review",
+                    "title": "Verify benchmark repair",
+                    "depends_on": ["repair"],
+                    "metadata": {
+                        "goal": "Run make check and verify all checks pass.",
+                        "repair_cycle": repair_cycle,
+                    },
+                },
+            ],
+            "dependency_graph": {"repair": [], "verify": ["repair"]},
+            "estimated_duration_minutes": 10,
+        }
+
+        self._store.update_spec_status(
+            spec_id=spec_id,
+            status=data.get("status", "reviewing"),
+            metadata=_serialize_metadata(meta),
+        )
+
+        log.info(
+            "metaloop_benchmark_repair_scheduled",
+            spec_id=spec_id,
+            repair_cycle=repair_cycle,
+            max_cycles=MAX_BENCHMARK_REPAIR_CYCLES,
+        )
+
+        # Transition REVIEWING -> IMPLEMENTING (benchmark repair loop)
+        return self._backlog.advance_phase(spec_id, PipelinePhase.IMPLEMENTING)
 
     def _run_learning(self, state: IterationState) -> None:
         """Run IterationLearner and create followup specs for mistake lessons."""

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkErrorDetail, BenchmarkResult
 
 # Safe import of the statistical engine modules.  The runner still works
 # without them — the engine analysis is purely additive.
@@ -35,6 +35,14 @@ log = structlog.get_logger()
 _PYTEST_SUMMARY_RE = re.compile(r"(\d+)\s+passed(?:.*?(\d+)\s+failed)?", re.IGNORECASE)
 _COVERAGE_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+(?:\.\d+)?)%")
 _RUFF_VIOLATION_RE = re.compile(r"Found\s+(\d+)\s+error", re.IGNORECASE)
+
+# Patterns for structured error detail extraction
+_PYTEST_FAILED_RE = re.compile(r"^FAILED\s+(\S+)", re.MULTILINE)
+_PYRIGHT_ERROR_RE = re.compile(r"^(.+?):(\d+):\d+:?\s*-?\s*error:", re.MULTILINE)
+_MYPY_ERROR_RE = re.compile(r"^(.+?):(\d+):\s*error:", re.MULTILINE)
+_TYPECHECK_SUMMARY_RE = re.compile(r"(\d+)\s+error(?:s)?\s+(?:in|found|on)", re.IGNORECASE)
+_RUFF_FILE_RE = re.compile(r"^(.+?):\d+:\d+:\s+\w+\d+", re.MULTILINE)
+_RAW_OUTPUT_LIMIT = 2000
 
 
 class BenchmarkRunner:
@@ -69,6 +77,13 @@ class BenchmarkRunner:
         lint_violations = _parse_ruff(stdout)
         check_passed = returncode == 0
 
+        # Build structured error details when the check failed.
+        error_details: tuple[BenchmarkErrorDetail, ...] = ()
+        if not check_passed:
+            error_details = _collect_error_details(stdout, lint_violations)
+
+        raw_output = stdout[:_RAW_OUTPUT_LIMIT] if not check_passed else ""
+
         baseline = self._fetch_baseline(spec_id, iteration_id)
         regression, compared = _detect_regression(
             test_total,
@@ -95,6 +110,8 @@ class BenchmarkRunner:
                 lint_violations=lint_violations,
                 baseline=baseline,
             ),
+            error_details=error_details,
+            raw_output=raw_output,
         )
         log.info("benchmark_done", passed=check_passed, regression=regression)
         return result
@@ -333,6 +350,129 @@ def _parse_coverage(output: str) -> float:
 def _parse_ruff(output: str) -> int:
     m = _RUFF_VIOLATION_RE.search(output)
     return int(m.group(1)) if m else 0
+
+
+# ---------------------------------------------------------------------------
+# Structured error detail parsers
+# ---------------------------------------------------------------------------
+
+
+def _parse_typecheck_errors(output: str) -> BenchmarkErrorDetail | None:
+    """Detect pyright/mypy errors, extract count and affected file paths."""
+    pyright_matches = _PYRIGHT_ERROR_RE.findall(output)
+    mypy_matches = _MYPY_ERROR_RE.findall(output)
+
+    all_matches = pyright_matches or mypy_matches
+    if not all_matches:
+        # Check for a summary line without per-file details
+        summary_m = _TYPECHECK_SUMMARY_RE.search(output)
+        if not summary_m:
+            return None
+        count = int(summary_m.group(1))
+        # Extract context around the summary
+        start = max(0, summary_m.start() - 200)
+        end = min(len(output), summary_m.end() + 200)
+        summary = output[start:end].strip()[:500]
+        return BenchmarkErrorDetail(
+            category="typecheck",
+            count=count,
+            summary=summary,
+        )
+
+    file_paths = tuple(dict.fromkeys(m[0] for m in all_matches))
+    count = len(all_matches)
+
+    # Build a summary from the first few error lines
+    error_lines: list[str] = []
+    for line in output.splitlines():
+        if _PYRIGHT_ERROR_RE.match(line) or _MYPY_ERROR_RE.match(line):
+            error_lines.append(line)
+            if len(error_lines) >= 10:
+                break
+    summary = "\n".join(error_lines)[:500]
+
+    return BenchmarkErrorDetail(
+        category="typecheck",
+        count=count,
+        summary=summary,
+        file_paths=file_paths,
+    )
+
+
+def _parse_test_failures(output: str) -> BenchmarkErrorDetail | None:
+    """Detect pytest FAILED lines, extract test names as file paths."""
+    matches = _PYTEST_FAILED_RE.findall(output)
+    if not matches:
+        return None
+
+    # Each match is a test node ID like "tests/test_foo.py::test_bar"
+    file_paths = tuple(dict.fromkeys(matches))
+    count = len(matches)
+
+    # Build summary from the FAILED lines
+    failed_lines: list[str] = []
+    for line in output.splitlines():
+        if line.strip().startswith("FAILED"):
+            failed_lines.append(line.strip())
+            if len(failed_lines) >= 10:
+                break
+    summary = "\n".join(failed_lines)[:500]
+
+    return BenchmarkErrorDetail(
+        category="test_failure",
+        count=count,
+        summary=summary,
+        file_paths=file_paths,
+    )
+
+
+def _parse_lint_errors(output: str) -> BenchmarkErrorDetail | None:
+    """Detect ruff violations, extract count and affected file paths."""
+    count_match = _RUFF_VIOLATION_RE.search(output)
+    if not count_match:
+        return None
+
+    count = int(count_match.group(1))
+    if count == 0:
+        return None
+
+    file_matches = _RUFF_FILE_RE.findall(output)
+    file_paths = tuple(dict.fromkeys(file_matches))
+
+    # Build summary from lint violation lines
+    lint_lines: list[str] = []
+    for line in output.splitlines():
+        if _RUFF_FILE_RE.match(line):
+            lint_lines.append(line.strip())
+            if len(lint_lines) >= 10:
+                break
+    summary = "\n".join(lint_lines)[:500]
+
+    return BenchmarkErrorDetail(
+        category="lint",
+        count=count,
+        summary=summary,
+        file_paths=file_paths,
+    )
+
+
+def _collect_error_details(output: str, lint_violations: int) -> tuple[BenchmarkErrorDetail, ...]:
+    """Collect all structured error details from benchmark output."""
+    details: list[BenchmarkErrorDetail] = []
+
+    typecheck = _parse_typecheck_errors(output)
+    if typecheck is not None:
+        details.append(typecheck)
+
+    test_fail = _parse_test_failures(output)
+    if test_fail is not None:
+        details.append(test_fail)
+
+    lint = _parse_lint_errors(output)
+    if lint is not None:
+        details.append(lint)
+
+    return tuple(details)
 
 
 def _detect_regression(

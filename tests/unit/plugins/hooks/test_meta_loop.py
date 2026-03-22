@@ -1106,10 +1106,13 @@ class TestReviewingHandler:
         self,
         fake_store: FakeStore,
     ) -> None:
-        """REVIEWING -> PENDING (retry) when benchmark check fails."""
+        """REVIEWING -> IMPLEMENTING (benchmark repair) when benchmark check fails."""
         from unittest.mock import AsyncMock, patch
 
-        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+        from hermit.plugins.builtin.hooks.benchmark.models import (
+            BenchmarkErrorDetail,
+            BenchmarkResult,
+        )
 
         bench_result = BenchmarkResult(
             iteration_id="s1",
@@ -1122,6 +1125,14 @@ class TestReviewingHandler:
             duration_seconds=30.0,
             regression_detected=False,
             compared_to_baseline={},
+            error_details=(
+                BenchmarkErrorDetail(
+                    category="test_failure",
+                    count=10,
+                    summary="FAILED tests/test_foo.py::test_bar",
+                    file_paths=("tests/test_foo.py::test_bar",),
+                ),
+            ),
         )
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
@@ -1150,15 +1161,29 @@ class TestReviewingHandler:
             result = orch._handle_reviewing(state)
 
         assert result is not None
-        # Should retry since benchmark failed
-        assert result.phase == PipelinePhase.PENDING
-        assert result.attempt == 2
+        # Should start benchmark repair (transition to IMPLEMENTING)
+        assert result.phase == PipelinePhase.IMPLEMENTING
+
+        # Verify repair metadata was stored
+        entry = fake_store.get_spec_entry(spec_id="s1")
+        assert entry is not None
+        meta = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        assert meta["benchmark_repair_cycle"] == 1
+        assert "benchmark_repair_goal" in meta
+        assert (
+            "test_failure" in meta["benchmark_repair_goal"].lower()
+            or "failing" in meta["benchmark_repair_goal"].lower()
+        )
 
     def test_reviewing_retries_on_regression(
         self,
         fake_store: FakeStore,
     ) -> None:
-        """REVIEWING -> PENDING (retry) when regression detected."""
+        """REVIEWING -> IMPLEMENTING (benchmark repair) when regression detected."""
         from unittest.mock import AsyncMock, patch
 
         from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
@@ -1174,6 +1199,7 @@ class TestReviewingHandler:
             duration_seconds=30.0,
             regression_detected=True,
             compared_to_baseline={"coverage_delta": -5.0},
+            raw_output="coverage dropped from 90% to 85%",
         )
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
@@ -1202,8 +1228,318 @@ class TestReviewingHandler:
             result = orch._handle_reviewing(state)
 
         assert result is not None
+        # Should start benchmark repair (transition to IMPLEMENTING)
+        assert result.phase == PipelinePhase.IMPLEMENTING
+
+        # Verify repair metadata
+        entry = fake_store.get_spec_entry(spec_id="s1")
+        meta = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        assert meta["benchmark_repair_cycle"] == 1
+
+    def test_benchmark_repair_exhausted_falls_back_to_mark_failed(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """After MAX_BENCHMARK_REPAIR_CYCLES, fall through to mark_failed."""
+        from unittest.mock import AsyncMock, patch
+
+        from hermit.plugins.builtin.hooks.benchmark.models import (
+            BenchmarkErrorDetail,
+            BenchmarkResult,
+        )
+
+        bench_result = BenchmarkResult(
+            iteration_id="s1",
+            spec_id="s1",
+            check_passed=False,
+            test_total=50,
+            test_passed=40,
+            coverage=80.0,
+            lint_violations=3,
+            duration_seconds=30.0,
+            regression_detected=False,
+            compared_to_baseline={},
+            error_details=(
+                BenchmarkErrorDetail(
+                    category="lint",
+                    count=3,
+                    summary="src/foo.py:10:1: E501",
+                    file_paths=("src/foo.py",),
+                ),
+            ),
+        )
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
+        fake_store.create_spec_entry(spec_id="s1", goal="test exhaust repair")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                    "benchmark_repair_cycle": 2,
+                }
+            ),
+        )
+
+        with (
+            patch.object(orch, "_run_council_review", return_value=None),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+                new_callable=AsyncMock,
+                return_value=bench_result,
+            ),
+        ):
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
+
+        assert result is not None
+        # Repair budget exhausted — should fall back to retry/fail
         assert result.phase == PipelinePhase.PENDING
         assert result.attempt == 2
+
+    def test_benchmark_repair_no_actionable_errors_falls_back(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """When no error details and no raw output, fall through to mark_failed."""
+        from unittest.mock import AsyncMock, patch
+
+        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+
+        bench_result = BenchmarkResult(
+            iteration_id="s1",
+            spec_id="s1",
+            check_passed=False,
+            test_total=50,
+            test_passed=40,
+            coverage=80.0,
+            lint_violations=0,
+            duration_seconds=30.0,
+            regression_detected=False,
+            compared_to_baseline={},
+            # No error_details, no raw_output
+        )
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
+        fake_store.create_spec_entry(spec_id="s1", goal="no errors to parse")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                }
+            ),
+        )
+
+        with (
+            patch.object(orch, "_run_council_review", return_value=None),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+                new_callable=AsyncMock,
+                return_value=bench_result,
+            ),
+        ):
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
+
+        assert result is not None
+        # No actionable errors → falls back to mark_failed (retry)
+        assert result.phase == PipelinePhase.PENDING
+        assert result.attempt == 2
+
+    def test_benchmark_repair_creates_correct_decomposition_plan(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """Verify the repair DAG has repair + verify steps with correct metadata."""
+        from unittest.mock import AsyncMock, patch
+
+        from hermit.plugins.builtin.hooks.benchmark.models import (
+            BenchmarkErrorDetail,
+            BenchmarkResult,
+        )
+
+        bench_result = BenchmarkResult(
+            iteration_id="s1",
+            spec_id="s1",
+            check_passed=False,
+            test_total=100,
+            test_passed=95,
+            coverage=90.0,
+            lint_violations=0,
+            typecheck_errors=3,
+            duration_seconds=30.0,
+            regression_detected=False,
+            compared_to_baseline={},
+            error_details=(
+                BenchmarkErrorDetail(
+                    category="typecheck",
+                    count=3,
+                    summary="src/foo.py:10: error: Missing return type",
+                    file_paths=("src/foo.py", "src/bar.py"),
+                ),
+            ),
+        )
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
+        fake_store.create_spec_entry(spec_id="s1", goal="test decomposition")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                }
+            ),
+        )
+
+        with (
+            patch.object(orch, "_run_council_review", return_value=None),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+                new_callable=AsyncMock,
+                return_value=bench_result,
+            ),
+        ):
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
+
+        assert result is not None
+        assert result.phase == PipelinePhase.IMPLEMENTING
+
+        entry = fake_store.get_spec_entry(spec_id="s1")
+        meta = (
+            json.loads(entry["metadata"])
+            if isinstance(entry["metadata"], str)
+            else entry["metadata"]
+        )
+        plan = meta["decomposition_plan"]
+        steps = plan["steps"]
+        assert len(steps) == 2
+        assert steps[0]["key"] == "repair"
+        assert steps[0]["kind"] == "execute"
+        assert steps[0]["metadata"]["repair_cycle"] == 1
+        assert "typecheck" in steps[0]["metadata"]["goal"].lower()
+        assert steps[1]["key"] == "verify"
+        assert steps[1]["kind"] == "review"
+        assert steps[1]["depends_on"] == ["repair"]
+
+        # implementing_started_at should be cleared for re-entry
+        assert "implementing_started_at" not in meta
+
+    def test_build_repair_goal_typecheck_errors(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """_build_repair_goal produces a goal mentioning typecheck errors."""
+        from hermit.plugins.builtin.hooks.benchmark.models import (
+            BenchmarkErrorDetail,
+            BenchmarkResult,
+        )
+
+        result = BenchmarkResult(
+            iteration_id="x",
+            spec_id="x",
+            check_passed=False,
+            error_details=(
+                BenchmarkErrorDetail(
+                    category="typecheck",
+                    count=5,
+                    summary="src/a.py:1: error: X\nsrc/b.py:2: error: Y",
+                    file_paths=("src/a.py", "src/b.py"),
+                ),
+            ),
+        )
+
+        orch = MetaLoopOrchestrator(fake_store)
+        goal = orch._build_repair_goal(result)
+        assert "typecheck" in goal.lower()
+        assert "src/a.py" in goal
+        assert "make check" in goal
+
+    def test_build_repair_goal_multiple_categories(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """_build_repair_goal handles multiple error categories."""
+        from hermit.plugins.builtin.hooks.benchmark.models import (
+            BenchmarkErrorDetail,
+            BenchmarkResult,
+        )
+
+        result = BenchmarkResult(
+            iteration_id="x",
+            spec_id="x",
+            check_passed=False,
+            error_details=(
+                BenchmarkErrorDetail(
+                    category="test_failure",
+                    count=2,
+                    summary="FAILED tests/test_x.py::test_a",
+                    file_paths=("tests/test_x.py::test_a", "tests/test_x.py::test_b"),
+                ),
+                BenchmarkErrorDetail(
+                    category="lint",
+                    count=1,
+                    summary="src/c.py:5:1: E501",
+                    file_paths=("src/c.py",),
+                ),
+            ),
+        )
+
+        orch = MetaLoopOrchestrator(fake_store)
+        goal = orch._build_repair_goal(result)
+        assert "failing test" in goal.lower()
+        assert "lint violation" in goal.lower()
+        assert "make check" in goal
+
+    def test_build_repair_goal_raw_output_fallback(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """_build_repair_goal falls back to raw_output when no error_details."""
+        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+
+        result = BenchmarkResult(
+            iteration_id="x",
+            spec_id="x",
+            check_passed=False,
+            raw_output="make: *** [check] Error 1",
+        )
+
+        orch = MetaLoopOrchestrator(fake_store)
+        goal = orch._build_repair_goal(result)
+        assert "benchmark failures" in goal.lower()
+        assert "make check" in goal
+
+    def test_build_repair_goal_empty_when_no_details(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """_build_repair_goal returns empty string when nothing actionable."""
+        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+
+        result = BenchmarkResult(
+            iteration_id="x",
+            spec_id="x",
+            check_passed=False,
+        )
+
+        orch = MetaLoopOrchestrator(fake_store)
+        goal = orch._build_repair_goal(result)
+        assert goal == ""
 
     def test_reviewing_benchmark_exception_still_accepts(
         self,
