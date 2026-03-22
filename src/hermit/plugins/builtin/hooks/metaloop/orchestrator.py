@@ -1442,6 +1442,7 @@ class SpecBacklogPoller:
             try:
                 for status in (
                     PipelinePhase.PLANNING.value,
+                    PipelinePhase.IMPLEMENTING.value,
                     PipelinePhase.REVIEWING.value,
                 ):
                     active = self._backlog._store.list_spec_backlog(status=status, limit=1)
