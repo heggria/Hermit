@@ -771,13 +771,23 @@ class MetaLoopOrchestrator:
         # start_dag_task may return a tuple (task, ...) or a single object
         task = result[0] if isinstance(result, tuple) else result
         dag_task_id = task.task_id if hasattr(task, "task_id") and task.task_id else None
-        # Self-transition IMPLEMENTING -> IMPLEMENTING to write dag_task_id + timestamp.
+        # Write dag_task_id and implementing_started_at directly — avoid
+        # advance_phase self-transition which races with the poller's
+        # _check_implementing_timeout reading the same spec in the same tick.
+        if dag_task_id:
+            self._store.update_spec_status(
+                spec_id=state.spec_id,
+                status="implementing",
+                dag_task_id=dag_task_id,
+            )
+        self._update_metadata(state.spec_id, "implementing_started_at", time.time())
         # on_subtask_complete advances to REVIEWING when the DAG task finishes.
-        return self._backlog.advance_phase(
-            state.spec_id,
-            PipelinePhase.IMPLEMENTING,
+        return IterationState(
+            spec_id=state.spec_id,
+            phase=PipelinePhase.IMPLEMENTING,
+            attempt=state.attempt,
+            revision_cycle=state.revision_cycle,
             dag_task_id=dag_task_id,
-            metadata={"implementing_started_at": time.time()},
         )
 
     # ------------------------------------------------------------------

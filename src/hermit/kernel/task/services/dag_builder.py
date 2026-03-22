@@ -250,6 +250,15 @@ class StepDAGBuilder:
                 attempt_context["heartbeat_interval_seconds"] = node.heartbeat_interval_seconds
             if workspace_root:
                 attempt_context["workspace_root"] = workspace_root
+            # Propagate task-level policy context to step attempts so that
+            # PolicyEngine sees the correct profile and source during
+            # governed execution (e.g. autonomous metaloop iterations).
+            task = self._store.get_task(task_id)
+            if task is not None:
+                if getattr(task, "policy_profile", ""):
+                    attempt_context["policy_profile"] = task.policy_profile
+                if getattr(task, "source_channel", ""):
+                    attempt_context["source_ingress"] = task.source_channel
 
             self._store.create_step_attempt(
                 task_id=task_id,
@@ -358,6 +367,14 @@ class StepDAGBuilder:
 
         attempt_context: dict[str, Any] = {"ingress_metadata": base_meta}
         if workspace_root:
+            attempt_context["workspace_root"] = workspace_root
+        # Propagate task-level policy context (same as build_and_materialize)
+        task = self._store.get_task(task_id)
+        if task is not None:
+            if getattr(task, "policy_profile", ""):
+                attempt_context["policy_profile"] = task.policy_profile
+            if getattr(task, "source_channel", ""):
+                attempt_context["source_ingress"] = task.source_channel
             attempt_context["workspace_root"] = workspace_root
 
         self._store.create_step_attempt(
