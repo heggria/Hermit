@@ -330,6 +330,10 @@ class MetaLoopOrchestrator:
         )
 
         workspace = self._workspace_root or ""
+        if not workspace:
+            import os
+
+            workspace = os.environ.get("HERMIT_WORKSPACE_ROOT", "") or os.getcwd()
         if global_pipeline is not None:
             pipeline = global_pipeline
         else:

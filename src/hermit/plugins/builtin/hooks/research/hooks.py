@@ -21,13 +21,23 @@ log = structlog.get_logger()
 _pipeline: ResearchPipeline | None = None
 
 
-def _on_serve_start(*, settings: Any, **kw: Any) -> None:
+def _on_serve_start(*, settings: Any, runner: Any = None, **kw: Any) -> None:
     global _pipeline
     if not bool(getattr(settings, "research_enabled", True)):
         log.info("research_disabled")
         return
 
+    import os
+
+    # Resolve workspace: settings → runner → env → cwd
     workspace = str(getattr(settings, "workspace_root", "") or "")
+    if not workspace and runner is not None:
+        workspace = str(getattr(runner, "workspace_root", "") or "")
+    if not workspace:
+        workspace = os.environ.get("HERMIT_WORKSPACE_ROOT", "")
+    if not workspace:
+        workspace = os.getcwd()
+
     web_enabled = bool(getattr(settings, "research_web_enabled", True))
     max_findings = int(getattr(settings, "research_max_findings", 20))
 
