@@ -231,11 +231,12 @@ class MetaLoopOrchestrator:
         # Count typecheck errors (pyright)
         try:
             proc = subprocess.run(
-                ["uv", "run", "pyright"],
+                "uv run pyright 2>&1 | tail -3",
                 cwd=workspace,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=180,
+                shell=True,
             )
             import re as _re
 
@@ -243,11 +244,10 @@ class MetaLoopOrchestrator:
             m = _re.search(r"(\d+)\s+error", combined)
             if m:
                 typecheck_errors = int(m.group(1))
-            log.debug(
+            log.info(
                 "baseline_typecheck_raw",
                 rc=proc.returncode,
-                stdout_len=len(proc.stdout),
-                stderr_len=len(proc.stderr),
+                stdout_tail=proc.stdout[-200:] if proc.stdout else "",
                 parsed=typecheck_errors,
             )
         except Exception:
