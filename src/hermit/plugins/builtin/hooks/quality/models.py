@@ -52,6 +52,7 @@ class ReviewPerspective:
     required: bool  # Must produce findings for verdict to be valid
     timeout_seconds: float  # Per-reviewer LLM call timeout
     model: str = ""  # Override model for this perspective (empty = use default)
+    requires_passed: tuple[str, ...] = ()  # Roles that must pass before this runs
 
 
 @dataclass(frozen=True)

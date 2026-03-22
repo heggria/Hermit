@@ -1,4 +1,28 @@
-"""Review council arbiter — synthesizes multiple reviewer findings into a single verdict."""
+"""Review council arbiter — synthesizes multiple reviewer findings into a single verdict.
+
+CouncilArbiter aggregates findings produced by parallel LLM reviewers
+(each examining code from a different perspective such as correctness,
+security, or maintainability) and consolidates them into a single
+accept / revise / reject verdict.
+
+The arbitration algorithm works as follows:
+
+1. Each finding carries a severity level (critical, high, medium, low, info).
+2. Severities are mapped to numeric weights via ``_SEVERITY_SCORES``.
+3. The weighted sum is compared against ``_REVISE_THRESHOLD`` and
+   ``_REJECT_THRESHOLD`` to determine the overall verdict.
+4. When the verdict is *revise*, concrete ``RevisionDirective`` objects are
+   produced so downstream automation knows exactly what to fix.
+
+Typical usage::
+
+    arbiter = CouncilArbiter()
+    verdict = arbiter.arbitrate(findings)
+
+See Also:
+    ``hermit.plugins.builtin.hooks.quality.models``: Data models used by
+    the arbiter (CouncilVerdict, ReviewerFinding, RevisionDirective).
+"""
 
 from __future__ import annotations
 

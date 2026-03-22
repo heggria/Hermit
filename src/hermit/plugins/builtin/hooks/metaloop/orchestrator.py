@@ -14,6 +14,7 @@ import hashlib
 import json
 import threading
 import time
+import uuid
 from typing import Any
 
 import structlog
@@ -888,6 +889,7 @@ class MetaLoopOrchestrator:
         reason = "Council rejected"
         if verdict_str == "revise" and not can_revise:
             reason = f"Revision budget exhausted ({revision_cycle}/{MAX_REVISION_CYCLES})"
+            self._store_exhaustion_retrospective(state.spec_id, revision_cycle)
         elif verdict is not None:
             reason = (
                 f"Council verdict: {verdict_str} "
@@ -1190,6 +1192,56 @@ class MetaLoopOrchestrator:
 
         # Transition REVIEWING -> IMPLEMENTING (revision loop)
         return self._backlog.advance_phase(spec_id, PipelinePhase.IMPLEMENTING)
+
+    # ------------------------------------------------------------------
+    # Retrospective on revision exhaustion
+    # ------------------------------------------------------------------
+
+    def _store_exhaustion_retrospective(self, spec_id: str, revision_cycle: int) -> None:
+        """Record a retrospective lesson when the revision budget is exhausted."""
+        if not hasattr(self._store, "create_lesson"):
+            log.debug("metaloop_retrospective_no_store", spec_id=spec_id)
+            return
+
+        goal = ""
+        last_directive = ""
+        try:
+            entry = self._store.get_spec_entry(spec_id=spec_id)
+            if entry is not None:
+                data = entry if isinstance(entry, dict) else entry.__dict__
+                goal = data.get("goal", "") or ""
+                meta = _parse_metadata(data.get("metadata"))
+                cv = meta.get("council_verdict")
+                if isinstance(cv, dict):
+                    last_directive = cv.get("revision_directive", "") or ""
+        except Exception:
+            pass
+
+        goal_part = f" for goal: {goal!r}" if goal else ""
+        directive_part = f" Last council directive: {last_directive!r}." if last_directive else ""
+        summary = (
+            f"Revision budget exhausted after {revision_cycle} cycles{goal_part}."
+            f"{directive_part} "
+            "The review council repeatedly rejected this implementation. "
+            "Consider: (1) Is the spec too ambiguous? "
+            "(2) Is the architectural approach fundamentally flawed? "
+            "(3) Should the task be decomposed differently?"
+        )
+
+        try:
+            self._store.create_lesson(
+                lesson_id=f"retro-{uuid.uuid4().hex[:12]}",
+                iteration_id=spec_id,
+                category="mistake",
+                summary=summary,
+            )
+            log.info("metaloop_retrospective_stored", spec_id=spec_id)
+        except Exception:
+            log.warning(
+                "metaloop_retrospective_store_failed",
+                spec_id=spec_id,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # on_subtask_complete — DAG task finished -> advance to REVIEWING

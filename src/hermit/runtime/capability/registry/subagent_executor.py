@@ -23,6 +23,11 @@ _RED = "\033[31m"
 _RESET = "\033[0m"
 
 
+def _sanitize_fragment(text: str) -> str:
+    """Remove XML tag sequences that could escape the task_context wrapper."""
+    return text.replace("</task_context>", "[redacted:tag]")
+
+
 class SubagentExecutor:
     """Builds delegation tools and runs subagents within the governed kernel.
 
@@ -170,8 +175,11 @@ class SubagentExecutor:
 
         system_prompt = spec.system_prompt
         if spec.context_fragments:
-            context_block = "\n".join(spec.context_fragments)
-            system_prompt = f"<task_context>\n{context_block}\n</task_context>\n\n{system_prompt}"
+            sanitized = [_sanitize_fragment(f) for f in spec.context_fragments if f and f.strip()]
+            if sanitized:
+                context_block = "\n".join(sanitized)
+                curated = f"<task_context>\n{context_block}\n</task_context>\n\n"
+                system_prompt = curated + system_prompt
 
         sub_agent = self._runtime.clone(
             registry=sub_registry,

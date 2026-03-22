@@ -2,9 +2,25 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
+
 from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.runtime.capability.contracts.skills import SkillDefinition
 from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec, localize_tool_spec
+
+log = structlog.get_logger()
+
+
+def _apply_token_budget(content: str, max_tokens: int | None) -> str:
+    """Truncate content to stay within an approximate token budget."""
+    if not max_tokens or len(content) // 4 <= max_tokens:
+        return content
+    char_limit = max_tokens * 4
+    truncated = content[:char_limit]
+    last_nl = truncated.rfind("\n")
+    if last_nl > char_limit // 2:
+        truncated = truncated[:last_nl]
+    return truncated + f"\n\n[Skill content truncated to ~{max_tokens} token budget]"
 
 
 class SkillLoader:
@@ -62,7 +78,9 @@ class SkillLoader:
         locale = resolve_locale(getattr(self.settings, "locale", None))
         for skill in self._all_skills:
             if skill.name == name:
-                return f'<skill_content name="{name}">\n{skill.content}\n</skill_content>'
+                log.info("skill_loaded", skill_name=name)
+                content = _apply_token_budget(skill.content, skill.max_tokens)
+                return f'<skill_content name="{name}">\n{content}\n</skill_content>'
         available = ", ".join(s.name for s in self._all_skills)
         return tr(
             "prompt.available_skills.read_skill.not_found",

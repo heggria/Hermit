@@ -170,6 +170,33 @@ class ReviewCouncilService:
             revision_cycle=revision_cycle,
         )
 
+        # ----- Validate perspective dependencies -----
+        all_roles = {p.role for p in self._perspectives}
+        for p in self._perspectives:
+            unknown = set(p.requires_passed) - all_roles
+            if unknown:
+                log.warning(
+                    "council.unknown_prerequisite",
+                    role=p.role,
+                    unknown_roles=unknown,
+                )
+
+        # Detect circular dependencies
+        dep_graph: dict[str, tuple[str, ...]] = {
+            p.role: p.requires_passed for p in self._perspectives if p.requires_passed
+        }
+        for start_role in dep_graph:
+            visited: set[str] = set()
+            current = start_role
+            while current in dep_graph:
+                if current in visited:
+                    cycle = " -> ".join([start_role, *list(visited), current])
+                    raise ValueError(f"Circular review dependency detected: {cycle}")
+                visited.add(current)
+                # Follow chain: pick first requires_passed that is also dependent
+                next_roles = [r for r in dep_graph[current] if r in dep_graph]
+                current = next_roles[0] if next_roles else ""
+
         # ----- Read file contents (bounded) -----
         bounded_files = changed_files[:_MAX_FILES]
         file_contents: dict[str, str] = {}
@@ -181,68 +208,68 @@ class ReviewCouncilService:
 
         diff_content = _git_diff_for_files(self._workspace_root, bounded_files)
 
-        # ----- Dispatch reviewers in parallel -----
+        # ----- Split perspectives into dependency phases -----
+        independent = [p for p in self._perspectives if not p.requires_passed]
+        dependent = [p for p in self._perspectives if p.requires_passed]
+
         all_findings: list[ReviewerFinding] = []
         lint_passed = True
+        passed_roles: set[str] = set()
 
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=self._max_workers,
         ) as pool:
-            futures: dict[concurrent.futures.Future[list[ReviewerFinding]], str] = {}
-
-            # Submit LLM-based reviewers
-            for perspective in self._perspectives:
-                future = pool.submit(
-                    self._run_single_review,
-                    perspective,
-                    council_id,
-                    file_contents,
-                    diff_content,
-                    spec_data,
-                    prior_findings,
-                )
-                futures[future] = perspective.role
-
-            # Submit lint reviewer (no LLM cost)
+            # Submit lint reviewer early so it runs in parallel with phase 1
             lint_future = pool.submit(
                 self._run_lint_review,
                 bounded_files,
                 self._workspace_root,
             )
 
-            # Collect LLM reviewer results
-            done, not_done = concurrent.futures.wait(
-                futures.keys(),
-                timeout=_FUTURES_TIMEOUT_SECONDS,
+            # Phase 1: independent perspectives
+            phase1_findings, phase1_passed = self._dispatch_phase(
+                pool,
+                independent,
+                council_id,
+                file_contents,
+                diff_content,
+                spec_data,
+                prior_findings,
             )
+            all_findings.extend(phase1_findings)
+            # A role "passed" if it completed and produced no critical/high findings
+            roles_with_blocking = {
+                f.reviewer_role for f in phase1_findings if f.severity in ("critical", "high")
+            }
+            passed_roles.update(phase1_passed - roles_with_blocking)
 
-            for future in done:
-                role = futures[future]
-                try:
-                    findings = future.result()
-                    all_findings.extend(findings)
-                    log.debug(
-                        "council.reviewer_done",
-                        council_id=council_id,
-                        role=role,
-                        finding_count=len(findings),
-                    )
-                except Exception:
-                    log.warning(
-                        "council.reviewer_failed",
-                        council_id=council_id,
-                        role=role,
-                        exc_info=True,
-                    )
-
-            for future in not_done:
-                role = futures[future]
-                future.cancel()
-                log.warning(
-                    "council.reviewer_timeout",
+            # Phase 2: dependent perspectives (only if prerequisites passed)
+            eligible = [
+                p for p in dependent if all(req in passed_roles for req in p.requires_passed)
+            ]
+            skipped = [
+                p for p in dependent if not all(req in passed_roles for req in p.requires_passed)
+            ]
+            for p in skipped:
+                missing = [r for r in p.requires_passed if r not in passed_roles]
+                log.info(
+                    "council.reviewer_skipped",
                     council_id=council_id,
-                    role=role,
+                    role=p.role,
+                    missing_prerequisites=missing,
                 )
+
+            if eligible:
+                phase2_findings, _ = self._dispatch_phase(
+                    pool,
+                    eligible,
+                    council_id,
+                    file_contents,
+                    diff_content,
+                    spec_data,
+                    prior_findings,
+                )
+                all_findings.extend(phase2_findings)
 
             # Collect lint results
             try:
@@ -282,6 +309,72 @@ class ReviewCouncilService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _dispatch_phase(
+        self,
+        pool: concurrent.futures.ThreadPoolExecutor,
+        perspectives: list[ReviewPerspective],
+        council_id: str,
+        file_contents: dict[str, str],
+        diff_content: str,
+        spec_data: dict[str, Any],
+        prior_findings: list[ReviewerFinding] | None,
+    ) -> tuple[list[ReviewerFinding], set[str]]:
+        """Dispatch a batch of perspectives and collect results.
+
+        Returns (findings, roles_that_completed_without_critical_or_high).
+        """
+        futures: dict[concurrent.futures.Future[list[ReviewerFinding]], str] = {}
+        for perspective in perspectives:
+            future = pool.submit(
+                self._run_single_review,
+                perspective,
+                council_id,
+                file_contents,
+                diff_content,
+                spec_data,
+                prior_findings,
+            )
+            futures[future] = perspective.role
+
+        findings: list[ReviewerFinding] = []
+        completed_roles: set[str] = set()
+
+        done, not_done = concurrent.futures.wait(
+            futures.keys(),
+            timeout=_FUTURES_TIMEOUT_SECONDS,
+        )
+
+        for future in done:
+            role = futures[future]
+            try:
+                role_findings = future.result()
+                findings.extend(role_findings)
+                completed_roles.add(role)
+                log.debug(
+                    "council.reviewer_done",
+                    council_id=council_id,
+                    role=role,
+                    finding_count=len(role_findings),
+                )
+            except Exception:
+                log.warning(
+                    "council.reviewer_failed",
+                    council_id=council_id,
+                    role=role,
+                    exc_info=True,
+                )
+
+        for future in not_done:
+            role = futures[future]
+            future.cancel()
+            log.warning(
+                "council.reviewer_timeout",
+                council_id=council_id,
+                role=role,
+            )
+
+        return findings, completed_roles
 
     def _run_single_review(
         self,

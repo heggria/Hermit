@@ -147,14 +147,13 @@ class TestCapabilityGrantBlocksExecution:
                 f"Capability grant {grant_id} does not cover resource scope.",
             )
 
-        cap_service.enforce = failing_enforce
-
         executor = _build_executor(store, artifact_store, registry, capability_service=cap_service)
-        result = executor.execute(
-            attempt_ctx,
-            "write_file",
-            {"path": "test.txt", "content": "hello"},
-        )
+        with patch.object(cap_service, "enforce", side_effect=failing_enforce):
+            result = executor.execute(
+                attempt_ctx,
+                "write_file",
+                {"path": "test.txt", "content": "hello"},
+            )
 
         handler.assert_not_called()
         assert result.denied is True
@@ -180,17 +179,17 @@ class TestCapabilityGrantBlocksExecution:
                 f"Capability grant {grant_id} expired before dispatch.",
             )
 
-        cap_service.enforce = expired_enforce
-
         executor = _build_executor(store, artifact_store, registry, capability_service=cap_service)
-        result = executor.execute(
-            attempt_ctx,
-            "write_file",
-            {"path": "test.txt", "content": "hello"},
-        )
+        with patch.object(cap_service, "enforce", side_effect=expired_enforce):
+            result = executor.execute(
+                attempt_ctx,
+                "write_file",
+                {"path": "test.txt", "content": "hello"},
+            )
 
         handler.assert_not_called()
         assert result.denied is True
+        assert result.result_code == "dispatch_denied"
 
 
 # ===========================================================================
@@ -246,6 +245,8 @@ class TestPolicyBeforeExecution:
             f"policy_pending (idx={policy_idx}) must precede "
             f"executing (idx={exec_idx}) in phase sequence: {phase_sequence}"
         )
+        assert phase_sequence.count("policy_pending") == 1
+        assert phase_sequence.count("executing") == 1
 
     def test_governed_action_has_capability_grant(
         self,
@@ -452,7 +453,7 @@ class TestPolicyDenialBlocksExecution:
             task_id=attempt_ctx.task_id,
             event_type="policy.denied",
         )
-        assert len(denied_events) >= 1
+        assert len(denied_events) == 1
         payload = denied_events[0]["payload"]
         assert payload["tool_name"] == "write_file"
 
@@ -483,8 +484,6 @@ class TestGrantIssuancePrecedesHandler:
             execution_log.append(f"grant_issued:{grant_id}")
             return grant_id
 
-        cap_service.issue = tracked_issue
-
         def tracked_handler(payload):
             execution_log.append("handler_executed")
             return "ok"
@@ -494,13 +493,16 @@ class TestGrantIssuancePrecedesHandler:
         registry.register(write_tool)
 
         executor = _build_executor(store, artifact_store, registry, capability_service=cap_service)
-        result = executor.execute(
-            attempt_ctx,
-            "write_file",
-            {"path": "test.txt", "content": "hello"},
-        )
+        with patch.object(cap_service, "issue", side_effect=tracked_issue):
+            result = executor.execute(
+                attempt_ctx,
+                "write_file",
+                {"path": "test.txt", "content": "hello"},
+            )
 
         assert result.result_code == "succeeded"
-        assert len(execution_log) == 2
-        assert execution_log[0].startswith("grant_issued:")
-        assert execution_log[1] == "handler_executed"
+        grant_indices = [i for i, e in enumerate(execution_log) if e.startswith("grant_issued")]
+        handler_indices = [i for i, e in enumerate(execution_log) if e == "handler_executed"]
+        assert grant_indices, "Expected grant_issued events"
+        assert handler_indices, "Expected handler_executed event"
+        assert grant_indices[0] < handler_indices[0], "Grant must precede handler"

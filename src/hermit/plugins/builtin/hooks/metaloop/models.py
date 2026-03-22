@@ -61,6 +61,7 @@ ALLOWED_TRANSITIONS: dict[PipelinePhase, frozenset[PipelinePhase]] = {
     ),
 }
 
+# 3 cycles = initial implementation + 2 revision attempts.
 MAX_REVISION_CYCLES = 3
 MAX_ATTEMPTS = 3
 
