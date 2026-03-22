@@ -17,7 +17,7 @@ from hermit.kernel.execution.executor.execution_helpers import (
     _load_witness_payload as load_witness_payload,
 )
 from hermit.kernel.execution.executor.execution_helpers import (
-    _set_attempt_phase as set_attempt_phase,
+    set_attempt_phase,
 )
 
 __all__ = [

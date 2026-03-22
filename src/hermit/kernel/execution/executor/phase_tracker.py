@@ -3,7 +3,9 @@ from __future__ import annotations
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.executor.execution_helpers import (
     _is_governed_action,
-    _set_attempt_phase,
+)
+from hermit.kernel.execution.executor.execution_helpers import (
+    set_attempt_phase as _set_attempt_phase,
 )
 from hermit.kernel.ledger.journal.store import KernelStore
 
