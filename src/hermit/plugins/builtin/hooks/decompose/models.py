@@ -16,6 +16,9 @@ class GeneratedSpec:
     constraints: tuple[str, ...] = ()
     acceptance_criteria: tuple[str, ...] = ()
     file_plan: tuple[dict[str, str], ...] = ()  # [{path, action, reason}]
+    verification_plan: tuple[
+        dict[str, str], ...
+    ] = ()  # [{metric, measurement_command, before_expected, after_expected, threshold}]
     research_ref: str = ""
     trust_zone: str = "normal"
     metadata: dict[str, Any] = field(default_factory=dict)

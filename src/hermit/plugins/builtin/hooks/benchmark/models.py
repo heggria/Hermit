@@ -35,6 +35,9 @@ class BenchmarkResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     error_details: tuple[BenchmarkErrorDetail, ...] = ()
     raw_output: str = ""
+    verification_results: tuple[
+        dict[str, Any], ...
+    ] = ()  # [{metric, command, output, expected, passed}]
 
 
 @dataclass(frozen=True)

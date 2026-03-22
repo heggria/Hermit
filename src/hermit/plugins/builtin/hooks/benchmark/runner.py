@@ -63,6 +63,7 @@ class BenchmarkRunner:
         iteration_id: str,
         spec_id: str,
         worktree_path: str | None = None,
+        verification_plan: tuple[dict[str, str], ...] | None = None,
     ) -> BenchmarkResult:
         """Execute make check and parse results."""
         start = time.monotonic()
@@ -92,6 +93,11 @@ class BenchmarkRunner:
             baseline,
         )
 
+        # Run verification plan if provided
+        verification_results: tuple[dict[str, Any], ...] = ()
+        if verification_plan:
+            verification_results = await self._run_verification_plan(verification_plan, cwd)
+
         result = BenchmarkResult(
             iteration_id=iteration_id,
             spec_id=spec_id,
@@ -112,6 +118,7 @@ class BenchmarkRunner:
             ),
             error_details=error_details,
             raw_output=raw_output,
+            verification_results=verification_results,
         )
         log.info("benchmark_done", passed=check_passed, regression=regression)
         return result
@@ -136,6 +143,89 @@ class BenchmarkRunner:
         except OSError as exc:
             log.warning("benchmark_exec_error", error=str(exc))
             return "", 1
+
+    async def _run_verification_plan(
+        self,
+        plan: tuple[dict[str, str], ...],
+        cwd: str,
+    ) -> tuple[dict[str, Any], ...]:
+        """Execute each verification plan entry and compare output against expectations.
+
+        For each entry, runs the measurement_command via _exec(), then checks
+        whether the output matches after_expected or satisfies the threshold.
+
+        Returns a tuple of result dicts:
+            {metric, command, output, expected, passed}
+        """
+        results: list[dict[str, Any]] = []
+        for entry in plan:
+            metric = entry.get("metric", "")
+            command = entry.get("measurement_command", "")
+            after_expected = entry.get("after_expected", "")
+            threshold = entry.get("threshold", "")
+
+            if not command:
+                results.append(
+                    {
+                        "metric": metric,
+                        "command": command,
+                        "output": "",
+                        "expected": after_expected,
+                        "passed": False,
+                        "reason": "no measurement_command provided",
+                    }
+                )
+                continue
+
+            output, returncode = await self._exec(command, cwd)
+            output_stripped = output.strip()
+
+            # Determine pass/fail: check if after_expected text appears in output
+            passed = False
+            reason = ""
+            if after_expected and after_expected.lower() in output_stripped.lower():
+                passed = True
+                reason = "after_expected matched in output"
+            elif returncode == 0 and not after_expected:
+                # No specific expected output but command succeeded
+                passed = True
+                reason = "command exited successfully"
+            elif returncode == 0 and after_expected:
+                # Command succeeded but expected text not found;
+                # still mark passed if threshold is purely about exit code
+                if threshold and "exit" in threshold.lower() and "0" in threshold:
+                    passed = True
+                    reason = "command exited 0 (threshold satisfied)"
+                else:
+                    reason = "after_expected not found in output"
+            else:
+                reason = f"command exited with code {returncode}"
+
+            results.append(
+                {
+                    "metric": metric,
+                    "command": command,
+                    "output": output_stripped[:500],
+                    "expected": after_expected,
+                    "threshold": threshold,
+                    "passed": passed,
+                    "reason": reason,
+                }
+            )
+            log.debug(
+                "verification_plan_entry",
+                metric=metric,
+                passed=passed,
+                reason=reason,
+            )
+
+        log.info(
+            "verification_plan_complete",
+            total=len(results),
+            passed=sum(1 for r in results if r["passed"]),
+            failed=sum(1 for r in results if not r["passed"]),
+        )
+        return tuple(results)
 
     def _fetch_baseline(
         self,

@@ -38,7 +38,10 @@ Your output MUST be a single JSON object with exactly these keys:
   "constraints": ["<constraint 1>", "<constraint 2>"],
   "acceptance_criteria": ["<criterion 1>", "<criterion 2>"],
   "trust_zone": "normal|sensitive|critical",
-  "risk_assessment": "<one-sentence risk summary>"
+  "risk_assessment": "<one-sentence risk summary>",
+  "verification_plan": [
+    {"metric": "<name>", "measurement_command": "<shell cmd>", "before_expected": "<value>", "after_expected": "<value>", "threshold": "<comparison>"}
+  ]
 }
 
 Rules for each field:
@@ -73,6 +76,36 @@ Rules for each field:
 
 **risk_assessment**:
 - One sentence summarizing the primary risk of this change.
+
+## Verification Plan
+Include a "verification_plan" array in your output. Each entry describes a quantifiable \
+before/after measurement:
+{
+  "verification_plan": [
+    {
+      "metric": "typecheck_errors",
+      "measurement_command": "uv run pyright 2>&1 | tail -1",
+      "before_expected": "1337 errors",
+      "after_expected": "1337 errors (no new errors introduced)",
+      "threshold": "after <= before"
+    },
+    {
+      "metric": "test_count",
+      "measurement_command": "uv run pytest tests/unit/path/test_file.py -q 2>&1 | tail -1",
+      "before_expected": "N/A (new test)",
+      "after_expected": "1 passed",
+      "threshold": "passed > 0"
+    }
+  ]
+}
+
+Common metrics by change type:
+- Performance optimization: latency_ms, throughput_ops_per_sec, memory_mb \
+(measure with time/cProfile)
+- Bug fix: specific_test_result (FAIL before, PASS after)
+- Refactor: test_count (same or higher), api_compatibility (all callers still work)
+- New feature: new_test_coverage_percent, feature_test_result
+- Documentation: no_new_lint_errors, docstring_present
 
 Output ONLY the JSON object. No markdown fences, no commentary.\
 """
@@ -148,6 +181,20 @@ def _validate_spec_output(data: dict[str, Any]) -> list[str]:
 
     if data.get("trust_zone") not in ("normal", "sensitive", "critical"):
         issues.append(f"invalid trust_zone: {data.get('trust_zone')}")
+
+    vp = data.get("verification_plan")
+    if vp is not None:
+        if not isinstance(vp, list):
+            issues.append("'verification_plan' must be a list")
+        else:
+            required_keys = {"metric", "measurement_command", "threshold"}
+            for idx, entry in enumerate(vp):
+                if not isinstance(entry, dict):
+                    issues.append(f"verification_plan[{idx}] is not a dict")
+                    continue
+                missing = required_keys - set(entry.keys())
+                if missing:
+                    issues.append(f"verification_plan[{idx}] missing keys: {sorted(missing)}")
 
     return issues
 
@@ -346,6 +393,19 @@ class LLMSpecGenerator:
         if risk_assessment:
             metadata["risk_assessment"] = risk_assessment
 
+        verification_plan_raw = data.get("verification_plan", [])
+        verification_plan = tuple(
+            {
+                "metric": str(entry.get("metric", "")),
+                "measurement_command": str(entry.get("measurement_command", "")),
+                "before_expected": str(entry.get("before_expected", "")),
+                "after_expected": str(entry.get("after_expected", "")),
+                "threshold": str(entry.get("threshold", "")),
+            }
+            for entry in verification_plan_raw
+            if isinstance(entry, dict) and entry.get("metric")
+        )
+
         return GeneratedSpec(
             spec_id=spec_id,
             title=str(data.get("title", goal.split("\n")[0][:80])),
@@ -356,4 +416,5 @@ class LLMSpecGenerator:
             research_ref=research_ref,
             trust_zone=trust_zone,
             metadata=metadata,
+            verification_plan=verification_plan,
         )

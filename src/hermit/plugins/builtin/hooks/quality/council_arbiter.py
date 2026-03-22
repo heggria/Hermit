@@ -72,6 +72,8 @@ class CouncilArbiter:
         lint_passed: bool,
         *,
         revision_cycle: int = 0,
+        # 3 cycles: (1) initial review, (2) targeted re-review of
+        # revised code, (3) final verification pass.
         max_revision_cycles: int = 3,
     ) -> CouncilVerdict:
         """Synthesize findings from multiple reviewers into a single verdict.

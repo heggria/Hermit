@@ -505,6 +505,7 @@ class MetaLoopOrchestrator:
             "constraints": list(spec.constraints),
             "acceptance_criteria": list(spec.acceptance_criteria),
             "file_plan": [dict(e) for e in spec.file_plan],
+            "verification_plan": [dict(e) for e in spec.verification_plan],
             "research_ref": spec.research_ref,
             "trust_zone": spec.trust_zone,
         }
@@ -953,8 +954,20 @@ class MetaLoopOrchestrator:
         try:
             from hermit.plugins.builtin.hooks.benchmark.runner import BenchmarkRunner
 
+            # Extract verification_plan from spec metadata
+            spec_data = metadata.get("generated_spec") or {}
+            vp_raw = spec_data.get("verification_plan", [])
+            verification_plan = tuple(dict(e) for e in vp_raw) if vp_raw else None
+
             runner = BenchmarkRunner(self._store)
-            benchmark_result = _run_async(runner.run(state.spec_id, state.spec_id, worktree_path))
+            benchmark_result = _run_async(
+                runner.run(
+                    state.spec_id,
+                    state.spec_id,
+                    worktree_path,
+                    verification_plan=verification_plan,
+                )
+            )
 
             benchmark_data: dict[str, Any] = {
                 "check_passed": benchmark_result.check_passed,
@@ -966,6 +979,21 @@ class MetaLoopOrchestrator:
                 "regression_detected": benchmark_result.regression_detected,
                 "compared_to_baseline": dict(benchmark_result.compared_to_baseline),
             }
+
+            # Store verification results alongside benchmark data
+            if benchmark_result.verification_results:
+                benchmark_data["verification_results"] = [
+                    dict(r) for r in benchmark_result.verification_results
+                ]
+                vr_passed = sum(1 for r in benchmark_result.verification_results if r.get("passed"))
+                vr_total = len(benchmark_result.verification_results)
+                benchmark_data["verification_summary"] = {
+                    "total": vr_total,
+                    "passed": vr_passed,
+                    "failed": vr_total - vr_passed,
+                    "all_passed": vr_passed == vr_total,
+                }
+
             self._update_metadata(state.spec_id, "benchmark", benchmark_data)
 
             if self._benchmark_blocking:
