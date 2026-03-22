@@ -336,8 +336,9 @@ class ContextCompiler:
         score = 0.0
         if self.governance.scope_matches(memory.scope_kind, memory.scope_ref, context=context):
             score += 100.0
-        if memory.expires_at is not None:
-            score += max(0.0, memory.expires_at) / now if now > 0 else 0.0
+        if memory.expires_at is not None and now > 0:
+            remaining = max(0.0, memory.expires_at - now)
+            score += min(1.0, remaining / (365 * 86400))
         if shares_topic(memory.claim_text, query):
             score += 10.0
         score += 5.0 if memory.trust_tier == "durable" else 0.0

@@ -25,7 +25,6 @@ _VERDICT_PRIORITY: dict[str, int] = {
     "allow_with_receipt": 1,
     "preview_required": 2,
     "approval_required": 3,
-    "require_approval": 3,
     "deny": 4,
 }
 

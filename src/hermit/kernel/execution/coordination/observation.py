@@ -335,7 +335,7 @@ class ObservationService:
                 logger = structlog.get_logger()
                 logger.info("observation.recovery", active_tickets=len(active))
         except Exception:
-            pass
+            _log.warning("observation.recover_tickets_failed", exc_info=True)
 
     def _loop(self) -> None:
         while not self._stop.wait(self._budget.observation_poll_interval):
@@ -395,7 +395,7 @@ class ObservationService:
                         waiting_reason="observation_timeout",
                     )
                 except Exception:
-                    pass
+                    _log.warning("observation.enforce_timeout_failed", exc_info=True)
 
     def persist_ticket(
         self,
@@ -426,6 +426,7 @@ class ObservationService:
                 ticket_data=ticket_data,
             )
         except Exception:
+            _log.warning("observation.persist_ticket_failed", exc_info=True)
             return None
 
     def resolve_ticket(self, ticket_id: str, *, status: str = "completed") -> None:
@@ -435,4 +436,4 @@ class ObservationService:
         try:
             self._store.resolve_observation(ticket_id, status=status)
         except Exception:
-            pass
+            _log.warning("observation.resolve_ticket_failed", exc_info=True)

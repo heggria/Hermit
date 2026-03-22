@@ -154,7 +154,7 @@ class SubtaskSpawner:
             child_step = self.store.create_step(
                 task_id=attempt_ctx.task_id,
                 kind=desc["tool_name"],
-                status="running",
+                status="ready",
                 title=desc["title"],
                 join_strategy=desc["join_strategy"],
             )
@@ -163,7 +163,7 @@ class SubtaskSpawner:
                 task_id=attempt_ctx.task_id,
                 step_id=child_step.step_id,
                 attempt=1,
-                status="running",
+                status="ready",
                 context={"tool_input": desc["tool_input"]},
             )
             child_step_ids.append(child_step.step_id)

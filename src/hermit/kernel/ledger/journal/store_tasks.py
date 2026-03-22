@@ -1188,7 +1188,9 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         row = self._row(
             """
             SELECT COUNT(*) as cnt FROM steps
-            WHERE task_id = ? AND status NOT IN ('succeeded', 'completed', 'skipped', 'failed')
+            WHERE task_id = ? AND status NOT IN (
+                'succeeded', 'completed', 'skipped', 'failed', 'needs_attention'
+            )
             """,
             (task_id,),
         )

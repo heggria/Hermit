@@ -67,6 +67,7 @@ class ApprovalResolver:
         agent: object,
         pm: object,
         result_status_fn: object,
+        runner: object = None,
         on_tool_call: ToolCallback | None = None,
         on_tool_start: ToolStartCallback | None = None,
     ) -> object:
@@ -103,6 +104,8 @@ class ApprovalResolver:
         # succeeded without the approved action actually executing.
         if self._is_async_dispatch(approval.step_attempt_id):
             task_ctx = self.task_controller.enqueue_resume(approval.step_attempt_id)
+            if runner is not None and hasattr(runner, "wake_dispatcher"):
+                runner.wake_dispatcher()
             text = _t(
                 "kernel.runner.approval_enqueued",
                 default="Approved. The step has been re-queued for execution.",

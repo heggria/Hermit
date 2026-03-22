@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -151,6 +152,8 @@ class RollbackService:
             }
         except Exception as exc:
             summary = str(exc)
+            if workspace_lease_id is not None:
+                self.workspace_leases.release(workspace_lease_id)
             self.store.update_rollback(
                 rollback.rollback_id, status="failed", result_summary=summary
             )
@@ -205,8 +208,18 @@ class RollbackService:
             prestate = self._prestate_payload(receipt)
             target_path = Path(str(prestate["path"]))
             if bool(prestate.get("existed")):
+                content = str(prestate.get("content", ""))
+                artifact = self.store.get_artifact(receipt.rollback_artifact_refs[0])
+                if artifact is not None and artifact.content_hash:
+                    raw = self.artifact_store.read_text(artifact.uri).encode("utf-8")
+                    actual_hash = hashlib.sha256(raw).hexdigest()
+                    if actual_hash != artifact.content_hash:
+                        raise RollbackError(
+                            "prestate_hash_mismatch",
+                            self._t("kernel.rollback.error.prestate_hash_mismatch"),
+                        )
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_text(str(prestate.get("content", "")), encoding="utf-8")
+                target_path.write_text(content, encoding="utf-8")
             elif target_path.exists():
                 target_path.unlink()
             return {

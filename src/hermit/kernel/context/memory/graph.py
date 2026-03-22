@@ -284,6 +284,9 @@ class MemoryGraphService:
         metadata: dict[str, Any] | None = None,
         store: KernelStore,
     ) -> GraphEdge:
+        existing = _find_edge(from_id, to_id, relation_type, store)
+        if existing is not None:
+            return existing
         edge_id = f"edge-{uuid.uuid4().hex[:12]}"
         now = time.time()
         edge = GraphEdge(
@@ -350,6 +353,35 @@ def ensure_graph_schema(store: KernelStore) -> None:
         CREATE INDEX IF NOT EXISTS idx_triples_source
             ON memory_entity_triples(source_memory_id);
         """
+    )
+
+
+def _find_edge(
+    from_id: str,
+    to_id: str,
+    relation_type: str,
+    store: KernelStore,
+) -> GraphEdge | None:
+    """Return an existing edge with the same (from, to, relation_type), or None."""
+    import json
+
+    rows = store.execute_raw(
+        "SELECT * FROM memory_graph_edges"
+        " WHERE from_memory_id = ? AND to_memory_id = ? AND relation_type = ?"
+        " LIMIT 1",
+        (from_id, to_id, relation_type),
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return GraphEdge(
+        edge_id=str(row["edge_id"]),
+        from_memory_id=str(row["from_memory_id"]),
+        to_memory_id=str(row["to_memory_id"]),
+        relation_type=str(row["relation_type"]),
+        weight=float(row["weight"]),
+        metadata=json.loads(row["metadata_json"]) if row["metadata_json"] else {},
+        created_at=float(row["created_at"]),
     )
 
 

@@ -364,6 +364,7 @@ class ProofService:
             proof_payload["reconciliations"] = [record.__dict__ for record in reconciliations]
 
         # --- Full: add heavy payload sections ---
+        _proof_bundle_ref: str | None = None
         if detail == "full":
             context_manifests = [
                 self._load_artifact_payload(ref_id) for ref_id in context_manifest_refs
@@ -388,15 +389,19 @@ class ProofService:
             signature_meta = self._signature_metadata(proof_payload, artifact_kind="proof.bundle")
             if signature_meta is not None:
                 proof_payload["signature"] = signature_meta
-            proof_bundle_ref = self._store_sealed_artifact(
+            # Store the sealed artifact BEFORE mutating proof_payload so the signature
+            # covers exactly what was stored.  proof_bundle_ref is returned as a separate
+            # top-level key in the result dict, not injected into the signed payload.
+            _proof_bundle_ref = self._store_sealed_artifact(
                 task_id=task_id,
                 step_id=receipts[0].step_id if receipts else None,
                 kind="proof.bundle",
                 payload=proof_payload,
                 producer="proof_service",
             )
-            proof_payload["proof_bundle_ref"] = proof_bundle_ref
 
+        if _proof_bundle_ref is not None:
+            return {**proof_payload, "proof_bundle_ref": _proof_bundle_ref}
         return proof_payload
 
     def _create_context_manifest(self, receipt: ReceiptRecord) -> str:

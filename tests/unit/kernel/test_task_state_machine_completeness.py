@@ -134,8 +134,8 @@ class TestTaskStateInvalidTransitions:
 
     @pytest.mark.parametrize(
         "source",
-        [TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED, TaskState.RECALLED],
-        ids=["completed", "failed", "cancelled", "recalled"],
+        [TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED],
+        ids=["completed", "failed", "cancelled"],
     )
     @pytest.mark.parametrize(
         "target",
@@ -171,9 +171,7 @@ class TestTaskStateTerminalStates:
 
     def test_terminal_states_match_enum_constant(self) -> None:
         assert (
-            frozenset(
-                {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED, TaskState.RECALLED}
-            )
+            frozenset({TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED})
             == TERMINAL_TASK_STATES
         )
 
@@ -745,7 +743,6 @@ class TestCrossValidation:
             TaskState.PAUSED,
             TaskState.BUDGET_EXCEEDED,
             TaskState.NEEDS_ATTENTION,
-            TaskState.RECONCILING,
         }
         assert uncovered == expected_others, (
             f"Unclassified TaskState members beyond expected: {uncovered - expected_others}"

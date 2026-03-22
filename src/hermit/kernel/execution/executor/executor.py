@@ -1431,6 +1431,7 @@ class ToolExecutor:
             try:
                 self.capability_service.enforce(
                     capability_grant_id,
+                    task_id=attempt_ctx.task_id,
                     action_class=action_type,
                     resource_scope=list(action_request.resource_scopes),
                     constraints=self._capability_constraints(

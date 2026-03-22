@@ -43,6 +43,8 @@ class KernelDispatchService:
         self._futures: dict[concurrent.futures.Future[Any], str] = {}
         self._lock = threading.Lock()
         self._kind_handlers: dict[str, Any] = {}
+        self._reaper_thread: threading.Thread | None = None
+        self._emitted_complete: set[str] = set()
 
     def register_kind_handler(self, kind: str, handler: Any) -> None:
         """Register a custom handler for a step kind.
@@ -69,6 +71,8 @@ class KernelDispatchService:
         self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+        if self._reaper_thread is not None:
+            self._reaper_thread.join(timeout=5)
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def wake(self) -> None:
@@ -316,6 +320,8 @@ class KernelDispatchService:
         and ``settings`` so that all registered consumers (metaloop,
         benchmark, etc.) receive the parameters they expect.
         """
+        if task_id in self._emitted_complete:
+            return
         try:
             pm = getattr(self._runner, "pm", None)
             if pm is None:
@@ -332,6 +338,7 @@ class KernelDispatchService:
                 status=status,
                 settings=settings,
             )
+            self._emitted_complete.add(task_id)
             log.debug(
                 "subtask_complete_emitted",
                 task_id=task_id,

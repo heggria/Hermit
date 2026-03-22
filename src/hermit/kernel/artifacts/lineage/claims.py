@@ -271,6 +271,7 @@ def _probe_scoped_authority() -> None:
             )
             grant = grant_service.enforce(
                 grant_id,
+                task_id=ctx.task_id,
                 action_class="write_local",
                 resource_scope=[str(target_path)],
                 constraints={"target_paths": [str(target_path)]},

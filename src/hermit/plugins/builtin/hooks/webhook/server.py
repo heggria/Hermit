@@ -430,6 +430,19 @@ class WebhookServer:
             host=self._config.host,
             port=self._config.port,
         )
+        if self._config.control_secret is None:
+            _log.warning(  # type: ignore[call-arg]
+                "webhook_no_control_secret",
+                detail="Control API endpoints are unauthenticated; set control_secret in webhooks.json",
+            )
+        for route in self._config.routes:
+            if route.secret is None:
+                _log.warning(  # type: ignore[call-arg]
+                    "webhook_route_no_secret",
+                    route=route.name,
+                    path=route.path,
+                    detail="Route has no HMAC secret; incoming requests will not be verified",
+                )
 
     def stop(self) -> None:
         if self._server is not None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import re
+from collections import OrderedDict
 from collections.abc import Iterable
 from typing import Any
 
@@ -46,15 +47,18 @@ def topic_tokens(content: str) -> set[str]:
 
 
 # --- Layer 2: Memory token cache ---
-_token_cache: dict[str, frozenset[str]] = {}
+_TOKEN_CACHE_MAX = 4096
+_token_cache: OrderedDict[str, frozenset[str]] = OrderedDict()
 
 
 def cached_topic_tokens(memory_id: str, content: str) -> frozenset[str]:
-    """Return topic tokens for a memory, caching by memory_id."""
+    """Return topic tokens for a memory, caching by memory_id (LRU, max 4096)."""
     cached = _token_cache.get(memory_id)
     if cached is not None:
         return cached
     tokens = frozenset(topic_tokens(content))
+    if len(_token_cache) >= _TOKEN_CACHE_MAX:
+        _token_cache.popitem(last=False)  # evict oldest entry
     _token_cache[memory_id] = tokens
     return tokens
 

@@ -16,7 +16,11 @@ def evaluate_attachment_rules(request: ActionRequest) -> list[RuleOutcome] | Non
     actor_kind = str(request.actor.get("kind", "") or "")
     actor_id = str(request.actor.get("agent_id", "") or "")
 
-    if actor_kind == "adapter" and actor_id == "feishu_adapter":
+    if actor_kind == "adapter" and actor_id in {
+        "feishu_adapter",
+        "slack_adapter",
+        "telegram_adapter",
+    }:
         return [
             RuleOutcome(
                 verdict="allow_with_receipt",

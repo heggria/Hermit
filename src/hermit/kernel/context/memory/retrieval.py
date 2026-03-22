@@ -80,6 +80,7 @@ class HybridRetrievalService:
         self._lineage = lineage_service
         self._reranker = reranker
         self._token_index: TokenIndex | None = None
+        self._token_index_ids: frozenset[str] | None = None
 
     def retrieve(
         self,
@@ -257,8 +258,12 @@ class HybridRetrievalService:
         return [mid for mid, _ in scored]
 
     def _ensure_token_index(self, memories: list[MemoryRecord]) -> TokenIndex:
-        """Lazily build or reuse the inverted token index."""
-        if self._token_index is not None and len(self._token_index) == len(memories):
+        """Lazily build or reuse the inverted token index.
+
+        Rebuilds when the memory ID set changes, not merely the count.
+        """
+        current_ids = frozenset(m.memory_id for m in memories)
+        if self._token_index is not None and current_ids == self._token_index_ids:
             return self._token_index
         index = TokenIndex()
         for m in memories:
@@ -266,6 +271,7 @@ class HybridRetrievalService:
             filtered = frozenset(t for t in tokens if len(t) >= 2)
             index.add(m.memory_id, filtered)
         self._token_index = index
+        self._token_index_ids = current_ids
         return index
 
     def _semantic_rank(
@@ -381,7 +387,8 @@ class HybridRetrievalService:
         scored: list[tuple[str, float]] = []
         for m in memories:
             effective_conf = self._confidence.compute_confidence(m, now=now)
-            recency = (m.updated_at or m.created_at or 0.0) / now if now > 0 else 0.0
+            age_hours = max(0.0, (now - (m.updated_at or m.created_at or 0.0))) / 3600.0
+            recency = 1.0 / (1.0 + age_hours)
             scored.append((m.memory_id, effective_conf + recency))
         scored.sort(key=lambda x: x[1], reverse=True)
         return [mid for mid, _ in scored]

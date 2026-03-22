@@ -14,7 +14,8 @@ class JoinStrategy(StrEnum):
 
 
 _SUCCEEDED_STATUSES = frozenset({"succeeded", "completed", "skipped"})
-_TERMINAL_STATUSES = frozenset({"succeeded", "completed", "skipped", "failed"})
+_FAILED_STATUSES = frozenset({"failed", "needs_attention"})
+_TERMINAL_STATUSES = _SUCCEEDED_STATUSES | _FAILED_STATUSES
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ class JoinBarrierService:
 
         total = len(deps)
         succeeded = sum(1 for s in statuses.values() if s in _SUCCEEDED_STATUSES)
-        failed = sum(1 for s in statuses.values() if s == "failed")
+        failed = sum(1 for s in statuses.values() if s in _FAILED_STATUSES)
         pending = total - succeeded - failed
 
         strategy = JoinStrategy(step.join_strategy)

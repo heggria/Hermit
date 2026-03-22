@@ -243,6 +243,7 @@ def promote_memories_via_kernel(
         try:
             capability_service.enforce(
                 capability_grant_id,
+                task_id=ctx.task_id,
                 action_class="memory_write",
                 resource_scope=["memory_store"],
                 constraints={

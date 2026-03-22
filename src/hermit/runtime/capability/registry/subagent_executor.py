@@ -205,7 +205,7 @@ class SubagentExecutor:
         callback: ToolCallback = self._on_tool_call or _sub_tool_call
 
         try:
-            result = sub_agent.run(task, on_tool_call=callback, readonly_only=True)
+            result = sub_agent.run(task, on_tool_call=callback, readonly_only=not spec.governed)
             sys.stderr.write(
                 f"{_MAGENTA}  \u2514\u2500{_RESET} {_GREEN}done{_RESET} "
                 f"{_DIM}({result.turns} turns, {result.tool_calls} tool calls){_RESET}\n\n"

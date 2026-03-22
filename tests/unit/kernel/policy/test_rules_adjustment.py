@@ -95,7 +95,9 @@ def _pattern_context(*, invocation_count: int = 5, success_rate: float = 0.90) -
 
 class TestApplyPolicySuggestion:
     def test_skip_eligible_changes_verdict_to_allow_with_receipt(self) -> None:
-        request = _make_request(context=_suggestion_context(skip_eligible=True))
+        request = _make_request(
+            action_class="read_local", context=_suggestion_context(skip_eligible=True)
+        )
         outcomes = [_make_outcome(verdict="approval_required", risk_level="high")]
 
         adjusted = apply_policy_suggestion(request, outcomes)
@@ -108,7 +110,8 @@ class TestApplyPolicySuggestion:
 
     def test_skip_eligible_adds_template_confidence_reason(self) -> None:
         request = _make_request(
-            context=_suggestion_context(confidence_basis="20 invocations, 100% success")
+            action_class="read_local",
+            context=_suggestion_context(confidence_basis="20 invocations, 100% success"),
         )
         outcomes = [_make_outcome()]
 
@@ -118,7 +121,9 @@ class TestApplyPolicySuggestion:
         assert "template_confidence_skip" in reason_codes
 
     def test_critical_risk_never_skipped(self) -> None:
-        request = _make_request(context=_suggestion_context(skip_eligible=True))
+        request = _make_request(
+            action_class="read_local", context=_suggestion_context(skip_eligible=True)
+        )
         outcomes = [_make_outcome(verdict="approval_required", risk_level="critical")]
 
         adjusted = apply_policy_suggestion(request, outcomes)
@@ -156,7 +161,9 @@ class TestApplyPolicySuggestion:
         assert adjusted == outcomes
 
     def test_non_approval_verdict_unchanged(self) -> None:
-        request = _make_request(context=_suggestion_context(skip_eligible=True))
+        request = _make_request(
+            action_class="read_local", context=_suggestion_context(skip_eligible=True)
+        )
         outcomes = [_make_outcome(verdict="allow", risk_level="low")]
 
         adjusted = apply_policy_suggestion(request, outcomes)
@@ -177,7 +184,9 @@ class TestApplyPolicySuggestion:
         assert len(adjusted[0].reasons) == 1
 
     def test_multiple_outcomes_adjusted_independently(self) -> None:
-        request = _make_request(context=_suggestion_context(skip_eligible=True))
+        request = _make_request(
+            action_class="read_local", context=_suggestion_context(skip_eligible=True)
+        )
         outcomes = [
             _make_outcome(verdict="allow", risk_level="low"),
             _make_outcome(verdict="approval_required", risk_level="high"),

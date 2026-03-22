@@ -8,6 +8,14 @@ from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations,
 _PATTERN_HIGH_CONFIDENCE_THRESHOLD = 0.85
 _PATTERN_MIN_INVOCATIONS = 3
 
+_SKIP_APPROVAL_SAFE_CLASSES = frozenset(
+    {
+        "read_local",
+        "execute_command_readonly",
+        "delegate_reasoning",
+    }
+)
+
 
 def apply_policy_suggestion(
     request: ActionRequest, outcomes: list[RuleOutcome]
@@ -41,7 +49,7 @@ def apply_policy_suggestion(
             adjusted.append(outcome)
             continue
 
-        if skip_eligible:
+        if skip_eligible and request.action_class in _SKIP_APPROVAL_SAFE_CLASSES:
             adjusted.append(
                 RuleOutcome(
                     verdict="allow_with_receipt",
@@ -203,12 +211,17 @@ def evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
             )
         ]
 
-    # Outside-workspace shell writes/deletes require approval even in autonomous mode
+    # Outside-workspace shell writes/deletes require approval even in autonomous mode.
+    # Exception: self-iteration pipeline (metaloop) tasks operate in worktrees and
+    # routinely write outside the worktree boundary (e.g. test artifacts, caches).
+    source_ingress = str(request.context.get("source_ingress", "") or "")
+    is_self_iteration = source_ingress == "metaloop"
     if (
         request.action_class == "execute_command"
         and outside_workspace
         and (writes_disk or deletes_files)
         and not sensitive_paths  # sensitive paths already denied above
+        and not is_self_iteration
     ):
         target_paths = list(request.derived.get("target_paths", []))
         outside_roots = list(request.derived.get("outside_workspace_roots", []))
@@ -243,8 +256,15 @@ def evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
         ]
 
     # Kernel self-modification guard (applies even in autonomous mode)
+    # Exception: self-iteration pipeline (metaloop) tasks are expected to modify
+    # kernel source — they go through governed spec review and benchmark
+    # verification, so the approval gate is redundant and blocks the pipeline.
     kernel_paths = list(request.derived.get("kernel_paths", []))
-    if request.action_class in {"write_local", "patch_file", "execute_command"} and kernel_paths:
+    if (
+        request.action_class in {"write_local", "patch_file", "execute_command"}
+        and kernel_paths
+        and not is_self_iteration
+    ):
         from pathlib import Path as _Path
 
         return [

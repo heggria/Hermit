@@ -10,6 +10,7 @@ from hermit.kernel.policy.models.models import ActionRequest
 
 _SENSITIVE_PREFIXES = (
     ".env",
+    ".hermit",
     ".ssh",
     ".gnupg",
     "Library/",

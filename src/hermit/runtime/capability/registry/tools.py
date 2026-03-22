@@ -160,7 +160,11 @@ def _write_path(root_dir: Path, raw_path: str) -> Path:
     candidate = Path(raw_path).expanduser()
     if not candidate.is_absolute():
         candidate = root_dir / candidate
-    return candidate.resolve()
+    resolved = candidate.resolve()
+    resolved_root = root_dir.resolve()
+    if resolved_root not in resolved.parents and resolved != resolved_root:
+        raise ValueError(f"Path escapes workspace: {raw_path}")
+    return resolved
 
 
 def create_builtin_tool_registry(

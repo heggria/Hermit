@@ -11,7 +11,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hermit.kernel.context.models.context import CompiledProviderInput, TaskExecutionContext
-from hermit.runtime.control.runner.task_executor import RunnerTaskExecutor
+from hermit.runtime.control.runner.task_executor import (
+    RunnerTaskExecutor,
+    _enrich_prompt_with_dag_metadata,
+)
 from hermit.runtime.provider_host.execution.runtime import AgentResult
 
 # ---------------------------------------------------------------------------
@@ -513,3 +516,106 @@ class TestRecordSchedulerExecution:
             task_ctx, result, started_at=time.time(), delivery_results=[]
         )
         executor.task_controller.store.append_schedule_history.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _enrich_prompt_with_dag_metadata
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichPromptWithDagMetadata:
+    def test_returns_prompt_unchanged_when_no_metadata(self) -> None:
+        assert _enrich_prompt_with_dag_metadata("hello", {}) == "hello"
+
+    def test_returns_prompt_unchanged_when_metadata_none_values(self) -> None:
+        assert _enrich_prompt_with_dag_metadata("hello", {"file": "", "goal": ""}) == "hello"
+
+    def test_appends_description(self) -> None:
+        result = _enrich_prompt_with_dag_metadata("do it", {"description": "Add docstring to X"})
+        assert "Description: Add docstring to X" in result
+        assert result.startswith("do it\n\n")
+
+    def test_appends_file(self) -> None:
+        result = _enrich_prompt_with_dag_metadata("do it", {"file": "src/foo.py"})
+        assert "Target file: src/foo.py" in result
+
+    def test_appends_goal(self) -> None:
+        result = _enrich_prompt_with_dag_metadata("do it", {"goal": "improve coverage"})
+        assert "Goal: improve coverage" in result
+
+    def test_appends_target(self) -> None:
+        result = _enrich_prompt_with_dag_metadata("do it", {"target": "class Foo"})
+        assert "Target: class Foo" in result
+
+    def test_appends_constraints_list(self) -> None:
+        result = _enrich_prompt_with_dag_metadata(
+            "do it", {"constraints": ["no side effects", "keep API"]}
+        )
+        assert "Constraints: no side effects; keep API" in result
+
+    def test_appends_constraints_string(self) -> None:
+        result = _enrich_prompt_with_dag_metadata("do it", {"constraints": "no side effects"})
+        assert "Constraints: no side effects" in result
+
+    def test_appends_extra_keys(self) -> None:
+        result = _enrich_prompt_with_dag_metadata("do it", {"language": "python"})
+        assert "language: python" in result
+
+    def test_includes_workspace_guard(self) -> None:
+        result = _enrich_prompt_with_dag_metadata("do it", {"file": "src/foo.py"})
+        assert "All file operations must stay within the workspace root" in result
+        assert "Do not write to /tmp/" in result
+
+    def test_full_metadata(self) -> None:
+        dag_meta = {
+            "description": "Add docstring",
+            "file": "src/foo.py",
+            "goal": "documentation",
+            "target": "class Foo",
+            "constraints": ["keep API stable"],
+        }
+        result = _enrich_prompt_with_dag_metadata("step title", dag_meta)
+        assert result.startswith("step title\n\n")
+        assert "Description: Add docstring" in result
+        assert "Target file: src/foo.py" in result
+        assert "Goal: documentation" in result
+        assert "Target: class Foo" in result
+        assert "Constraints: keep API stable" in result
+        assert "All file operations must stay within the workspace root" in result
+
+
+# ---------------------------------------------------------------------------
+# process_claimed_attempt — DAG metadata enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestProcessClaimedAttemptDagMetadata:
+    def test_enriches_prompt_with_dag_metadata(
+        self, executor: RunnerTaskExecutor, mock_runtime: MagicMock, mock_task_controller: MagicMock
+    ) -> None:
+        dag_meta = {"file": "src/bar.py", "description": "Fix bug in bar"}
+        mock_task_controller.context_for_attempt.return_value = _make_task_ctx(
+            ingress_metadata={
+                "entry_prompt": "Fix bar",
+                "dag_node_metadata": dag_meta,
+            }
+        )
+        executor.process_claimed_attempt("attempt_1")
+        call_args = mock_runtime.run.call_args
+        prompt_sent = call_args[0][0]
+        assert "Fix bar" in prompt_sent
+        assert "Target file: src/bar.py" in prompt_sent
+        assert "Description: Fix bug in bar" in prompt_sent
+        assert "All file operations must stay within the workspace root" in prompt_sent
+
+    def test_no_enrichment_without_dag_metadata(
+        self, executor: RunnerTaskExecutor, mock_runtime: MagicMock, mock_task_controller: MagicMock
+    ) -> None:
+        mock_task_controller.context_for_attempt.return_value = _make_task_ctx(
+            ingress_metadata={"entry_prompt": "Simple task"}
+        )
+        executor.process_claimed_attempt("attempt_1")
+        call_args = mock_runtime.run.call_args
+        prompt_sent = call_args[0][0]
+        assert prompt_sent == "Simple task"
+        assert "Target file:" not in prompt_sent

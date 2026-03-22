@@ -10,6 +10,7 @@ _GOVERNANCE_ACTION_CLASSES = frozenset(
         "scheduler_mutation",
         "rollback",
         "memory_write",
+        "patrol_execution",
     }
 )
 

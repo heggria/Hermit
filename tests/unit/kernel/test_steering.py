@@ -54,7 +54,7 @@ class TestSteeringDirectiveModel:
         assert sig.task_id == "task_001"
         assert sig.summary == sd.directive
         assert sig.suggested_goal == sd.directive
-        assert sig.confidence == 1.0
+        assert sig.confidence == 0.9
         assert sig.metadata["issued_by"] == "operator"
         assert sig.metadata["steering_type"] == "scope"
 

@@ -1022,9 +1022,12 @@ class TaskController:
                             _data_flow.inject_resolved_inputs(
                                 activated_attempts[0].step_attempt_id, resolved
                             )
-        elif status == "failed":
+        elif status in ("failed", "needs_attention"):
             # Fix 1: max_attempts retry — use retry_step() for atomic attempt increment
             #        instead of raw _get_conn() calls.
+            # needs_attention (dispatch denial, uncertain outcome) is treated as
+            # failure for DAG propagation so the task fails fast instead of
+            # hanging until the staleness guard intervenes.
             step = self.store.get_step(ctx.step_id)
             if step is not None and step.attempt < step.max_attempts:
                 self.store.retry_step(ctx.task_id, ctx.step_id)

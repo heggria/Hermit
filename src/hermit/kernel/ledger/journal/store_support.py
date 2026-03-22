@@ -15,6 +15,9 @@ def json_loads(raw: str | None) -> Any:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
+        import structlog
+
+        structlog.get_logger().warning("json_parse_error", raw_preview=raw[:200] if raw else "")
         return {}
 
 

@@ -388,6 +388,7 @@ class AgentRunner:
             agent=self.agent,
             pm=self.pm,
             result_status_fn=self._result_status,
+            runner=self,
             on_tool_call=on_tool_call,
             on_tool_start=on_tool_start,
         )
@@ -740,15 +741,27 @@ class AgentRunner:
         )
         if hasattr(self.task_controller, "update_attempt_phase"):
             self.task_controller.update_attempt_phase(task_ctx.step_attempt_id, phase="executing")
-        result = self.agent.run(
-            prompt,
-            compiled_messages=compiled_input.messages,
-            on_tool_call=on_tool_call,
-            on_tool_start=on_tool_start,
-            disable_tools=bool(run_opts.get("disable_tools", False)),
-            readonly_only=bool(run_opts.get("readonly_only", False)),
-            task_context=task_ctx,
-        )
+        try:
+            result = self.agent.run(
+                prompt,
+                compiled_messages=compiled_input.messages,
+                on_tool_call=on_tool_call,
+                on_tool_start=on_tool_start,
+                disable_tools=bool(run_opts.get("disable_tools", False)),
+                readonly_only=bool(run_opts.get("readonly_only", False)),
+                task_context=task_ctx,
+            )
+        except Exception as exc:
+            result = AgentResult(
+                text=f"[API Error] {exc}",
+                turns=0,
+                tool_calls=0,
+                messages=list(session.messages),
+                task_id=task_ctx.task_id,
+                step_id=task_ctx.step_id,
+                step_attempt_id=task_ctx.step_attempt_id,
+                execution_status="failed",
+            )
 
         session.total_input_tokens += result.input_tokens
         session.total_output_tokens += result.output_tokens

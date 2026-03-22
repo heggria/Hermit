@@ -41,6 +41,15 @@ class EvidenceSignal:
     acted_at: float | None = None
 
 
+_STEERING_RISK_LEVEL: dict[str, str] = {
+    "scope": "medium",
+    "strategy": "medium",
+    "constraint": "low",
+    "priority": "low",
+    "policy": "high",
+}
+
+
 @dataclass
 class SteeringDirective:
     """Structured guidance from operators for mid-execution task redirection."""
@@ -64,17 +73,18 @@ class SteeringDirective:
         meta["issued_by"] = self.issued_by
         if self.supersedes_id:
             meta["supersedes_id"] = self.supersedes_id
+        risk_level = _STEERING_RISK_LEVEL.get(self.steering_type, "low")
         return EvidenceSignal(
             signal_id=self.directive_id,
             source_kind=f"steering:{self.steering_type}",
             source_ref=f"task://{self.task_id}",
             task_id=self.task_id,
             summary=self.directive,
-            confidence=1.0,
+            confidence=0.9,
             evidence_refs=list(self.evidence_refs),
             suggested_goal=self.directive,
             suggested_policy_profile="default",
-            risk_level="low",
+            risk_level=risk_level,
             disposition=self.disposition,
             metadata=meta,
             created_at=self.created_at,

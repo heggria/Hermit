@@ -30,4 +30,8 @@ class ArtifactStore:
         return str(path), content_hash
 
     def read_text(self, uri: str) -> str:
-        return Path(uri).read_text(encoding="utf-8")
+        resolved = Path(uri).resolve()
+        resolved_root = self.root_dir.resolve()
+        if resolved_root not in resolved.parents and resolved != resolved_root:
+            raise ValueError(f"Artifact path escapes store root: {uri}")
+        return resolved.read_text(encoding="utf-8")

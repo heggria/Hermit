@@ -19,6 +19,9 @@ from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy.models.models import ActionRequest
 from hermit.kernel.task.models.records import ReconciliationRecord
 
+MAX_AUTO_FOLLOWUPS: int = 3
+_FOLLOWUP_RESULT_CLASSES: frozenset[str] = frozenset({"violated", "unauthorized", "ambiguous"})
+
 
 class ReconciliationExecutor:
     """Reconciliation recording, template learning, and memory invalidation."""
@@ -32,6 +35,7 @@ class ReconciliationExecutor:
         execution_contracts: ExecutionContractService,
         evidence_cases: EvidenceCaseService,
         pattern_learner: TaskPatternLearner,
+        auto_followup: bool = True,
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
@@ -39,10 +43,62 @@ class ReconciliationExecutor:
         self.execution_contracts = execution_contracts
         self.evidence_cases = evidence_cases
         self._pattern_learner = pattern_learner
+        self._auto_followup = auto_followup
 
     # ------------------------------------------------------------------
     # Public API (extracted from ToolExecutor, underscore prefix removed)
     # ------------------------------------------------------------------
+
+    def _generate_followup_if_needed(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        reconciliation_record: ReconciliationRecord,
+    ) -> str | None:
+        """Generate a follow-up task when a reconciliation result class requires one.
+
+        Returns the new task_id if a follow-up was created, or None otherwise.
+        """
+        result_class = str(getattr(reconciliation_record, "result_class", "") or "")
+        if result_class not in _FOLLOWUP_RESULT_CLASSES:
+            return None
+
+        task = self.store.get_task(task_id)
+        if task is None:
+            return None
+
+        # Determine the root parent task to keep follow-up chains flat.
+        root_task_id = str(getattr(task, "parent_task_id", None) or "") or task_id
+
+        # Count existing follow-ups (children whose goal starts with retry prefix).
+        existing_children: list[Any] = self.store.list_child_tasks(root_task_id)
+        followup_count = sum(
+            1
+            for child in existing_children
+            if str(getattr(child, "goal", "") or "").startswith("retry/mitigate: ")
+        )
+        if followup_count >= MAX_AUTO_FOLLOWUPS:
+            return None
+
+        original_goal = str(getattr(task, "goal", "") or "")
+        # Strip existing retry prefix to avoid stacked prefixes.
+        base_goal = (
+            original_goal[len("retry/mitigate: ") :]
+            if original_goal.startswith("retry/mitigate: ")
+            else original_goal
+        )
+        new_task = self.store.create_task(
+            goal=f"retry/mitigate: {base_goal}",
+            parent_task_id=root_task_id,
+            status="queued",
+            priority=str(getattr(task, "priority", "normal") or "normal"),
+            policy_profile=str(getattr(task, "policy_profile", "default") or "default"),
+            source_channel=str(getattr(task, "source_channel", "chat") or "chat"),
+            conversation_id=str(getattr(task, "conversation_id", "") or ""),
+            owner=str(getattr(task, "owner_principal_id", "hermit") or "hermit"),
+        )
+        return str(getattr(new_task, "task_id", "") or "")
 
     def record_reconciliation(
         self,

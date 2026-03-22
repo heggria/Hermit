@@ -34,6 +34,49 @@ from hermit.runtime.control.runner.utils import (
 )
 
 
+def _enrich_prompt_with_dag_metadata(prompt: str, dag_meta: dict[str, Any]) -> str:
+    """Append DAG node metadata to a prompt so the agent receives full context.
+
+    DAG step metadata (file path, description, goal, constraints) is stored in
+    ``ingress_metadata["dag_node_metadata"]`` but was previously never surfaced
+    to the agent.  This helper folds it into the prompt text.
+    """
+    if not dag_meta:
+        return prompt
+
+    extra_parts: list[str] = []
+    if dag_meta.get("description"):
+        extra_parts.append(f"Description: {dag_meta['description']}")
+    if dag_meta.get("file"):
+        extra_parts.append(f"Target file: {dag_meta['file']}")
+    if dag_meta.get("goal"):
+        extra_parts.append(f"Goal: {dag_meta['goal']}")
+    if dag_meta.get("target"):
+        extra_parts.append(f"Target: {dag_meta['target']}")
+    if dag_meta.get("constraints"):
+        constraints = dag_meta["constraints"]
+        if isinstance(constraints, list):
+            extra_parts.append(f"Constraints: {'; '.join(str(c) for c in constraints)}")
+        else:
+            extra_parts.append(f"Constraints: {constraints}")
+
+    # Surface any remaining keys that aren't already handled above.
+    _HANDLED = {"description", "file", "goal", "target", "constraints"}
+    for key, value in dag_meta.items():
+        if key not in _HANDLED and value:
+            extra_parts.append(f"{key}: {value}")
+
+    if not extra_parts:
+        return prompt
+
+    enrichment = "\n".join(extra_parts)
+    workspace_guard = (
+        "All file operations must stay within the workspace root. "
+        "Do not write to /tmp/ or any directory outside the project."
+    )
+    return f"{prompt}\n\n{enrichment}\n\n{workspace_guard}"
+
+
 class RunnerTaskExecutor:
     """Executes tasks through the agent loop on behalf of AgentRunner.
 
@@ -287,18 +330,28 @@ class RunnerTaskExecutor:
                     on_tool_start=on_tool_start,
                 )
             else:
-                compiled_input = self._compile_provider_input(
-                    task_ctx=task_ctx,
-                    prompt=str(metadata.get("entry_prompt", "") or ""),
-                    raw_text=str(
+                # Build prompt, enriching with DAG node metadata when present.
+                dag_meta = dict(metadata.get("dag_node_metadata", {}) or {})
+                prompt = _enrich_prompt_with_dag_metadata(
+                    str(metadata.get("entry_prompt", "") or ""),
+                    dag_meta,
+                )
+                raw_text = _enrich_prompt_with_dag_metadata(
+                    str(
                         metadata.get("raw_text", "") or str(metadata.get("entry_prompt", "") or "")
                     ),
+                    dag_meta,
+                )
+                compiled_input = self._compile_provider_input(
+                    task_ctx=task_ctx,
+                    prompt=prompt,
+                    raw_text=raw_text,
                     session_messages=list(session.messages),
                 )
                 if hasattr(self.task_controller, "update_attempt_phase"):
                     self.task_controller.update_attempt_phase(step_attempt_id, phase="executing")
                 result = self.runtime.run(
-                    str(metadata.get("entry_prompt", "") or ""),
+                    prompt,
                     compiled_messages=compiled_input.messages,
                     on_tool_call=on_tool_call,
                     on_tool_start=on_tool_start,
