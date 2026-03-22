@@ -228,8 +228,7 @@ class MetaLoopOrchestrator:
         typecheck_errors = 0
         lint_violations = 0
 
-        # Count typecheck errors (pyright — use plain output, not --outputjson
-        # which may produce incomplete output in some environments)
+        # Count typecheck errors (pyright)
         try:
             proc = subprocess.run(
                 ["uv", "run", "pyright"],
@@ -244,8 +243,15 @@ class MetaLoopOrchestrator:
             m = _re.search(r"(\d+)\s+error", combined)
             if m:
                 typecheck_errors = int(m.group(1))
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            log.debug("baseline_typecheck_capture_failed")
+            log.debug(
+                "baseline_typecheck_raw",
+                rc=proc.returncode,
+                stdout_len=len(proc.stdout),
+                stderr_len=len(proc.stderr),
+                parsed=typecheck_errors,
+            )
+        except Exception:
+            log.warning("baseline_typecheck_capture_failed", exc_info=True)
 
         # Count lint violations (ruff)
         try:
