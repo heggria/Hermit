@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -12,6 +13,16 @@ from typing import Any
 from hermit.infra.system.i18n import _t
 from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
+
+
+def _get_proxy_opener() -> urllib.request.OpenerDirector | None:
+    """Build a proxy-aware opener if HERMIT_WEB_PROXY is set."""
+    proxy = os.environ.get("HERMIT_WEB_PROXY", "")
+    if not proxy:
+        return None
+    handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+    return urllib.request.build_opener(handler)
+
 
 # DDG date-filter codes
 _TIME_FILTER_MAP = {
@@ -100,8 +111,15 @@ def _ddg_lite_search(
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         },
     )
-    with urllib.request.urlopen(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
-        html = resp.read().decode("utf-8")
+    opener = _get_proxy_opener()
+    if opener:
+        with opener.open(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
+            html = resp.read().decode("utf-8")
+    else:
+        with urllib.request.urlopen(
+            req, timeout=get_runtime_budget().provider_read_timeout
+        ) as resp:
+            html = resp.read().decode("utf-8")
 
     parser = _DDGLiteParser()
     parser.feed(html)
@@ -180,10 +198,15 @@ def _ddg_instant_answer(query: str) -> str:
         )
         url = f"https://api.duckduckgo.com/?{params}"
         req = urllib.request.Request(url, headers={"User-Agent": "Hermit/0.1"})
-        with urllib.request.urlopen(
-            req, timeout=get_runtime_budget().provider_read_timeout
-        ) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        opener = _get_proxy_opener()
+        if opener:
+            with opener.open(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        else:
+            with urllib.request.urlopen(
+                req, timeout=get_runtime_budget().provider_read_timeout
+            ) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return ""
 
