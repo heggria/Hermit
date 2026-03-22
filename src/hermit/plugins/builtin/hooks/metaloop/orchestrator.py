@@ -228,30 +228,22 @@ class MetaLoopOrchestrator:
         typecheck_errors = 0
         lint_violations = 0
 
-        # Count typecheck errors (pyright)
+        # Count typecheck errors (pyright — use plain output, not --outputjson
+        # which may produce incomplete output in some environments)
         try:
             proc = subprocess.run(
-                ["uv", "run", "pyright", "--outputjson"],
+                ["uv", "run", "pyright"],
                 cwd=workspace,
                 capture_output=True,
                 text=True,
                 timeout=120,
             )
-            # pyright --outputjson gives structured JSON with error count
-            try:
-                import json as _json
+            import re as _re
 
-                data = _json.loads(proc.stdout)
-                summary = data.get("summary", {})
-                typecheck_errors = int(summary.get("errorCount", 0))
-            except (json.JSONDecodeError, TypeError, ValueError):
-                # Fallback: count error lines from stderr/stdout
-                import re as _re
-
-                combined = proc.stdout + proc.stderr
-                m = _re.search(r"(\d+)\s+error(?:s)?", combined)
-                if m:
-                    typecheck_errors = int(m.group(1))
+            combined = proc.stdout + proc.stderr
+            m = _re.search(r"(\d+)\s+error", combined)
+            if m:
+                typecheck_errors = int(m.group(1))
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             log.debug("baseline_typecheck_capture_failed")
 
