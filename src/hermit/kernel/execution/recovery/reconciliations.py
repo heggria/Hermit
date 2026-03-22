@@ -58,7 +58,7 @@ class ReconciliationService:
         )
         result_class = self._result_class(outcome, result_code_hint=result_code_hint)
         if result_class == "satisfied_with_downgrade":
-            log.warning(
+            log.debug(
                 "reconciliation.inferred_success",
                 task_id=attempt_ctx.task_id,
                 step_id=attempt_ctx.step_id,

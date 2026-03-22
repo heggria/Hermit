@@ -168,11 +168,16 @@ class SubagentExecutor:
             except KeyError:
                 log.warning("subagent_tool_not_found", subagent=spec.name, tool=tool_name)
 
+        system_prompt = spec.system_prompt
+        if spec.context_fragments:
+            context_block = "\n".join(spec.context_fragments)
+            system_prompt = f"<task_context>\n{context_block}\n</task_context>\n\n{system_prompt}"
+
         sub_agent = self._runtime.clone(
             registry=sub_registry,
             model=spec.model or self._model,
             max_turns=15,
-            system_prompt=spec.system_prompt,
+            system_prompt=system_prompt,
         )
 
         task_preview = task[:80] + ("..." if len(task) > 80 else "")

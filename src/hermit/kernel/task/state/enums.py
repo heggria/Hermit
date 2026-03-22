@@ -23,6 +23,7 @@ class TaskState(StrEnum):
     CANCELLED = "cancelled"
     BUDGET_EXCEEDED = "budget_exceeded"
     NEEDS_ATTENTION = "needs_attention"
+    RECONCILING = "reconciling"
 
 
 class StepAttemptState(StrEnum):

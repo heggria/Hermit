@@ -743,6 +743,7 @@ class TestCrossValidation:
             TaskState.PAUSED,
             TaskState.BUDGET_EXCEEDED,
             TaskState.NEEDS_ATTENTION,
+            TaskState.RECONCILING,
         }
         assert uncovered == expected_others, (
             f"Unclassified TaskState members beyond expected: {uncovered - expected_others}"

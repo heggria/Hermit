@@ -78,8 +78,18 @@ def promote_memories_via_kernel(
 
             artifact_store = ArtifactStore(Path(kernel_artifacts_dir))
             controller = TaskController(store)
+            # Use a distinct conversation_id so memory tasks never share
+            # a conversation with the parent DAG/session task.  Sharing
+            # the conversation_id caused the conversation focus to shift
+            # to the memory task, stalling the DAG's dispatch loop
+            # (see #40).
+            memory_conversation_id = (
+                f"{session_id}-memory-{uuid.uuid4().hex[:8]}"
+                if session_id
+                else f"memory-{mode}-{uuid.uuid4().hex[:8]}"
+            )
             ctx = controller.start_task(
-                conversation_id=session_id or f"memory-{mode}",
+                conversation_id=memory_conversation_id,
                 goal=task_goal,
                 source_channel=controller.source_from_session(session_id or "memory"),
                 kind="memory_promotion",

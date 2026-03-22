@@ -36,6 +36,7 @@ POLL_INTERVAL_ACTIVE = 10.0  # seconds
 POLL_INTERVAL_IDLE = 60.0  # seconds
 _IDLE_TICKS_THRESHOLD = 6  # consecutive idle ticks before switching to idle interval
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_SONNET_MODEL = "claude-sonnet-4-6-20250514"
 
 
 def _run_async(coro: Any) -> Any:
@@ -114,19 +115,43 @@ class MetaLoopOrchestrator:
         except Exception:
             return None
 
-    def _get_model(self) -> str:
+    def _get_model(self, attempt: int = 1) -> str:
         """Return the model to use for metaloop LLM calls.
 
-        Checks settings on the runner, then falls back to the default haiku
-        model for cost-effective metaloop operations.
+        Escalates to a more capable model on retry:
+          attempt 1 → default haiku (or settings override)
+          attempt 2 → sonnet
+          attempt 3+ → runner's primary model (provider.model)
         """
-        if self._runner is not None:
-            settings = getattr(self._runner, "settings", None)
-            if settings is not None:
-                model = getattr(settings, "metaloop_model", None)
-                if model:
-                    return str(model)
-        return _DEFAULT_MODEL
+        if attempt <= 1:
+            if self._runner is not None:
+                settings = getattr(self._runner, "settings", None)
+                if settings is not None:
+                    model = getattr(settings, "metaloop_model", None)
+                    if model:
+                        return str(model)
+            return _DEFAULT_MODEL
+        if attempt == 2:
+            return _SONNET_MODEL
+        # attempt 3+: use the runner's primary model
+        primary = self._get_primary_model()
+        return primary if primary else _SONNET_MODEL
+
+    def _get_primary_model(self) -> str | None:
+        """Return the runner's configured primary model, or None."""
+        try:
+            if self._runner is None:
+                return None
+            agent = getattr(self._runner, "agent", None)
+            if agent is None:
+                return None
+            provider = getattr(agent, "provider", None)
+            if provider is None:
+                return None
+            model = getattr(provider, "model", None)
+            return str(model) if model else None
+        except Exception:
+            return None
 
     def _query_relevant_lessons(self, goal: str, limit: int = 10) -> list[dict]:
         """Query stored lessons relevant to the current iteration goal.
@@ -248,7 +273,9 @@ class MetaLoopOrchestrator:
         research_data = self._run_research(state.spec_id, goal, data, metadata)
 
         # --- Step 2: Spec generation (LLM with deterministic fallback) ---
-        spec_data = self._run_spec_generation(state.spec_id, goal, research_data)
+        spec_data = self._run_spec_generation(
+            state.spec_id, goal, research_data, attempt=state.attempt
+        )
         if spec_data is None:
             return self._backlog.mark_failed(
                 state.spec_id,
@@ -269,7 +296,7 @@ class MetaLoopOrchestrator:
             return state
 
         # --- Step 4: Decomposition (LLM with deterministic fallback) ---
-        self._run_decomposition(state.spec_id, spec_data, research_data)
+        self._run_decomposition(state.spec_id, spec_data, research_data, attempt=state.attempt)
 
         return self._backlog.advance_phase(state.spec_id, PipelinePhase.IMPLEMENTING)
 
@@ -327,15 +354,14 @@ class MetaLoopOrchestrator:
             GitHistoryStrategy,
             WebStrategy,
         )
-        from hermit.plugins.builtin.hooks.research.tools import (
-            _pipeline as global_pipeline,
-        )
+        from hermit.plugins.builtin.hooks.research.tools import get_pipeline
 
         workspace = self._workspace_root or ""
         if not workspace:
             import os
 
             workspace = os.environ.get("HERMIT_WORKSPACE_ROOT", "") or os.getcwd()
+        global_pipeline = get_pipeline()
         if global_pipeline is not None:
             pipeline = global_pipeline
         else:
@@ -398,6 +424,8 @@ class MetaLoopOrchestrator:
         spec_id: str,
         goal: str,
         research_data: dict,
+        *,
+        attempt: int = 1,
     ) -> dict | None:
         """Generate a spec via LLM, falling back to deterministic generator."""
         from hermit.plugins.builtin.hooks.research.models import (
@@ -454,7 +482,7 @@ class MetaLoopOrchestrator:
             )
 
             provider = self._get_provider()
-            model = self._get_model()
+            model = self._get_model(attempt)
             spec = LLMSpecGenerator(provider, model=model).generate(goal, report, constraints)
         except Exception:
             log.warning(
@@ -622,6 +650,8 @@ class MetaLoopOrchestrator:
         spec_id: str,
         spec_data: dict,
         research_data: dict,
+        *,
+        attempt: int = 1,
     ) -> None:
         """Decompose spec into a task DAG via LLM, falling back to deterministic."""
         from hermit.plugins.builtin.hooks.decompose.models import GeneratedSpec
@@ -685,7 +715,7 @@ class MetaLoopOrchestrator:
             )
 
             provider = self._get_provider()
-            model = self._get_model()
+            model = self._get_model(attempt)
             plan = LLMTaskDecomposer(provider, model=model).decompose(spec)
         except Exception:
             log.warning(
@@ -1466,12 +1496,15 @@ class SpecBacklogPoller:
             did_work = True
 
         # 3. Advance active (non-terminal, non-pending) iterations.
-        #    Uses the 3 active phases from the new pipeline.
+        #    Only PLANNING and REVIEWING have synchronous handlers that
+        #    complete in one call.  IMPLEMENTING is handled above by
+        #    _check_implementing_timeout (DAG completion + timeout) and
+        #    by the on_subtask_complete callback — including it here
+        #    would cause a no-op advance() every tick (#35).
         if hasattr(self._backlog._store, "list_spec_backlog"):
             try:
                 for status in (
                     PipelinePhase.PLANNING.value,
-                    PipelinePhase.IMPLEMENTING.value,
                     PipelinePhase.REVIEWING.value,
                 ):
                     active = self._backlog._store.list_spec_backlog(status=status, limit=1)

@@ -461,10 +461,15 @@ def test_checkpoint_memories_promotes_durable_memory_via_kernel(tmp_path) -> Non
 
     # Promotion is now async (enqueued), so verify task was created rather than
     # checking memories.md content or receipts (those happen during dispatch).
+    # The memory task uses a distinct conversation_id (with random suffix) to
+    # avoid stealing focus from DAG tasks (#40), so we query by goal instead.
     store = KernelStore(settings.kernel_db_path)
     try:
-        task = store.get_last_task_for_conversation("chat-memory")
-        assert task is not None
+        tasks = store.list_tasks(limit=10)
+        memory_tasks = [t for t in tasks if "Promote durable memory" in (t.goal or "")]
+        assert memory_tasks, "Expected at least one memory promotion task"
+        task = memory_tasks[0]
+        assert task.conversation_id.startswith("chat-memory-memory-")
         assert "Promote durable memory" in task.title
     finally:
         store.close()

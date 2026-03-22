@@ -33,6 +33,7 @@ VALID_TASK_TRANSITIONS: dict[TaskState, set[TaskState]] = {
         TaskState.QUEUED,
         TaskState.BUDGET_EXCEEDED,
         TaskState.NEEDS_ATTENTION,
+        TaskState.RECONCILING,
     },
     TaskState.BLOCKED: {
         TaskState.RUNNING,
@@ -61,6 +62,14 @@ VALID_TASK_TRANSITIONS: dict[TaskState, set[TaskState]] = {
         TaskState.RUNNING,
         TaskState.CANCELLED,
         TaskState.FAILED,
+    },
+    TaskState.RECONCILING: {
+        TaskState.RUNNING,
+        TaskState.COMPLETED,
+        TaskState.FAILED,
+        TaskState.CANCELLED,
+        TaskState.NEEDS_ATTENTION,
+        TaskState.RECONCILING,  # allow self-transition for partial reconciliation
     },
 }
 

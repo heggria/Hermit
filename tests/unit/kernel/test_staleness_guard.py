@@ -112,6 +112,16 @@ class TestStalenessGuardSweep:
         _, status, _ = store.status_updates[0]
         assert status == "failed"
 
+    def test_sweep_fails_stale_reconciling_task(self, now: float, ttl: int) -> None:
+        store = FakeStore([_make_task("t1", TaskState.RECONCILING, now - ttl - 1)])
+        guard = StalenessGuard(store, ttl_seconds=ttl)
+        affected = guard.sweep()
+        assert affected == ["t1"]
+        _, status, payload = store.status_updates[0]
+        assert status == "failed"
+        assert payload["reason"] == "state_timeout_exceeded"
+        assert payload["original_status"] == TaskState.RECONCILING
+
     def test_sweep_cancels_stale_paused_task(self, now: float, ttl: int) -> None:
         """PAUSED -> FAILED is not valid in the state machine; guard uses CANCELLED."""
         store = FakeStore([_make_task("t1", TaskState.PAUSED, now - ttl - 1)])
@@ -195,5 +205,7 @@ class TestStalenessGuardDefaults:
         assert guard.ttl == 300
 
     def test_watchable_states_are_correct(self) -> None:
-        expected = frozenset({"planning_ready", "paused", "needs_attention", "blocked"})
+        expected = frozenset(
+            {"planning_ready", "paused", "needs_attention", "blocked", "reconciling"}
+        )
         assert expected == StalenessGuard.WATCHABLE_STATES

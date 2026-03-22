@@ -45,6 +45,7 @@ class StalenessGuard:
             TaskState.PAUSED,
             TaskState.NEEDS_ATTENTION,
             TaskState.BLOCKED,
+            TaskState.RECONCILING,
         }
     )
 

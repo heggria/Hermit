@@ -3,23 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 
 from hermit.plugins.builtin.hooks.research.pipeline import ResearchPipeline
 from hermit.runtime.capability.contracts.base import PluginContext
 from hermit.runtime.capability.registry.tools import ToolSpec
 
+_pipeline_lock = threading.Lock()
 _pipeline: ResearchPipeline | None = None
 
 
-def set_pipeline(pipeline: ResearchPipeline) -> None:
+def set_pipeline(pipeline: ResearchPipeline | None) -> None:
     global _pipeline
-    _pipeline = pipeline
+    with _pipeline_lock:
+        _pipeline = pipeline
+
+
+def get_pipeline() -> ResearchPipeline | None:
+    with _pipeline_lock:
+        return _pipeline
 
 
 def _handle_research_context(payload: dict[str, Any]) -> str:
     """Run the research pipeline and return a structured report."""
-    if _pipeline is None:
+    pipeline = get_pipeline()
+    if pipeline is None:
         return "Research pipeline is not initialized."
 
     goal = str(payload.get("goal", "")).strip()
@@ -41,10 +50,10 @@ def _handle_research_context(payload: dict[str, Any]) -> str:
         import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(asyncio.run, _pipeline.run(goal, hints))
+            future = executor.submit(asyncio.run, pipeline.run(goal, hints))
             report = future.result(timeout=120)
     else:
-        report = asyncio.run(_pipeline.run(goal, hints))
+        report = asyncio.run(pipeline.run(goal, hints))
 
     # Format as structured text
     lines = [

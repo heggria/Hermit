@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Iterable
 from typing import Any, cast
@@ -19,6 +20,9 @@ from hermit.runtime.provider_host.shared.messages import (
     normalize_block,
     split_internal_tool_context,
 )
+
+_LLM_CONCURRENCY_LIMIT = 8  # Max concurrent API calls
+_llm_semaphore = threading.Semaphore(_LLM_CONCURRENCY_LIMIT)
 
 _CACHE_CONTROL_EPHEMERAL: dict[str, str] = {"type": "ephemeral"}
 
@@ -220,23 +224,24 @@ class ClaudeProvider(Provider):
     def generate(self, request: ProviderRequest) -> ProviderResponse:
         payload = self._payload(request)
         last_exc: BaseException | None = None
-        for _attempt in range(_CONTENT_FILTER_MAX_RETRIES + 1):
-            try:
-                if _attempt > 0:
-                    time.sleep(_CONTENT_FILTER_RETRY_DELAY)
-                    response = self.client.messages.create(
-                        **_nudge_payload_for_retry(payload, _attempt)
-                    )
-                else:
-                    response = self.client.messages.create(**payload)
-                break
-            except Exception as exc:
-                if _is_content_filter_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
-                    last_exc = exc
-                    continue
-                raise
-        else:
-            raise last_exc  # type: ignore[misc]
+        with _llm_semaphore:
+            for _attempt in range(_CONTENT_FILTER_MAX_RETRIES + 1):
+                try:
+                    if _attempt > 0:
+                        time.sleep(_CONTENT_FILTER_RETRY_DELAY)
+                        response = self.client.messages.create(
+                            **_nudge_payload_for_retry(payload, _attempt)
+                        )
+                    else:
+                        response = self.client.messages.create(**payload)
+                    break
+                except Exception as exc:
+                    if _is_content_filter_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
+                        last_exc = exc
+                        continue
+                    raise
+            else:
+                raise last_exc  # type: ignore[misc]
         raw_content: list[Any] = list(getattr(response, "content", None) or [])
         content = [normalize_block(block) for block in raw_content]
         api_error = getattr(response, "error", None)
@@ -259,23 +264,24 @@ class ClaudeProvider(Provider):
         payload = self._payload(request, stream=True)
         last_exc: BaseException | None = None
         raw_stream = None
-        for _attempt in range(_CONTENT_FILTER_MAX_RETRIES + 1):
-            try:
-                if _attempt > 0:
-                    time.sleep(_CONTENT_FILTER_RETRY_DELAY)
-                    raw_stream = self.client.messages.create(
-                        **_nudge_payload_for_retry(payload, _attempt)
-                    )
-                else:
-                    raw_stream = self.client.messages.create(**payload)
-                break
-            except Exception as exc:
-                if _is_content_filter_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
-                    last_exc = exc
-                    continue
-                raise
-        else:
-            raise last_exc  # type: ignore[misc]
+        with _llm_semaphore:
+            for _attempt in range(_CONTENT_FILTER_MAX_RETRIES + 1):
+                try:
+                    if _attempt > 0:
+                        time.sleep(_CONTENT_FILTER_RETRY_DELAY)
+                        raw_stream = self.client.messages.create(
+                            **_nudge_payload_for_retry(payload, _attempt)
+                        )
+                    else:
+                        raw_stream = self.client.messages.create(**payload)
+                    break
+                except Exception as exc:
+                    if _is_content_filter_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
+                        last_exc = exc
+                        continue
+                    raise
+            else:
+                raise last_exc  # type: ignore[misc]
         current_block: dict[str, Any] | None = None
         usage = UsageMetrics()
         stop_reason: str | None = None

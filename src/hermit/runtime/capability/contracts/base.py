@@ -39,6 +39,7 @@ class SubagentSpec:
     model: str = ""
     policy_profile: str = "readonly"
     governed: bool = False
+    context_fragments: list[str] | None = None
 
 
 @dataclass(frozen=True)
