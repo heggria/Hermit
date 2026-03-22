@@ -8,8 +8,8 @@ from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
 from hermit.kernel.execution.executor.execution_helpers import (
-    _contract_refs,
-    _set_attempt_phase,
+    contract_refs,
+    set_attempt_phase,
 )
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import POLICY_RULES_VERSION, ActionRequest, PolicyDecision
@@ -38,7 +38,7 @@ class ContractExecutor:
     def contract_refs(
         self, attempt_ctx: TaskExecutionContext
     ) -> tuple[str | None, str | None, str | None]:
-        return _contract_refs(self.store, attempt_ctx)
+        return contract_refs(self.store, attempt_ctx)
 
     def load_contract_bundle(
         self, attempt_ctx: TaskExecutionContext
@@ -90,7 +90,7 @@ class ContractExecutor:
         preview_artifact: str | None,
         witness_ref: str | None,
     ) -> tuple[Any, Any, Any]:
-        _set_attempt_phase(
+        set_attempt_phase(
             self.store, attempt_ctx, "contracting", reason="contract_synthesis_started"
         )
         self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="contracting")
@@ -113,7 +113,7 @@ class ContractExecutor:
             policy_result_ref=policy_result_ref,
             witness_ref=witness_ref,
         )
-        _set_attempt_phase(
+        set_attempt_phase(
             self.store, attempt_ctx, "preflighting", reason="authorization_preflight_started"
         )
         self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="preflighting")
@@ -154,11 +154,11 @@ class ContractExecutor:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _set_attempt_phase(
+    def set_attempt_phase(
         self,
         attempt_ctx: TaskExecutionContext,
         phase: str,
         *,
         reason: str | None = None,
     ) -> None:
-        _set_attempt_phase(self.store, attempt_ctx, phase, reason=reason)
+        set_attempt_phase(self.store, attempt_ctx, phase, reason=reason)

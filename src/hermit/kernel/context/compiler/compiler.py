@@ -125,6 +125,7 @@ class ContextCompiler:
         excluded_reasons: dict[str, str] = {}
         static_memory: list[dict[str, Any]] = []
         retrieval_candidates: list[tuple[MemoryRecord, float]] = []
+        retrieval_memory: list[dict[str, Any]] = []
         query_text = self._normalize_query(query)
         suppress_contextual_retrieval = self._is_smalltalk_query(query_text)
 

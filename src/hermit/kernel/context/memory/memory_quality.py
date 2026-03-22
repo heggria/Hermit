@@ -142,7 +142,7 @@ class _RecordProxy:
             return None
 
 
-def _to_record_proxy(record: dict[str, Any]) -> Any:
+def _to_record_proxy(record: dict[str, Any]) -> _RecordProxy:
     """Wrap a dict as a record proxy compatible with decay/confidence services."""
     return _RecordProxy(record)
 

@@ -17,33 +17,33 @@ class InteractionType(StrEnum):
 class TaskContractPacket:
     task_id: str
     goal: str
-    scope: dict[str, Any] = field(default_factory=dict)
-    inputs: list[str] = field(default_factory=list)
-    constraints: list[str] = field(default_factory=list)
-    acceptance_criteria: list[str] = field(default_factory=list)
+    scope: dict[str, Any] = field(default_factory=lambda: {})
+    inputs: list[str] = field(default_factory=lambda: [])
+    constraints: list[str] = field(default_factory=lambda: [])
+    acceptance_criteria: list[str] = field(default_factory=lambda: [])
     risk_band: str = "medium"
-    suggested_plan: list[str] = field(default_factory=list)
-    dependencies: list[str] = field(default_factory=list)
-    expected_artifacts: list[str] = field(default_factory=list)
-    verification_requirements: dict[str, Any] = field(default_factory=dict)
+    suggested_plan: list[str] = field(default_factory=lambda: [])
+    dependencies: list[str] = field(default_factory=lambda: [])
+    expected_artifacts: list[str] = field(default_factory=lambda: [])
+    verification_requirements: dict[str, Any] = field(default_factory=lambda: {})
 
 
 @dataclass(frozen=True)
 class CompletionPacket:
     task_id: str
     status: str
-    changed_files: list[str] = field(default_factory=list)
-    artifacts: dict[str, str] = field(default_factory=dict)
-    known_risks: list[str] = field(default_factory=list)
-    needs_review_focus: list[str] = field(default_factory=list)
+    changed_files: list[str] = field(default_factory=lambda: [])
+    artifacts: dict[str, str] = field(default_factory=lambda: {})
+    known_risks: list[str] = field(default_factory=lambda: [])
+    needs_review_focus: list[str] = field(default_factory=lambda: [])
 
 
 @dataclass(frozen=True)
 class VerdictPacket:
     task_id: str
     verdict: str
-    acceptance_check: dict[str, bool] = field(default_factory=dict)
-    issues: list[dict[str, Any]] = field(default_factory=list)
+    acceptance_check: dict[str, bool] = field(default_factory=lambda: {})
+    issues: list[dict[str, Any]] = field(default_factory=lambda: [])
     recommended_next_action: str = ""
 
 
@@ -53,7 +53,7 @@ class SupervisorQuery:
     type: str = "query"
     task_id: str = ""
     question: str = ""
-    options: list[str] = field(default_factory=list)
+    options: list[str] = field(default_factory=lambda: [])
     blocking: bool = False
     from_role: str = ""
 
@@ -65,7 +65,7 @@ class SupervisorEscalation:
     reason: str
     severity: str = "medium"
     from_role: str = ""
-    context: dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=lambda: {})
 
 
 _VALID_VERDICTS: frozenset[str] = frozenset(

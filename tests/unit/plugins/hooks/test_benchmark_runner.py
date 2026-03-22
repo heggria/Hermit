@@ -10,6 +10,8 @@ from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkErrorDetail, 
 from hermit.plugins.builtin.hooks.benchmark.runner import (
     BenchmarkRunner,
     _collect_error_details,
+    _count_lint_violations,
+    _count_typecheck_errors,
     _detect_regression,
     _parse_coverage,
     _parse_lint_errors,
@@ -324,3 +326,316 @@ class TestBenchmarkErrorDetailModel:
     def test_default_file_paths(self) -> None:
         detail = BenchmarkErrorDetail(category="other", count=0, summary="")
         assert detail.file_paths == ()
+
+
+# ---------------------------------------------------------------------------
+# Delta comparison helpers
+# ---------------------------------------------------------------------------
+
+
+class TestCountTypecheckErrors:
+    def test_summary_line(self) -> None:
+        output = "some output\n1337 errors found in 200 files\nmore output"
+        assert _count_typecheck_errors(output) == 1337
+
+    def test_summary_line_singular(self) -> None:
+        output = "1 error found in 1 file"
+        assert _count_typecheck_errors(output) == 1
+
+    def test_fallback_pyright_lines(self) -> None:
+        output = "src/foo.py:10:5: error: Type mismatch\nsrc/bar.py:20:3: error: Missing arg\n"
+        assert _count_typecheck_errors(output) == 2
+
+    def test_no_errors(self) -> None:
+        output = "All checks passed"
+        assert _count_typecheck_errors(output) == 0
+
+
+class TestCountLintViolations:
+    def test_found_errors(self) -> None:
+        output = "Found 7 errors"
+        assert _count_lint_violations(output) == 7
+
+    def test_no_errors(self) -> None:
+        output = "All checks passed"
+        assert _count_lint_violations(output) == 0
+
+
+# ---------------------------------------------------------------------------
+# Delta comparison in BenchmarkRunner
+# ---------------------------------------------------------------------------
+
+
+class TestBenchmarkRunnerDeltaComparison:
+    @pytest.mark.asyncio()
+    async def test_delta_passes_with_preexisting_errors(self, runner: BenchmarkRunner) -> None:
+        """Pre-existing errors should not cause failure when baseline is provided."""
+        output = "42 passed in 5.0s\nTOTAL   200    10    95.0%\n1337 errors found in 200 files\n"
+        baseline = {"typecheck_errors": 1337, "lint_violations": 0}
+        with patch.object(runner, "_exec", return_value=(output, 1)):
+            result = await runner.run("iter-d1", "spec-d1", baseline_metrics=baseline)
+
+        assert result.check_passed is True
+        assert result.delta_info["new_typecheck"] == 0
+        assert result.delta_info["baseline_typecheck"] == 1337
+        assert result.delta_info["current_typecheck"] == 1337
+
+    @pytest.mark.asyncio()
+    async def test_delta_fails_when_new_errors_introduced(self, runner: BenchmarkRunner) -> None:
+        """New errors beyond the baseline should cause failure."""
+        output = "42 passed in 5.0s\n1340 errors found in 200 files\n"
+        baseline = {"typecheck_errors": 1337, "lint_violations": 0}
+        with patch.object(runner, "_exec", return_value=(output, 1)):
+            result = await runner.run("iter-d2", "spec-d2", baseline_metrics=baseline)
+
+        assert result.check_passed is False
+        assert result.delta_info["new_typecheck"] == 3
+
+    @pytest.mark.asyncio()
+    async def test_delta_fails_on_new_lint_violations(self, runner: BenchmarkRunner) -> None:
+        """New lint violations beyond baseline should cause failure."""
+        output = "42 passed in 5.0s\nFound 5 errors\n"
+        baseline = {"typecheck_errors": 0, "lint_violations": 3}
+        with patch.object(runner, "_exec", return_value=(output, 1)):
+            result = await runner.run("iter-d3", "spec-d3", baseline_metrics=baseline)
+
+        assert result.check_passed is False
+        assert result.delta_info["new_lint"] == 2
+
+    @pytest.mark.asyncio()
+    async def test_delta_fails_on_test_failures(self, runner: BenchmarkRunner) -> None:
+        """Test failures should always cause failure even with baseline."""
+        output = "5 passed, 3 failed\n"
+        baseline = {"typecheck_errors": 0, "lint_violations": 0}
+        with patch.object(runner, "_exec", return_value=(output, 1)):
+            result = await runner.run("iter-d4", "spec-d4", baseline_metrics=baseline)
+
+        assert result.check_passed is False
+        assert result.delta_info["test_passed"] == 5
+        assert result.delta_info["test_total"] == 8
+
+    @pytest.mark.asyncio()
+    async def test_no_baseline_uses_absolute_check(self, runner: BenchmarkRunner) -> None:
+        """Without baseline_metrics, fall back to absolute returncode check."""
+        output = "42 passed in 5.0s\n1337 errors found\n"
+        with patch.object(runner, "_exec", return_value=(output, 1)):
+            result = await runner.run("iter-d5", "spec-d5")
+
+        assert result.check_passed is False
+        assert result.delta_info == {}
+
+    @pytest.mark.asyncio()
+    async def test_delta_tolerates_fewer_errors(self, runner: BenchmarkRunner) -> None:
+        """If errors decreased from baseline, that is a pass."""
+        output = "42 passed in 5.0s\n1330 errors found in 200 files\n"
+        baseline = {"typecheck_errors": 1337, "lint_violations": 0}
+        with patch.object(runner, "_exec", return_value=(output, 1)):
+            result = await runner.run("iter-d6", "spec-d6", baseline_metrics=baseline)
+
+        assert result.check_passed is True
+        assert result.delta_info["new_typecheck"] == 0
+        assert result.delta_info["current_typecheck"] == 1330
+
+    @pytest.mark.asyncio()
+    async def test_delta_info_stored_in_result(self, runner: BenchmarkRunner) -> None:
+        """delta_info should be populated in the result."""
+        output = "42 passed in 5.0s\n"
+        baseline = {"typecheck_errors": 10, "lint_violations": 5}
+        with patch.object(runner, "_exec", return_value=(output, 0)):
+            result = await runner.run("iter-d7", "spec-d7", baseline_metrics=baseline)
+
+        assert "baseline_typecheck" in result.delta_info
+        assert "baseline_lint" in result.delta_info
+        assert result.delta_info["baseline_typecheck"] == 10
+        assert result.delta_info["baseline_lint"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Tiered benchmark strategy
+# ---------------------------------------------------------------------------
+
+
+class TestBenchmarkRunnerTieredStrategy:
+    @pytest.mark.asyncio()
+    async def test_tiered_all_tiers_pass(self, runner: BenchmarkRunner) -> None:
+        """When all tiers pass, tier_reached should be tier3_full."""
+        calls: list[str] = []
+
+        async def fake_exec(cmd: str, cwd: str) -> tuple[str, int]:
+            calls.append(cmd)
+            if "ruff" in cmd:
+                return "All checks passed!\n", 0
+            if "pytest" in cmd and "tests/unit/" in cmd:
+                return "100 passed in 10.0s\n", 0
+            if "pytest" in cmd:
+                return "5 passed in 1.0s\n", 0
+            if cmd == "make test":
+                return "200 passed in 30.0s\n", 0
+            return "", 0
+
+        changed = ["src/hermit/foo.py", "tests/unit/test_foo.py"]
+        with patch.object(runner, "_exec", side_effect=fake_exec):
+            result = await runner.run("iter-t1", "spec-t1", changed_files=changed)
+
+        assert result.check_passed is True
+        assert result.tier_reached == "tier3_full"
+        assert result.strategy_used == "tiered"
+        assert any("ruff" in c for c in calls)
+        assert any("make test" in c for c in calls)
+
+    @pytest.mark.asyncio()
+    async def test_tiered_fails_at_tier1_lint(self, runner: BenchmarkRunner) -> None:
+        """Lint failure on changed files stops at tier1."""
+
+        async def fake_exec(cmd: str, cwd: str) -> tuple[str, int]:
+            if "ruff" in cmd:
+                return "src/hermit/foo.py:10:5: E501 line too long\nFound 1 error\n", 1
+            return "", 0
+
+        changed = ["src/hermit/foo.py"]
+        with patch.object(runner, "_exec", side_effect=fake_exec):
+            result = await runner.run("iter-t2", "spec-t2", changed_files=changed)
+
+        assert result.check_passed is False
+        assert result.tier_reached == "tier1_lint"
+        assert result.strategy_used == "tiered"
+
+    @pytest.mark.asyncio()
+    async def test_tiered_fails_at_tier1_test(self, runner: BenchmarkRunner) -> None:
+        """Test failure on changed test files stops at tier1."""
+
+        async def fake_exec(cmd: str, cwd: str) -> tuple[str, int]:
+            if "ruff" in cmd:
+                return "", 0
+            if "pytest" in cmd and "test_bar" in cmd:
+                return "1 passed, 1 failed\nFAILED tests/test_bar.py::test_x\n", 1
+            return "", 0
+
+        changed = ["src/hermit/bar.py", "tests/test_bar.py"]
+        with patch.object(runner, "_exec", side_effect=fake_exec):
+            result = await runner.run("iter-t3", "spec-t3", changed_files=changed)
+
+        assert result.check_passed is False
+        assert result.tier_reached == "tier1_test"
+
+    @pytest.mark.asyncio()
+    async def test_tiered_fails_at_tier2_unit(self, runner: BenchmarkRunner) -> None:
+        """Unit test failure stops at tier2."""
+
+        async def fake_exec(cmd: str, cwd: str) -> tuple[str, int]:
+            if "tests/unit/" in cmd:
+                return "50 passed, 2 failed\n", 1
+            return "", 0
+
+        changed = ["src/hermit/baz.py"]
+        with patch.object(runner, "_exec", side_effect=fake_exec):
+            result = await runner.run("iter-t4", "spec-t4", changed_files=changed)
+
+        assert result.check_passed is False
+        assert result.tier_reached == "tier2_unit"
+
+    @pytest.mark.asyncio()
+    async def test_tiered_fails_at_tier3_full(self, runner: BenchmarkRunner) -> None:
+        """Full test suite failure at tier3."""
+
+        async def fake_exec(cmd: str, cwd: str) -> tuple[str, int]:
+            if cmd == "make test":
+                return "190 passed, 5 failed\n", 1
+            return "", 0
+
+        changed = ["src/hermit/qux.py"]
+        with patch.object(runner, "_exec", side_effect=fake_exec):
+            result = await runner.run("iter-t5", "spec-t5", changed_files=changed)
+
+        assert result.check_passed is False
+        assert result.tier_reached == "tier3_full"
+
+    @pytest.mark.asyncio()
+    async def test_no_changed_files_falls_back_to_full(self, runner: BenchmarkRunner) -> None:
+        """Without changed_files, strategy falls back to full make check."""
+        with patch.object(runner, "_exec", return_value=("42 passed\n", 0)):
+            result = await runner.run("iter-t6", "spec-t6")
+
+        assert result.strategy_used == "full"
+        assert result.tier_reached == "full"
+
+    @pytest.mark.asyncio()
+    async def test_full_strategy_ignores_changed_files(self, runner: BenchmarkRunner) -> None:
+        """Explicit full strategy runs make check even with changed_files."""
+        with patch.object(runner, "_exec", return_value=("42 passed\n", 0)):
+            result = await runner.run(
+                "iter-t7",
+                "spec-t7",
+                changed_files=["src/hermit/foo.py"],
+                strategy="full",
+            )
+
+        assert result.strategy_used == "full"
+        assert result.tier_reached == "full"
+
+    @pytest.mark.asyncio()
+    async def test_quick_strategy_runs_tier1_only(self, runner: BenchmarkRunner) -> None:
+        """Quick strategy runs only tier 1 and stops."""
+        calls: list[str] = []
+
+        async def fake_exec(cmd: str, cwd: str) -> tuple[str, int]:
+            calls.append(cmd)
+            return "1 passed\n", 0
+
+        changed = ["src/hermit/foo.py", "tests/test_foo.py"]
+        with patch.object(runner, "_exec", side_effect=fake_exec):
+            result = await runner.run(
+                "iter-t8",
+                "spec-t8",
+                changed_files=changed,
+                strategy="quick",
+            )
+
+        assert result.check_passed is True
+        assert result.tier_reached == "tier1_quick"
+        assert result.strategy_used == "quick"
+        # Should NOT have run make test or unit tests
+        assert not any("make test" in c for c in calls)
+        assert not any("tests/unit/" in c for c in calls)
+
+    @pytest.mark.asyncio()
+    async def test_tiered_skips_non_python_files(self, runner: BenchmarkRunner) -> None:
+        """Non-.py changed files are ignored for lint/test but tiered still runs."""
+
+        async def fake_exec(cmd: str, cwd: str) -> tuple[str, int]:
+            if "tests/unit/" in cmd:
+                return "10 passed\n", 0
+            if cmd == "make test":
+                return "20 passed\n", 0
+            return "", 0
+
+        changed = ["README.md", "config.toml"]
+        with patch.object(runner, "_exec", side_effect=fake_exec):
+            result = await runner.run("iter-t9", "spec-t9", changed_files=changed)
+
+        assert result.check_passed is True
+        assert result.tier_reached == "tier3_full"
+
+    @pytest.mark.asyncio()
+    async def test_tiered_with_delta_baseline(self, runner: BenchmarkRunner) -> None:
+        """Tiered strategy works together with delta comparison."""
+
+        async def fake_exec(cmd: str, cwd: str) -> tuple[str, int]:
+            if cmd == "make test":
+                return "42 passed in 5.0s\n1337 errors found in 200 files\n", 1
+            return "", 0
+
+        changed = ["src/hermit/mod.py"]
+        baseline = {"typecheck_errors": 1337, "lint_violations": 0}
+        with patch.object(runner, "_exec", side_effect=fake_exec):
+            result = await runner.run(
+                "iter-t10",
+                "spec-t10",
+                changed_files=changed,
+                baseline_metrics=baseline,
+            )
+
+        # Delta comparison should pass (no new errors)
+        assert result.check_passed is True
+        assert result.tier_reached == "tier3_full"
+        assert result.delta_info["new_typecheck"] == 0

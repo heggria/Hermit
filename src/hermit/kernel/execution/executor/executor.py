@@ -27,7 +27,7 @@ from hermit.kernel.execution.executor.observation_handler import ObservationHand
 from hermit.kernel.execution.executor.phase_tracker import (
     PhaseTracker,
     _is_governed_action,
-    _needs_witness,
+    needs_witness,
 )
 from hermit.kernel.execution.executor.receipt_handler import ReceiptHandler
 from hermit.kernel.execution.executor.reconciliation_executor import ReconciliationExecutor
@@ -1047,7 +1047,7 @@ class ToolExecutor:
             governed
             and witness_ref is None
             and matched_approval is None
-            and _needs_witness(action_type)
+            and needs_witness(action_type)
         ):
             witness_ref = self._capture_state_witness(action_request, attempt_ctx)
 

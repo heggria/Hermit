@@ -33,14 +33,14 @@ class TaskMetrics:
     avg_step_duration_seconds: float | None = None
     min_step_duration_seconds: float | None = None
     max_step_duration_seconds: float | None = None
-    step_timings: list[StepTimingEntry] = field(default_factory=list)
+    step_timings: list[StepTimingEntry] = field(default_factory=lambda: [])
 
 
 @dataclass
 class TaskMetricsSummary:
     """Aggregated timing metrics across one or more tasks."""
 
-    tasks: list[TaskMetrics] = field(default_factory=list)
+    tasks: list[TaskMetrics] = field(default_factory=lambda: [])
     total_tasks: int = 0
     tasks_with_timing: int = 0
 
@@ -129,8 +129,8 @@ class TaskMetricsService:
                     )
                 )
 
-        total_duration = sum(durations) if durations else None
-        avg_duration = (total_duration / len(durations)) if durations else None
+        total_duration: float | None = sum(durations) if durations else None
+        avg_duration: float | None = (sum(durations) / len(durations)) if durations else None
         min_duration = min(durations) if durations else None
         max_duration = max(durations) if durations else None
 

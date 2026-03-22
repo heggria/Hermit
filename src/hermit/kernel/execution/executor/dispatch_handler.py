@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from hermit.kernel.authority.grants import CapabilityGrantError
 from hermit.kernel.context.models.context import TaskExecutionContext
-from hermit.kernel.execution.executor.execution_helpers import _contract_refs
+from hermit.kernel.execution.executor.execution_helpers import contract_refs
 from hermit.kernel.execution.executor.receipt_handler import ReceiptHandler
 from hermit.kernel.execution.executor.reconciliation_executor import ReconciliationExecutor
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -108,8 +108,8 @@ class DispatchDeniedHandler:
                 idempotency_key=idempotency_key,
                 result_summary=str(error),
                 output_kind="dispatch_error",
-                contract_ref=_contract_refs(self.store, attempt_ctx)[0],
-                authorization_plan_ref=_contract_refs(self.store, attempt_ctx)[2],
+                contract_ref=contract_refs(self.store, attempt_ctx)[0],
+                authorization_plan_ref=contract_refs(self.store, attempt_ctx)[2],
                 observed_effect_summary=str(error),
                 reconciliation_required=True,
             )

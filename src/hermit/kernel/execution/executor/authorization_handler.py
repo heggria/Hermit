@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from hermit.infra.system.i18n import _t
+from hermit.infra.system.i18n import t
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.authority.grants import CapabilityGrantService
 from hermit.kernel.authority.workspaces import WorkspaceLeaseService
@@ -52,13 +52,13 @@ class AuthorizationHandler:
         approval_mode: str,
     ) -> str:
         if approval_mode == "mutable_workspace":
-            return _t(
+            return t(
                 "kernel.executor.authorization.policy_allowed",
                 default="Allowed after mutable workspace approval.",
             )
         if approval_mode == "once":
-            return _t("kernel.executor.authorization.once")
-        return policy.reason or _t("kernel.executor.authorization.policy_allowed")
+            return t("kernel.executor.authorization.once")
+        return policy.reason or t("kernel.executor.authorization.policy_allowed")
 
     def successful_result_summary(
         self,
@@ -67,14 +67,14 @@ class AuthorizationHandler:
         approval_mode: str,
     ) -> str:
         if approval_mode == "mutable_workspace":
-            return _t(
+            return t(
                 "kernel.executor.result.success",
                 default="{tool_name} completed under mutable workspace lease.",
                 tool_name=tool_name,
             )
         if approval_mode == "once":
-            return _t("kernel.executor.result.once", tool_name=tool_name)
-        return _t("kernel.executor.result.success", tool_name=tool_name)
+            return t("kernel.executor.result.once", tool_name=tool_name)
+        return t("kernel.executor.result.success", tool_name=tool_name)
 
     def prepare_rollback_plan(
         self,

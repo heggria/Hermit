@@ -71,7 +71,7 @@ class ExecutionContractService:
             if tmpl_budget.get("requires_witness", False):
                 request_requires_witness = True
 
-        drift_budget = {
+        drift_budget: dict[str, Any] = {
             "resource_scopes": request_scopes,
             "outside_workspace": request_outside_workspace,
             "requires_witness": request_requires_witness,

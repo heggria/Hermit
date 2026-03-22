@@ -8,7 +8,7 @@ import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 
-from hermit.infra.system.i18n import _t
+from hermit.infra.system.i18n import t
 from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 
@@ -18,7 +18,7 @@ _MAX_CONTENT_LENGTH = 50_000
 def handle_fetch(payload: dict[str, Any]) -> str:
     url = str(payload.get("url", "")).strip()
     if not url:
-        return _t("tools.web.fetch.error.empty_url")
+        return t("tools.web.fetch.error.empty_url")
 
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
@@ -53,11 +53,11 @@ def handle_fetch(payload: dict[str, Any]) -> str:
             content_type = resp.headers.get("Content-Type", "")
             raw = resp.read(200_000)
     except urllib.error.HTTPError as exc:
-        return _t("tools.web.fetch.error.http", code=exc.code, reason=exc.reason)
+        return t("tools.web.fetch.error.http", code=exc.code, reason=exc.reason)
     except urllib.error.URLError as exc:
-        return _t("tools.web.fetch.error.url", reason=exc.reason)
+        return t("tools.web.fetch.error.url", reason=exc.reason)
     except Exception as exc:
-        return _t("tools.web.fetch.error.fetch", error=exc)
+        return t("tools.web.fetch.error.fetch", error=exc)
 
     encoding = _detect_encoding(content_type, raw)
     try:
@@ -71,16 +71,16 @@ def handle_fetch(payload: dict[str, Any]) -> str:
         text = _html_to_text(html)
 
     if not text.strip():
-        return _t("tools.web.fetch.no_content", url=url)
+        return t("tools.web.fetch.no_content", url=url)
 
     if len(text) > max_length:
-        text = text[:max_length] + _t(
+        text = text[:max_length] + t(
             "tools.web.fetch.truncated",
             max_length=max_length,
             full_length=len(text),
         )
 
-    result = _t("tools.web.fetch.content.title", url=url, text=text)
+    result = t("tools.web.fetch.content.title", url=url, text=text)
     cache.set(cache_key, result)
     return result
 

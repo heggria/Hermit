@@ -101,7 +101,8 @@ def _read_catalog(locale: str) -> dict[str, str]:
             raw = json.load(handle)
         if not isinstance(raw, dict):
             continue
-        merged.update({str(key): str(value) for key, value in raw.items()})
+        items = cast(dict[str, object], raw)
+        merged.update({str(key): str(value) for key, value in items.items()})
     return merged
 
 
@@ -207,13 +208,13 @@ def localize_schema(schema: Any, *, locale: str | None = None) -> Any:
     return localized
 
 
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
+def t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:  # pyright: ignore[reportUnusedFunction]
     """Shared i18n helper used across modules.
 
     Resolves the current locale automatically via :func:`resolve_locale` and
     delegates to :func:`tr`.  Import this instead of re-defining the same
     two-line wrapper in every module::
 
-        from hermit.infra.system.i18n import _t
+        from hermit.infra.system.i18n import t
     """
     return tr(message_key, locale=resolve_locale(), default=default, **kwargs)

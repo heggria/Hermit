@@ -13,13 +13,13 @@ class WorkspaceLeaseRecord:
     root_path: str
     holder_principal_id: str
     mode: str
-    resource_scope: list[str] = field(default_factory=list[str])
+    resource_scope: list[str] = field(default_factory=lambda: [])
     environment_ref: str | None = None
     status: str = "active"
     acquired_at: float | None = None
     expires_at: float | None = None
     released_at: float | None = None
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
 
 
 @dataclass
@@ -33,8 +33,8 @@ class WorkspaceLeaseQueueEntry:
     root_path: str
     holder_principal_id: str
     mode: str
-    resource_scope: list[str] = field(default_factory=list)
+    resource_scope: list[str] = field(default_factory=lambda: [])
     ttl_seconds: int | None = None
     queued_at: float | None = None
     status: str = "pending"
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: {})

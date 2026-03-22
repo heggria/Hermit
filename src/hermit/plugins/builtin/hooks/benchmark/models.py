@@ -38,6 +38,9 @@ class BenchmarkResult:
     verification_results: tuple[
         dict[str, Any], ...
     ] = ()  # [{metric, command, output, expected, passed}]
+    delta_info: dict[str, Any] = field(default_factory=dict)
+    tier_reached: str = ""  # e.g. "tier1_lint", "tier2_unit", "tier3_full"
+    strategy_used: str = ""  # e.g. "tiered", "quick", "full"
 
 
 @dataclass(frozen=True)

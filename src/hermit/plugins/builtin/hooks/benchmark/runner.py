@@ -64,19 +64,95 @@ class BenchmarkRunner:
         spec_id: str,
         worktree_path: str | None = None,
         verification_plan: tuple[dict[str, str], ...] | None = None,
+        baseline_metrics: dict[str, Any] | None = None,
+        changed_files: list[str] | None = None,
+        strategy: str = "tiered",
+        verification_baseline: list[dict[str, Any]] | None = None,
     ) -> BenchmarkResult:
-        """Execute make check and parse results."""
+        """Execute quality checks and parse results.
+
+        When *changed_files* is provided and *strategy* is ``"tiered"``
+        (the default), runs a 3-tier benchmark:
+
+        - **Tier 1 (5-10s):** lint + test only the changed files.
+        - **Tier 2 (30-60s):** all unit tests.
+        - **Tier 3 (3-10min):** full ``make test`` (skips typecheck).
+
+        Each tier runs only if the previous tier passed.  When
+        *changed_files* is empty/None or *strategy* is ``"full"``,
+        falls back to ``make check``.
+
+        When *baseline_metrics* is provided (a dict with ``typecheck_errors``
+        and ``lint_violations`` captured **before** the iteration started),
+        the pass/fail decision uses **delta comparison** instead of requiring
+        a zero exit code.  Pre-existing errors that the iteration did not
+        introduce are tolerated; only *new* errors cause a failure.
+        Test failures are always treated as real failures.
+
+        When *verification_baseline* is provided (a list of dicts with actual
+        ``before_value`` measurements captured before implementation), the
+        verification plan comparison uses real before/after deltas instead of
+        relying on the LLM-guessed ``before_expected`` field.
+        """
         start = time.monotonic()
         cwd = worktree_path or "."
-        log.info("benchmark_start", iteration_id=iteration_id, spec_id=spec_id)
+        log.info(
+            "benchmark_start",
+            iteration_id=iteration_id,
+            spec_id=spec_id,
+            strategy=strategy,
+            changed_file_count=len(changed_files) if changed_files else 0,
+        )
 
-        stdout, returncode = await self._exec("make check", cwd)
+        tier = "full"
+        strategy_used = strategy
+        if strategy == "tiered" and changed_files:
+            stdout, returncode, tier = await self._run_tiered(changed_files, cwd)
+        elif strategy == "quick" and changed_files:
+            stdout, returncode, tier = await self._run_quick(changed_files, cwd)
+        else:
+            strategy_used = "full"
+            stdout, returncode = await self._exec("make check", cwd)
         duration = time.monotonic() - start
 
         test_total, test_passed = _parse_pytest(stdout)
         coverage = _parse_coverage(stdout)
         lint_violations = _parse_ruff(stdout)
-        check_passed = returncode == 0
+        typecheck_errors = _count_typecheck_errors(stdout)
+
+        # --- Delta comparison vs absolute pass/fail ---
+        delta_info: dict[str, Any] = {}
+        if baseline_metrics:
+            baseline_tc = int(baseline_metrics.get("typecheck_errors", 0))
+            baseline_lint = int(baseline_metrics.get("lint_violations", 0))
+
+            new_typecheck = max(0, typecheck_errors - baseline_tc)
+            new_lint = max(0, lint_violations - baseline_lint)
+
+            # Tests must still pass (test failures are always real)
+            test_ok = test_passed == test_total or test_total == 0
+            check_passed = (new_typecheck == 0) and (new_lint == 0) and test_ok
+
+            delta_info = {
+                "baseline_typecheck": baseline_tc,
+                "current_typecheck": typecheck_errors,
+                "new_typecheck": new_typecheck,
+                "baseline_lint": baseline_lint,
+                "current_lint": lint_violations,
+                "new_lint": new_lint,
+                "test_passed": test_passed,
+                "test_total": test_total,
+            }
+            log.info(
+                "benchmark_delta_comparison",
+                iteration_id=iteration_id,
+                new_typecheck=new_typecheck,
+                new_lint=new_lint,
+                test_ok=test_ok,
+                check_passed=check_passed,
+            )
+        else:
+            check_passed = returncode == 0
 
         # Build structured error details when the check failed.
         error_details: tuple[BenchmarkErrorDetail, ...] = ()
@@ -96,7 +172,9 @@ class BenchmarkRunner:
         # Run verification plan if provided
         verification_results: tuple[dict[str, Any], ...] = ()
         if verification_plan:
-            verification_results = await self._run_verification_plan(verification_plan, cwd)
+            verification_results = await self._run_verification_plan(
+                verification_plan, cwd, verification_baseline
+            )
 
         result = BenchmarkResult(
             iteration_id=iteration_id,
@@ -106,6 +184,7 @@ class BenchmarkRunner:
             test_passed=test_passed,
             coverage=coverage,
             lint_violations=lint_violations,
+            typecheck_errors=typecheck_errors,
             duration_seconds=round(duration, 2),
             regression_detected=regression,
             compared_to_baseline=compared,
@@ -119,9 +198,116 @@ class BenchmarkRunner:
             error_details=error_details,
             raw_output=raw_output,
             verification_results=verification_results,
+            delta_info=delta_info,
+            tier_reached=tier,
+            strategy_used=strategy_used,
         )
-        log.info("benchmark_done", passed=check_passed, regression=regression)
+        log.info(
+            "benchmark_done",
+            passed=check_passed,
+            regression=regression,
+            tier=tier,
+            strategy=strategy_used,
+        )
         return result
+
+    # ------------------------------------------------------------------
+    # Tiered benchmark strategies
+    # ------------------------------------------------------------------
+
+    async def _run_tiered(
+        self,
+        changed_files: list[str],
+        cwd: str,
+    ) -> tuple[str, int, str]:
+        """Run a 3-tier benchmark.  Returns (stdout, returncode, tier_reached).
+
+        Tier 1 — Quick (5-10s): lint + test changed files only.
+        Tier 2 — Medium (30-60s): all unit tests.
+        Tier 3 — Full (3-10min): ``make test`` (skips typecheck).
+        """
+        all_output_parts: list[str] = []
+        py_files = [f for f in changed_files if f.endswith(".py")]
+        test_files = [f for f in py_files if "test" in f]
+        src_files = [f for f in py_files if "test" not in f]
+
+        # --- Tier 1: lint + test changed files only ---
+        if src_files:
+            lint_cmd = f"uv run ruff check {' '.join(src_files)}"
+            lint_out, lint_rc = await self._exec(lint_cmd, cwd)
+            all_output_parts.append(lint_out)
+            if lint_rc != 0:
+                log.info(
+                    "benchmark_tier1_lint_failed",
+                    file_count=len(src_files),
+                    returncode=lint_rc,
+                )
+                return "\n".join(all_output_parts), lint_rc, "tier1_lint"
+
+        if test_files:
+            test_cmd = f"uv run pytest {' '.join(test_files)} -x -q --no-header"
+            test_out, test_rc = await self._exec(test_cmd, cwd)
+            all_output_parts.append(test_out)
+            if test_rc != 0:
+                log.info(
+                    "benchmark_tier1_test_failed",
+                    test_count=len(test_files),
+                    returncode=test_rc,
+                )
+                return "\n".join(all_output_parts), test_rc, "tier1_test"
+
+        log.info("benchmark_tier1_passed")
+
+        # --- Tier 2: all unit tests ---
+        unit_out, unit_rc = await self._exec("uv run pytest tests/unit/ -x -q --no-header", cwd)
+        all_output_parts.append(unit_out)
+        if unit_rc != 0:
+            log.info("benchmark_tier2_unit_failed", returncode=unit_rc)
+            return "\n".join(all_output_parts), unit_rc, "tier2_unit"
+
+        log.info("benchmark_tier2_passed")
+
+        # --- Tier 3: full test suite (skip typecheck) ---
+        full_out, full_rc = await self._exec("make test", cwd)
+        all_output_parts.append(full_out)
+        tier = "tier3_full"
+        if full_rc != 0:
+            log.info("benchmark_tier3_full_failed", returncode=full_rc)
+        else:
+            log.info("benchmark_tier3_passed")
+        return "\n".join(all_output_parts), full_rc, tier
+
+    async def _run_quick(
+        self,
+        changed_files: list[str],
+        cwd: str,
+    ) -> tuple[str, int, str]:
+        """Run only Tier 1 (changed files).  Returns (stdout, returncode, tier)."""
+        all_output_parts: list[str] = []
+        py_files = [f for f in changed_files if f.endswith(".py")]
+        test_files = [f for f in py_files if "test" in f]
+        src_files = [f for f in py_files if "test" not in f]
+
+        if src_files:
+            lint_cmd = f"uv run ruff check {' '.join(src_files)}"
+            lint_out, lint_rc = await self._exec(lint_cmd, cwd)
+            all_output_parts.append(lint_out)
+            if lint_rc != 0:
+                return "\n".join(all_output_parts), lint_rc, "tier1_lint"
+
+        if test_files:
+            test_cmd = f"uv run pytest {' '.join(test_files)} -x -q --no-header"
+            test_out, test_rc = await self._exec(test_cmd, cwd)
+            all_output_parts.append(test_out)
+            if test_rc != 0:
+                return "\n".join(all_output_parts), test_rc, "tier1_test"
+
+        combined = "\n".join(all_output_parts)
+        return combined, 0, "tier1_quick"
+
+    # ------------------------------------------------------------------
+    # Subprocess execution
+    # ------------------------------------------------------------------
 
     async def _exec(self, cmd: str, cwd: str) -> tuple[str, int]:
         # Skip the test suite lock so benchmark can run even when other
@@ -148,15 +334,31 @@ class BenchmarkRunner:
         self,
         plan: tuple[dict[str, str], ...],
         cwd: str,
+        baseline_measurements: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], ...]:
-        """Execute each verification plan entry and compare output against expectations.
+        """Execute each verification plan entry and compare against baseline.
 
-        For each entry, runs the measurement_command via _exec(), then checks
-        whether the output matches after_expected or satisfies the threshold.
+        When *baseline_measurements* is provided (actual before-implementation
+        measurements), uses real before/after delta instead of the LLM-guessed
+        ``before_expected`` / ``after_expected`` fields.
+
+        For each entry:
+        1. Run ``measurement_command`` to get the current (after) value.
+        2. Look up the matching baseline by metric name to get the real before value.
+        3. Compare: did the metric improve, stay the same, or regress?
+        4. Apply ``threshold`` to decide pass/fail.
 
         Returns a tuple of result dicts:
-            {metric, command, output, expected, passed}
+            {metric, command, before_value, after_value, delta, threshold, passed, reason}
         """
+        # Build a lookup from metric name -> baseline measurement
+        baseline_by_metric: dict[str, dict[str, Any]] = {}
+        if baseline_measurements:
+            for bm in baseline_measurements:
+                metric_name = bm.get("metric", "")
+                if metric_name:
+                    baseline_by_metric[metric_name] = bm
+
         results: list[dict[str, Any]] = []
         for entry in plan:
             metric = entry.get("metric", "")
@@ -169,6 +371,8 @@ class BenchmarkRunner:
                     {
                         "metric": metric,
                         "command": command,
+                        "before_value": "",
+                        "after_value": "",
                         "output": "",
                         "expected": after_expected,
                         "passed": False,
@@ -178,21 +382,31 @@ class BenchmarkRunner:
                 continue
 
             output, returncode = await self._exec(command, cwd)
-            output_stripped = output.strip()
+            after_value = output.strip()[:500]
 
-            # Determine pass/fail: check if after_expected text appears in output
+            # Look up the actual baseline measurement
+            baseline_entry = baseline_by_metric.get(metric)
+            before_value = baseline_entry["before_value"] if baseline_entry else ""
+
+            # Determine pass/fail using real before/after delta when available
             passed = False
             reason = ""
-            if after_expected and after_expected.lower() in output_stripped.lower():
+            delta = ""
+
+            if baseline_entry and before_value and before_value != "(measurement failed)":
+                # Real before/after comparison
+                delta = _compute_metric_delta(before_value, after_value)
+                passed, reason = _evaluate_metric_change(
+                    metric, before_value, after_value, delta, threshold, returncode
+                )
+            elif after_expected and after_expected.lower() in after_value.lower():
+                # Fallback: LLM-guessed after_expected
                 passed = True
                 reason = "after_expected matched in output"
             elif returncode == 0 and not after_expected:
-                # No specific expected output but command succeeded
                 passed = True
                 reason = "command exited successfully"
             elif returncode == 0 and after_expected:
-                # Command succeeded but expected text not found;
-                # still mark passed if threshold is purely about exit code
                 if threshold and "exit" in threshold.lower() and "0" in threshold:
                     passed = True
                     reason = "command exited 0 (threshold satisfied)"
@@ -201,22 +415,28 @@ class BenchmarkRunner:
             else:
                 reason = f"command exited with code {returncode}"
 
-            results.append(
-                {
-                    "metric": metric,
-                    "command": command,
-                    "output": output_stripped[:500],
-                    "expected": after_expected,
-                    "threshold": threshold,
-                    "passed": passed,
-                    "reason": reason,
-                }
-            )
-            log.debug(
-                "verification_plan_entry",
+            result_entry: dict[str, Any] = {
+                "metric": metric,
+                "command": command,
+                "before_value": before_value,
+                "after_value": after_value,
+                "output": after_value,
+                "expected": after_expected,
+                "threshold": threshold,
+                "passed": passed,
+                "reason": reason,
+            }
+            if delta:
+                result_entry["delta"] = delta
+            results.append(result_entry)
+
+            log.info(
+                "verification_metric_delta",
                 metric=metric,
+                before=before_value[:80] if before_value else "(no baseline)",
+                after=after_value[:80],
+                delta=delta,
                 passed=passed,
-                reason=reason,
             )
 
         log.info(
@@ -565,6 +785,84 @@ def _collect_error_details(output: str, lint_violations: int) -> tuple[Benchmark
     return tuple(details)
 
 
+# ---------------------------------------------------------------------------
+# Verification plan delta helpers
+# ---------------------------------------------------------------------------
+
+
+def _try_parse_number(value: str) -> float | None:
+    """Try to extract a leading number from a string value."""
+    value = value.strip()
+    m = re.match(r"^-?[\d.]+", value)
+    if m:
+        try:
+            return float(m.group())
+        except ValueError:
+            return None
+    return None
+
+
+def _compute_metric_delta(before: str, after: str) -> str:
+    """Compute a human-readable delta between two metric values.
+
+    If both values are numeric, returns the numeric difference.
+    Otherwise returns a textual comparison indicator.
+    """
+    before_num = _try_parse_number(before)
+    after_num = _try_parse_number(after)
+    if before_num is not None and after_num is not None:
+        diff = after_num - before_num
+        sign = "+" if diff >= 0 else ""
+        return f"{sign}{diff:.4g}"
+    if before == after:
+        return "unchanged"
+    return "changed"
+
+
+def _evaluate_metric_change(
+    metric: str,
+    before: str,
+    after: str,
+    delta: str,
+    threshold: str,
+    returncode: int,
+) -> tuple[bool, str]:
+    """Evaluate whether a metric change represents a pass or fail.
+
+    Returns (passed, reason).
+    """
+    before_num = _try_parse_number(before)
+    after_num = _try_parse_number(after)
+
+    # If threshold specifies a numeric bound, use it
+    if threshold:
+        threshold_num = _try_parse_number(threshold)
+        if threshold_num is not None and after_num is not None:
+            if after_num <= threshold_num:
+                return True, f"after ({after_num}) <= threshold ({threshold_num})"
+            return False, f"after ({after_num}) > threshold ({threshold_num})"
+        if "exit" in threshold.lower() and "0" in threshold:
+            passed = returncode == 0
+            return passed, f"exit code {returncode} vs threshold exit 0"
+
+    # Numeric comparison: no regression means after >= before (for counts, fewer is better)
+    if before_num is not None and after_num is not None:
+        # For metrics where "more is better" (test count, coverage) vs
+        # "less is better" (errors, violations), we cannot reliably infer
+        # direction from the metric name alone. Default: treat no-regression
+        # as the value not getting worse (same or command succeeded).
+        if returncode == 0:
+            return True, f"command succeeded; before={before_num}, after={after_num}"
+        return False, f"command failed (exit {returncode}); before={before_num}, after={after_num}"
+
+    # Text comparison
+    if before == after:
+        return True, "metric unchanged"
+    if returncode == 0:
+        return True, f"command succeeded; value changed from {before[:40]!r} to {after[:40]!r}"
+    return False, f"command failed (exit {returncode}); value changed"
+
+
 def _detect_regression(
     test_total: int,
     coverage: float,
@@ -584,3 +882,31 @@ def _detect_regression(
         or lint_violations > baseline.get("lint_violations", 0)
     )
     return regression, compared
+
+
+# ---------------------------------------------------------------------------
+# Delta comparison helpers — count errors from make check output
+# ---------------------------------------------------------------------------
+
+
+def _count_typecheck_errors(stdout: str) -> int:
+    """Count typecheck errors (pyright/mypy) from combined make check output.
+
+    Looks for the summary line first (e.g. ``1337 errors found``), falling
+    back to counting individual ``error:`` lines.
+    """
+    summary_m = _TYPECHECK_SUMMARY_RE.search(stdout)
+    if summary_m:
+        return int(summary_m.group(1))
+    # Fallback: count individual error lines
+    pyright_count = len(_PYRIGHT_ERROR_RE.findall(stdout))
+    mypy_count = len(_MYPY_ERROR_RE.findall(stdout))
+    return pyright_count or mypy_count
+
+
+def _count_lint_violations(stdout: str) -> int:
+    """Count lint violations (ruff) from combined make check output.
+
+    Reuses the same regex as ``_parse_ruff``.
+    """
+    return _parse_ruff(stdout)

@@ -210,6 +210,131 @@ class MetaLoopOrchestrator:
         )
         return metadata
 
+    def _capture_baseline_metrics(self) -> dict[str, Any]:
+        """Capture current typecheck and lint error counts as a baseline.
+
+        Runs quick shell commands (pyright error count and ruff violation count)
+        so the benchmark can later do delta comparison — only failing if the
+        iteration *introduced* new errors rather than requiring zero errors.
+        """
+        import subprocess
+
+        workspace = self._workspace_root or ""
+        if not workspace:
+            import os as _os
+
+            workspace = _os.environ.get("HERMIT_WORKSPACE_ROOT", "") or _os.getcwd()
+
+        typecheck_errors = 0
+        lint_violations = 0
+
+        # Count typecheck errors (pyright)
+        try:
+            proc = subprocess.run(
+                ["uv", "run", "pyright", "--outputjson"],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            # pyright --outputjson gives structured JSON with error count
+            try:
+                import json as _json
+
+                data = _json.loads(proc.stdout)
+                summary = data.get("summary", {})
+                typecheck_errors = int(summary.get("errorCount", 0))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # Fallback: count error lines from stderr/stdout
+                import re as _re
+
+                combined = proc.stdout + proc.stderr
+                m = _re.search(r"(\d+)\s+error(?:s)?", combined)
+                if m:
+                    typecheck_errors = int(m.group(1))
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            log.debug("baseline_typecheck_capture_failed")
+
+        # Count lint violations (ruff)
+        try:
+            proc = subprocess.run(
+                ["uv", "run", "ruff", "check", "."],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            import re as _re
+
+            m = _re.search(r"Found\s+(\d+)\s+error", proc.stdout + proc.stderr, _re.IGNORECASE)
+            if m:
+                lint_violations = int(m.group(1))
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            log.debug("baseline_lint_capture_failed")
+
+        baseline: dict[str, Any] = {
+            "typecheck_errors": typecheck_errors,
+            "lint_violations": lint_violations,
+            "captured_at": time.time(),
+        }
+        log.info(
+            "metaloop_baseline_captured",
+            typecheck_errors=typecheck_errors,
+            lint_violations=lint_violations,
+        )
+        return baseline
+
+    def _measure_verification_baseline(self, plan: list[dict]) -> list[dict]:
+        """Run each verification_plan entry's measurement_command to capture actual baselines.
+
+        Runs before implementation so the benchmark runner can later compare
+        real before/after deltas instead of relying on LLM-guessed ``before_expected``.
+        """
+        import os
+        import subprocess
+
+        results: list[dict[str, Any]] = []
+        workspace = self._workspace_root or ""
+        if not workspace:
+            workspace = os.environ.get("HERMIT_WORKSPACE_ROOT", "") or os.getcwd()
+        for entry in plan[:10]:  # cap at 10 measurements
+            cmd = entry.get("measurement_command", "")
+            if not cmd:
+                continue
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    shell=True,
+                    cwd=workspace,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                results.append(
+                    {
+                        "metric": entry.get("metric", "unknown"),
+                        "command": cmd,
+                        "before_value": proc.stdout.strip()[:500],
+                        "exit_code": proc.returncode,
+                        "measured_at": time.time(),
+                    }
+                )
+            except Exception:
+                results.append(
+                    {
+                        "metric": entry.get("metric", "unknown"),
+                        "command": cmd,
+                        "before_value": "(measurement failed)",
+                        "exit_code": -1,
+                        "measured_at": time.time(),
+                    }
+                )
+        log.info(
+            "metaloop_verification_baseline_captured",
+            measurement_count=len(results),
+        )
+        return results
+
     # ------------------------------------------------------------------
     # Advance — dynamic dispatch
     # ------------------------------------------------------------------
@@ -299,6 +424,16 @@ class MetaLoopOrchestrator:
 
         # --- Step 4: Decomposition (LLM with deterministic fallback) ---
         self._run_decomposition(state.spec_id, spec_data, research_data, attempt=state.attempt)
+
+        # --- Step 5: Capture pre-implementation baseline metrics ---
+        baseline = self._capture_baseline_metrics()
+        self._update_metadata(state.spec_id, "pre_implementation_baseline", baseline)
+
+        # --- Step 6: Capture verification_plan baseline measurements ---
+        verification_plan = spec_data.get("verification_plan", [])
+        if verification_plan:
+            verification_baseline = self._measure_verification_baseline(verification_plan)
+            self._update_metadata(state.spec_id, "verification_baseline", verification_baseline)
 
         return self._backlog.advance_phase(state.spec_id, PipelinePhase.IMPLEMENTING)
 
@@ -948,6 +1083,16 @@ class MetaLoopOrchestrator:
         impl_info = metadata.get("implementation") or {}
         worktree_path = impl_info.get("worktree_path")
 
+        # Extract changed file paths from decomposition for tiered benchmarking
+        decomposition = metadata.get("decomposition_plan") or {}
+        steps = decomposition.get("steps", [])
+        changed_files: list[str] = []
+        for step in steps:
+            step_meta = step.get("metadata", {})
+            path = step_meta.get("path", "")
+            if path:
+                changed_files.append(path)
+
         # --- Benchmark ---
         benchmark_passed = True
         benchmark_result = None
@@ -959,6 +1104,12 @@ class MetaLoopOrchestrator:
             vp_raw = spec_data.get("verification_plan", [])
             verification_plan = tuple(dict(e) for e in vp_raw) if vp_raw else None
 
+            # Retrieve pre-implementation baseline for delta comparison
+            pre_impl_baseline = metadata.get("pre_implementation_baseline")
+
+            # Retrieve verification baseline (actual before measurements)
+            verification_baseline = metadata.get("verification_baseline")
+
             runner = BenchmarkRunner(self._store)
             benchmark_result = _run_async(
                 runner.run(
@@ -966,6 +1117,9 @@ class MetaLoopOrchestrator:
                     state.spec_id,
                     worktree_path,
                     verification_plan=verification_plan,
+                    baseline_metrics=pre_impl_baseline,
+                    changed_files=changed_files or None,
+                    verification_baseline=verification_baseline,
                 )
             )
 
@@ -975,9 +1129,13 @@ class MetaLoopOrchestrator:
                 "test_passed": benchmark_result.test_passed,
                 "coverage": benchmark_result.coverage,
                 "lint_violations": benchmark_result.lint_violations,
+                "typecheck_errors": benchmark_result.typecheck_errors,
                 "duration_seconds": benchmark_result.duration_seconds,
                 "regression_detected": benchmark_result.regression_detected,
                 "compared_to_baseline": dict(benchmark_result.compared_to_baseline),
+                "delta_info": dict(benchmark_result.delta_info),
+                "tier_reached": benchmark_result.tier_reached,
+                "strategy_used": benchmark_result.strategy_used,
             }
 
             # Store verification results alongside benchmark data

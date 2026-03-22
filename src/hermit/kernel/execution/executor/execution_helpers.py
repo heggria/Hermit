@@ -51,7 +51,7 @@ def _is_governed_action(tool: ToolSpec, policy: PolicyDecision) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _set_attempt_phase(
+def set_attempt_phase(
     store: KernelStore,
     attempt_ctx: TaskExecutionContext,
     phase: str,
@@ -101,7 +101,7 @@ def _set_attempt_phase(
 # ---------------------------------------------------------------------------
 
 
-def _contract_refs(
+def contract_refs(
     store: KernelStore,
     attempt_ctx: TaskExecutionContext,
 ) -> tuple[str | None, str | None, str | None]:
@@ -130,7 +130,7 @@ def _contract_refs(
 # ---------------------------------------------------------------------------
 
 
-def _load_witness_payload(
+def load_witness_payload(
     store: KernelStore,
     artifact_store: ArtifactStore,
     witness_ref: str | None,

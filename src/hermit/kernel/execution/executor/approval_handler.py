@@ -5,7 +5,7 @@ from typing import Any
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
-from hermit.kernel.execution.executor.phase_tracker import _needs_witness
+from hermit.kernel.execution.executor.phase_tracker import needs_witness
 from hermit.kernel.execution.executor.witness import WitnessCapture
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import (
@@ -125,7 +125,7 @@ class ApprovalHandler:
                 return None, witness_ref, "approval_drift"
         if (
             witness_ref
-            and _needs_witness(action_request.action_class)
+            and needs_witness(action_request.action_class)
             and not self._witness.validate(witness_ref, action_request, attempt_ctx)
         ):
             return None, witness_ref, "witness_drift"

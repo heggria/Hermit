@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from hermit.infra.system.i18n import _t
+from hermit.infra.system.i18n import t
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.coordination.observation import ObservationTicket
@@ -103,7 +103,7 @@ class StatePersistence:
         attempt = self.store.get_step_attempt(step_attempt_id)
         if attempt is None:
             raise KeyError(
-                _t(
+                t(
                     "kernel.executor.error.unknown_step_attempt",
                     default="Unknown step attempt: {step_attempt_id}",
                     step_attempt_id=step_attempt_id,

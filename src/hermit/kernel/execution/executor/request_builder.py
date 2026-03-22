@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from hermit.infra.system.i18n import _t
+from hermit.infra.system.i18n import t
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.errors import ContractError
@@ -48,7 +48,7 @@ class RequestBuilder:
             if not isinstance(actor, dict):
                 raise ContractError(
                     "invalid_override",
-                    _t(
+                    t(
                         "kernel.executor.error.request_overrides_actor_dict",
                         default="request_overrides.actor must be a dict",
                     ),
@@ -59,7 +59,7 @@ class RequestBuilder:
             if not isinstance(context, dict):
                 raise ContractError(
                     "invalid_override",
-                    _t(
+                    t(
                         "kernel.executor.error.request_overrides_context_dict",
                         default="request_overrides.context must be a dict",
                     ),
@@ -204,7 +204,7 @@ class RequestBuilder:
                     lineterm="",
                 )
             )
-            return _t(
+            return t(
                 "kernel.executor.preview.write",
                 default=(
                     f"# Write Preview\n\nPath: `{path}`\n\n"
@@ -212,14 +212,14 @@ class RequestBuilder:
                 ),
                 path=path,
                 diff=diff
-                or _t(
+                or t(
                     "kernel.executor.preview.write.empty_diff",
                     default="(new file or no textual diff)",
                 ),
             )
         if tool.name == "bash":
             command = str(tool_input.get("command", ""))
-            return _t(
+            return t(
                 "kernel.executor.preview.command",
                 default=f"# Command Preview\n\n```bash\n{command}\n```",
                 command=command,

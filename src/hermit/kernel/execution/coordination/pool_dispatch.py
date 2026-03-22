@@ -16,7 +16,7 @@ from typing import Any
 import structlog
 
 from hermit.kernel.execution.coordination.dispatch import (
-    _POLL_INTERVAL_SECONDS,
+    POLL_INTERVAL_SECONDS,
     KernelDispatchService,
 )
 from hermit.kernel.execution.workers.models import (
@@ -222,19 +222,19 @@ class PoolAwareDispatchService:
         then launches a daemon thread running the pool-gated dispatch loop.
         Also starts the dedicated lease-reaper thread from the inner service.
         """
-        self._inner._recover_interrupted_attempts()
-        self._inner._thread = threading.Thread(
+        self._inner.recover_interrupted_attempts()
+        self._inner.thread = threading.Thread(
             target=self._loop,
             daemon=True,
             name="kernel-pool-dispatch-loop",
         )
-        self._inner._thread.start()
-        self._inner._reaper_thread = threading.Thread(
-            target=self._inner._reaper_loop,
+        self._inner.thread.start()
+        self._inner.reaper_thread = threading.Thread(
+            target=self._inner.reaper_loop,
             daemon=True,
             name="lease-reaper",
         )
-        self._inner._reaper_thread.start()
+        self._inner.reaper_thread.start()
 
     def stop(self) -> None:
         """Signal the dispatch loop to stop and shut down the thread pool."""
@@ -268,7 +268,7 @@ class PoolAwareDispatchService:
 
     def _loop(self) -> None:
         """Main dispatch loop — claims slots before submitting attempts."""
-        while not self._inner._stop.is_set():
+        while not self._inner.stop_event.is_set():
             self._reap_futures()
             self._inner.check_heartbeat_timeouts()
 
@@ -281,8 +281,8 @@ class PoolAwareDispatchService:
 
             if claimed:
                 continue
-            self._inner._wake.wait(_POLL_INTERVAL_SECONDS)
-            self._inner._wake.clear()
+            self._inner.wake_event.wait(POLL_INTERVAL_SECONDS)
+            self._inner.wake_event.clear()
 
     def _resolve_role_for_attempt(self, step_attempt_id: str) -> WorkerRole:
         """Resolve the :class:`WorkerRole` for a step attempt by reading
@@ -388,14 +388,14 @@ class PoolAwareDispatchService:
         # Resolve handler and submit.  Wrap in try/except so that if
         # submit() raises (e.g. executor shutdown), the claimed pool slot
         # is released — otherwise the slot leaks permanently.
-        handler = self._inner._resolve_handler(attempt.step_attempt_id)
+        handler = self._inner.resolve_handler(attempt.step_attempt_id)
         try:
-            future = self._inner._executor.submit(handler, attempt.step_attempt_id)
+            future = self._inner.executor.submit(handler, attempt.step_attempt_id)
         except Exception:
             self._pool.release_slot(slot.slot_id)
             raise
-        with self._inner._lock:
-            self._inner._futures[future] = attempt.step_attempt_id
+        with self._inner.lock:
+            self._inner.futures[future] = attempt.step_attempt_id
         with self._slot_lock:
             self._slot_map[future] = slot.slot_id
 
@@ -410,16 +410,16 @@ class PoolAwareDispatchService:
     def _reap_futures(self) -> None:
         """Reap completed futures, release pool slots, and handle failures."""
         done: list[concurrent.futures.Future[Any]] = []
-        with self._inner._lock:
-            for future in list(self._inner._futures):
+        with self._inner.lock:
+            for future in list(self._inner.futures):
                 if future.done():
                     done.append(future)
 
         for future in done:
             attempt_id = ""
             slot_id = ""
-            with self._inner._lock:
-                attempt_id = self._inner._futures.pop(future, "")
+            with self._inner.lock:
+                attempt_id = self._inner.futures.pop(future, "")
             with self._slot_lock:
                 slot_id = self._slot_map.pop(future, "")
 
@@ -429,10 +429,10 @@ class PoolAwareDispatchService:
 
             try:
                 future.result()
-                self._inner._on_attempt_completed(attempt_id)
+                self._inner.on_attempt_completed(attempt_id)
             except Exception:
                 log.exception(
                     "pool_dispatch_attempt_failed",
                     step_attempt_id=attempt_id,
                 )
-                self._inner._force_fail_attempt(attempt_id)
+                self._inner.force_fail_attempt(attempt_id)

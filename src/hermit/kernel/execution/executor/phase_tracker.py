@@ -13,7 +13,7 @@ __all__ = [
     "PhaseTracker",
     "_execution_status_from_result_code",
     "_is_governed_action",
-    "_needs_witness",
+    "needs_witness",
 ]
 
 _WITNESS_REQUIRED_ACTIONS = {
@@ -28,7 +28,7 @@ _WITNESS_REQUIRED_ACTIONS = {
 }
 
 
-def _needs_witness(action_class: str) -> bool:
+def needs_witness(action_class: str) -> bool:
     return action_class in _WITNESS_REQUIRED_ACTIONS
 
 

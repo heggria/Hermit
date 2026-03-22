@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any, cast
 
-from hermit.infra.system.i18n import _t, tr
+from hermit.infra.system.i18n import t, tr
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 
 _XAI_BASE_URL = "https://api.x.ai/v1"
@@ -22,11 +22,11 @@ def _get_api_key() -> str:
 def handle_grok_search(payload: dict[str, Any]) -> str:
     query = str(payload.get("query", "")).strip()
     if not query:
-        return _t("tools.grok.search.error.empty_query")
+        return t("tools.grok.search.error.empty_query")
 
     api_key = _get_api_key()
     if not api_key:
-        return _t("tools.grok.search.error.missing_key")
+        return t("tools.grok.search.error.missing_key")
 
     model = str(payload.get("model", _DEFAULT_MODEL))
     max_tokens = int(payload.get("max_tokens", 2048))
@@ -72,12 +72,12 @@ def handle_grok_search(payload: dict[str, Any]) -> str:
                 err_msg = json.loads(body).get("error") or body[:300]
             except Exception:
                 err_msg = body[:300]
-            return _t("tools.grok.search.error.out_of_credit", error=err_msg)
+            return t("tools.grok.search.error.out_of_credit", error=err_msg)
         if exc.code == 401:
-            return _t("tools.grok.search.error.invalid_key")
-        return _t("tools.grok.search.error.http", code=exc.code, body=body[:500])
+            return t("tools.grok.search.error.invalid_key")
+        return t("tools.grok.search.error.http", code=exc.code, body=body[:500])
     except Exception as exc:
-        return _t("tools.grok.search.error.api", error=exc)
+        return t("tools.grok.search.error.api", error=exc)
 
     # /v1/responses returns output as a list of message objects
     content = ""
@@ -96,7 +96,7 @@ def handle_grok_search(payload: dict[str, Any]) -> str:
     # Append citations
     citations = cast(list[Any], response_dict.get("citations") or [])
     if citations and content:
-        lines = [_t("tools.grok.search.citations.title")]
+        lines = [t("tools.grok.search.citations.title")]
         for i, c in enumerate(citations, 1):
             c_d = cast(dict[str, Any], c)
             title = cast(
@@ -104,10 +104,10 @@ def handle_grok_search(payload: dict[str, Any]) -> str:
             )
             url = cast(str, c_d.get("url") or "")
             lines.append(
-                _t("tools.grok.search.citations.item", index=i, title=title, url=url)
+                t("tools.grok.search.citations.item", index=i, title=title, url=url)
                 if url
-                else _t("tools.grok.search.citations.item_text", index=i, title=title)
+                else t("tools.grok.search.citations.item_text", index=i, title=title)
             )
         content += "\n".join(lines)
 
-    return content or _t("tools.grok.search.empty_response")
+    return content or t("tools.grok.search.empty_response")

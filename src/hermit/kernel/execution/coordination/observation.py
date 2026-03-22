@@ -264,7 +264,7 @@ class SubtaskJoinObservation:
         if not isinstance(child_ids, list):
             child_ids = []
         return cls(
-            child_step_ids=[str(s) for s in child_ids],
+            child_step_ids=[str(s) for s in cast(list[Any], child_ids)],
             join_strategy=str(data.get("join_strategy", "all_required") or "all_required"),
             parent_step_id=str(data.get("parent_step_id", "") or ""),
             parent_attempt_id=str(data.get("parent_attempt_id", "") or ""),

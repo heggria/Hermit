@@ -12,7 +12,7 @@ from hermit.runtime.capability.contracts.base import HookEvent
 
 log = structlog.get_logger()
 
-_POLL_INTERVAL_SECONDS = 0.5
+POLL_INTERVAL_SECONDS = 0.5
 
 _INFLIGHT_STATUSES = frozenset(
     {
@@ -31,20 +31,20 @@ class KernelDispatchService:
     """Small in-process worker pool for async kernel ingress."""
 
     def __init__(self, runner: Any, *, worker_count: int = 4) -> None:
-        self._runner = runner
-        self._worker_count = max(1, int(worker_count or 1))
-        self._stop = threading.Event()
-        self._wake = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=self._worker_count,
+        self.runner = runner
+        self.worker_count = max(1, int(worker_count or 1))
+        self.stop_event = threading.Event()
+        self.wake_event = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self.worker_count,
             thread_name_prefix="kernel-dispatch",
         )
-        self._futures: dict[concurrent.futures.Future[Any], str] = {}
-        self._lock = threading.Lock()
-        self._kind_handlers: dict[str, Any] = {}
-        self._reaper_thread: threading.Thread | None = None
-        self._emitted_complete: set[str] = set()
+        self.futures: dict[concurrent.futures.Future[Any], str] = {}
+        self.lock = threading.Lock()
+        self.kind_handlers: dict[str, Any] = {}
+        self.reaper_thread: threading.Thread | None = None
+        self.emitted_complete: set[str] = set()
 
     def register_kind_handler(self, kind: str, handler: Any) -> None:
         """Register a custom handler for a step kind.
@@ -55,28 +55,28 @@ class KernelDispatchService:
         tasks (e.g. memory promotion) to reuse the same thread pool, heartbeat,
         and recovery infrastructure.
         """
-        self._kind_handlers[kind] = handler
+        self.kind_handlers[kind] = handler
 
     def start(self) -> None:
-        self._recover_interrupted_attempts()
-        self._thread = threading.Thread(
+        self.recover_interrupted_attempts()
+        self.thread = threading.Thread(
             target=self._loop,
             daemon=True,
             name="kernel-dispatch-loop",
         )
-        self._thread.start()
+        self.thread.start()
 
     def stop(self) -> None:
-        self._stop.set()
-        self._wake.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-        if self._reaper_thread is not None:
-            self._reaper_thread.join(timeout=5)
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        self.stop_event.set()
+        self.wake_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=5)
+        if self.reaper_thread is not None:
+            self.reaper_thread.join(timeout=5)
+        self.executor.shutdown(wait=False, cancel_futures=True)
 
     def wake(self) -> None:
-        self._wake.set()
+        self.wake_event.set()
 
     def report_heartbeat(self, step_attempt_id: str) -> None:
         """Record a heartbeat for a running step attempt.
@@ -86,7 +86,7 @@ class KernelDispatchService:
         background check can compare it against the configured interval.
         """
         try:
-            store = self._runner.task_controller.store
+            store = self.runner.task_controller.store
             store.update_step_attempt(step_attempt_id, last_heartbeat_at=time.time())
         except Exception:
             log.exception(
@@ -104,7 +104,7 @@ class KernelDispatchService:
         failed with reason ``heartbeat_timeout`` and a retry attempt is
         created if allowed by ``max_attempts``.
         """
-        store = self._runner.task_controller.store
+        store = self.runner.task_controller.store
         now = time.time()
         for status in ("running", "dispatching", "executing"):
             for attempt in store.list_step_attempts(status=status, limit=500):
@@ -153,67 +153,67 @@ class KernelDispatchService:
                             error="heartbeat_timeout",
                         )
 
-    def _resolve_handler(self, step_attempt_id: str) -> Any:
+    def resolve_handler(self, step_attempt_id: str) -> Any:
         """Return the handler for the given step attempt based on step kind."""
-        if not self._kind_handlers:
-            return self._runner.process_claimed_attempt
+        if not self.kind_handlers:
+            return self.runner.process_claimed_attempt
         try:
-            store = self._runner.task_controller.store
+            store = self.runner.task_controller.store
             attempt = store.get_step_attempt(step_attempt_id)
             if attempt is not None:
                 step = store.get_step(attempt.step_id)
-                if step is not None and step.kind in self._kind_handlers:
-                    return self._kind_handlers[step.kind]
+                if step is not None and step.kind in self.kind_handlers:
+                    return self.kind_handlers[step.kind]
         except Exception:
             log.warning("kind_handler_resolve_failed", step_attempt_id=step_attempt_id)
-        return self._runner.process_claimed_attempt
+        return self.runner.process_claimed_attempt
 
     def _loop(self) -> None:
-        while not self._stop.is_set():
+        while not self.stop_event.is_set():
             self._reap_futures()
             self.check_heartbeat_timeouts()
             claimed = False
             while self._capacity_available():
-                attempt = self._runner.task_controller.store.claim_next_ready_step_attempt()
+                attempt = self.runner.task_controller.store.claim_next_ready_step_attempt()
                 if attempt is None:
                     break
-                handler = self._resolve_handler(attempt.step_attempt_id)
-                future = self._executor.submit(
+                handler = self.resolve_handler(attempt.step_attempt_id)
+                future = self.executor.submit(
                     handler,
                     attempt.step_attempt_id,
                 )
-                with self._lock:
-                    self._futures[future] = attempt.step_attempt_id
+                with self.lock:
+                    self.futures[future] = attempt.step_attempt_id
                 claimed = True
             if claimed:
                 continue
-            self._wake.wait(_POLL_INTERVAL_SECONDS)
-            self._wake.clear()
+            self.wake_event.wait(POLL_INTERVAL_SECONDS)
+            self.wake_event.clear()
 
     def _capacity_available(self) -> bool:
-        with self._lock:
-            return len(self._futures) < self._worker_count
+        with self.lock:
+            return len(self.futures) < self.worker_count
 
     def _reap_futures(self) -> None:
         done: list[concurrent.futures.Future[Any]] = []
-        with self._lock:
-            for future in list(self._futures):
+        with self.lock:
+            for future in list(self.futures):
                 if future.done():
                     done.append(future)
         for future in done:
             attempt_id = ""
-            with self._lock:
-                attempt_id = self._futures.pop(future, "")
+            with self.lock:
+                attempt_id = self.futures.pop(future, "")
             try:
                 future.result()
-                self._on_attempt_completed(attempt_id)
+                self.on_attempt_completed(attempt_id)
             except Exception:
                 log.exception("kernel_dispatch_attempt_failed", step_attempt_id=attempt_id)
                 # Ensure the step is marked failed and DAG dependents are
                 # unblocked even when process_claimed_attempt crashes.
-                self._force_fail_attempt(attempt_id)
+                self.force_fail_attempt(attempt_id)
 
-    def _force_fail_attempt(self, step_attempt_id: str) -> None:
+    def force_fail_attempt(self, step_attempt_id: str) -> None:
         """Mark a crashed attempt as failed and propagate DAG failure.
 
         Called when ``process_claimed_attempt`` itself raises an unhandled
@@ -226,7 +226,7 @@ class KernelDispatchService:
         if not step_attempt_id:
             return
         try:
-            store = self._runner.task_controller.store
+            store = self.runner.task_controller.store
             attempt = store.get_step_attempt(step_attempt_id)
             if attempt is None:
                 return
@@ -250,7 +250,7 @@ class KernelDispatchService:
                         "result_text": "worker_exception",
                     },
                 )
-            self._wake.set()
+            self.wake_event.set()
             if task_terminal:
                 self._emit_subtask_complete_for_task(
                     attempt.task_id,
@@ -263,7 +263,7 @@ class KernelDispatchService:
                 step_attempt_id=step_attempt_id,
             )
 
-    def _on_attempt_completed(self, step_attempt_id: str) -> None:
+    def on_attempt_completed(self, step_attempt_id: str) -> None:
         """Wake the dispatch loop after a step completes and emit
         ``SUBTASK_COMPLETE`` when the parent task reaches a terminal state.
 
@@ -275,7 +275,7 @@ class KernelDispatchService:
         """
         if not step_attempt_id:
             return
-        self._wake.set()
+        self.wake_event.set()
         self._maybe_emit_subtask_complete(step_attempt_id)
 
     def _maybe_emit_subtask_complete(self, step_attempt_id: str) -> None:
@@ -287,7 +287,7 @@ class KernelDispatchService:
         (``_force_fail_attempt``) funnel through here.
         """
         try:
-            store = self._runner.task_controller.store
+            store = self.runner.task_controller.store
             attempt = store.get_step_attempt(step_attempt_id)
             if attempt is None:
                 return
@@ -320,13 +320,13 @@ class KernelDispatchService:
         and ``settings`` so that all registered consumers (metaloop,
         benchmark, etc.) receive the parameters they expect.
         """
-        if task_id in self._emitted_complete:
+        if task_id in self.emitted_complete:
             return
         try:
-            pm = getattr(self._runner, "pm", None)
+            pm = getattr(self.runner, "pm", None)
             if pm is None:
                 return
-            store = self._runner.task_controller.store
+            store = self.runner.task_controller.store
             status = "succeeded" if success else (error or "failed")
             settings = getattr(pm, "settings", None)
             pm.hooks.fire(
@@ -338,7 +338,7 @@ class KernelDispatchService:
                 status=status,
                 settings=settings,
             )
-            self._emitted_complete.add(task_id)
+            self.emitted_complete.add(task_id)
             log.debug(
                 "subtask_complete_emitted",
                 task_id=task_id,
@@ -365,7 +365,7 @@ class KernelDispatchService:
             DeliberationService,
         )
 
-        store = self._runner.task_controller.store
+        store = self.runner.task_controller.store
         attempt = store.get_step_attempt(step_attempt_id)
         if attempt is None:
             return False
@@ -415,21 +415,21 @@ class KernelDispatchService:
         )
         return True
 
-    def _reaper_loop(self) -> None:
+    def reaper_loop(self) -> None:
         """Background loop that periodically checks for expired leases.
 
         Runs as a daemon thread alongside the main dispatch loop.  Checks
         heartbeat timeouts on a slower cadence than the main dispatch poll.
         """
-        while not self._stop.is_set():
+        while not self.stop_event.is_set():
             try:
                 self.check_heartbeat_timeouts()
             except Exception:
                 log.exception("lease_reaper_error")
-            self._stop.wait(2.0)
+            self.stop_event.wait(2.0)
 
-    def _recover_interrupted_attempts(self) -> None:
-        store = self._runner.task_controller.store
+    def recover_interrupted_attempts(self) -> None:
+        store = self.runner.task_controller.store
         now = time.time()
 
         # Phase 1: recover all in-flight intermediate-status attempts.

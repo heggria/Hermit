@@ -10,7 +10,7 @@ import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 
-from hermit.infra.system.i18n import _t
+from hermit.infra.system.i18n import t
 from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 
@@ -36,7 +36,7 @@ _TIME_FILTER_MAP = {
 def handle_search(payload: dict[str, Any]) -> str:
     query = str(payload.get("query", "")).strip()
     if not query:
-        return _t("tools.web.search.error.empty_query")
+        return t("tools.web.search.error.empty_query")
 
     max_results = min(int(payload.get("max_results", 8)), 20)
     region = str(payload.get("region", "wt-wt"))
@@ -77,10 +77,10 @@ def handle_search(payload: dict[str, Any]) -> str:
         if results:
             parts.append(results)
     except Exception as exc:
-        parts.append(_t("tools.web.search.error.search", error=exc))
+        parts.append(t("tools.web.search.error.search", error=exc))
 
     if not parts:
-        return _t("tools.web.search.no_results", query=query)
+        return t("tools.web.search.no_results", query=query)
 
     result = "\n\n".join(parts)
     cache.set(cache_key, result)
@@ -128,7 +128,7 @@ def _ddg_lite_search(
     if not results:
         return ""
 
-    lines = [_t("tools.web.search.results.title")]
+    lines = [t("tools.web.search.results.title")]
     for i, r in enumerate(results, 1):
         title = r.get("title", "(no title)")
         snippet = r.get("snippet", "")
@@ -215,15 +215,15 @@ def _ddg_instant_answer(query: str) -> str:
     if data.get("AbstractText"):
         source = data.get("AbstractSource", "")
         source_url = data.get("AbstractURL", "")
-        parts.append(_t("tools.web.search.instant.summary", source=source))
+        parts.append(t("tools.web.search.instant.summary", source=source))
         parts.append(data["AbstractText"])
         if source_url:
-            parts.append(_t("tools.web.search.instant.source", url=source_url))
+            parts.append(t("tools.web.search.instant.source", url=source_url))
 
     if data.get("Answer"):
-        parts.append(_t("tools.web.search.instant.answer", answer=data["Answer"]))
+        parts.append(t("tools.web.search.instant.answer", answer=data["Answer"]))
 
     if data.get("Definition"):
-        parts.append(_t("tools.web.search.instant.definition", definition=data["Definition"]))
+        parts.append(t("tools.web.search.instant.definition", definition=data["Definition"]))
 
     return "\n\n".join(parts) if parts else ""
