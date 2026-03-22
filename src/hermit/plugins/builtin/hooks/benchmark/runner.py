@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from typing import TYPE_CHECKING, Any
@@ -99,12 +100,16 @@ class BenchmarkRunner:
         return result
 
     async def _exec(self, cmd: str, cwd: str) -> tuple[str, int]:
+        # Skip the test suite lock so benchmark can run even when other
+        # pytest processes are active (e.g. dispatch workers running tests).
+        env = {**os.environ, "_HERMIT_SKIP_TEST_LOCK": "1"}
         try:
             proc = await asyncio.create_subprocess_shell(
                 cmd,
                 cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=env,
             )
             raw, _ = await asyncio.wait_for(proc.communicate(), self._timeout)
             return raw.decode(errors="replace"), proc.returncode or 0
