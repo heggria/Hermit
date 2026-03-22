@@ -32,6 +32,10 @@ site/
 docs/site/
 reports/
 
+# Kernel runtime artifacts
+artifacts/
+/kernel/
+
 # OS & editor
 .DS_Store
 .env
