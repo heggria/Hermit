@@ -1439,7 +1439,7 @@ class SpecBacklogPoller:
         return True
 
     def _tick(self) -> None:
-        """Claim and advance the next pending spec, or continue active ones."""
+        """Claim and advance the next pending spec, AND continue active ones."""
         did_work = False
 
         # Always check IMPLEMENTING specs for timeouts first (Fix 1).
@@ -1456,6 +1456,7 @@ class SpecBacklogPoller:
             except Exception:
                 log.exception("metaloop_poller_implementing_check_error")
 
+        # Claim a pending spec (does NOT block active phase advancement)
         claimed = self._backlog.claim_next()
         if claimed is not None:
             log.info(
@@ -1464,42 +1465,36 @@ class SpecBacklogPoller:
                 phase=claimed.phase.value,
             )
             self._orchestrator.advance(claimed.spec_id)
-            self._consecutive_idle = 0
-            return
+            did_work = True
 
-        # No pending specs — advance any active (non-terminal, non-pending)
-        # iterations. IMPLEMENTING is handled above.
-        if not hasattr(self._backlog._store, "list_spec_backlog"):
-            if not did_work:
-                self._consecutive_idle += 1
-            else:
-                self._consecutive_idle = 0
-            return
-        try:
-            for status in (
-                "researching",
-                "generating_spec",
-                "spec_approval",
-                "decomposing",
-                "reviewing",
-                "benchmarking",
-                "learning",
-                "reconciling",
-            ):
-                active = self._backlog._store.list_spec_backlog(status=status, limit=1)
-                if active:
-                    entry = active[0] if isinstance(active[0], dict) else active[0].__dict__
-                    spec_id = entry["spec_id"]
-                    log.info(
-                        "metaloop_poller_advancing",
-                        spec_id=spec_id,
-                        phase=status,
-                    )
-                    self._orchestrator.advance(spec_id)
-                    self._consecutive_idle = 0
-                    return
-        except Exception:
-            log.exception("metaloop_poller_advance_active_error")
+        # ALSO advance active (non-terminal, non-pending) iterations.
+        # Process one spec per active phase per tick for fairness.
+        if hasattr(self._backlog._store, "list_spec_backlog"):
+            try:
+                for status in (
+                    "researching",
+                    "generating_spec",
+                    "spec_approval",
+                    "decomposing",
+                    "reviewing",
+                    "benchmarking",
+                    "learning",
+                    "reconciling",
+                ):
+                    active = self._backlog._store.list_spec_backlog(status=status, limit=1)
+                    if active:
+                        entry = active[0] if isinstance(active[0], dict) else active[0].__dict__
+                        spec_id = entry["spec_id"]
+                        log.info(
+                            "metaloop_poller_advancing",
+                            spec_id=spec_id,
+                            phase=status,
+                        )
+                        self._orchestrator.advance(spec_id)
+                        did_work = True
+                        break  # one active advance per tick for fairness
+            except Exception:
+                log.exception("metaloop_poller_advance_active_error")
 
         # Update idle counter for adaptive polling (Fix 13)
         if did_work:
