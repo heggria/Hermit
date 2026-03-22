@@ -10,10 +10,10 @@ from typing import Any
 import structlog
 
 from hermit.plugins.builtin.hooks.metaloop.models import (
-    PHASE_ORDER,
+    ALLOWED_TRANSITIONS,
     TERMINAL_PHASES,
-    IterationPhase,
     IterationState,
+    PipelinePhase,
 )
 
 log = structlog.get_logger()
@@ -21,6 +21,38 @@ log = structlog.get_logger()
 # Backoff parameters for retry scheduling
 _BACKOFF_BASE_DELAY = 30  # seconds
 _BACKOFF_MAX_DELAY = 600  # seconds
+
+
+def _parse_metadata(raw: Any) -> dict:
+    """Parse metadata from DB entry (string or dict) into a plain dict."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+def _read_revision_cycle(data: dict) -> int:
+    """Extract revision_cycle from entry metadata."""
+    meta = _parse_metadata(data.get("metadata"))
+    return int(meta.get("revision_cycle", 0))
+
+
+def _build_state(data: dict) -> IterationState:
+    """Build an IterationState from a DB entry dict."""
+    return IterationState(
+        spec_id=data["spec_id"],
+        phase=PipelinePhase(data.get("status", "pending")),
+        attempt=int(data.get("attempt", 1)),
+        revision_cycle=_read_revision_cycle(data),
+        dag_task_id=data.get("dag_task_id"),
+        error=data.get("error"),
+    )
 
 
 class SpecBacklog:
@@ -43,19 +75,13 @@ class SpecBacklog:
             return None
         try:
             specs = self._store.list_spec_backlog(
-                status=IterationPhase.PENDING.value,
+                status=PipelinePhase.PENDING.value,
                 limit=1,
             )
             if not specs:
                 return None
             entry = specs[0] if isinstance(specs[0], dict) else specs[0].__dict__
-            return IterationState(
-                spec_id=entry["spec_id"],
-                phase=IterationPhase(entry.get("status", "pending")),
-                attempt=int(entry.get("attempt", 1)),
-                dag_task_id=entry.get("dag_task_id"),
-                error=entry.get("error"),
-            )
+            return _build_state(entry)
         except Exception:
             log.exception("spec_backlog_peek_error")
             return None
@@ -71,14 +97,15 @@ class SpecBacklog:
 
         if hasattr(self._store, "claim_next_spec"):
             try:
-                entry = self._store.claim_next_spec("pending", "researching")
+                entry = self._store.claim_next_spec("pending", "planning")
                 if entry is None:
                     return None
                 data = entry if isinstance(entry, dict) else entry.__dict__
                 return IterationState(
                     spec_id=data["spec_id"],
-                    phase=IterationPhase.RESEARCHING,
+                    phase=PipelinePhase.PLANNING,
                     attempt=int(data.get("attempt", 1)),
+                    revision_cycle=_read_revision_cycle(data),
                 )
             except Exception:
                 log.exception("spec_backlog_claim_error")
@@ -88,12 +115,12 @@ class SpecBacklog:
         state = self.peek_next()
         if state is None:
             return None
-        return self.advance_phase(state.spec_id, IterationPhase.RESEARCHING)
+        return self.advance_phase(state.spec_id, PipelinePhase.PLANNING)
 
     def advance_phase(
         self,
         spec_id: str,
-        new_phase: IterationPhase,
+        new_phase: PipelinePhase,
         *,
         dag_task_id: str | None = None,
         error: str | None = None,
@@ -101,10 +128,11 @@ class SpecBacklog:
     ) -> IterationState | None:
         """Update a spec entry to a new phase in the database.
 
-        Enforces forward-only phase transitions (Fix 6).  Special cases:
-        - IMPLEMENTING → IMPLEMENTING is allowed (self-transition to write dag_task_id).
-        - Any → FAILED is always allowed.
-        Uses conditional SQL UPDATE (Fix 5) for idempotent writes.
+        Uses the explicit ALLOWED_TRANSITIONS map for validation.
+        Special cases:
+        - IMPLEMENTING -> IMPLEMENTING is allowed (self-transition to write dag_task_id).
+        - Any -> FAILED is always allowed.
+        Uses conditional SQL UPDATE for idempotent writes.
         """
         if not hasattr(self._store, "update_spec_status"):
             log.warning("spec_backlog_no_update_method")
@@ -117,13 +145,13 @@ class SpecBacklog:
         data = entry if isinstance(entry, dict) else entry.__dict__
         current_phase_str = data.get("status", "pending")
         try:
-            current_phase = IterationPhase(current_phase_str)
+            current_phase = PipelinePhase(current_phase_str)
         except ValueError:
-            current_phase = IterationPhase.PENDING
+            current_phase = PipelinePhase.PENDING
 
-        # Enforce forward-only transitions
-        if new_phase != IterationPhase.FAILED:
-            if current_phase == new_phase == IterationPhase.IMPLEMENTING:
+        # Enforce transition rules via explicit map
+        if new_phase != PipelinePhase.FAILED:
+            if current_phase == new_phase == PipelinePhase.IMPLEMENTING:
                 pass  # allow self-transition for dag_task_id write
             elif current_phase in TERMINAL_PHASES:
                 log.debug(
@@ -132,33 +160,18 @@ class SpecBacklog:
                     current=current_phase.value,
                     requested=new_phase.value,
                 )
-                return IterationState(
-                    spec_id=spec_id,
-                    phase=current_phase,
-                    attempt=int(data.get("attempt", 1)),
-                    dag_task_id=data.get("dag_task_id"),
-                    error=data.get("error"),
-                )
+                return _build_state(data)
             else:
-                try:
-                    cur_idx = PHASE_ORDER.index(current_phase)
-                    new_idx = PHASE_ORDER.index(new_phase)
-                except ValueError:
-                    cur_idx, new_idx = 0, 1
-                if new_idx < cur_idx:
+                allowed = ALLOWED_TRANSITIONS.get(current_phase, frozenset())
+                if new_phase not in allowed:
                     log.warning(
-                        "spec_backlog_advance_rejected_backward",
+                        "spec_backlog_advance_rejected_invalid_transition",
                         spec_id=spec_id,
                         current=current_phase.value,
                         requested=new_phase.value,
+                        allowed=[p.value for p in allowed],
                     )
-                    return IterationState(
-                        spec_id=spec_id,
-                        phase=current_phase,
-                        attempt=int(data.get("attempt", 1)),
-                        dag_task_id=data.get("dag_task_id"),
-                        error=data.get("error"),
-                    )
+                    return _build_state(data)
 
         try:
             # Build extra kwargs for update
@@ -169,16 +182,7 @@ class SpecBacklog:
                 extra["error"] = error
             if metadata is not None:
                 # Merge metadata with existing
-                existing_meta_raw = data.get("metadata")
-                existing_meta: dict = {}
-                if existing_meta_raw:
-                    if isinstance(existing_meta_raw, str):
-                        try:
-                            existing_meta = json.loads(existing_meta_raw)
-                        except (json.JSONDecodeError, TypeError):
-                            existing_meta = {}
-                    elif isinstance(existing_meta_raw, dict):
-                        existing_meta = existing_meta_raw
+                existing_meta = _parse_metadata(data.get("metadata"))
                 existing_meta.update(metadata)
                 extra["metadata"] = existing_meta
 
@@ -200,13 +204,7 @@ class SpecBacklog:
                 if refreshed is None:
                     return None
                 rd = refreshed if isinstance(refreshed, dict) else refreshed.__dict__
-                return IterationState(
-                    spec_id=spec_id,
-                    phase=IterationPhase(rd.get("status", "pending")),
-                    attempt=int(rd.get("attempt", 1)),
-                    dag_task_id=rd.get("dag_task_id"),
-                    error=rd.get("error"),
-                )
+                return _build_state(rd)
 
             refreshed = self._store.get_spec_entry(spec_id=spec_id)
             if refreshed is None:
@@ -216,6 +214,7 @@ class SpecBacklog:
                 spec_id=spec_id,
                 phase=new_phase,
                 attempt=int(rd.get("attempt", 1)),
+                revision_cycle=_read_revision_cycle(rd),
                 dag_task_id=rd.get("dag_task_id") or dag_task_id,
                 error=rd.get("error") or error,
             )
@@ -234,7 +233,7 @@ class SpecBacklog:
 
         If the current attempt is below max_retries, resets to PENDING
         with an incremented attempt counter and schedules a retry with
-        exponential backoff (Fix 8). Otherwise marks as FAILED.
+        exponential backoff. Otherwise marks as FAILED.
         """
         if not hasattr(self._store, "get_spec_entry"):
             return None
@@ -259,20 +258,11 @@ class SpecBacklog:
                 current_status = data.get("status", "pending")
                 if hasattr(self._store, "update_spec_status"):
                     # Merge next_retry_at into existing metadata
-                    existing_meta_raw = data.get("metadata")
-                    meta: dict = {}
-                    if existing_meta_raw:
-                        if isinstance(existing_meta_raw, str):
-                            try:
-                                meta = json.loads(existing_meta_raw)
-                            except (json.JSONDecodeError, TypeError):
-                                meta = {}
-                        elif isinstance(existing_meta_raw, dict):
-                            meta = dict(existing_meta_raw)
+                    meta = _parse_metadata(data.get("metadata"))
                     meta["next_retry_at"] = next_retry_at
                     updated = self._store.update_spec_status(
                         spec_id=spec_id,
-                        status=IterationPhase.PENDING.value,
+                        status=PipelinePhase.PENDING.value,
                         expected_status=current_status,
                         error=error,
                         metadata=meta,
@@ -295,15 +285,16 @@ class SpecBacklog:
                 )
                 return IterationState(
                     spec_id=spec_id,
-                    phase=IterationPhase.PENDING,
+                    phase=PipelinePhase.PENDING,
                     attempt=current_attempt + 1,
+                    revision_cycle=_read_revision_cycle(data),
                     error=error,
                 )
             else:
                 # Final failure
                 return self.advance_phase(
                     spec_id,
-                    IterationPhase.FAILED,
+                    PipelinePhase.FAILED,
                     error=error,
                 )
         except Exception:
@@ -319,13 +310,7 @@ class SpecBacklog:
             if entry is None:
                 return None
             data = entry if isinstance(entry, dict) else entry.__dict__
-            return IterationState(
-                spec_id=data["spec_id"],
-                phase=IterationPhase(data.get("status", "pending")),
-                attempt=int(data.get("attempt", 1)),
-                dag_task_id=data.get("dag_task_id"),
-                error=data.get("error"),
-            )
+            return _build_state(data)
         except Exception:
             log.exception("spec_backlog_get_state_error", spec_id=spec_id)
             return None

@@ -1,7 +1,15 @@
-"""Tests for SpecGenerator — research-aware spec generation."""
+"""Tests for SpecGenerator and LLMSpecGenerator — research-aware spec generation."""
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+from typing import Any
+
+from hermit.plugins.builtin.hooks.decompose.llm_spec_generator import (
+    LLMSpecGenerator,
+    _validate_spec_output,
+)
 from hermit.plugins.builtin.hooks.decompose.models import GeneratedSpec
 from hermit.plugins.builtin.hooks.decompose.spec_generator import (
     SpecGenerator,
@@ -13,6 +21,11 @@ from hermit.plugins.builtin.hooks.decompose.spec_generator import (
     _make_spec_id,
 )
 from hermit.plugins.builtin.hooks.research.models import ResearchFinding, ResearchReport
+from hermit.runtime.provider_host.shared.contracts import (
+    ProviderFeatures,
+    ProviderResponse,
+    UsageMetrics,
+)
 
 
 class TestMakeSpecId:
@@ -175,3 +188,141 @@ class TestSpecGenerator:
             raise AssertionError("Should have raised")
         except AttributeError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Helpers for LLMSpecGenerator tests
+# ---------------------------------------------------------------------------
+
+
+def _make_provider_response(data: dict[str, Any]) -> ProviderResponse:
+    """Build a ProviderResponse whose content contains JSON text."""
+    return ProviderResponse(
+        content=[{"type": "text", "text": json.dumps(data)}],
+        stop_reason="end_turn",
+        usage=UsageMetrics(),
+    )
+
+
+def _make_fake_provider(response: ProviderResponse) -> SimpleNamespace:
+    """Return a SimpleNamespace that quacks like a Provider."""
+    return SimpleNamespace(
+        name="fake",
+        features=ProviderFeatures(),
+        generate=lambda request: response,
+        stream=lambda request: iter([]),
+        clone=lambda **kw: None,
+    )
+
+
+_VALID_SPEC_JSON: dict[str, Any] = {
+    "title": "Add caching layer",
+    "file_plan": [
+        {"path": "src/hermit/cache.py", "action": "create", "reason": "New cache module"},
+    ],
+    "constraints": ["Follow Ruff rules"],
+    "acceptance_criteria": ["`make check` passes", "Cache hit rate > 80%"],
+    "trust_zone": "normal",
+    "risk_assessment": "Low risk — isolated new module.",
+}
+
+
+# ---------------------------------------------------------------------------
+# LLMSpecGenerator tests
+# ---------------------------------------------------------------------------
+
+
+class TestLLMSpecGenerator:
+    def test_llm_generate_with_mock_provider(self) -> None:
+        """Mock Provider returns valid JSON -> GeneratedSpec."""
+        response = _make_provider_response(_VALID_SPEC_JSON)
+        provider = _make_fake_provider(response)
+
+        gen = LLMSpecGenerator(provider, model="test-model")
+        spec = gen.generate("Add caching layer")
+
+        assert isinstance(spec, GeneratedSpec)
+        assert spec.title == "Add caching layer"
+        assert len(spec.file_plan) == 1
+        assert spec.file_plan[0]["path"] == "src/hermit/cache.py"
+        assert spec.trust_zone == "normal"
+        assert spec.metadata.get("generator") == "llm"
+        assert any("make check" in c for c in spec.acceptance_criteria)
+
+    def test_llm_generate_fallback_on_parse_failure(self) -> None:
+        """Mock returns garbage text -> falls back to deterministic generator."""
+        response = ProviderResponse(
+            content=[{"type": "text", "text": "this is not json at all!!!"}],
+            stop_reason="end_turn",
+            usage=UsageMetrics(),
+        )
+        provider = _make_fake_provider(response)
+
+        gen = LLMSpecGenerator(provider, model="test-model")
+        spec = gen.generate("Add caching layer")
+
+        # Should still produce a spec via the deterministic fallback
+        assert isinstance(spec, GeneratedSpec)
+        assert spec.spec_id
+        # Deterministic generator does not set "llm" in metadata
+        assert spec.metadata.get("generator") != "llm"
+
+    def test_llm_generate_fallback_on_exception(self) -> None:
+        """Mock provider raises -> falls back to deterministic generator."""
+
+        def _exploding_generate(request: Any) -> ProviderResponse:
+            raise RuntimeError("Provider is down")
+
+        provider = SimpleNamespace(
+            name="broken",
+            features=ProviderFeatures(),
+            generate=_exploding_generate,
+            stream=lambda request: iter([]),
+            clone=lambda **kw: None,
+        )
+
+        gen = LLMSpecGenerator(provider, model="test-model")
+        spec = gen.generate("Fix the login bug")
+
+        assert isinstance(spec, GeneratedSpec)
+        assert spec.spec_id
+
+
+class TestValidateSpecOutput:
+    def test_validate_spec_output_valid(self) -> None:
+        """A fully valid spec output produces no issues."""
+        issues = _validate_spec_output(_VALID_SPEC_JSON)
+        assert issues == []
+
+    def test_validate_spec_output_missing_fields(self) -> None:
+        """Missing required fields produce issue strings."""
+        issues = _validate_spec_output({})
+        assert any("title" in i for i in issues)
+        assert any("file_plan" in i for i in issues)
+        assert any("constraints" in i for i in issues)
+        assert any("acceptance_criteria" in i for i in issues)
+        assert any("trust_zone" in i for i in issues)
+
+    def test_validate_spec_output_invalid_action(self) -> None:
+        """file_plan entries with invalid action are flagged."""
+        data = {
+            "title": "Test",
+            "file_plan": [{"path": "src/a.py", "action": "rename", "reason": "bad"}],
+            "constraints": [],
+            "acceptance_criteria": ["`make check` passes"],
+            "trust_zone": "normal",
+        }
+        issues = _validate_spec_output(data)
+        assert any("invalid action" in i for i in issues)
+
+    def test_validate_spec_output_missing_make_check(self) -> None:
+        """acceptance_criteria without 'make check' is flagged."""
+        data = {
+            "title": "Test",
+            "file_plan": [],
+            "constraints": [],
+            "acceptance_criteria": ["all tests pass"],
+            "trust_zone": "normal",
+        }
+        issues = _validate_spec_output(data)
+        assert any("make check" in i for i in issues)

@@ -1,4 +1,4 @@
-"""Data models for the meta-loop self-iteration plugin."""
+"""Data models for the meta-loop v2 pipeline."""
 
 from __future__ import annotations
 
@@ -6,51 +6,63 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 
-class IterationPhase(StrEnum):
-    """Phases of a self-improvement iteration lifecycle."""
+class PipelinePhase(StrEnum):
+    """Phases of the 3-phase LLM-native iteration pipeline."""
 
     PENDING = "pending"
-    RESEARCHING = "researching"
-    GENERATING_SPEC = "generating_spec"
-    SPEC_APPROVAL = "spec_approval"
-    DECOMPOSING = "decomposing"
+    PLANNING = "planning"
     IMPLEMENTING = "implementing"
     REVIEWING = "reviewing"
-    BENCHMARKING = "benchmarking"
-    LEARNING = "learning"
-    RECONCILING = "reconciling"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
-    COMPLETED = "completed"
     FAILED = "failed"
 
 
-# Ordered phase transitions for the state machine.
-# Terminal phases (COMPLETED, FAILED, ACCEPTED, REJECTED) are not in the
-# main linear sequence except as reachable from RECONCILING.
-PHASE_ORDER: tuple[IterationPhase, ...] = (
-    IterationPhase.PENDING,
-    IterationPhase.RESEARCHING,
-    IterationPhase.GENERATING_SPEC,
-    IterationPhase.SPEC_APPROVAL,
-    IterationPhase.DECOMPOSING,
-    IterationPhase.IMPLEMENTING,
-    IterationPhase.REVIEWING,
-    IterationPhase.BENCHMARKING,
-    IterationPhase.LEARNING,
-    IterationPhase.RECONCILING,
-    IterationPhase.ACCEPTED,
-    IterationPhase.COMPLETED,
+PHASE_ORDER: tuple[PipelinePhase, ...] = (
+    PipelinePhase.PENDING,
+    PipelinePhase.PLANNING,
+    PipelinePhase.IMPLEMENTING,
+    PipelinePhase.REVIEWING,
+    PipelinePhase.ACCEPTED,
 )
 
 TERMINAL_PHASES = frozenset(
     {
-        IterationPhase.COMPLETED,
-        IterationPhase.FAILED,
-        IterationPhase.ACCEPTED,
-        IterationPhase.REJECTED,
+        PipelinePhase.ACCEPTED,
+        PipelinePhase.REJECTED,
+        PipelinePhase.FAILED,
     }
 )
+
+# Explicit transition map — supports the REVIEWING → IMPLEMENTING revision loop
+ALLOWED_TRANSITIONS: dict[PipelinePhase, frozenset[PipelinePhase]] = {
+    PipelinePhase.PENDING: frozenset({PipelinePhase.PLANNING, PipelinePhase.FAILED}),
+    PipelinePhase.PLANNING: frozenset(
+        {
+            PipelinePhase.IMPLEMENTING,
+            PipelinePhase.REJECTED,  # approval denied
+            PipelinePhase.FAILED,
+        }
+    ),
+    PipelinePhase.IMPLEMENTING: frozenset(
+        {
+            PipelinePhase.REVIEWING,
+            PipelinePhase.IMPLEMENTING,  # self-transition for dag_task_id write
+            PipelinePhase.FAILED,
+        }
+    ),
+    PipelinePhase.REVIEWING: frozenset(
+        {
+            PipelinePhase.IMPLEMENTING,  # REVISION LOOP
+            PipelinePhase.ACCEPTED,
+            PipelinePhase.REJECTED,
+            PipelinePhase.FAILED,
+        }
+    ),
+}
+
+MAX_REVISION_CYCLES = 3
+MAX_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -58,24 +70,17 @@ class IterationState:
     """Immutable snapshot of an iteration's current state."""
 
     spec_id: str
-    phase: IterationPhase
+    phase: PipelinePhase
     attempt: int = 1
+    revision_cycle: int = 0
     dag_task_id: str | None = None
+    plan_artifact_ref: str | None = None
     error: str | None = None
-
-    def next_phase(self) -> IterationPhase | None:
-        """Return the next phase in the lifecycle, or None if terminal."""
-        if self.phase in TERMINAL_PHASES:
-            return None
-        try:
-            idx = PHASE_ORDER.index(self.phase)
-        except ValueError:
-            return None
-        next_idx = idx + 1
-        if next_idx >= len(PHASE_ORDER):
-            return None
-        return PHASE_ORDER[next_idx]
 
     @property
     def is_terminal(self) -> bool:
         return self.phase in TERMINAL_PHASES
+
+    @property
+    def can_revise(self) -> bool:
+        return self.revision_cycle < MAX_REVISION_CYCLES

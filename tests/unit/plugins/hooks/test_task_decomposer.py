@@ -1,12 +1,24 @@
-"""Tests for TaskDecomposer — deterministic spec decomposition."""
+"""Tests for TaskDecomposer and LLMTaskDecomposer — spec decomposition."""
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from hermit.plugins.builtin.hooks.decompose.llm_task_decomposer import LLMTaskDecomposer
 from hermit.plugins.builtin.hooks.decompose.models import (
     DecompositionPlan,
     GeneratedSpec,
 )
 from hermit.plugins.builtin.hooks.decompose.task_decomposer import TaskDecomposer
+from hermit.runtime.provider_host.shared.contracts import (
+    ProviderFeatures,
+    ProviderResponse,
+    UsageMetrics,
+)
 
 
 def _make_spec(**overrides: object) -> GeneratedSpec:
@@ -139,3 +151,159 @@ class TestTaskDecomposer:
             assert "kind" in step
             assert "title" in step
             assert "depends_on" in step
+
+
+# ---------------------------------------------------------------------------
+# Helpers for LLMTaskDecomposer tests
+# ---------------------------------------------------------------------------
+
+_VALID_DAG_JSON: dict[str, Any] = {
+    "steps": [
+        {
+            "key": "implement_cache",
+            "kind": "code",
+            "title": "Implement cache module",
+            "depends_on": [],
+            "description": "Create the cache module.",
+        },
+        {
+            "key": "test_cache",
+            "kind": "test",
+            "title": "Test cache module",
+            "depends_on": ["implement_cache"],
+            "description": "Add unit tests.",
+        },
+        {
+            "key": "final_check",
+            "kind": "review",
+            "title": "Run final verification",
+            "depends_on": ["implement_cache", "test_cache"],
+        },
+    ],
+    "estimated_duration_minutes": 15,
+    "rationale": "Simple create-test-review pipeline.",
+}
+
+
+def _make_dag_response(data: dict[str, Any]) -> ProviderResponse:
+    return ProviderResponse(
+        content=[{"type": "text", "text": json.dumps(data)}],
+        stop_reason="end_turn",
+        usage=UsageMetrics(),
+    )
+
+
+def _make_fake_provider(response: ProviderResponse) -> SimpleNamespace:
+    return SimpleNamespace(
+        name="fake",
+        features=ProviderFeatures(),
+        generate=lambda request: response,
+        stream=lambda request: iter([]),
+        clone=lambda **kw: None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# LLMTaskDecomposer tests
+# ---------------------------------------------------------------------------
+
+
+class TestLLMTaskDecomposer:
+    def test_llm_decompose_with_mock_provider(self) -> None:
+        """Mock returns valid DAG -> DecompositionPlan."""
+        response = _make_dag_response(_VALID_DAG_JSON)
+        provider = _make_fake_provider(response)
+
+        decomposer = LLMTaskDecomposer(provider, model="test-model")
+        plan = decomposer.decompose(_make_spec())
+
+        assert isinstance(plan, DecompositionPlan)
+        assert plan.spec_id == "test-spec-abc123"
+        assert len(plan.steps) == 3
+        assert plan.steps[0]["key"] == "implement_cache"
+        assert plan.steps[-1]["key"] == "final_check"
+        assert plan.estimated_duration_minutes == 15
+        assert "implement_cache" in plan.dependency_graph
+        assert plan.dependency_graph["test_cache"] == ["implement_cache"]
+
+    def test_llm_decompose_fallback_on_failure(self) -> None:
+        """Provider raises -> falls back to deterministic TaskDecomposer."""
+
+        def _exploding_generate(request: Any) -> ProviderResponse:
+            raise RuntimeError("LLM is down")
+
+        provider = SimpleNamespace(
+            name="broken",
+            features=ProviderFeatures(),
+            generate=_exploding_generate,
+            stream=lambda request: iter([]),
+            clone=lambda **kw: None,
+        )
+
+        decomposer = LLMTaskDecomposer(provider, model="test-model")
+        plan = decomposer.decompose(_make_spec())
+
+        # Should fall back to deterministic decomposer and still produce a plan
+        assert isinstance(plan, DecompositionPlan)
+        assert plan.spec_id == "test-spec-abc123"
+        assert len(plan.steps) >= 2
+        assert plan.steps[-1]["key"] == "final_check"
+
+
+class TestValidateDecompositionOutput:
+    """Tests for LLMTaskDecomposer._validate_decomposition_output."""
+
+    def test_validate_decomposition_duplicate_keys(self) -> None:
+        """Duplicate step keys must raise ValueError."""
+        data = {
+            "steps": [
+                {"key": "step_a", "kind": "code", "title": "A", "depends_on": []},
+                {"key": "step_a", "kind": "test", "title": "B", "depends_on": []},
+                {"key": "final_check", "kind": "review", "title": "Final", "depends_on": []},
+            ],
+        }
+        with pytest.raises(ValueError, match="duplicate step key"):
+            LLMTaskDecomposer._validate_decomposition_output(data)
+
+    def test_validate_decomposition_invalid_deps(self) -> None:
+        """depends_on referencing a non-existent or future step must raise."""
+        data = {
+            "steps": [
+                {
+                    "key": "step_a",
+                    "kind": "code",
+                    "title": "A",
+                    "depends_on": ["nonexistent"],
+                },
+                {"key": "final_check", "kind": "review", "title": "Final", "depends_on": []},
+            ],
+        }
+        with pytest.raises(ValueError, match="not a prior step"):
+            LLMTaskDecomposer._validate_decomposition_output(data)
+
+    def test_validate_decomposition_missing_final_check(self) -> None:
+        """Last step must have key 'final_check'."""
+        data = {
+            "steps": [
+                {"key": "step_a", "kind": "code", "title": "A", "depends_on": []},
+                {"key": "step_b", "kind": "review", "title": "B", "depends_on": ["step_a"]},
+            ],
+        }
+        with pytest.raises(ValueError, match="final_check"):
+            LLMTaskDecomposer._validate_decomposition_output(data)
+
+    def test_validate_decomposition_empty_steps(self) -> None:
+        """Empty steps list must raise."""
+        with pytest.raises(ValueError, match="non-empty list"):
+            LLMTaskDecomposer._validate_decomposition_output({"steps": []})
+
+    def test_validate_decomposition_invalid_kind(self) -> None:
+        """Step with invalid kind must raise."""
+        data = {
+            "steps": [
+                {"key": "step_a", "kind": "deploy", "title": "A", "depends_on": []},
+                {"key": "final_check", "kind": "review", "title": "Final", "depends_on": []},
+            ],
+        }
+        with pytest.raises(ValueError, match="invalid kind"):
+            LLMTaskDecomposer._validate_decomposition_output(data)

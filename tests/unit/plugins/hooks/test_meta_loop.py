@@ -1,7 +1,12 @@
-"""Tests for the meta-loop orchestrator, hooks, and poller."""
+"""Tests for the meta-loop v2 orchestrator, hooks, and poller.
+
+v2 pipeline phases: PENDING -> PLANNING -> IMPLEMENTING -> REVIEWING -> ACCEPTED
+with a revision loop: REVIEWING -> IMPLEMENTING -> REVIEWING.
+"""
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -11,7 +16,13 @@ import pytest
 
 from hermit.plugins.builtin.hooks.metaloop import hooks as metaloop_hooks
 from hermit.plugins.builtin.hooks.metaloop.backlog import SpecBacklog
-from hermit.plugins.builtin.hooks.metaloop.models import PHASE_ORDER, IterationPhase, IterationState
+from hermit.plugins.builtin.hooks.metaloop.models import (
+    ALLOWED_TRANSITIONS,
+    MAX_REVISION_CYCLES,
+    TERMINAL_PHASES,
+    IterationState,
+    PipelinePhase,
+)
 from hermit.plugins.builtin.hooks.metaloop.orchestrator import (
     MetaLoopOrchestrator,
     SignalToSpecConsumer,
@@ -96,7 +107,7 @@ class FakeStore:
     def claim_next_spec(
         self,
         from_status: str = "pending",
-        to_status: str = "researching",
+        to_status: str = "planning",
     ) -> dict[str, Any] | None:
         with self._claim_lock:
             for spec in self._specs.values():
@@ -194,34 +205,52 @@ def orchestrator(fake_store: FakeStore) -> MetaLoopOrchestrator:
 
 
 class TestIterationState:
-    def test_next_phase_from_pending(self) -> None:
-        state = IterationState(spec_id="s1", phase=IterationPhase.PENDING)
-        assert state.next_phase() == IterationPhase.RESEARCHING
+    def test_pending_is_not_terminal(self) -> None:
+        state = IterationState(spec_id="s1", phase=PipelinePhase.PENDING)
+        assert not state.is_terminal
 
-    def test_next_phase_from_learning(self) -> None:
-        state = IterationState(spec_id="s1", phase=IterationPhase.LEARNING)
-        assert state.next_phase() == IterationPhase.RECONCILING
-
-    def test_next_phase_terminal(self) -> None:
-        state = IterationState(spec_id="s1", phase=IterationPhase.COMPLETED)
-        assert state.next_phase() is None
+    def test_accepted_is_terminal(self) -> None:
+        state = IterationState(spec_id="s1", phase=PipelinePhase.ACCEPTED)
         assert state.is_terminal
 
-    def test_next_phase_failed_is_terminal(self) -> None:
-        state = IterationState(spec_id="s1", phase=IterationPhase.FAILED)
+    def test_rejected_is_terminal(self) -> None:
+        state = IterationState(spec_id="s1", phase=PipelinePhase.REJECTED)
         assert state.is_terminal
-        assert state.next_phase() is None
+
+    def test_failed_is_terminal(self) -> None:
+        state = IterationState(spec_id="s1", phase=PipelinePhase.FAILED)
+        assert state.is_terminal
 
     def test_frozen(self) -> None:
-        state = IterationState(spec_id="s1", phase=IterationPhase.PENDING)
+        state = IterationState(spec_id="s1", phase=PipelinePhase.PENDING)
         with pytest.raises(AttributeError):
-            state.phase = IterationPhase.RESEARCHING  # type: ignore[misc]
+            state.phase = PipelinePhase.PLANNING  # type: ignore[misc]
 
-    def test_phase_order_covers_all_non_terminal(self) -> None:
-        non_terminal = {
-            p for p in IterationPhase if p not in {IterationPhase.FAILED, IterationPhase.REJECTED}
-        }
-        assert set(PHASE_ORDER) == non_terminal
+    def test_can_revise_within_budget(self) -> None:
+        state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING, revision_cycle=0)
+        assert state.can_revise
+
+    def test_cannot_revise_when_budget_exhausted(self) -> None:
+        state = IterationState(
+            spec_id="s1",
+            phase=PipelinePhase.REVIEWING,
+            revision_cycle=MAX_REVISION_CYCLES,
+        )
+        assert not state.can_revise
+
+    def test_allowed_transitions_cover_non_terminal_phases(self) -> None:
+        non_terminal = {p for p in PipelinePhase if p not in TERMINAL_PHASES}
+        assert set(ALLOWED_TRANSITIONS.keys()) == non_terminal
+
+    def test_reviewing_can_transition_to_implementing(self) -> None:
+        """REVIEWING -> IMPLEMENTING is the revision loop transition."""
+        allowed = ALLOWED_TRANSITIONS[PipelinePhase.REVIEWING]
+        assert PipelinePhase.IMPLEMENTING in allowed
+
+    def test_implementing_self_transition_allowed(self) -> None:
+        """IMPLEMENTING -> IMPLEMENTING is allowed for dag_task_id writes."""
+        allowed = ALLOWED_TRANSITIONS[PipelinePhase.IMPLEMENTING]
+        assert PipelinePhase.IMPLEMENTING in allowed
 
 
 # ---------------------------------------------------------------------------
@@ -230,22 +259,22 @@ class TestIterationState:
 
 
 class TestMetaLoopOrchestrator:
-    def test_advance_pending_to_researching(
+    def test_advance_pending_to_planning(
         self, orchestrator: MetaLoopOrchestrator, fake_store: FakeStore
     ) -> None:
         fake_store.create_spec_entry(spec_id="s1", goal="improve X")
         result = orchestrator.advance("s1")
         assert result is not None
-        assert result.phase == IterationPhase.RESEARCHING
+        assert result.phase == PipelinePhase.PLANNING
 
     def test_advance_through_all_phases(
         self, orchestrator: MetaLoopOrchestrator, fake_store: FakeStore
     ) -> None:
+        """Walk through the 3-phase pipeline: PENDING -> PLANNING -> IMPLEMENTING -> REVIEWING -> ACCEPTED."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         fake_store.create_spec_entry(spec_id="s1", goal="improve X")
 
-        # Mock research pipeline and benchmark runner so handlers produce real metadata
         mock_report = MagicMock()
         mock_report.goal = "improve X"
         mock_report.findings = ()
@@ -276,19 +305,19 @@ class TestMetaLoopOrchestrator:
             ),
         ):
             # Walk through phases until we hit a terminal state
-            phases_seen = [IterationPhase.PENDING]
+            phases_seen = [PipelinePhase.PENDING]
             for _ in range(20):  # safety limit
                 result = orchestrator.advance("s1")
                 assert result is not None
                 phases_seen.append(result.phase)
                 if result.is_terminal:
                     break
-            # Should reach ACCEPTED (promotion gate passes with good benchmark)
-            assert result.phase == IterationPhase.ACCEPTED
+            # Should reach ACCEPTED (benchmark passes, no council review)
+            assert result.phase == PipelinePhase.ACCEPTED
             # After ACCEPTED (terminal), should not advance further
             result = orchestrator.advance("s1")
             assert result is not None
-            assert result.phase == IterationPhase.ACCEPTED
+            assert result.phase == PipelinePhase.ACCEPTED
 
     def test_advance_nonexistent_spec(self, orchestrator: MetaLoopOrchestrator) -> None:
         result = orchestrator.advance("nonexistent")
@@ -300,12 +329,12 @@ class TestMetaLoopOrchestrator:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             dag_task_id="dag-123",
         )
         result = orchestrator.on_subtask_complete("dag-123", success=True)
         assert result is not None
-        assert result.phase == IterationPhase.REVIEWING
+        assert result.phase == PipelinePhase.REVIEWING
 
     def test_on_subtask_complete_failure_with_retry(
         self, orchestrator: MetaLoopOrchestrator, fake_store: FakeStore
@@ -313,13 +342,13 @@ class TestMetaLoopOrchestrator:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             dag_task_id="dag-456",
         )
         result = orchestrator.on_subtask_complete("dag-456", success=False, error="build failed")
         assert result is not None
         # Should retry: reset to PENDING with attempt incremented
-        assert result.phase == IterationPhase.PENDING
+        assert result.phase == PipelinePhase.PENDING
         assert result.attempt == 2
 
     def test_on_subtask_complete_unknown_task(self, orchestrator: MetaLoopOrchestrator) -> None:
@@ -480,7 +509,7 @@ class TestMetaLoopHooks:
         fake_store.create_spec_entry(spec_id="iter-1", goal="test subtask hook")
         fake_store.update_spec_status(
             spec_id="iter-1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             dag_task_id="dag-abc",
         )
 
@@ -494,7 +523,7 @@ class TestMetaLoopHooks:
         # Should have advanced to REVIEWING
         entry = fake_store.get_spec_entry(spec_id="iter-1")
         assert entry is not None
-        assert entry["status"] == IterationPhase.REVIEWING.value
+        assert entry["status"] == PipelinePhase.REVIEWING.value
 
         # Clean up
         ctx._hooks.fire(HookEvent.SERVE_STOP)
@@ -529,7 +558,7 @@ class TestMetaLoopHooks:
 
 
 # ---------------------------------------------------------------------------
-# Gap 1: Implementing handler tests
+# Implementing handler tests
 # ---------------------------------------------------------------------------
 
 
@@ -538,23 +567,19 @@ class TestImplementingHandler:
         self,
         fake_store: FakeStore,
     ) -> None:
-        """Without a runner, _handle_implementing falls back to dry-run."""
+        """Without a runner, _handle_implementing skips to REVIEWING."""
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, runner=None)
         fake_store.create_spec_entry(spec_id="s1", goal="test")
-        # Walk to IMPLEMENTING
-        for _ in range(5):  # PENDING→RESEARCH→GEN_SPEC→APPROVAL→DECOMPOSING
-            orch.advance("s1")
-        entry = fake_store.get_spec_entry("s1")
-        assert entry is not None
-        # Should be at IMPLEMENTING now; next advance should dry-run through
-        assert entry["status"] == IterationPhase.DECOMPOSING.value or True  # flexible
-        result = orch.advance("s1")
-        assert result is not None
-        # Should have advanced past IMPLEMENTING (dry-run skips)
-        assert (
-            result.phase != IterationPhase.IMPLEMENTING
-            or result.phase == IterationPhase.IMPLEMENTING
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=PipelinePhase.IMPLEMENTING.value,
+            metadata=json.dumps({"decomposition_plan": {"steps": [{"key": "a"}]}}),
         )
+        state = IterationState(spec_id="s1", phase=PipelinePhase.IMPLEMENTING)
+        result = orch._handle_implementing(state)
+        assert result is not None
+        # Without a runner, should advance to REVIEWING directly
+        assert result.phase == PipelinePhase.REVIEWING
 
     def test_implementing_no_steps_advances_to_reviewing(
         self,
@@ -565,20 +590,19 @@ class TestImplementingHandler:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             metadata='{"decomposition_plan": {"steps": []}}',
         )
-        state = IterationState(spec_id="s1", phase=IterationPhase.IMPLEMENTING)
+        state = IterationState(spec_id="s1", phase=PipelinePhase.IMPLEMENTING)
         result = orch._handle_implementing(state)
         assert result is not None
-        assert result.phase == IterationPhase.REVIEWING
+        assert result.phase == PipelinePhase.REVIEWING
 
     def test_implementing_builds_step_nodes(
         self,
         fake_store: FakeStore,
     ) -> None:
         """DAG nodes built from decomposition plan should be valid StepNode instances."""
-        import json
         from unittest.mock import MagicMock
 
         plan_meta = json.dumps(
@@ -614,7 +638,7 @@ class TestImplementingHandler:
         fake_store.create_spec_entry(spec_id="s1", goal="test dag")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             metadata=plan_meta,
         )
 
@@ -631,7 +655,7 @@ class TestImplementingHandler:
         runner = SimpleNamespace(task_controller=mock_tc)
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, runner=runner)
-        state = IterationState(spec_id="s1", phase=IterationPhase.IMPLEMENTING)
+        state = IterationState(spec_id="s1", phase=PipelinePhase.IMPLEMENTING)
         result = orch._handle_implementing(state)
 
         # Verify start_dag_task was called with correct kwargs
@@ -655,7 +679,7 @@ class TestImplementingHandler:
 
         # Should stay at IMPLEMENTING (waiting for DAG)
         assert result is not None
-        assert result.phase == IterationPhase.IMPLEMENTING
+        assert result.phase == PipelinePhase.IMPLEMENTING
         assert result.dag_task_id == "dag-test-123"
 
 
@@ -669,12 +693,12 @@ class TestSubtaskMergeAndCleanup:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             dag_task_id="dag-ok",
         )
         result = orch.on_subtask_complete("dag-ok", success=True)
         assert result is not None
-        assert result.phase == IterationPhase.REVIEWING
+        assert result.phase == PipelinePhase.REVIEWING
 
     def test_subtask_failure_marks_failed(
         self,
@@ -685,13 +709,13 @@ class TestSubtaskMergeAndCleanup:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             dag_task_id="dag-fail",
         )
         result = orch.on_subtask_complete("dag-fail", success=False, error="build error")
         assert result is not None
         # First attempt: should retry (PENDING with attempt 2)
-        assert result.phase == IterationPhase.PENDING
+        assert result.phase == PipelinePhase.PENDING
         assert result.attempt == 2
 
     def test_subtask_success_with_worktree_metadata(
@@ -699,13 +723,11 @@ class TestSubtaskMergeAndCleanup:
         fake_store: FakeStore,
     ) -> None:
         """When metadata has worktree info, PR info is stored (no direct merge)."""
-        import json
-
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, workspace_root="/tmp/test-repo")
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             dag_task_id="dag-merge",
             metadata=json.dumps(
                 {
@@ -720,7 +742,7 @@ class TestSubtaskMergeAndCleanup:
         result = orch.on_subtask_complete("dag-merge", success=True)
 
         assert result is not None
-        assert result.phase == IterationPhase.REVIEWING
+        assert result.phase == PipelinePhase.REVIEWING
 
         # Verify PR pending metadata was stored instead of merging
         entry = fake_store.get_spec_entry("s1")
@@ -738,14 +760,13 @@ class TestSubtaskMergeAndCleanup:
         fake_store: FakeStore,
     ) -> None:
         """Failed subtask should clean up worktree without merging."""
-        import json
         from unittest.mock import MagicMock, patch
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, workspace_root="/tmp/test-repo")
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.IMPLEMENTING.value,
+            status=PipelinePhase.IMPLEMENTING.value,
             dag_task_id="dag-cleanup",
             metadata=json.dumps(
                 {
@@ -766,87 +787,117 @@ class TestSubtaskMergeAndCleanup:
             result = orch.on_subtask_complete("dag-cleanup", success=False, error="step failed")
 
         assert result is not None
-        assert result.phase == IterationPhase.PENDING  # retry
+        assert result.phase == PipelinePhase.PENDING  # retry
         mock_ws.remove.assert_called_once_with("s1")
         mock_ws.merge_to_main.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# Gap 2: Lessons feedback loop tests
+# Revision loop tests
 # ---------------------------------------------------------------------------
 
 
-class TestLessonsFeedbackLoop:
-    def test_research_injects_prior_lessons(
+class TestRevisionLoop:
+    def test_revision_loop_reviewing_to_implementing(
         self,
         fake_store: FakeStore,
     ) -> None:
-        """Prior lessons are injected as hints during research (relevance-filtered)."""
-        from unittest.mock import patch
+        """REVIEWING -> IMPLEMENTING when council says 'revise'."""
+        from unittest.mock import MagicMock, patch
 
-        fake_store._lessons = [
-            {
-                "lesson_id": "L1",
-                "category": "mistake",
-                "summary": "Always run quality checks before commit",
-            },
-            {
-                "lesson_id": "L2",
-                "category": "optimization",
-                "summary": "Use parallel strategies for speed",
-            },
-            {
-                "lesson_id": "L3",
-                "category": "success_pattern",
-                "summary": "Unrelated database migration tip",
-            },
-        ]
         orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="improve quality checks")
-        # Advance from PENDING to RESEARCHING
-        orch.advance("s1")
+        fake_store.create_spec_entry(spec_id="s1", goal="test revision")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                }
+            ),
+        )
 
-        # Capture hints passed to pipeline.run
-        captured_hints: list[list[str]] = []
+        # Mock council to return "revise" verdict
+        mock_verdict = MagicMock()
+        mock_verdict.verdict = "revise"
+        mock_verdict.council_id = "council-1"
+        mock_verdict.finding_count = 2
+        mock_verdict.critical_count = 0
+        mock_verdict.high_count = 1
+        mock_verdict.lint_passed = True
+        mock_verdict.consensus_score = 0.7
+        mock_verdict.revision_directive = "Fix the edge case handling"
+        mock_verdict.duration_seconds = 1.0
+        mock_verdict.decided_at = 1234567890.0
 
-        async def capture_run(goal: str, hints: list[str] | None = None):
-            from hermit.plugins.builtin.hooks.research.models import ResearchReport
-
-            captured_hints.append(hints or [])
-            return ResearchReport(goal=goal, duration_seconds=0.01)
-
-        with patch(
-            "hermit.plugins.builtin.hooks.research.pipeline.ResearchPipeline.run",
-            side_effect=capture_run,
-        ):
-            result = orch.advance("s1")
+        with patch.object(orch, "_run_council_review", return_value=mock_verdict):
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
 
         assert result is not None
-        assert result.phase == IterationPhase.GENERATING_SPEC
+        assert result.phase == PipelinePhase.IMPLEMENTING
 
-        # Verify relevant lessons were injected as hints with category prefixes
-        assert len(captured_hints) == 1
-        injected = captured_hints[0]
-        # L1 matches "quality" and "checks" — should be included with AVOID prefix
-        assert any("AVOID (prior mistake)" in h and "quality checks" in h for h in injected)
-        # L3 has no keyword overlap — should NOT be included
-        assert not any("database migration" in h for h in injected)
-
-        # Verify research metadata includes prior_lessons
+        # Verify revision metadata was stored
         entry = fake_store.get_spec_entry("s1")
-        assert entry is not None
-        import json
-
         metadata = (
             json.loads(entry["metadata"])
             if isinstance(entry["metadata"], str)
             else entry["metadata"]
         )
-        assert "research" in metadata
-        assert "prior_lessons" in metadata["research"]
-        lesson_summaries = [ls["summary"] for ls in metadata["research"]["prior_lessons"]]
-        assert any("quality checks" in s for s in lesson_summaries)
+        assert metadata["revision_cycle"] == 1
 
+    def test_revision_budget_exhausted(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """When revision cycle reaches MAX_REVISION_CYCLES, reject instead of revise."""
+        from unittest.mock import MagicMock, patch
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test budget")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": MAX_REVISION_CYCLES,
+                }
+            ),
+        )
+
+        mock_verdict = MagicMock()
+        mock_verdict.verdict = "revise"
+        mock_verdict.council_id = "council-1"
+        mock_verdict.finding_count = 1
+        mock_verdict.critical_count = 0
+        mock_verdict.high_count = 0
+        mock_verdict.lint_passed = True
+        mock_verdict.consensus_score = 0.6
+        mock_verdict.revision_directive = "More fixes needed"
+        mock_verdict.duration_seconds = 0.5
+        mock_verdict.decided_at = 1234567890.0
+
+        with patch.object(orch, "_run_council_review", return_value=mock_verdict):
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
+
+        assert result is not None
+        assert result.phase == PipelinePhase.REJECTED
+        entry = fake_store.get_spec_entry("s1")
+        assert entry["error"] is not None
+        assert "budget exhausted" in entry["error"].lower() or "revision" in entry["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Lessons feedback loop tests
+# ---------------------------------------------------------------------------
+
+
+class TestLessonsFeedbackLoop:
     def test_query_relevant_lessons_filters_by_keyword_overlap(
         self,
         fake_store: FakeStore,
@@ -889,137 +940,9 @@ class TestLessonsFeedbackLoop:
         result = orch._query_relevant_lessons("anything")
         assert result == []
 
-    def test_generating_spec_adds_lesson_constraints(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """Mistake lessons become AVOID constraints; success_pattern become PREFER."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="improve quality")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.GENERATING_SPEC.value,
-            metadata=json.dumps(
-                {
-                    "research": {
-                        "goal": "improve quality",
-                        "findings": [],
-                        "knowledge_gaps": [],
-                        "query_count": 0,
-                        "duration_seconds": 0.1,
-                        "count": 0,
-                        "sources": [],
-                        "prior_lessons": [
-                            {
-                                "lesson_id": "L1",
-                                "category": "mistake",
-                                "summary": "check failed due to lint",
-                            },
-                            {
-                                "lesson_id": "L2",
-                                "category": "success_pattern",
-                                "summary": "high coverage works",
-                            },
-                            {
-                                "lesson_id": "L3",
-                                "category": "optimization",
-                                "summary": "fast build",
-                            },
-                        ],
-                    },
-                }
-            ),
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.GENERATING_SPEC)
-        result = orch._handle_generating_spec(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.SPEC_APPROVAL
-
-        entry = fake_store.get_spec_entry("s1")
-        metadata = (
-            json.loads(entry["metadata"])
-            if isinstance(entry["metadata"], str)
-            else entry["metadata"]
-        )
-        constraints = metadata["generated_spec"]["constraints"]
-        # Mistake lesson → AVOID constraint
-        assert any("AVOID" in c and "lint" in c for c in constraints)
-        # Success pattern → PREFER constraint
-        assert any("PREFER" in c and "coverage" in c for c in constraints)
-        # Optimization is not turned into a constraint
-        assert not any("fast build" in c for c in constraints)
-
-    def test_learning_spawns_followup_for_mistake_lesson(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """When a lesson has category 'mistake', a follow-up spec is created."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test")
-        # Set up state at LEARNING with benchmark data
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.LEARNING.value,
-            metadata=json.dumps(
-                {
-                    "benchmark": {
-                        "check_passed": False,
-                        "test_total": 100,
-                        "test_passed": 90,
-                        "coverage": 0.85,
-                        "lint_violations": 3,
-                        "duration_seconds": 60.0,
-                        "regression_detected": True,
-                        "compared_to_baseline": {},
-                    },
-                }
-            ),
-        )
-
-        # Monkey-patch IterationLearner to return a lesson with 'mistake' category
-        from unittest.mock import AsyncMock, patch
-
-        from hermit.plugins.builtin.hooks.benchmark.models import LessonLearned
-
-        mock_lessons = [
-            LessonLearned(
-                lesson_id="lesson-1",
-                iteration_id="s1",
-                category="mistake",
-                summary="Forgot to add type hints",
-                applicable_files="all",
-            ),
-        ]
-        with patch(
-            "hermit.plugins.builtin.hooks.benchmark.learning.IterationLearner.learn",
-            new_callable=AsyncMock,
-            return_value=mock_lessons,
-        ):
-            state = IterationState(spec_id="s1", phase=IterationPhase.LEARNING)
-            result = orch._handle_learning(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.RECONCILING
-
-        # Check that a followup spec was created
-        all_specs = list(fake_store._specs.keys())
-        followup_specs = [s for s in all_specs if s.startswith("followup-")]
-        assert len(followup_specs) == 1
-
-        followup = fake_store.get_spec_entry(followup_specs[0])
-        assert followup is not None
-        assert followup["priority"] == "high"
-        assert "Forgot to add type hints" in followup["goal"]
-
 
 # ---------------------------------------------------------------------------
-# Gap 3: Signal-to-spec consumer tests
+# Signal-to-spec consumer tests
 # ---------------------------------------------------------------------------
 
 
@@ -1117,159 +1040,16 @@ class TestSignalToSpecConsumer:
 
 
 # ---------------------------------------------------------------------------
-# Wired phase handler tests
+# Reviewing handler tests (post-accept path: benchmark + learning)
 # ---------------------------------------------------------------------------
 
 
-class TestWiredPhaseHandlers:
-    def test_researching_stores_findings(self, fake_store: FakeStore) -> None:
-        """Advancing from RESEARCHING populates metadata with research findings."""
-        import json
-        from unittest.mock import AsyncMock, patch
-
-        from hermit.plugins.builtin.hooks.research.models import (
-            ResearchFinding,
-            ResearchReport,
-        )
-
-        report = ResearchReport(
-            goal="improve X",
-            findings=(
-                ResearchFinding(
-                    source="codebase",
-                    title="src/foo.py",
-                    content="relevant code",
-                    relevance=0.9,
-                ),
-            ),
-            query_count=1,
-            duration_seconds=0.5,
-        )
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="improve X")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.RESEARCHING.value,
-        )
-
-        with patch(
-            "hermit.plugins.builtin.hooks.research.pipeline.ResearchPipeline.run",
-            new_callable=AsyncMock,
-            return_value=report,
-        ):
-            state = IterationState(spec_id="s1", phase=IterationPhase.RESEARCHING)
-            result = orch._handle_researching(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.GENERATING_SPEC
-
-        entry = fake_store.get_spec_entry("s1")
-        metadata = (
-            json.loads(entry["metadata"])
-            if isinstance(entry["metadata"], str)
-            else entry["metadata"]
-        )
-        assert "research" in metadata
-        assert metadata["research"]["count"] == 1
-        assert "codebase" in metadata["research"]["sources"]
-        assert metadata["research"]["duration_seconds"] == 0.5
-
-    def test_generating_spec_stores_spec(self, fake_store: FakeStore) -> None:
-        """Advancing from GENERATING_SPEC populates metadata with generated_spec."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="improve X")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.GENERATING_SPEC.value,
-            metadata=json.dumps(
-                {
-                    "research": {
-                        "goal": "improve X",
-                        "findings": [],
-                        "knowledge_gaps": [],
-                        "query_count": 0,
-                        "duration_seconds": 0.1,
-                        "count": 0,
-                        "sources": [],
-                    },
-                }
-            ),
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.GENERATING_SPEC)
-        result = orch._handle_generating_spec(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.SPEC_APPROVAL
-
-        entry = fake_store.get_spec_entry("s1")
-        metadata = (
-            json.loads(entry["metadata"])
-            if isinstance(entry["metadata"], str)
-            else entry["metadata"]
-        )
-        assert "generated_spec" in metadata
-        assert "spec_id" in metadata["generated_spec"]
-        assert "title" in metadata["generated_spec"]
-        assert "acceptance_criteria" in metadata["generated_spec"]
-
-    def test_decomposing_stores_plan(self, fake_store: FakeStore) -> None:
-        """Advancing from DECOMPOSING populates metadata with decomposition_plan."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(
-            spec_id="s1",
-            goal="create src/utils.py and modify src/main.py",
-        )
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.DECOMPOSING.value,
-            metadata=json.dumps(
-                {
-                    "generated_spec": {
-                        "spec_id": "test-spec",
-                        "title": "create src/utils.py and modify src/main.py",
-                        "goal": "create src/utils.py and modify src/main.py",
-                        "constraints": [],
-                        "acceptance_criteria": ["`make check` passes"],
-                        "file_plan": [
-                            {"path": "src/utils.py", "action": "create", "reason": "new"},
-                            {"path": "src/main.py", "action": "modify", "reason": "update"},
-                        ],
-                        "research_ref": "",
-                        "trust_zone": "normal",
-                    },
-                }
-            ),
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.DECOMPOSING)
-        result = orch._handle_decomposing(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.IMPLEMENTING
-
-        entry = fake_store.get_spec_entry("s1")
-        metadata = (
-            json.loads(entry["metadata"])
-            if isinstance(entry["metadata"], str)
-            else entry["metadata"]
-        )
-        assert "decomposition_plan" in metadata
-        plan = metadata["decomposition_plan"]
-        assert len(plan["steps"]) > 0
-        # Should have code steps + review steps + final_check
-        step_kinds = [s["kind"] for s in plan["steps"]]
-        assert "code" in step_kinds
-        assert "review" in step_kinds
-
-    def test_benchmarking_stores_result(self, fake_store: FakeStore) -> None:
-        """Advancing from BENCHMARKING populates metadata with benchmark result."""
-        import json
+class TestReviewingHandler:
+    def test_reviewing_accepts_when_council_accepts_and_benchmark_passes(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """REVIEWING -> ACCEPTED when council accepts and benchmark passes."""
         from unittest.mock import AsyncMock, patch
 
         from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
@@ -1279,46 +1059,47 @@ class TestWiredPhaseHandlers:
             spec_id="s1",
             check_passed=True,
             test_total=50,
-            test_passed=48,
+            test_passed=50,
             coverage=92.5,
-            lint_violations=1,
+            lint_violations=0,
             duration_seconds=30.0,
             regression_detected=False,
-            compared_to_baseline={"coverage_delta": 2.0},
+            compared_to_baseline={},
         )
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test bench")
+        fake_store.create_spec_entry(spec_id="s1", goal="test accept")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.BENCHMARKING.value,
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                }
+            ),
         )
 
-        with patch(
-            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
-            new_callable=AsyncMock,
-            return_value=bench_result,
+        with (
+            patch.object(orch, "_run_council_review", return_value=None),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+                new_callable=AsyncMock,
+                return_value=bench_result,
+            ),
         ):
-            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
-            result = orch._handle_benchmarking(state)
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
 
         assert result is not None
-        assert result.phase == IterationPhase.LEARNING
+        assert result.phase == PipelinePhase.ACCEPTED
 
-        entry = fake_store.get_spec_entry("s1")
-        metadata = (
-            json.loads(entry["metadata"])
-            if isinstance(entry["metadata"], str)
-            else entry["metadata"]
-        )
-        assert "benchmark" in metadata
-        assert metadata["benchmark"]["check_passed"] is True
-        assert metadata["benchmark"]["test_total"] == 50
-        assert metadata["benchmark"]["coverage"] == 92.5
-
-    def test_benchmarking_blocks_on_check_failed(self, fake_store: FakeStore) -> None:
-        """When check_passed=False and blocking enabled, benchmark fails the iteration."""
-        import json
+    def test_reviewing_retries_when_benchmark_fails(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """REVIEWING -> PENDING (retry) when benchmark check fails."""
         from unittest.mock import AsyncMock, patch
 
         from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
@@ -1337,39 +1118,40 @@ class TestWiredPhaseHandlers:
         )
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
-        fake_store.create_spec_entry(spec_id="s1", goal="test bench fail")
+        fake_store.create_spec_entry(spec_id="s1", goal="test fail")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.BENCHMARKING.value,
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                }
+            ),
         )
 
-        with patch(
-            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
-            new_callable=AsyncMock,
-            return_value=bench_result,
+        with (
+            patch.object(orch, "_run_council_review", return_value=None),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+                new_callable=AsyncMock,
+                return_value=bench_result,
+            ),
         ):
-            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
-            result = orch._handle_benchmarking(state)
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
 
         assert result is not None
-        # First attempt: should retry (PENDING with attempt 2)
-        assert result.phase == IterationPhase.PENDING
+        # Should retry since benchmark failed
+        assert result.phase == PipelinePhase.PENDING
         assert result.attempt == 2
-        assert result.error is not None
-        assert "make check returned non-zero" in result.error
 
-        # Verify benchmark data was still stored in metadata
-        entry = fake_store.get_spec_entry("s1")
-        metadata = (
-            json.loads(entry["metadata"])
-            if isinstance(entry["metadata"], str)
-            else entry["metadata"]
-        )
-        assert "benchmark" in metadata
-        assert metadata["benchmark"]["check_passed"] is False
-
-    def test_benchmarking_blocks_on_regression(self, fake_store: FakeStore) -> None:
-        """When regression_detected=True and blocking enabled, benchmark fails the iteration."""
+    def test_reviewing_retries_on_regression(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """REVIEWING -> PENDING (retry) when regression detected."""
         from unittest.mock import AsyncMock, patch
 
         from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
@@ -1384,93 +1166,73 @@ class TestWiredPhaseHandlers:
             lint_violations=0,
             duration_seconds=30.0,
             regression_detected=True,
-            compared_to_baseline={"coverage_delta": -5.0, "test_delta": -3},
+            compared_to_baseline={"coverage_delta": -5.0},
         )
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
         fake_store.create_spec_entry(spec_id="s1", goal="test regression")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.BENCHMARKING.value,
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                }
+            ),
         )
 
-        with patch(
-            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
-            new_callable=AsyncMock,
-            return_value=bench_result,
+        with (
+            patch.object(orch, "_run_council_review", return_value=None),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+                new_callable=AsyncMock,
+                return_value=bench_result,
+            ),
         ):
-            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
-            result = orch._handle_benchmarking(state)
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
 
         assert result is not None
-        assert result.phase == IterationPhase.PENDING
+        assert result.phase == PipelinePhase.PENDING
         assert result.attempt == 2
-        assert result.error is not None
-        assert "regression detected" in result.error.lower()
-        assert "coverage_delta" in result.error
 
-    def test_benchmarking_nonblocking_advances_on_failure(self, fake_store: FakeStore) -> None:
-        """When benchmark_blocking=False, failures advance to LEARNING regardless."""
-        from unittest.mock import AsyncMock, patch
-
-        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
-
-        bench_result = BenchmarkResult(
-            iteration_id="s1",
-            spec_id="s1",
-            check_passed=False,
-            test_total=50,
-            test_passed=30,
-            coverage=60.0,
-            lint_violations=10,
-            duration_seconds=30.0,
-            regression_detected=True,
-            compared_to_baseline={"coverage_delta": -20.0},
-        )
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=False)
-        fake_store.create_spec_entry(spec_id="s1", goal="test nonblocking")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.BENCHMARKING.value,
-        )
-
-        with patch(
-            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
-            new_callable=AsyncMock,
-            return_value=bench_result,
-        ):
-            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
-            result = orch._handle_benchmarking(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.LEARNING
-
-    def test_benchmarking_exception_advances_with_skip_metadata(
-        self, fake_store: FakeStore
+    def test_reviewing_benchmark_exception_still_accepts(
+        self,
+        fake_store: FakeStore,
     ) -> None:
-        """When BenchmarkRunner raises, advance to LEARNING with benchmark_skipped metadata."""
-        import json
+        """When BenchmarkRunner raises, advance to ACCEPTED with benchmark_skipped metadata."""
         from unittest.mock import AsyncMock, patch
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
         fake_store.create_spec_entry(spec_id="s1", goal="test exception")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.BENCHMARKING.value,
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                }
+            ),
         )
 
-        with patch(
-            "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("infra failure"),
+        with (
+            patch.object(orch, "_run_council_review", return_value=None),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("infra failure"),
+            ),
         ):
-            state = IterationState(spec_id="s1", phase=IterationPhase.BENCHMARKING)
-            result = orch._handle_benchmarking(state)
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
 
         assert result is not None
-        # Should still advance to LEARNING (don't block on infra failure)
-        assert result.phase == IterationPhase.LEARNING
+        # Should still advance to ACCEPTED (don't block on infra failure)
+        assert result.phase == PipelinePhase.ACCEPTED
 
         # Verify benchmark_skipped metadata
         entry = fake_store.get_spec_entry("s1")
@@ -1482,279 +1244,172 @@ class TestWiredPhaseHandlers:
         assert "benchmark" in metadata
         assert metadata["benchmark"]["benchmark_skipped"] is True
 
-    def test_benchmarking_default_blocking_is_true(self, fake_store: FakeStore) -> None:
+    def test_reviewing_council_rejects(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """REVIEWING -> REJECTED when council says 'reject'."""
+        from unittest.mock import MagicMock, patch
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="test reject")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=PipelinePhase.REVIEWING.value,
+            metadata=json.dumps(
+                {
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
+                }
+            ),
+        )
+
+        mock_verdict = MagicMock()
+        mock_verdict.verdict = "reject"
+        mock_verdict.council_id = "council-1"
+        mock_verdict.finding_count = 5
+        mock_verdict.critical_count = 2
+        mock_verdict.high_count = 3
+        mock_verdict.lint_passed = False
+        mock_verdict.consensus_score = 0.9
+        mock_verdict.revision_directive = ""
+        mock_verdict.duration_seconds = 1.0
+        mock_verdict.decided_at = 1234567890.0
+
+        with patch.object(orch, "_run_council_review", return_value=mock_verdict):
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
+
+        assert result is not None
+        assert result.phase == PipelinePhase.REJECTED
+
+    def test_default_benchmark_blocking_is_true(self, fake_store: FakeStore) -> None:
         """Default benchmark_blocking should be True."""
         orch = MetaLoopOrchestrator(fake_store, max_retries=2)
         assert orch._benchmark_blocking is True
 
-    def test_spec_approval_fails_without_generated_spec(
+    def test_learning_spawns_followup_for_mistake_lesson(
         self,
         fake_store: FakeStore,
     ) -> None:
-        """Spec approval without generated_spec in metadata should fail."""
+        """When a lesson has category 'mistake', a follow-up spec is created."""
+        from unittest.mock import AsyncMock, patch
+
+        from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult, LessonLearned
+
+        mock_lessons = [
+            LessonLearned(
+                lesson_id="lesson-1",
+                iteration_id="s1",
+                category="mistake",
+                summary="Forgot to add type hints",
+                applicable_files="all",
+            ),
+        ]
+
+        bench_result = BenchmarkResult(
+            iteration_id="s1",
+            spec_id="s1",
+            check_passed=True,
+            test_total=100,
+            test_passed=100,
+            coverage=95.0,
+            lint_violations=0,
+            duration_seconds=60.0,
+            regression_detected=False,
+            compared_to_baseline={},
+        )
+
         orch = MetaLoopOrchestrator(fake_store, max_retries=2)
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store.update_spec_status(
             spec_id="s1",
-            status=IterationPhase.SPEC_APPROVAL.value,
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.SPEC_APPROVAL)
-        result = orch._handle_spec_approval(state)
-
-        assert result is not None
-        # Should fail (retry) since no generated_spec exists
-        assert result.phase == IterationPhase.PENDING
-        assert result.attempt == 2
-
-
-# ---------------------------------------------------------------------------
-# Promotion gate (reconciling) tests
-# ---------------------------------------------------------------------------
-
-
-class TestPromotionGate:
-    def test_accepted_is_terminal(self) -> None:
-        state = IterationState(spec_id="s1", phase=IterationPhase.ACCEPTED)
-        assert state.is_terminal
-        assert state.next_phase() is None
-
-    def test_rejected_is_terminal(self) -> None:
-        state = IterationState(spec_id="s1", phase=IterationPhase.REJECTED)
-        assert state.is_terminal
-        assert state.next_phase() is None
-
-    def test_reconciling_next_phase_is_accepted(self) -> None:
-        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
-        assert state.next_phase() == IterationPhase.ACCEPTED
-
-    def test_reconciling_accepts_when_benchmark_passes(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """Promotion gate passes when benchmark passes with no regression."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test promotion")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.RECONCILING.value,
+            status=PipelinePhase.REVIEWING.value,
             metadata=json.dumps(
                 {
-                    "benchmark": {
-                        "check_passed": True,
-                        "regression_detected": False,
-                        "test_total": 50,
-                        "test_passed": 50,
-                    },
+                    "decomposition_plan": {"steps": []},
+                    "generated_spec": {"goal": "test"},
+                    "revision_cycle": 0,
                 }
             ),
         )
 
-        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
-        result = orch._handle_reconciling(state)
+        with (
+            patch.object(orch, "_run_council_review", return_value=None),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.runner.BenchmarkRunner.run",
+                new_callable=AsyncMock,
+                return_value=bench_result,
+            ),
+            patch(
+                "hermit.plugins.builtin.hooks.benchmark.learning.IterationLearner.learn",
+                new_callable=AsyncMock,
+                return_value=mock_lessons,
+            ),
+        ):
+            state = IterationState(spec_id="s1", phase=PipelinePhase.REVIEWING)
+            result = orch._handle_reviewing(state)
 
         assert result is not None
-        assert result.phase == IterationPhase.ACCEPTED
+        assert result.phase == PipelinePhase.ACCEPTED
 
-        # Verify promotion decision metadata was stored
+        # Check that a followup spec was created
+        all_specs = list(fake_store._specs.keys())
+        followup_specs = [s for s in all_specs if s.startswith("followup-")]
+        assert len(followup_specs) == 1
+
+        followup = fake_store.get_spec_entry(followup_specs[0])
+        assert followup is not None
+        assert followup["priority"] == "high"
+        assert "Forgot to add type hints" in followup["goal"]
+
+
+# ---------------------------------------------------------------------------
+# Planning handler tests
+# ---------------------------------------------------------------------------
+
+
+class TestPlanningHandler:
+    def test_planning_runs_research_and_decomposition(
+        self,
+        fake_store: FakeStore,
+    ) -> None:
+        """_handle_planning runs research, spec gen, approval, and decomposition."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_report = MagicMock()
+        mock_report.goal = "improve X"
+        mock_report.findings = ()
+        mock_report.knowledge_gaps = ()
+        mock_report.query_count = 0
+        mock_report.duration_seconds = 0.1
+
+        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
+        fake_store.create_spec_entry(spec_id="s1", goal="improve X")
+        fake_store.update_spec_status(
+            spec_id="s1",
+            status=PipelinePhase.PLANNING.value,
+        )
+
+        with patch(
+            "hermit.plugins.builtin.hooks.research.pipeline.ResearchPipeline.run",
+            new_callable=AsyncMock,
+            return_value=mock_report,
+        ):
+            state = IterationState(spec_id="s1", phase=PipelinePhase.PLANNING)
+            result = orch._handle_planning(state)
+
+        assert result is not None
+        assert result.phase == PipelinePhase.IMPLEMENTING
+
+        # Verify metadata contains research and decomposition data
         entry = fake_store.get_spec_entry("s1")
         metadata = (
             json.loads(entry["metadata"])
             if isinstance(entry["metadata"], str)
             else entry["metadata"]
         )
-        assert "promotion_decision" in metadata
-        assert metadata["promotion_decision"]["promoted"] is True
-
-    def test_reconciling_rejects_when_benchmark_regression(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """Promotion gate fails when benchmark detects regression."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test regression")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.RECONCILING.value,
-            metadata=json.dumps(
-                {
-                    "benchmark": {
-                        "check_passed": False,
-                        "regression_detected": True,
-                        "test_total": 50,
-                        "test_passed": 40,
-                    },
-                }
-            ),
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
-        result = orch._handle_reconciling(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.REJECTED
-
-        # Verify rejection reasons are stored
-        entry = fake_store.get_spec_entry("s1")
-        metadata = (
-            json.loads(entry["metadata"])
-            if isinstance(entry["metadata"], str)
-            else entry["metadata"]
-        )
-        assert "promotion_decision" in metadata
-        assert metadata["promotion_decision"]["promoted"] is False
-        reasons = metadata["promotion_decision"]["rejection_reasons"]
-        assert any("regression" in r.lower() for r in reasons)
-
-    def test_reconciling_rejects_when_no_benchmark(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """Promotion gate fails when no benchmark results exist."""
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test no bench")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.RECONCILING.value,
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
-        result = orch._handle_reconciling(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.REJECTED
-
-    def test_reconciling_rejects_when_review_failed(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """Promotion gate fails when review found blocking findings."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test review fail")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.RECONCILING.value,
-            metadata=json.dumps(
-                {
-                    "benchmark": {
-                        "check_passed": True,
-                        "regression_detected": False,
-                    },
-                    "review": {
-                        "passed": False,
-                        "finding_count": 3,
-                    },
-                }
-            ),
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
-        result = orch._handle_reconciling(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.REJECTED
-
-    def test_reconciling_rejects_with_prior_error(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """Promotion gate fails when spec entry has a prior error."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test prior error")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.RECONCILING.value,
-            error="some earlier failure",
-            metadata=json.dumps(
-                {
-                    "benchmark": {
-                        "check_passed": True,
-                        "regression_detected": False,
-                    },
-                }
-            ),
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
-        result = orch._handle_reconciling(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.REJECTED
-
-    def test_reconciling_rejects_with_mistake_lessons(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """Promotion gate fails when mistake lessons exist for the iteration."""
-        import json
-
-        fake_store._lessons = [
-            {
-                "lesson_id": "L1",
-                "iteration_id": "s1",
-                "category": "mistake",
-                "summary": "Broke the build",
-            },
-        ]
-        # Override list_lessons to filter by iteration_ids and categories
-        original_list = fake_store.list_lessons
-
-        def filtered_list_lessons(iteration_ids=None, categories=None, **kwargs):
-            results = original_list(**kwargs)
-            if iteration_ids:
-                results = [r for r in results if r.get("iteration_id") in iteration_ids]
-            if categories:
-                results = [r for r in results if r.get("category") in categories]
-            return results
-
-        fake_store.list_lessons = filtered_list_lessons
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test mistake lessons")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.RECONCILING.value,
-            metadata=json.dumps(
-                {
-                    "benchmark": {
-                        "check_passed": True,
-                        "regression_detected": False,
-                    },
-                }
-            ),
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.RECONCILING)
-        result = orch._handle_reconciling(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.REJECTED
-
-    def test_learning_transitions_to_reconciling(
-        self,
-        fake_store: FakeStore,
-    ) -> None:
-        """Learning handler now transitions to RECONCILING, not COMPLETED."""
-        import json
-
-        orch = MetaLoopOrchestrator(fake_store, max_retries=2)
-        fake_store.create_spec_entry(spec_id="s1", goal="test transition")
-        fake_store.update_spec_status(
-            spec_id="s1",
-            status=IterationPhase.LEARNING.value,
-            metadata=json.dumps({"benchmark": {}}),
-        )
-
-        state = IterationState(spec_id="s1", phase=IterationPhase.LEARNING)
-        result = orch._handle_learning(state)
-
-        assert result is not None
-        assert result.phase == IterationPhase.RECONCILING
+        assert "research" in metadata
+        assert "generated_spec" in metadata
+        assert "decomposition_plan" in metadata

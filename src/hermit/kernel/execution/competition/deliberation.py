@@ -22,6 +22,7 @@ class DeliberationTrigger(StrEnum):
     follow_up_decision = "follow_up_decision"
     benchmark_dispute = "benchmark_dispute"
     post_execution_review = "post_execution_review"
+    review_council = "review_council"
 
 
 @dataclass

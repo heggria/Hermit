@@ -43,6 +43,7 @@ class WorkerRole(StrEnum):
     reconciler = "reconciler"
     tester = "tester"
     spec = "spec"
+    reviewer = "reviewer"
 
 
 class SlotStatus(StrEnum):

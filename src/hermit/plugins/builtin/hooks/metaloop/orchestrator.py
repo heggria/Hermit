@@ -1,4 +1,11 @@
-"""Meta-loop orchestrator — state machine that advances iterations through phases."""
+"""Meta-loop orchestrator — 3-phase pipeline that advances iterations through
+planning, implementing, and reviewing.
+
+Phase handlers:
+  _handle_planning     — research + spec generation + approval + decomposition
+  _handle_implementing — DAG task creation, poller handles timeout detection
+  _handle_reviewing    — council review + benchmark + learning, with revision loop
+"""
 
 from __future__ import annotations
 
@@ -13,8 +20,9 @@ import structlog
 
 from hermit.plugins.builtin.hooks.metaloop.backlog import SpecBacklog
 from hermit.plugins.builtin.hooks.metaloop.models import (
-    IterationPhase,
+    MAX_REVISION_CYCLES,
     IterationState,
+    PipelinePhase,
 )
 
 log = structlog.get_logger()
@@ -27,6 +35,7 @@ PHASE_TIMEOUT_IMPLEMENT = 900  # 15 minutes
 POLL_INTERVAL_ACTIVE = 10.0  # seconds
 POLL_INTERVAL_IDLE = 60.0  # seconds
 _IDLE_TICKS_THRESHOLD = 6  # consecutive idle ticks before switching to idle interval
+_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 
 def _run_async(coro: Any) -> Any:
@@ -62,7 +71,9 @@ def _serialize_metadata(meta: dict) -> str:
 
 
 class MetaLoopOrchestrator:
-    """Advances self-improvement iterations through lifecycle phases."""
+    """Advances self-improvement iterations through the 3-phase pipeline:
+    PLANNING -> IMPLEMENTING -> REVIEWING -> ACCEPTED/REJECTED.
+    """
 
     def __init__(
         self,
@@ -84,6 +95,28 @@ class MetaLoopOrchestrator:
         """Update the runner reference (for hot-reload)."""
         self._runner = runner
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _get_provider(self) -> Any:
+        """Clone the LLM provider from the runner's agent."""
+        return self._runner.agent.provider.clone()
+
+    def _get_model(self) -> str:
+        """Return the model to use for metaloop LLM calls.
+
+        Checks settings on the runner, then falls back to the default haiku
+        model for cost-effective metaloop operations.
+        """
+        if self._runner is not None:
+            settings = getattr(self._runner, "settings", None)
+            if settings is not None:
+                model = getattr(settings, "metaloop_model", None)
+                if model:
+                    return str(model)
+        return _DEFAULT_MODEL
+
     def _query_relevant_lessons(self, goal: str, limit: int = 10) -> list[dict]:
         """Query stored lessons relevant to the current iteration goal.
 
@@ -100,10 +133,8 @@ class MetaLoopOrchestrator:
         if not all_lessons:
             return []
 
-        # Tokenise goal into lowercase keywords (>= 3 chars to skip noise)
         goal_keywords = {w for w in goal.lower().split() if len(w) >= 3}
         if not goal_keywords:
-            # Fallback: return most recent lessons if goal has no usable keywords
             return all_lessons[:limit]
 
         scored: list[tuple[float, dict]] = []
@@ -120,19 +151,15 @@ class MetaLoopOrchestrator:
             )
             summary_keywords = {w for w in summary.lower().split() if len(w) >= 3}
             overlap = len(goal_keywords & summary_keywords)
-            # Boost actionable categories (mistakes and rollback patterns)
-            category_boost = 1.0
-            if category in ("mistake", "rollback_pattern"):
-                category_boost = 1.5
+            category_boost = 1.5 if category in ("mistake", "rollback_pattern") else 1.0
             score = overlap * category_boost
             if score > 0:
                 scored.append((score, lesson))
 
-        # Sort by score descending, take top-N
         scored.sort(key=lambda x: x[0], reverse=True)
         return [lesson for _, lesson in scored[:limit]]
 
-    def _update_metadata(self, spec_id: str, key: str, value: dict) -> dict:
+    def _update_metadata(self, spec_id: str, key: str, value: Any) -> dict:
         """Merge *value* under *key* in the spec's metadata and persist."""
         entry = self._store.get_spec_entry(spec_id=spec_id)
         data = entry if isinstance(entry, dict) else entry.__dict__
@@ -144,6 +171,10 @@ class MetaLoopOrchestrator:
             metadata=_serialize_metadata(metadata),
         )
         return metadata
+
+    # ------------------------------------------------------------------
+    # Advance — dynamic dispatch
+    # ------------------------------------------------------------------
 
     def advance(self, spec_id: str) -> IterationState | None:
         """Advance a single spec by one phase."""
@@ -162,10 +193,12 @@ class MetaLoopOrchestrator:
 
         handler = getattr(self, f"_handle_{state.phase.value}", None)
         if handler is None:
-            next_phase = state.next_phase()
-            if next_phase is None:
-                return state
-            return self._backlog.advance_phase(spec_id, next_phase)
+            log.warning(
+                "metaloop_advance_no_handler",
+                spec_id=spec_id,
+                phase=state.phase.value,
+            )
+            return state
 
         try:
             return handler(state)
@@ -181,102 +214,62 @@ class MetaLoopOrchestrator:
                 max_retries=self._max_retries,
             )
 
-    def on_subtask_complete(
-        self, task_id: str, *, success: bool = True, error: str | None = None
-    ) -> IterationState | None:
-        """Handle DAG subtask completion — advance IMPLEMENTING to REVIEWING.
-
-        On success, stores the worktree branch info for later PR creation
-        instead of merging directly to main. The actual merge only happens
-        after explicit approval via the IterationBridge.
-        """
-        if not task_id:
-            return None
-
-        if not hasattr(self._store, "get_spec_by_dag_task_id"):
-            return None
-
-        entry = self._store.get_spec_by_dag_task_id(task_id)
-        if entry is None:
-            return None
-
-        data = entry if isinstance(entry, dict) else entry.__dict__
-        spec_id = data["spec_id"]
-        phase = IterationPhase(data.get("status", "pending"))
-
-        if phase != IterationPhase.IMPLEMENTING:
-            return None
-
-        metadata = _parse_metadata(data.get("metadata"))
-        impl_info = metadata.get("implementation") or {}
-        worktree_path = impl_info.get("worktree_path")
-
-        if success:
-            # Do NOT merge to main. Store branch info for PR creation instead.
-            # The worktree branch will be used later by create_iteration_pr()
-            # after the iteration passes review, benchmarking, and reconciliation.
-            if worktree_path and self._workspace_root:
-                self._update_metadata(
-                    spec_id,
-                    "pr_pending",
-                    {
-                        "worktree_path": worktree_path,
-                        "branch": f"self-modify/{spec_id}",
-                        "ready_for_review": True,
-                    },
-                )
-                log.info(
-                    "metaloop_subtask_complete_pr_pending",
-                    task_id=task_id,
-                    spec_id=spec_id,
-                )
-            else:
-                log.info(
-                    "metaloop_subtask_complete",
-                    task_id=task_id,
-                    spec_id=spec_id,
-                )
-            return self._backlog.advance_phase(spec_id, IterationPhase.REVIEWING)
-
-        # Failure path — clean up worktree without merging
-        if worktree_path and self._workspace_root:
-            try:
-                from hermit.kernel.execution.self_modify.workspace import (
-                    SelfModifyWorkspace,
-                )
-
-                ws = SelfModifyWorkspace(self._workspace_root)
-                ws.remove(spec_id)
-            except Exception:
-                log.exception("metaloop_worktree_cleanup_failed", spec_id=spec_id)
-
-        log.warning(
-            "metaloop_subtask_failed",
-            task_id=task_id,
-            spec_id=spec_id,
-            error=error,
-        )
-        return self._backlog.mark_failed(
-            spec_id,
-            error=error or "Subtask failed",
-            max_retries=self._max_retries,
-        )
-
     # ------------------------------------------------------------------
-    # Phase handlers — method name must match IterationPhase.value
+    # Phase 0: PENDING -> PLANNING
     # ------------------------------------------------------------------
 
     def _handle_pending(self, state: IterationState) -> IterationState | None:
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.RESEARCHING)
+        return self._backlog.advance_phase(state.spec_id, PipelinePhase.PLANNING)
 
-    def _handle_researching(self, state: IterationState) -> IterationState | None:
+    # ------------------------------------------------------------------
+    # Phase 1: PLANNING — research + spec gen + approval + decompose
+    # ------------------------------------------------------------------
+
+    def _handle_planning(self, state: IterationState) -> IterationState | None:
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
             return state
         data = entry if isinstance(entry, dict) else entry.__dict__
         goal = data.get("goal", "")
+        metadata = _parse_metadata(data.get("metadata"))
 
-        # Parse research hints
+        # --- Step 1: Research ---
+        research_data = self._run_research(state.spec_id, goal, data, metadata)
+
+        # --- Step 2: Spec generation (LLM with deterministic fallback) ---
+        spec_data = self._run_spec_generation(state.spec_id, goal, research_data)
+        if spec_data is None:
+            return self._backlog.mark_failed(
+                state.spec_id,
+                error="Spec generation failed",
+                max_retries=self._max_retries,
+            )
+
+        # --- Step 3: Inline approval check ---
+        approval_result = self._check_spec_approval(state.spec_id, spec_data, data)
+        if approval_result == "rejected":
+            return self._backlog.advance_phase(
+                state.spec_id,
+                PipelinePhase.REJECTED,
+                error="Spec approval denied",
+            )
+        if approval_result == "pending":
+            # Approval request created — stay at PLANNING.
+            return state
+
+        # --- Step 4: Decomposition (LLM with deterministic fallback) ---
+        self._run_decomposition(state.spec_id, spec_data, research_data)
+
+        return self._backlog.advance_phase(state.spec_id, PipelinePhase.IMPLEMENTING)
+
+    def _run_research(
+        self,
+        spec_id: str,
+        goal: str,
+        data: dict,
+        metadata: dict,
+    ) -> dict:
+        """Run the research pipeline and store results in metadata."""
         raw_hints = data.get("research_hints")
         hints: list[str] = []
         if raw_hints:
@@ -310,14 +303,12 @@ class MetaLoopOrchestrator:
                 hints.append(f"{prefix}: {summary}")
         log.info(
             "metaloop_lessons_applied",
-            spec_id=state.spec_id,
+            spec_id=spec_id,
             lessons_found=len(prior_lessons),
-            phase="researching",
+            phase="planning_research",
         )
 
         # Run research pipeline — prefer the globally initialized pipeline
-        # (set up at SERVE_START with all 4 strategies: codebase, web, doc,
-        # git_history).  Fall back to local instantiation if not available.
         from hermit.plugins.builtin.hooks.research.pipeline import ResearchPipeline
         from hermit.plugins.builtin.hooks.research.strategies import (
             CodebaseStrategy,
@@ -359,52 +350,45 @@ class MetaLoopOrchestrator:
             }
             for f in report.findings
         ]
-        self._update_metadata(
-            state.spec_id,
-            "research",
-            {
-                "goal": report.goal,
-                "findings": findings_dicts,
-                "knowledge_gaps": list(report.knowledge_gaps),
-                "query_count": report.query_count,
-                "duration_seconds": report.duration_seconds,
-                "count": len(findings_dicts),
-                "sources": sorted({f.source for f in report.findings}),
-                "prior_lessons": [
-                    {
-                        "lesson_id": (
-                            ls.get("lesson_id", "")
-                            if isinstance(ls, dict)
-                            else getattr(ls, "lesson_id", "")
-                        ),
-                        "category": (
-                            ls.get("category", "")
-                            if isinstance(ls, dict)
-                            else getattr(ls, "category", "")
-                        ),
-                        "summary": (
-                            ls.get("summary", "")
-                            if isinstance(ls, dict)
-                            else getattr(ls, "summary", "")
-                        ),
-                    }
-                    for ls in prior_lessons
-                ],
-            },
-        )
+        research_data: dict[str, Any] = {
+            "goal": report.goal,
+            "findings": findings_dicts,
+            "knowledge_gaps": list(report.knowledge_gaps),
+            "query_count": report.query_count,
+            "duration_seconds": report.duration_seconds,
+            "count": len(findings_dicts),
+            "sources": sorted({f.source for f in report.findings}),
+            "prior_lessons": [
+                {
+                    "lesson_id": (
+                        ls.get("lesson_id", "")
+                        if isinstance(ls, dict)
+                        else getattr(ls, "lesson_id", "")
+                    ),
+                    "category": (
+                        ls.get("category", "")
+                        if isinstance(ls, dict)
+                        else getattr(ls, "category", "")
+                    ),
+                    "summary": (
+                        ls.get("summary", "")
+                        if isinstance(ls, dict)
+                        else getattr(ls, "summary", "")
+                    ),
+                }
+                for ls in prior_lessons
+            ],
+        }
+        self._update_metadata(spec_id, "research", research_data)
+        return research_data
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.GENERATING_SPEC)
-
-    def _handle_generating_spec(self, state: IterationState) -> IterationState | None:
-        entry = self._store.get_spec_entry(spec_id=state.spec_id)
-        if entry is None:
-            return state
-        data = entry if isinstance(entry, dict) else entry.__dict__
-        goal = data.get("goal", "")
-        metadata = _parse_metadata(data.get("metadata"))
-        research_data = metadata.get("research") or {}
-
-        # Reconstruct ResearchReport from metadata
+    def _run_spec_generation(
+        self,
+        spec_id: str,
+        goal: str,
+        research_data: dict,
+    ) -> dict | None:
+        """Generate a spec via LLM, falling back to deterministic generator."""
         from hermit.plugins.builtin.hooks.research.models import (
             ResearchFinding,
             ResearchReport,
@@ -430,7 +414,7 @@ class MetaLoopOrchestrator:
             duration_seconds=research_data.get("duration_seconds", 0.0),
         )
 
-        # Build lesson-derived constraints from prior lessons
+        # Build lesson-derived constraints
         lesson_constraints: list[str] = []
         prior_lessons = research_data.get("prior_lessons", [])
         for ls in prior_lessons:
@@ -445,101 +429,99 @@ class MetaLoopOrchestrator:
         if lesson_constraints:
             log.info(
                 "metaloop_lessons_applied",
-                spec_id=state.spec_id,
+                spec_id=spec_id,
                 constraint_count=len(lesson_constraints),
-                phase="generating_spec",
+                phase="planning_spec_gen",
             )
 
-        # Generate spec with lesson constraints
-        from hermit.plugins.builtin.hooks.decompose.spec_generator import SpecGenerator
+        constraints = tuple(lesson_constraints) if lesson_constraints else None
 
-        spec = SpecGenerator().generate(
-            goal,
-            research_report=report,
-            constraints=tuple(lesson_constraints) if lesson_constraints else None,
-        )
+        # Try LLM spec generator, fall back to deterministic
+        try:
+            from hermit.plugins.builtin.hooks.decompose.llm_spec_generator import (
+                LLMSpecGenerator,
+            )
 
-        # Serialize to metadata
-        self._update_metadata(
-            state.spec_id,
-            "generated_spec",
-            {
-                "spec_id": spec.spec_id,
-                "title": spec.title,
-                "goal": spec.goal,
-                "constraints": list(spec.constraints),
-                "acceptance_criteria": list(spec.acceptance_criteria),
-                "file_plan": [dict(e) for e in spec.file_plan],
-                "research_ref": spec.research_ref,
-                "trust_zone": spec.trust_zone,
-            },
-        )
+            provider = self._get_provider()
+            model = self._get_model()
+            spec = LLMSpecGenerator(provider, model=model).generate(goal, report, constraints)
+        except Exception:
+            log.warning(
+                "metaloop_llm_spec_gen_fallback",
+                spec_id=spec_id,
+                exc_info=True,
+            )
+            from hermit.plugins.builtin.hooks.decompose.spec_generator import (
+                SpecGenerator,
+            )
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.SPEC_APPROVAL)
+            spec = SpecGenerator().generate(goal, research_report=report, constraints=constraints)
 
-    def _handle_spec_approval(self, state: IterationState) -> IterationState | None:
-        """Evaluate spec approval based on policy_profile and risk_budget.
+        spec_data: dict[str, Any] = {
+            "spec_id": spec.spec_id,
+            "title": spec.title,
+            "goal": spec.goal,
+            "constraints": list(spec.constraints),
+            "acceptance_criteria": list(spec.acceptance_criteria),
+            "file_plan": [dict(e) for e in spec.file_plan],
+            "research_ref": spec.research_ref,
+            "trust_zone": spec.trust_zone,
+        }
+        self._update_metadata(spec_id, "generated_spec", spec_data)
+        return spec_data
+
+    def _check_spec_approval(
+        self,
+        spec_id: str,
+        spec_data: dict,
+        data: dict,
+    ) -> str:
+        """Check spec approval inline. Returns 'approved', 'rejected', or 'pending'.
 
         - autonomous: auto-approve if risk_budget <= medium
-        - supervised: always create an approval request via the kernel
+        - supervised: always require approval
         - default: auto-approve low risk, request approval for medium+
         """
-        entry = self._store.get_spec_entry(spec_id=state.spec_id)
+        # Re-read metadata (it was updated during research and spec gen)
+        entry = self._store.get_spec_entry(spec_id=spec_id)
         if entry is None:
-            return state
+            return "approved"
         data = entry if isinstance(entry, dict) else entry.__dict__
         metadata = _parse_metadata(data.get("metadata"))
 
-        if "generated_spec" not in metadata:
-            return self._backlog.mark_failed(
-                state.spec_id,
-                error="No generated_spec in metadata — cannot approve",
-                max_retries=self._max_retries,
-            )
-
-        spec_data = metadata.get("generated_spec", {})
-
-        # Determine risk level from the generated spec or metadata
+        # Determine risk level
         risk_budget = metadata.get("risk_budget", {})
         risk_band = risk_budget.get("band", "")
         if not risk_band:
-            # Infer from trust_zone in spec
             trust_zone = spec_data.get("trust_zone", "normal")
             risk_band = {"strict": "high", "normal": "medium", "relaxed": "low"}.get(
                 trust_zone, "medium"
             )
 
-        # Determine policy_profile: check metadata, then fall back to source
+        # Determine policy_profile
         policy_profile = metadata.get("policy_profile", "")
         if not policy_profile:
             source = data.get("source", "")
-            if source == "self-iterate":
-                policy_profile = "autonomous"
-            else:
-                policy_profile = "default"
+            policy_profile = "autonomous" if source == "self-iterate" else "default"
 
         # Decision logic
         needs_approval = False
-
         if policy_profile == "autonomous":
-            # Auto-approve low and medium risk; require approval for high
             needs_approval = risk_band in ("high", "critical")
         elif policy_profile == "supervised":
-            # Always require human approval
             needs_approval = True
         else:
-            # "default": auto-approve low, require approval for medium+
             needs_approval = risk_band not in ("low",)
 
         if not needs_approval:
             log.info(
                 "metaloop_spec_auto_approved",
-                spec_id=state.spec_id,
+                spec_id=spec_id,
                 policy_profile=policy_profile,
                 risk_band=risk_band,
             )
             self._update_metadata(
-                state.spec_id,
+                spec_id,
                 "spec_approval_decision",
                 {
                     "approved": True,
@@ -549,7 +531,7 @@ class MetaLoopOrchestrator:
                     "decided_at": time.time(),
                 },
             )
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.DECOMPOSING)
+            return "approved"
 
         # Create an approval request via the kernel approval system
         approval_created = False
@@ -558,16 +540,15 @@ class MetaLoopOrchestrator:
             store = tc.store
             if hasattr(store, "create_approval"):
                 try:
-                    # Find or create a task_id context for the approval
-                    task_id = metadata.get("dag_task_id", f"metaloop-{state.spec_id}")
+                    task_id = metadata.get("dag_task_id", f"metaloop-{spec_id}")
                     store.create_approval(
                         task_id=task_id,
-                        step_id=f"spec-approval-{state.spec_id}",
-                        step_attempt_id=f"attempt-{state.spec_id}",
+                        step_id=f"spec-approval-{spec_id}",
+                        step_attempt_id=f"attempt-{spec_id}",
                         approval_type="spec_approval",
                         requested_action={
                             "action": "approve_iteration_spec",
-                            "spec_id": state.spec_id,
+                            "spec_id": spec_id,
                             "title": spec_data.get("title", ""),
                             "goal": spec_data.get("goal", ""),
                             "risk_band": risk_band,
@@ -580,27 +561,25 @@ class MetaLoopOrchestrator:
                     approval_created = True
                     log.info(
                         "metaloop_spec_approval_requested",
-                        spec_id=state.spec_id,
+                        spec_id=spec_id,
                         policy_profile=policy_profile,
                         risk_band=risk_band,
                     )
                 except Exception:
                     log.warning(
                         "metaloop_spec_approval_create_failed",
-                        spec_id=state.spec_id,
+                        spec_id=spec_id,
                         exc_info=True,
                     )
 
         if not approval_created:
-            # Fallback: if we cannot create a kernel approval, auto-approve
-            # with a warning to avoid blocking the pipeline indefinitely
             log.warning(
                 "metaloop_spec_approval_fallback_auto",
-                spec_id=state.spec_id,
+                spec_id=spec_id,
                 reason="approval system unavailable",
             )
             self._update_metadata(
-                state.spec_id,
+                spec_id,
                 "spec_approval_decision",
                 {
                     "approved": True,
@@ -611,12 +590,11 @@ class MetaLoopOrchestrator:
                     "decided_at": time.time(),
                 },
             )
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.DECOMPOSING)
+            return "approved"
 
-        # Approval request created — stay at SPEC_APPROVAL.
-        # The approval resolution hook will advance us when approved/denied.
+        # Approval request created — stay at PLANNING and wait
         self._update_metadata(
-            state.spec_id,
+            spec_id,
             "spec_approval_decision",
             {
                 "approved": False,
@@ -626,25 +604,21 @@ class MetaLoopOrchestrator:
                 "requested_at": time.time(),
             },
         )
-        return self._backlog.advance_phase(
-            state.spec_id,
-            IterationPhase.SPEC_APPROVAL,
-        )
+        return "pending"
 
-    def _handle_decomposing(self, state: IterationState) -> IterationState | None:
-        entry = self._store.get_spec_entry(spec_id=state.spec_id)
-        if entry is None:
-            return state
-        data = entry if isinstance(entry, dict) else entry.__dict__
-        metadata = _parse_metadata(data.get("metadata"))
-        spec_data = metadata.get("generated_spec") or {}
+    def _run_decomposition(
+        self,
+        spec_id: str,
+        spec_data: dict,
+        research_data: dict,
+    ) -> None:
+        """Decompose spec into a task DAG via LLM, falling back to deterministic."""
+        from hermit.plugins.builtin.hooks.decompose.models import GeneratedSpec
 
         # Collect lesson-referenced files for priority boosting
-        research_data = metadata.get("research") or {}
         lesson_files: set[str] = set()
         prior_lessons = research_data.get("prior_lessons", [])
         for ls in prior_lessons:
-            # Fetch full lesson data to get applicable_files
             lesson_id = ls.get("lesson_id", "")
             if lesson_id and hasattr(self._store, "get_lesson"):
                 try:
@@ -653,9 +627,9 @@ class MetaLoopOrchestrator:
                         raw_files = full.get("applicable_files")
                         if isinstance(raw_files, str):
                             try:
-                                parsed = json.loads(raw_files)
-                                if isinstance(parsed, list):
-                                    lesson_files.update(str(f) for f in parsed)
+                                parsed_files = json.loads(raw_files)
+                                if isinstance(parsed_files, list):
+                                    lesson_files.update(str(f) for f in parsed_files)
                             except (json.JSONDecodeError, TypeError):
                                 pass
                         elif isinstance(raw_files, list):
@@ -663,13 +637,9 @@ class MetaLoopOrchestrator:
                 except Exception:
                     pass
 
-        # Reconstruct GeneratedSpec from metadata
-        from hermit.plugins.builtin.hooks.decompose.models import GeneratedSpec
-        from hermit.plugins.builtin.hooks.decompose.task_decomposer import TaskDecomposer
-
         file_plan_raw = spec_data.get("file_plan", [])
 
-        # Boost lesson-referenced files by prepending them to file_plan if not present
+        # Boost lesson-referenced files by prepending them if not present
         existing_paths = {e.get("path", "") for e in file_plan_raw}
         boosted_entries: list[dict] = []
         for lf in sorted(lesson_files):
@@ -681,13 +651,13 @@ class MetaLoopOrchestrator:
             file_plan_raw = boosted_entries + list(file_plan_raw)
             log.info(
                 "metaloop_lessons_applied",
-                spec_id=state.spec_id,
+                spec_id=spec_id,
                 boosted_files=len(boosted_entries),
-                phase="decomposing",
+                phase="planning_decompose",
             )
 
         spec = GeneratedSpec(
-            spec_id=spec_data.get("spec_id", state.spec_id),
+            spec_id=spec_data.get("spec_id", spec_id),
             title=spec_data.get("title", ""),
             goal=spec_data.get("goal", ""),
             constraints=tuple(spec_data.get("constraints", ())),
@@ -697,11 +667,29 @@ class MetaLoopOrchestrator:
             trust_zone=spec_data.get("trust_zone", "normal"),
         )
 
-        plan = TaskDecomposer().decompose(spec)
+        # Try LLM decomposer, fall back to deterministic
+        try:
+            from hermit.plugins.builtin.hooks.decompose.llm_task_decomposer import (
+                LLMTaskDecomposer,
+            )
 
-        # Serialize to metadata
+            provider = self._get_provider()
+            model = self._get_model()
+            plan = LLMTaskDecomposer(provider, model=model).decompose(spec)
+        except Exception:
+            log.warning(
+                "metaloop_llm_decompose_fallback",
+                spec_id=spec_id,
+                exc_info=True,
+            )
+            from hermit.plugins.builtin.hooks.decompose.task_decomposer import (
+                TaskDecomposer,
+            )
+
+            plan = TaskDecomposer().decompose(spec)
+
         self._update_metadata(
-            state.spec_id,
+            spec_id,
             "decomposition_plan",
             {
                 "spec_id": plan.spec_id,
@@ -711,7 +699,9 @@ class MetaLoopOrchestrator:
             },
         )
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.IMPLEMENTING)
+    # ------------------------------------------------------------------
+    # Phase 2: IMPLEMENTING — create DAG task, poller handles timeout
+    # ------------------------------------------------------------------
 
     def _handle_implementing(self, state: IterationState) -> IterationState | None:
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
@@ -722,10 +712,10 @@ class MetaLoopOrchestrator:
         decomposition = metadata.get("decomposition_plan") or {}
         steps = decomposition.get("steps", [])
         if not steps:
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.REVIEWING)
+            return self._backlog.advance_phase(state.spec_id, PipelinePhase.REVIEWING)
 
         if self._runner is None:
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.REVIEWING)
+            return self._backlog.advance_phase(state.spec_id, PipelinePhase.REVIEWING)
 
         from hermit.kernel.task.services.dag_builder import StepNode
 
@@ -757,167 +747,156 @@ class MetaLoopOrchestrator:
             )
             return self._backlog.mark_failed(
                 state.spec_id,
-                error=f"DAG task creation failed for {len(nodes)} steps: "
-                f"{type(exc).__name__}: {exc}",
+                error=(
+                    f"DAG task creation failed for {len(nodes)} steps: {type(exc).__name__}: {exc}"
+                ),
                 max_retries=self._max_retries,
             )
         # start_dag_task may return a tuple (task, ...) or a single object
         task = result[0] if isinstance(result, tuple) else result
         dag_task_id = task.task_id if hasattr(task, "task_id") and task.task_id else None
-        # Stay at IMPLEMENTING — poller will detect completion via timeout check.
-        # on_subtask_complete is also called by the poller when the DAG task
-        # reaches a terminal state (see _check_implementing_timeout).
+        # Self-transition IMPLEMENTING -> IMPLEMENTING to write dag_task_id + timestamp.
+        # on_subtask_complete advances to REVIEWING when the DAG task finishes.
         return self._backlog.advance_phase(
             state.spec_id,
-            IterationPhase.IMPLEMENTING,
+            PipelinePhase.IMPLEMENTING,
             dag_task_id=dag_task_id,
             metadata={"implementing_started_at": time.time()},
         )
 
+    # ------------------------------------------------------------------
+    # Phase 3: REVIEWING — council + benchmark + learning + revision loop
+    # ------------------------------------------------------------------
+
     def _handle_reviewing(self, state: IterationState) -> IterationState | None:
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.BENCHMARKING)
+            return self._backlog.mark_failed(
+                state.spec_id,
+                error="Spec entry not found during review",
+                max_retries=self._max_retries,
+            )
         data = entry if isinstance(entry, dict) else entry.__dict__
         metadata = _parse_metadata(data.get("metadata"))
         decomposition = metadata.get("decomposition_plan") or {}
         steps = decomposition.get("steps", [])
+        spec_data = metadata.get("generated_spec") or {}
 
         # Extract changed file paths from decomposition steps
-        changed_files = []
+        changed_files: list[str] = []
         for step in steps:
             step_meta = step.get("metadata", {})
             path = step_meta.get("path", "")
             if path:
                 changed_files.append(path)
 
-        if not changed_files:
+        # Read revision_cycle from metadata (default 0)
+        revision_cycle = int(metadata.get("revision_cycle", 0))
+
+        # --- Step 1: Council review ---
+        verdict = self._run_council_review(state.spec_id, changed_files, spec_data, revision_cycle)
+
+        # Store council verdict in metadata
+        if verdict is not None:
             self._update_metadata(
                 state.spec_id,
-                "acceptance_criteria_validation",
-                {"total": 0, "validated": 0, "skipped": True},
-            )
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.BENCHMARKING)
-
-        try:
-            from hermit.plugins.builtin.hooks.quality.reviewer import GovernedReviewer
-
-            report = _run_async(GovernedReviewer(self._workspace_root).review(changed_files))
-
-            self._update_metadata(
-                state.spec_id,
-                "review",
+                "council_verdict",
                 {
-                    "passed": report.passed,
-                    "finding_count": len(report.findings),
-                    "duration_seconds": report.duration_seconds,
-                    "findings": [
-                        {
-                            "severity": f.severity.value,
-                            "category": f.category,
-                            "message": f.message,
-                            "file_path": f.file_path,
-                            "line": f.line,
-                        }
-                        for f in report.findings
-                    ],
+                    "verdict": verdict.verdict,
+                    "council_id": verdict.council_id,
+                    "finding_count": verdict.finding_count,
+                    "critical_count": verdict.critical_count,
+                    "high_count": verdict.high_count,
+                    "lint_passed": verdict.lint_passed,
+                    "consensus_score": verdict.consensus_score,
+                    "revision_directive": verdict.revision_directive,
+                    "duration_seconds": verdict.duration_seconds,
+                    "decided_at": verdict.decided_at,
                 },
             )
+        else:
+            log.debug("metaloop_council_unavailable", spec_id=state.spec_id)
 
-            if not report.passed:
-                blocking = [f for f in report.findings if f.severity == "blocking"]
-                detail_lines = [
-                    f"  - [{f.category}] {f.file_path}:{f.line}: {f.message}" for f in blocking
-                ]
-                detail = "\n".join(detail_lines) if detail_lines else "(no detail)"
-                log.warning(
-                    "metaloop_review_blocked",
-                    spec_id=state.spec_id,
-                    blocking_count=len(blocking),
-                    total_findings=len(report.findings),
-                )
-                return self._backlog.mark_failed(
-                    state.spec_id,
-                    error=f"Review blocked: {len(blocking)} BLOCKING finding(s):\n{detail}",
-                    max_retries=self._max_retries,
-                )
-        except ImportError:
-            log.debug(
-                "metaloop_reviewer_import_failed",
-                spec_id=state.spec_id,
+        verdict_str = verdict.verdict if verdict is not None else "accept"
+
+        # --- Verdict: "accept" -> benchmark + learning ---
+        if verdict_str == "accept":
+            return self._run_post_accept(state, metadata)
+
+        # --- Verdict: "revise" -> revision loop ---
+        can_revise = revision_cycle < MAX_REVISION_CYCLES
+        if verdict_str == "revise" and can_revise:
+            return self._start_revision_cycle(state.spec_id, revision_cycle, verdict, metadata)
+
+        # --- Verdict: "reject" or revision budget exhausted ---
+        reason = "Council rejected"
+        if verdict_str == "revise" and not can_revise:
+            reason = f"Revision budget exhausted ({revision_cycle}/{MAX_REVISION_CYCLES})"
+        elif verdict is not None:
+            reason = (
+                f"Council verdict: {verdict_str} "
+                f"(critical={verdict.critical_count}, high={verdict.high_count})"
             )
-        except Exception:
-            log.exception("metaloop_review_error", spec_id=state.spec_id)
-
-        # --- Acceptance criteria validation ---
-        spec_data = metadata.get("generated_spec") or {}
-        criteria = spec_data.get("acceptance_criteria", [])
-        file_plan = spec_data.get("file_plan", [])
-        criteria_results: list[dict[str, object]] = []
-
-        for criterion in criteria:
-            if criterion is None:
-                continue
-            result: dict[str, object] = {"criterion": criterion, "validated": False}
-            criterion_lower = str(criterion).lower()
-
-            if "make check" in criterion_lower:
-                result["validated"] = True
-                result["method"] = "deferred_to_benchmark"
-            elif "new files" in criterion_lower or "created and importable" in criterion_lower:
-                plan_paths = {f.get("path", "") for f in file_plan if f.get("action") == "create"}
-                if not plan_paths:
-                    result["method"] = "unverifiable_no_file_plan"
-                else:
-                    found = plan_paths & set(changed_files)
-                    result["validated"] = bool(found)
-                    result["method"] = "file_existence_check"
-                    result["detail"] = f"expected={sorted(plan_paths)}, found={sorted(found)}"
-            elif "modified files" in criterion_lower:
-                plan_paths = {f.get("path", "") for f in file_plan if f.get("action") == "modify"}
-                if not plan_paths:
-                    result["method"] = "unverifiable_no_file_plan"
-                else:
-                    found = plan_paths & set(changed_files)
-                    result["validated"] = bool(found)
-                    result["method"] = "file_modification_check"
-            elif (
-                "approach validated" in criterion_lower
-                or "implementation follows" in criterion_lower
-            ):
-                result["validated"] = True
-                result["method"] = "research_approach_noted"
-            else:
-                result["method"] = "unverifiable_at_review"
-
-            criteria_results.append(result)
-
-        validated_count = sum(1 for r in criteria_results if r.get("validated"))
-        self._update_metadata(
+        log.warning("metaloop_review_terminal", spec_id=state.spec_id, reason=reason)
+        return self._backlog.advance_phase(
             state.spec_id,
-            "acceptance_criteria_validation",
-            {
-                "total": len(criteria_results),
-                "validated": validated_count,
-                "results": criteria_results,
-            },
+            PipelinePhase.REJECTED,
+            error=reason,
         )
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.BENCHMARKING)
-        if entry is None:
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.LEARNING)
-        data = entry if isinstance(entry, dict) else entry.__dict__
-        metadata = _parse_metadata(data.get("metadata"))
+    def _run_council_review(
+        self,
+        spec_id: str,
+        changed_files: list[str],
+        spec_data: dict,
+        revision_cycle: int,
+    ) -> Any | None:
+        """Invoke ReviewCouncilService and return a CouncilVerdict, or None."""
+        try:
+            from hermit.plugins.builtin.hooks.quality.council_service import (
+                ReviewCouncilService,
+            )
+
+            workspace = self._workspace_root
+            if not workspace:
+                import os
+
+                workspace = os.environ.get("HERMIT_WORKSPACE_ROOT", "") or os.getcwd()
+
+            provider_factory = self._get_provider
+            council = ReviewCouncilService(provider_factory, workspace)
+            return council.convene(
+                spec_id,
+                changed_files,
+                spec_data,
+                revision_cycle=revision_cycle,
+                max_revision_cycles=MAX_REVISION_CYCLES,
+            )
+        except ImportError:
+            log.debug("metaloop_council_import_failed", spec_id=spec_id)
+            return None
+        except Exception:
+            log.exception("metaloop_council_review_error", spec_id=spec_id)
+            return None
+
+    def _run_post_accept(
+        self,
+        state: IterationState,
+        metadata: dict,
+    ) -> IterationState | None:
+        """Run benchmark and learning after council accepts."""
         impl_info = metadata.get("implementation") or {}
         worktree_path = impl_info.get("worktree_path")
 
+        # --- Benchmark ---
+        benchmark_passed = True
         try:
             from hermit.plugins.builtin.hooks.benchmark.runner import BenchmarkRunner
 
             runner = BenchmarkRunner(self._store)
             result = _run_async(runner.run(state.spec_id, state.spec_id, worktree_path))
 
-            benchmark_data = {
+            benchmark_data: dict[str, Any] = {
                 "check_passed": result.check_passed,
                 "test_total": result.test_total,
                 "test_passed": result.test_passed,
@@ -929,39 +908,27 @@ class MetaLoopOrchestrator:
             }
             self._update_metadata(state.spec_id, "benchmark", benchmark_data)
 
-            # Gate: block iteration on benchmark failure when blocking is enabled
             if self._benchmark_blocking:
                 if not result.check_passed:
-                    error_msg = "Benchmark failed: make check returned non-zero"
+                    benchmark_passed = False
                     log.warning(
                         "metaloop_benchmark_check_failed",
                         spec_id=state.spec_id,
                         test_passed=result.test_passed,
                         test_total=result.test_total,
                     )
-                    return self._backlog.mark_failed(
-                        state.spec_id,
-                        error=error_msg,
-                        max_retries=self._max_retries,
-                    )
-
-                if result.regression_detected:
+                elif result.regression_detected:
+                    benchmark_passed = False
                     compared = result.compared_to_baseline
                     regression_details = (
                         "; ".join(f"{k}: {v}" for k, v in sorted(compared.items()))
                         if compared
                         else "details unavailable"
                     )
-                    error_msg = f"Benchmark regression detected: {regression_details}"
                     log.warning(
                         "metaloop_benchmark_regression",
                         spec_id=state.spec_id,
                         regressions=regression_details,
-                    )
-                    return self._backlog.mark_failed(
-                        state.spec_id,
-                        error=error_msg,
-                        max_retries=self._max_retries,
                     )
         except Exception:
             log.warning(
@@ -969,299 +936,301 @@ class MetaLoopOrchestrator:
                 spec_id=state.spec_id,
                 exc_info=True,
             )
-            # Infrastructure failure — don't block, but record that benchmark
-            # was skipped so downstream phases have visibility.
             self._update_metadata(
                 state.spec_id,
                 "benchmark",
-                {"benchmark_skipped": True, "reason": "BenchmarkRunner raised an exception"},
+                {
+                    "benchmark_skipped": True,
+                    "reason": "BenchmarkRunner raised an exception",
+                },
             )
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.LEARNING)
+        # --- Learning ---
+        self._run_learning(state)
 
-    def _handle_learning(self, state: IterationState) -> IterationState | None:
+        # --- Final decision ---
+        if not benchmark_passed:
+            return self._backlog.mark_failed(
+                state.spec_id,
+                error="Benchmark failed or regression detected",
+                max_retries=self._max_retries,
+            )
+
+        log.info("metaloop_accepted", spec_id=state.spec_id)
+        return self._backlog.advance_phase(state.spec_id, PipelinePhase.ACCEPTED)
+
+    def _run_learning(self, state: IterationState) -> None:
+        """Run IterationLearner and create followup specs for mistake lessons."""
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.RECONCILING)
+            return
         data = entry if isinstance(entry, dict) else entry.__dict__
         metadata = _parse_metadata(data.get("metadata"))
         benchmark_data = metadata.get("benchmark") or {}
-
-        # Determine current followup depth (Fix 2)
         current_depth = int(metadata.get("followup_depth", 0))
 
-        if benchmark_data:
-            try:
-                from hermit.plugins.builtin.hooks.benchmark.learning import (
-                    IterationLearner,
-                )
-                from hermit.plugins.builtin.hooks.benchmark.models import (
-                    BenchmarkResult,
-                )
+        if not benchmark_data:
+            return
 
-                br = BenchmarkResult(
-                    iteration_id=state.spec_id,
-                    spec_id=state.spec_id,
-                    **{
-                        k: v
-                        for k, v in benchmark_data.items()
-                        if k
-                        in (
-                            "check_passed",
-                            "test_total",
-                            "test_passed",
-                            "coverage",
-                            "lint_violations",
-                            "duration_seconds",
-                            "regression_detected",
-                            "compared_to_baseline",
-                        )
-                    },
-                )
-                learner = IterationLearner(self._store)
-                lessons = _run_async(learner.learn(state.spec_id, br))
+        try:
+            from hermit.plugins.builtin.hooks.benchmark.learning import (
+                IterationLearner,
+            )
+            from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
 
-                # Create followup specs for mistake lessons with safety limits
-                mistake_lessons = [ls for ls in lessons if ls.category == "mistake"]
-                followups_created = 0
+            br = BenchmarkResult(
+                iteration_id=state.spec_id,
+                spec_id=state.spec_id,
+                **{
+                    k: v
+                    for k, v in benchmark_data.items()
+                    if k
+                    in (
+                        "check_passed",
+                        "test_total",
+                        "test_passed",
+                        "coverage",
+                        "lint_violations",
+                        "duration_seconds",
+                        "regression_detected",
+                        "compared_to_baseline",
+                    )
+                },
+            )
+            learner = IterationLearner(self._store)
+            lessons = _run_async(learner.learn(state.spec_id, br))
 
-                for lesson in mistake_lessons:
-                    # Fix 3: fanout limit
-                    if followups_created >= MAX_FOLLOWUP_FANOUT:
-                        log.info(
-                            "metaloop_followup_fanout_capped",
+            # Create followup specs for mistake lessons with safety limits
+            mistake_lessons = [ls for ls in lessons if ls.category == "mistake"]
+            followups_created = 0
+
+            for lesson in mistake_lessons:
+                if followups_created >= MAX_FOLLOWUP_FANOUT:
+                    log.info(
+                        "metaloop_followup_fanout_capped",
+                        spec_id=state.spec_id,
+                        limit=MAX_FOLLOWUP_FANOUT,
+                    )
+                    break
+
+                if current_depth >= MAX_FOLLOWUP_DEPTH:
+                    log.info(
+                        "metaloop_followup_depth_capped",
+                        spec_id=state.spec_id,
+                        depth=current_depth,
+                        limit=MAX_FOLLOWUP_DEPTH,
+                    )
+                    self._update_metadata(
+                        state.spec_id,
+                        "terminated_info",
+                        {
+                            "terminated_reason": "max_followup_depth_exceeded",
+                            "limit_name": "max_followup_depth",
+                            "limit_value": MAX_FOLLOWUP_DEPTH,
+                            "actual_value": current_depth,
+                        },
+                    )
+                    break
+
+                if hasattr(self._store, "count_active_specs"):
+                    active_count = self._store.count_active_specs()
+                    if active_count >= MAX_QUEUE_DEPTH:
+                        log.warning(
+                            "metaloop_followup_queue_full",
                             spec_id=state.spec_id,
-                            limit=MAX_FOLLOWUP_FANOUT,
-                        )
-                        break
-
-                    # Fix 2: depth limit
-                    if current_depth >= MAX_FOLLOWUP_DEPTH:
-                        log.info(
-                            "metaloop_followup_depth_capped",
-                            spec_id=state.spec_id,
-                            depth=current_depth,
-                            limit=MAX_FOLLOWUP_DEPTH,
+                            active=active_count,
+                            limit=MAX_QUEUE_DEPTH,
                         )
                         self._update_metadata(
                             state.spec_id,
                             "terminated_info",
                             {
-                                "terminated_reason": "max_followup_depth_exceeded",
-                                "limit_name": "max_followup_depth",
-                                "limit_value": MAX_FOLLOWUP_DEPTH,
-                                "actual_value": current_depth,
+                                "terminated_reason": "queue_depth_exceeded",
+                                "limit_name": "max_queue_depth",
+                                "limit_value": MAX_QUEUE_DEPTH,
+                                "actual_value": active_count,
                             },
                         )
                         break
 
-                    # Fix 4: queue depth limit
-                    if hasattr(self._store, "count_active_specs"):
-                        active_count = self._store.count_active_specs()
-                        if active_count >= MAX_QUEUE_DEPTH:
-                            log.warning(
-                                "metaloop_followup_queue_full",
-                                spec_id=state.spec_id,
-                                active=active_count,
-                                limit=MAX_QUEUE_DEPTH,
-                            )
-                            self._update_metadata(
-                                state.spec_id,
-                                "terminated_info",
-                                {
-                                    "terminated_reason": "queue_depth_exceeded",
-                                    "limit_name": "max_queue_depth",
-                                    "limit_value": MAX_QUEUE_DEPTH,
-                                    "actual_value": active_count,
-                                },
-                            )
-                            break
-
-                    # Fix 9: goal hash dedup
-                    goal_text = f"Fix: {lesson.summary}"
-                    goal_hash = hashlib.sha256(goal_text.strip().lower().encode()).hexdigest()
-                    if hasattr(self._store, "find_spec_by_goal_hash"):
-                        existing = self._store.find_spec_by_goal_hash(goal_hash)
-                        if existing is not None:
-                            log.debug(
-                                "metaloop_followup_dedup_skipped",
-                                spec_id=state.spec_id,
-                                goal_hash=goal_hash[:16],
-                            )
-                            continue
-
-                    import uuid
-
-                    followup_id = f"followup-{uuid.uuid4().hex[:12]}"
-                    if hasattr(self._store, "create_spec_entry"):
-                        # Fix 0: pass native types, NOT pre-serialized strings
-                        self._store.create_spec_entry(
-                            spec_id=followup_id,
-                            goal=goal_text,
-                            priority="high",
-                            research_hints=[
-                                f"Followup from iteration {state.spec_id}",
-                                f"Lesson: {lesson.summary}",
-                            ],
-                            metadata={
-                                "followup_from": state.spec_id,
-                                "lesson_id": lesson.lesson_id,
-                                "followup_depth": current_depth + 1,
-                                "goal_hash": goal_hash,
-                            },
+                # Goal hash dedup
+                goal_text = f"Fix: {lesson.summary}"
+                goal_hash = hashlib.sha256(goal_text.strip().lower().encode()).hexdigest()
+                if hasattr(self._store, "find_spec_by_goal_hash"):
+                    existing = self._store.find_spec_by_goal_hash(goal_hash)
+                    if existing is not None:
+                        log.debug(
+                            "metaloop_followup_dedup_skipped",
+                            spec_id=state.spec_id,
+                            goal_hash=goal_hash[:16],
                         )
-                        followups_created += 1
-                        log.info(
-                            "metaloop_followup_created",
-                            spec_id=followup_id,
-                            source=state.spec_id,
-                            depth=current_depth + 1,
-                        )
-            except Exception:
-                log.exception("metaloop_learning_error", spec_id=state.spec_id)
+                        continue
 
-        return self._backlog.advance_phase(state.spec_id, IterationPhase.RECONCILING)
+                import uuid
 
-    def _handle_reconciling(self, state: IterationState) -> IterationState | None:
-        """Evaluate the promotion gate and transition to ACCEPTED or REJECTED.
-
-        Promotion criteria:
-        1. Benchmark must pass (no regression detected)
-        2. Review must pass (no blocking findings)
-        3. No prior error recorded on the spec entry
-        4. Lessons should not contain 'mistake' category entries
-        5. Acceptance criteria validation must meet minimum threshold
-        6. IterationKernel promotion gate (if available)
-        """
-        entry = self._store.get_spec_entry(spec_id=state.spec_id)
-        if entry is None:
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.REJECTED)
-        data = entry if isinstance(entry, dict) else entry.__dict__
-        metadata = _parse_metadata(data.get("metadata"))
-
-        rejection_reasons: list[str] = []
-
-        # 1. Benchmark gate
-        benchmark_data = metadata.get("benchmark") or {}
-        if not benchmark_data:
-            rejection_reasons.append("No benchmark results available")
-        else:
-            if benchmark_data.get("regression_detected"):
-                rejection_reasons.append("Benchmark regression detected")
-            if not benchmark_data.get("check_passed", False):
-                rejection_reasons.append("Benchmark check did not pass")
-
-        # 2. Review gate
-        review_data = metadata.get("review") or {}
-        if review_data and not review_data.get("passed", True):
-            rejection_reasons.append(
-                f"Review found blocking findings ({review_data.get('finding_count', 0)} issues)"
-            )
-
-        # 3. DAG step completion gate — check for prior failures
-        error = data.get("error")
-        if error:
-            rejection_reasons.append(f"Prior error recorded: {error}")
-
-        # 4. Lessons gate — 'mistake' lessons indicate broken implementation
-        try:
-            if hasattr(self._store, "list_lessons"):
-                lessons = self._store.list_lessons(
-                    iteration_ids=[state.spec_id],
-                    categories=["mistake"],
-                )
-                if lessons:
-                    summaries = [
-                        ls.get("summary", "") if isinstance(ls, dict) else str(ls) for ls in lessons
-                    ]
-                    rejection_reasons.append(f"Mistake lessons found: {'; '.join(summaries[:3])}")
+                followup_id = f"followup-{uuid.uuid4().hex[:12]}"
+                if hasattr(self._store, "create_spec_entry"):
+                    self._store.create_spec_entry(
+                        spec_id=followup_id,
+                        goal=goal_text,
+                        priority="high",
+                        research_hints=[
+                            f"Followup from iteration {state.spec_id}",
+                            f"Lesson: {lesson.summary}",
+                        ],
+                        metadata={
+                            "followup_from": state.spec_id,
+                            "lesson_id": lesson.lesson_id,
+                            "followup_depth": current_depth + 1,
+                            "goal_hash": goal_hash,
+                        },
+                    )
+                    followups_created += 1
+                    log.info(
+                        "metaloop_followup_created",
+                        spec_id=followup_id,
+                        source=state.spec_id,
+                        depth=current_depth + 1,
+                    )
         except Exception:
-            log.debug(
-                "metaloop_reconciling_lessons_check_failed",
-                spec_id=state.spec_id,
-            )
+            log.exception("metaloop_learning_error", spec_id=state.spec_id)
 
-        # 5. Acceptance criteria gate
-        _CRITERIA_VALIDATION_THRESHOLD = 0.5
-        criteria_validation = metadata.get("acceptance_criteria_validation") or {}
-        total_criteria = criteria_validation.get("total", 0)
-        validated_criteria = criteria_validation.get("validated", 0)
-        spec_criteria = (metadata.get("generated_spec") or {}).get("acceptance_criteria", [])
-        if total_criteria > 0:
-            validation_ratio = validated_criteria / total_criteria
-            if validation_ratio < _CRITERIA_VALIDATION_THRESHOLD:
-                rejection_reasons.append(
-                    f"Acceptance criteria insufficiently validated: "
-                    f"{validated_criteria}/{total_criteria} "
-                    f"({validation_ratio:.0%})"
-                )
-        elif spec_criteria and not criteria_validation.get("skipped"):
-            rejection_reasons.append(
-                f"Acceptance criteria validation was never run "
-                f"({len(spec_criteria)} criteria defined but no validation recorded)"
-            )
+    def _start_revision_cycle(
+        self,
+        spec_id: str,
+        revision_cycle: int,
+        verdict: Any,
+        metadata: dict,
+    ) -> IterationState | None:
+        """Store revision directive and go back to IMPLEMENTING for a revision."""
+        new_cycle = revision_cycle + 1
         log.info(
-            "metaloop_criteria_gate",
-            spec_id=state.spec_id,
-            total=total_criteria,
-            validated=validated_criteria,
+            "metaloop_revision_cycle",
+            spec_id=spec_id,
+            cycle=new_cycle,
+            max=MAX_REVISION_CYCLES,
         )
 
-        # 6. Try the IterationKernel.check_promotion_gate() if available
-        kernel_gate_passed = False
-        try:
-            from hermit.kernel.execution.self_modify.iteration_kernel import (
-                IterationKernel,
-            )
-
-            kernel = IterationKernel(self._store)
-            kernel_gate_passed = kernel.check_promotion_gate(state.spec_id)
-        except (KeyError, ImportError):
-            # KeyError = iteration not found in kernel's model (expected when
-            # the iteration was created via metaloop, not IterationKernel.admit).
-            # ImportError = iteration_kernel module unavailable.
-            # Fall through to local criteria.
-            pass
-        except Exception:
-            log.debug(
-                "metaloop_reconciling_kernel_gate_error",
-                spec_id=state.spec_id,
-            )
-
-        # Build the promotion decision
-        promoted = len(rejection_reasons) == 0 or kernel_gate_passed
-        decision = {
-            "promoted": promoted,
-            "kernel_gate_passed": kernel_gate_passed,
-            "rejection_reasons": rejection_reasons,
-            "decided_at": time.time(),
+        # Store revision directive in metadata
+        revision_info: dict[str, Any] = {
+            "revision_cycle": new_cycle,
+            "council_id": verdict.council_id if verdict else "",
+            "directive": verdict.revision_directive if verdict else "",
+            "initiated_at": time.time(),
         }
-        self._update_metadata(state.spec_id, "promotion_decision", decision)
+        self._update_metadata(spec_id, "revision_directive", revision_info)
 
-        if promoted:
-            log.info(
-                "metaloop_promotion_accepted",
-                spec_id=state.spec_id,
-                kernel_gate=kernel_gate_passed,
+        # Update revision_cycle counter in metadata
+        entry = self._store.get_spec_entry(spec_id=spec_id)
+        if entry is not None:
+            data = entry if isinstance(entry, dict) else entry.__dict__
+            meta = _parse_metadata(data.get("metadata"))
+            meta["revision_cycle"] = new_cycle
+            self._store.update_spec_status(
+                spec_id=spec_id,
+                status=data.get("status", "reviewing"),
+                metadata=_serialize_metadata(meta),
             )
-            return self._backlog.advance_phase(state.spec_id, IterationPhase.ACCEPTED)
+
+        # Transition REVIEWING -> IMPLEMENTING (revision loop)
+        return self._backlog.advance_phase(spec_id, PipelinePhase.IMPLEMENTING)
+
+    # ------------------------------------------------------------------
+    # on_subtask_complete — DAG task finished -> advance to REVIEWING
+    # ------------------------------------------------------------------
+
+    def on_subtask_complete(
+        self, task_id: str, *, success: bool = True, error: str | None = None
+    ) -> IterationState | None:
+        """Handle DAG subtask completion — advance IMPLEMENTING to REVIEWING.
+
+        On success, stores the worktree branch info for later PR creation
+        instead of merging directly to main.
+        """
+        if not task_id:
+            return None
+
+        if not hasattr(self._store, "get_spec_by_dag_task_id"):
+            return None
+
+        entry = self._store.get_spec_by_dag_task_id(task_id)
+        if entry is None:
+            return None
+
+        data = entry if isinstance(entry, dict) else entry.__dict__
+        spec_id = data["spec_id"]
+        phase_str = data.get("status", "pending")
+
+        try:
+            phase = PipelinePhase(phase_str)
+        except ValueError:
+            return None
+
+        if phase != PipelinePhase.IMPLEMENTING:
+            return None
+
+        metadata = _parse_metadata(data.get("metadata"))
+        impl_info = metadata.get("implementation") or {}
+        worktree_path = impl_info.get("worktree_path")
+
+        if success:
+            if worktree_path and self._workspace_root:
+                self._update_metadata(
+                    spec_id,
+                    "pr_pending",
+                    {
+                        "worktree_path": worktree_path,
+                        "branch": f"self-modify/{spec_id}",
+                        "ready_for_review": True,
+                    },
+                )
+                log.info(
+                    "metaloop_subtask_complete_pr_pending",
+                    task_id=task_id,
+                    spec_id=spec_id,
+                )
+            else:
+                log.info(
+                    "metaloop_subtask_complete",
+                    task_id=task_id,
+                    spec_id=spec_id,
+                )
+            return self._backlog.advance_phase(spec_id, PipelinePhase.REVIEWING)
+
+        # Failure path — clean up worktree without merging
+        if worktree_path and self._workspace_root:
+            try:
+                from hermit.kernel.execution.self_modify.workspace import (
+                    SelfModifyWorkspace,
+                )
+
+                ws = SelfModifyWorkspace(self._workspace_root)
+                ws.remove(spec_id)
+            except Exception:
+                log.exception("metaloop_worktree_cleanup_failed", spec_id=spec_id)
 
         log.warning(
-            "metaloop_promotion_rejected",
-            spec_id=state.spec_id,
-            reasons=rejection_reasons,
+            "metaloop_subtask_failed",
+            task_id=task_id,
+            spec_id=spec_id,
+            error=error,
         )
-        return self._backlog.advance_phase(
-            state.spec_id,
-            IterationPhase.REJECTED,
-            error=f"Promotion gate failed: {'; '.join(rejection_reasons)}",
+        return self._backlog.mark_failed(
+            spec_id,
+            error=error or "Subtask failed",
+            max_retries=self._max_retries,
         )
+
+
+# ======================================================================
+# SpecBacklogPoller
+# ======================================================================
 
 
 class SpecBacklogPoller:
     """Meta-loop poller that wakes for pending and active iterations.
 
-    Uses adaptive polling (Fix 13): fast interval when work exists,
+    Uses adaptive polling: fast interval when work exists,
     slow interval after consecutive idle ticks.
     """
 
@@ -1304,7 +1273,7 @@ class SpecBacklogPoller:
         return self._thread is not None and self._thread.is_alive()
 
     def _current_interval(self) -> float:
-        """Return current poll interval based on idle streak (Fix 13)."""
+        """Return current poll interval based on idle streak."""
         if self._consecutive_idle >= _IDLE_TICKS_THRESHOLD:
             return POLL_INTERVAL_IDLE
         return POLL_INTERVAL_ACTIVE
@@ -1323,7 +1292,9 @@ class SpecBacklogPoller:
         if not workspace_root:
             return
         try:
-            from hermit.kernel.execution.self_modify.workspace import SelfModifyWorkspace
+            from hermit.kernel.execution.self_modify.workspace import (
+                SelfModifyWorkspace,
+            )
 
             ws = SelfModifyWorkspace(workspace_root)
             ws.remove(spec_id)
@@ -1339,7 +1310,7 @@ class SpecBacklogPoller:
         """Check if a DAG task reached a terminal state and handle it.
 
         Returns True if terminal and handled, False if still running,
-        None if the task could not be checked (no runner / lookup error).
+        None if the task could not be checked.
         """
         if not self._orchestrator._runner:
             return None
@@ -1378,11 +1349,6 @@ class SpecBacklogPoller:
         """Check if an IMPLEMENTING spec has timed out.
 
         Returns True if work was done (spec advanced or failed).
-
-        Before timeout: checks whether the DAG task finished early.
-        After timeout: if the DAG task is terminal, advances normally;
-        if still running, cancels it and fails the spec with worktree
-        cleanup.  Never extends the timeout indefinitely.
         """
         spec_id = entry["spec_id"]
         metadata = _parse_metadata(entry.get("metadata"))
@@ -1437,17 +1403,16 @@ class SpecBacklogPoller:
         self._cleanup_worktree(spec_id)
         self._backlog.mark_failed(
             spec_id,
-            error=f"IMPLEMENTING timed out after {int(elapsed)}s (dag_task_id={dag_task_id})",
+            error=(f"IMPLEMENTING timed out after {int(elapsed)}s (dag_task_id={dag_task_id})"),
             max_retries=self._orchestrator._max_retries,
         )
         return True
 
     def _tick(self) -> None:
-        """Claim and advance the next pending spec, AND continue active ones."""
+        """Claim pending AND advance active specs per tick — no early return."""
         did_work = False
 
-        # Always check IMPLEMENTING specs for timeouts first (Fix 1).
-        # This runs regardless of pending specs to avoid starvation.
+        # 1. Check IMPLEMENTING specs for timeouts (runs regardless of pending)
         if hasattr(self._backlog._store, "list_spec_backlog"):
             try:
                 implementing = self._backlog._store.list_spec_backlog(
@@ -1456,11 +1421,11 @@ class SpecBacklogPoller:
                 for impl_entry in implementing:
                     entry = impl_entry if isinstance(impl_entry, dict) else impl_entry.__dict__
                     if self._check_implementing_timeout(entry):
-                        did_work = True  # only count actual transitions
+                        did_work = True
             except Exception:
                 log.exception("metaloop_poller_implementing_check_error")
 
-        # Claim a pending spec (does NOT block active phase advancement)
+        # 2. Claim a pending spec (does NOT block active phase advancement)
         claimed = self._backlog.claim_next()
         if claimed is not None:
             log.info(
@@ -1471,19 +1436,13 @@ class SpecBacklogPoller:
             self._orchestrator.advance(claimed.spec_id)
             did_work = True
 
-        # ALSO advance active (non-terminal, non-pending) iterations.
-        # Process one spec per active phase per tick for fairness.
+        # 3. Advance active (non-terminal, non-pending) iterations.
+        #    Uses the 3 active phases from the new pipeline.
         if hasattr(self._backlog._store, "list_spec_backlog"):
             try:
                 for status in (
-                    "researching",
-                    "generating_spec",
-                    "spec_approval",
-                    "decomposing",
-                    "reviewing",
-                    "benchmarking",
-                    "learning",
-                    "reconciling",
+                    PipelinePhase.PLANNING.value,
+                    PipelinePhase.REVIEWING.value,
                 ):
                     active = self._backlog._store.list_spec_backlog(status=status, limit=1)
                     if active:
@@ -1496,15 +1455,19 @@ class SpecBacklogPoller:
                         )
                         self._orchestrator.advance(spec_id)
                         did_work = True
-                        break  # one active advance per tick for fairness
             except Exception:
                 log.exception("metaloop_poller_advance_active_error")
 
-        # Update idle counter for adaptive polling (Fix 13)
+        # Update idle counter for adaptive polling
         if did_work:
             self._consecutive_idle = 0
         else:
             self._consecutive_idle += 1
+
+
+# ======================================================================
+# SignalToSpecConsumer
+# ======================================================================
 
 
 class SignalToSpecConsumer:
@@ -1559,7 +1522,7 @@ class SignalToSpecConsumer:
         if not hasattr(self._store, "actionable_signals"):
             return 0
 
-        # Fix 4: queue depth check before processing signals
+        # Queue depth check before processing signals
         if hasattr(self._store, "count_active_specs"):
             active_count = self._store.count_active_specs()
             if active_count >= MAX_QUEUE_DEPTH:
@@ -1611,7 +1574,7 @@ class SignalToSpecConsumer:
             if existing is not None:
                 continue
 
-            # Fix 9: goal hash dedup (replaces O(n) full-table scan)
+            # Goal hash dedup
             goal_hash = hashlib.sha256(suggested_goal.strip().lower().encode()).hexdigest()
             if hasattr(self._store, "find_spec_by_goal_hash"):
                 dup = self._store.find_spec_by_goal_hash(goal_hash)
@@ -1642,7 +1605,6 @@ class SignalToSpecConsumer:
                 )
                 priority = "high" if risk_level in ("high", "critical") else "normal"
 
-                # Fix 0: pass native types, not pre-serialized strings
                 self._store.create_spec_entry(
                     spec_id=f"signal-{signal_id}",
                     goal=suggested_goal,

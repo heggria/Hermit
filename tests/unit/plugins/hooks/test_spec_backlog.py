@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from hermit.plugins.builtin.hooks.metaloop.backlog import SpecBacklog
-from hermit.plugins.builtin.hooks.metaloop.models import IterationPhase, IterationState
+from hermit.plugins.builtin.hooks.metaloop.models import IterationState, PipelinePhase
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -76,7 +76,7 @@ class FakeStore:
     def claim_next_spec(
         self,
         from_status: str = "pending",
-        to_status: str = "researching",
+        to_status: str = "planning",
     ) -> dict[str, Any] | None:
         with self._claim_lock:
             for spec in self._specs.values():
@@ -114,11 +114,11 @@ class TestSpecBacklogPeek:
         result = backlog.peek_next()
         assert result is not None
         assert result.spec_id == "s1"
-        assert result.phase == IterationPhase.PENDING
+        assert result.phase == PipelinePhase.PENDING
 
     def test_peek_skips_non_pending(self, backlog: SpecBacklog, fake_store: FakeStore) -> None:
         fake_store.create_spec_entry(spec_id="s1", goal="improve X")
-        fake_store.update_spec_status(spec_id="s1", status=IterationPhase.RESEARCHING.value)
+        fake_store.update_spec_status(spec_id="s1", status=PipelinePhase.PLANNING.value)
         assert backlog.peek_next() is None
 
     def test_peek_does_not_mutate(self, backlog: SpecBacklog, fake_store: FakeStore) -> None:
@@ -133,14 +133,14 @@ class TestSpecBacklogClaim:
     def test_claim_empty_backlog(self, backlog: SpecBacklog) -> None:
         assert backlog.claim_next() is None
 
-    def test_claim_transitions_to_researching(
+    def test_claim_transitions_to_planning(
         self, backlog: SpecBacklog, fake_store: FakeStore
     ) -> None:
         fake_store.create_spec_entry(spec_id="s1", goal="improve X")
         result = backlog.claim_next()
         assert result is not None
         assert result.spec_id == "s1"
-        assert result.phase == IterationPhase.RESEARCHING
+        assert result.phase == PipelinePhase.PLANNING
 
     def test_claim_is_atomic(self, backlog: SpecBacklog, fake_store: FakeStore) -> None:
         """Only one claim should succeed for a single spec."""
@@ -164,31 +164,32 @@ class TestSpecBacklogClaim:
 class TestSpecBacklogAdvance:
     def test_advance_phase(self, backlog: SpecBacklog, fake_store: FakeStore) -> None:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
-        result = backlog.advance_phase("s1", IterationPhase.RESEARCHING)
+        result = backlog.advance_phase("s1", PipelinePhase.PLANNING)
         assert result is not None
-        assert result.phase == IterationPhase.RESEARCHING
+        assert result.phase == PipelinePhase.PLANNING
         entry = fake_store.get_spec_entry(spec_id="s1")
         assert entry is not None
-        assert entry["status"] == "researching"
+        assert entry["status"] == "planning"
 
     def test_advance_with_dag_task_id(self, backlog: SpecBacklog, fake_store: FakeStore) -> None:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
-        result = backlog.advance_phase("s1", IterationPhase.IMPLEMENTING, dag_task_id="dag-abc")
+        backlog.advance_phase("s1", PipelinePhase.PLANNING)
+        result = backlog.advance_phase("s1", PipelinePhase.IMPLEMENTING, dag_task_id="dag-abc")
         assert result is not None
         assert result.dag_task_id == "dag-abc"
 
     def test_advance_nonexistent_spec(self, backlog: SpecBacklog) -> None:
-        result = backlog.advance_phase("nonexistent", IterationPhase.RESEARCHING)
+        result = backlog.advance_phase("nonexistent", PipelinePhase.PLANNING)
         assert result is None
 
 
 class TestSpecBacklogMarkFailed:
     def test_retry_on_first_failure(self, backlog: SpecBacklog, fake_store: FakeStore) -> None:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
-        fake_store.update_spec_status(spec_id="s1", status=IterationPhase.IMPLEMENTING.value)
+        fake_store.update_spec_status(spec_id="s1", status=PipelinePhase.IMPLEMENTING.value)
         result = backlog.mark_failed("s1", error="build error", max_retries=2)
         assert result is not None
-        assert result.phase == IterationPhase.PENDING
+        assert result.phase == PipelinePhase.PENDING
         assert result.attempt == 2
         assert result.error == "build error"
 
@@ -197,10 +198,10 @@ class TestSpecBacklogMarkFailed:
     ) -> None:
         fake_store.create_spec_entry(spec_id="s1", goal="test")
         fake_store._specs["s1"]["attempt"] = 2  # Already at max
-        fake_store.update_spec_status(spec_id="s1", status=IterationPhase.REVIEWING.value)
+        fake_store.update_spec_status(spec_id="s1", status=PipelinePhase.REVIEWING.value)
         result = backlog.mark_failed("s1", error="review failed", max_retries=2)
         assert result is not None
-        assert result.phase == IterationPhase.FAILED
+        assert result.phase == PipelinePhase.FAILED
 
     def test_mark_failed_nonexistent(self, backlog: SpecBacklog) -> None:
         result = backlog.mark_failed("nonexistent", error="oops")
@@ -213,7 +214,7 @@ class TestSpecBacklogGetState:
         state = backlog.get_state("s1")
         assert state is not None
         assert state.spec_id == "s1"
-        assert state.phase == IterationPhase.PENDING
+        assert state.phase == PipelinePhase.PENDING
 
     def test_get_state_nonexistent(self, backlog: SpecBacklog) -> None:
         assert backlog.get_state("nonexistent") is None
@@ -227,5 +228,5 @@ class TestSpecBacklogNoStoreSupport:
         assert backlog.peek_next() is None
         assert backlog.claim_next() is None
         assert backlog.get_state("s1") is None
-        assert backlog.advance_phase("s1", IterationPhase.RESEARCHING) is None
+        assert backlog.advance_phase("s1", PipelinePhase.PLANNING) is None
         assert backlog.mark_failed("s1", error="no store") is None
