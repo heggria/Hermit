@@ -709,6 +709,11 @@ class MetaLoopOrchestrator:
             return state
         data = entry if isinstance(entry, dict) else entry.__dict__
         metadata = _parse_metadata(data.get("metadata"))
+
+        # If DAG already started (has timestamp), skip — let timeout checker handle it
+        if metadata.get("implementing_started_at"):
+            return state
+
         decomposition = metadata.get("decomposition_plan") or {}
         steps = decomposition.get("steps", [])
         if not steps:
