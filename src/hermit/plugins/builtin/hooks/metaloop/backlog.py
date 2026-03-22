@@ -254,18 +254,22 @@ class SpecBacklog:
                 jitter = random.uniform(0, delay * 0.1)
                 next_retry_at = time.time() + delay + jitter
 
-                # Reset to pending with incremented attempt + backoff metadata
+                # Reset to pending with incremented attempt + backoff metadata.
+                # Clear dag_task_id and implementing_started_at so the retry
+                # creates a fresh DAG task instead of reusing the failed one.
                 current_status = data.get("status", "pending")
                 if hasattr(self._store, "update_spec_status"):
                     # Merge next_retry_at into existing metadata
                     meta = _parse_metadata(data.get("metadata"))
                     meta["next_retry_at"] = next_retry_at
+                    meta.pop("implementing_started_at", None)
                     updated = self._store.update_spec_status(
                         spec_id=spec_id,
                         status=PipelinePhase.PENDING.value,
                         expected_status=current_status,
                         error=error,
                         metadata=meta,
+                        dag_task_id="",  # clear stale dag_task_id
                     )
                     if not updated:
                         log.debug(
