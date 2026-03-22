@@ -11,12 +11,8 @@ New code should import directly from ``execution_helpers`` instead.
 from __future__ import annotations
 
 from hermit.kernel.execution.executor.execution_helpers import (
-    _contract_refs as contract_refs,
-)
-from hermit.kernel.execution.executor.execution_helpers import (
-    _load_witness_payload as load_witness_payload,
-)
-from hermit.kernel.execution.executor.execution_helpers import (
+    contract_refs,
+    load_witness_payload,
     set_attempt_phase,
 )
 
