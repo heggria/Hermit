@@ -32,8 +32,8 @@ site/
 docs/site/
 reports/
 
-# Kernel runtime artifacts
-artifacts/
+# Kernel runtime artifacts (root-level only, not src/hermit/kernel/artifacts/)
+/artifacts/
 /kernel/
 
 # OS & editor
