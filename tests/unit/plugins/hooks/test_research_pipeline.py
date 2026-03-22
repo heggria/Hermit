@@ -76,7 +76,7 @@ class TestResearchReport:
 class TestExtractKeywords:
     def test_basic(self) -> None:
         keywords = _extract_keywords("implement authentication flow", [])
-        assert "implement" in keywords
+        # "implement" is now a stop word (action verb)
         assert "authentication" in keywords
         assert "flow" in keywords
 
@@ -84,7 +84,7 @@ class TestExtractKeywords:
         keywords = _extract_keywords("how to implement the feature", [])
         assert "how" not in keywords
         assert "the" not in keywords
-        assert "implement" in keywords
+        assert "implement" not in keywords  # action verb stop word
         assert "feature" in keywords
 
     def test_includes_hints(self) -> None:

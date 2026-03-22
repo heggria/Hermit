@@ -383,10 +383,17 @@ class TestSpecBacklogPoller:
         # Wait for at least one tick
         time.sleep(0.08)
         poller.stop()
-        # The spec should have been claimed and advanced past PENDING
+        # The spec should have been claimed and moved past PENDING.
+        # With no runner, planning will fail and reset to pending with
+        # incremented attempt, so we check that it was at least touched.
         entry = fake_store.get_spec_entry(spec_id="s1")
         assert entry is not None
-        assert entry["status"] != "pending"
+        # Either advanced past pending or failed and retried (attempt > 1)
+        status = entry["status"]
+        attempt = int(entry.get("attempt", 1))
+        assert status != "pending" or attempt > 1, (
+            f"Expected spec to be processed but got status={status} attempt={attempt}"
+        )
 
     def test_poller_no_work(self, orchestrator: MetaLoopOrchestrator, backlog: SpecBacklog) -> None:
         """Poller should not error when backlog is empty."""

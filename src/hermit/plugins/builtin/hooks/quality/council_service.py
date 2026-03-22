@@ -431,12 +431,16 @@ class ReviewCouncilService:
                 CouncilArbiter,
             )
 
+            # Group findings by role for the arbiter
+            findings_by_role: dict[str, list[ReviewerFinding]] = {}
+            for f in findings:
+                findings_by_role.setdefault(f.reviewer_role, []).append(f)
+
             return CouncilArbiter().synthesize(
                 council_id=council_id,
-                spec_id=spec_id,
-                findings=findings,
+                findings_by_role=findings_by_role,
+                perspectives=self._perspectives,
                 lint_passed=lint_passed,
-                start_time=start_time,
                 revision_cycle=revision_cycle,
                 max_revision_cycles=max_revision_cycles,
             )

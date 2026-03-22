@@ -100,8 +100,19 @@ class MetaLoopOrchestrator:
     # ------------------------------------------------------------------
 
     def _get_provider(self) -> Any:
-        """Clone the LLM provider from the runner's agent."""
-        return self._runner.agent.provider.clone()
+        """Clone the LLM provider from the runner's agent. Returns None if unavailable."""
+        try:
+            if self._runner is None:
+                return None
+            agent = getattr(self._runner, "agent", None)
+            if agent is None:
+                return None
+            provider = getattr(agent, "provider", None)
+            if provider is None:
+                return None
+            return provider.clone()
+        except Exception:
+            return None
 
     def _get_model(self) -> str:
         """Return the model to use for metaloop LLM calls.
@@ -1361,7 +1372,10 @@ class SpecBacklogPoller:
         dag_task_id = entry.get("dag_task_id")
 
         if started_at is None:
-            self._orchestrator._update_metadata(spec_id, "implementing_started_at", time.time())
+            # DAG task not yet created by _handle_implementing — do nothing.
+            # _handle_implementing will set implementing_started_at when it
+            # creates the DAG task.  Writing the timestamp here would cause
+            # _handle_implementing's guard to fire, preventing DAG creation.
             return False
 
         elapsed = time.time() - float(started_at)

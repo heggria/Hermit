@@ -16,7 +16,11 @@ from hermit.runtime.provider_host.execution.runtime import (
 )
 
 if TYPE_CHECKING:
+    from hermit.kernel.context.injection.provider_input import ProviderInputCompiler
+    from hermit.kernel.context.models.context import CompiledProviderInput, TaskExecutionContext
+    from hermit.kernel.ledger.journal.store import KernelStore
     from hermit.runtime.capability.registry.manager import PluginManager
+    from hermit.runtime.control.lifecycle.session import Session
     from hermit.runtime.control.runner.message_compiler import MessageCompiler
 
 from hermit.runtime.control.runner.utils import (
@@ -234,7 +238,7 @@ class AgentRunner:
     # Delegation to extracted modules (lazy imports to avoid circular deps)
     # ------------------------------------------------------------------
 
-    def _get_store(self):
+    def _get_store(self) -> KernelStore | None:
         """Retrieve the kernel store from the task controller, or None."""
         return getattr(self.task_controller, "store", None)
 
@@ -251,7 +255,9 @@ class AgentRunner:
             artifact_store=getattr(self.agent, "artifact_store", None),
         )
 
-    def _prepare_prompt_context(self, session_id, text, *, source_channel):
+    def _prepare_prompt_context(
+        self, session_id: str, text: str, *, source_channel: str
+    ) -> tuple[Session, str, dict[str, object], str]:
         return self._make_compiler().prepare_prompt_context(
             session_id,
             text,
@@ -260,10 +266,17 @@ class AgentRunner:
             ensure_session_started=self._ensure_session_started,
         )
 
-    def _provider_input_compiler(self):
+    def _provider_input_compiler(self) -> ProviderInputCompiler:
         return self._make_compiler().provider_input_compiler()
 
-    def _compile_provider_input(self, *, task_ctx, prompt, raw_text, session_messages=None):
+    def _compile_provider_input(
+        self,
+        *,
+        task_ctx: TaskExecutionContext,
+        prompt: str,
+        raw_text: str,
+        session_messages: list[dict[str, object]] | None = None,
+    ) -> CompiledProviderInput:
         return self._make_compiler().compile_provider_input(
             task_ctx=task_ctx,
             prompt=prompt,
@@ -271,7 +284,9 @@ class AgentRunner:
             session_messages=session_messages,
         )
 
-    def _append_note_context(self, session_id, task_id, source_channel):
+    def _append_note_context(
+        self, session_id: str, task_id: str, source_channel: str
+    ) -> TaskExecutionContext:
         return self._make_compiler().append_note_context(session_id, task_id, source_channel)
 
     def _run_existing_task(self, task_ctx, prompt, **kwargs):

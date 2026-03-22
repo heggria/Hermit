@@ -19,6 +19,16 @@ POLICY_STRICTNESS: dict[str, int] = {
     "autonomous": 0,
 }
 
+# Verdict restrictiveness: higher = more restrictive.
+_VERDICT_PRIORITY: dict[str, int] = {
+    "allow": 0,
+    "allow_with_receipt": 1,
+    "preview_required": 2,
+    "approval_required": 3,
+    "require_approval": 3,
+    "deny": 4,
+}
+
 
 @dataclass
 class RuleOutcome:
@@ -95,16 +105,6 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
         evaluate_attachment_rules,
         evaluate_governance_rules,
     ]
-
-    # Verdict restrictiveness: higher = more restrictive.
-    _VERDICT_PRIORITY: dict[str, int] = {
-        "allow": 0,
-        "allow_with_receipt": 1,
-        "preview_required": 2,
-        "approval_required": 3,
-        "require_approval": 3,
-        "deny": 4,
-    }
 
     # Collect results from ALL evaluators so a later deny is never skipped.
     all_outcomes: list[RuleOutcome] = []

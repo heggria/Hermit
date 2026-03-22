@@ -59,8 +59,13 @@ class CodebaseStrategy:
                 if relative in seen_paths:
                     continue
 
-                # Check if filename/path matches any keyword
                 path_lower = relative.lower()
+
+                # Skip non-source paths (build artifacts, vendor, caches, etc.)
+                if _is_excluded_path(path_lower):
+                    continue
+
+                # Check if filename/path matches any keyword
                 relevance = _score_path(path_lower, keywords)
                 if relevance < 0.1:
                     continue
@@ -305,6 +310,22 @@ def _extract_keywords(goal: str, hints: list[str]) -> list[str]:
             "those",
             "it",
             "its",
+            # Common action verbs (not useful as file-path keywords)
+            "implement",
+            "add",
+            "create",
+            "modify",
+            "update",
+            "fix",
+            "refactor",
+            "remove",
+            "delete",
+            "run",
+            "check",
+            "make",
+            "test",
+            "ensure",
+            "verify",
         }
     )
     words: list[str] = []
@@ -321,6 +342,17 @@ def _extract_keywords(goal: str, hints: list[str]) -> list[str]:
             seen.add(w)
             unique.append(w)
     return unique[:10]
+
+
+_EXCLUDED_PREFIXES = ("site/", "node_modules/", ".venv/", "dist/", "build/", ".uv-cache/")
+_EXCLUDED_CONTAINS = ("assets/", "vendor/", "/static/", "__pycache__")
+
+
+def _is_excluded_path(path_lower: str) -> bool:
+    """Return True if path falls under a non-source directory."""
+    if any(path_lower.startswith(p) for p in _EXCLUDED_PREFIXES):
+        return True
+    return any(seg in path_lower for seg in _EXCLUDED_CONTAINS)
 
 
 def _score_path(path_lower: str, keywords: list[str]) -> float:

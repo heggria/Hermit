@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -12,81 +11,30 @@ from hermit.kernel.execution.coordination.observation import (
     normalize_observation_progress,
     normalize_observation_ticket,
 )
+from hermit.kernel.execution.executor.formatting import (
+    compact_progress_text as _compact_progress_text,
+)
+from hermit.kernel.execution.executor.formatting import (
+    format_model_content as _format_model_content,
+)
+from hermit.kernel.execution.executor.formatting import (
+    progress_signature as _progress_signature,
+)
+from hermit.kernel.execution.executor.formatting import (
+    progress_summary_signature as _progress_summary_signature,
+)
 from hermit.kernel.execution.executor.snapshot import RuntimeSnapshotManager
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import ActionRequest, PolicyDecision
 from hermit.kernel.task.projections.progress_summary import (
     ProgressSummaryFormatter,
-    normalize_progress_summary,
 )
-from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec, serialize_tool_result
+from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec
 
 if TYPE_CHECKING:
     from hermit.kernel.execution.executor.executor import ToolExecutionResult
 
-_BLOCK_TYPES = {"text", "image"}
 _RUNTIME_SNAPSHOT_KEY = "runtime_snapshot"
-
-
-# ---------------------------------------------------------------------------
-# Pure formatting helpers (will move to formatting.py in A1.14)
-# ---------------------------------------------------------------------------
-
-
-def _truncate_middle(text: str, limit: int) -> str:
-    if limit <= 0 or len(text) <= limit:
-        return text
-    if limit <= 32:
-        return text[:limit]
-    head = max(1, limit // 2 - 8)
-    tail = max(1, limit - head - len("\n...\n"))
-    return f"{text[:head]}\n...\n{text[-tail:]}"
-
-
-def _format_model_content(value: Any, limit: int) -> Any:
-    serialized: Any = serialize_tool_result(value)
-    if isinstance(serialized, str):
-        return _truncate_middle(serialized, limit)
-    if (
-        isinstance(serialized, dict)
-        and cast(dict[str, Any], serialized).get("type") in _BLOCK_TYPES
-    ):
-        return cast(list[Any], [serialized])
-    if isinstance(serialized, list) and all(
-        isinstance(item, dict) and cast(dict[str, Any], item).get("type") in _BLOCK_TYPES
-        for item in cast(list[Any], serialized)
-    ):
-        return cast(list[Any], serialized)
-    text = json.dumps(serialized, ensure_ascii=True, indent=2, sort_keys=True)
-    return _truncate_middle(text, limit)
-
-
-def _progress_signature(
-    value: dict[str, Any] | None,
-) -> tuple[str, str, str | None, int | None, bool] | None:
-    progress = normalize_observation_progress(value)
-    if progress is None:
-        return None
-    return progress.signature()
-
-
-def _progress_summary_signature(
-    value: dict[str, Any] | None,
-) -> tuple[str, str | None, str | None, int | None] | None:
-    summary = normalize_progress_summary(value)
-    if summary is None:
-        return None
-    return summary.signature()
-
-
-def _compact_progress_text(value: Any, *, limit: int = 240) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1].rstrip() + "\u2026"
 
 
 def _is_governed_action(tool: ToolSpec, policy: PolicyDecision) -> bool:

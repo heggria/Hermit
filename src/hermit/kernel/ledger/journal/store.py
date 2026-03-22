@@ -312,6 +312,14 @@ class KernelStore(
         row = self._row("SELECT value FROM kernel_meta WHERE key = 'schema_version'")
         return str(row["value"]) if row is not None else ""
 
+    def get_schema_version(self) -> str:
+        """Return the current schema version string.
+
+        Public alias for :meth:`schema_version` following the get_* naming
+        convention used elsewhere in the kernel API.
+        """
+        return self.schema_version()
+
     def _existing_tables(self) -> set[str]:
         cursor = self._get_conn().execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"

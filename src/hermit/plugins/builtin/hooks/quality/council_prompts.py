@@ -13,23 +13,7 @@ Placeholders in every template:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-# ---------------------------------------------------------------------------
-# ReviewPerspective — inline definition to avoid circular imports.
-# When quality/models.py gains a canonical ReviewPerspective, swap this for
-# an import:  from hermit.plugins.builtin.hooks.quality.models import ReviewPerspective
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ReviewPerspective:
-    """A named review perspective with its system prompt template."""
-
-    name: str
-    slug: str
-    prompt_template: str
-
+from hermit.plugins.builtin.hooks.quality.models import ReviewPerspective
 
 # ---------------------------------------------------------------------------
 # JSON schema for reviewer output
@@ -401,28 +385,38 @@ from the project structure.
 
 DEFAULT_PERSPECTIVES: tuple[ReviewPerspective, ...] = (
     ReviewPerspective(
-        name="Security Reviewer",
-        slug="security",
-        prompt_template=SECURITY_REVIEWER_PROMPT,
+        role="security",
+        system_prompt_template=SECURITY_REVIEWER_PROMPT,
+        severity_weight=1.0,
+        required=True,
+        timeout_seconds=120.0,
     ),
     ReviewPerspective(
-        name="Logic Reviewer",
-        slug="logic",
-        prompt_template=LOGIC_REVIEWER_PROMPT,
+        role="logic",
+        system_prompt_template=LOGIC_REVIEWER_PROMPT,
+        severity_weight=1.0,
+        required=True,
+        timeout_seconds=120.0,
     ),
     ReviewPerspective(
-        name="Architecture Reviewer",
-        slug="architecture",
-        prompt_template=ARCHITECTURE_REVIEWER_PROMPT,
+        role="architecture",
+        system_prompt_template=ARCHITECTURE_REVIEWER_PROMPT,
+        severity_weight=0.8,
+        required=False,
+        timeout_seconds=120.0,
     ),
     ReviewPerspective(
-        name="Test Reviewer",
-        slug="test",
-        prompt_template=TEST_REVIEWER_PROMPT,
+        role="test",
+        system_prompt_template=TEST_REVIEWER_PROMPT,
+        severity_weight=0.9,
+        required=True,
+        timeout_seconds=120.0,
     ),
     ReviewPerspective(
-        name="Regression Reviewer",
-        slug="regression",
-        prompt_template=REGRESSION_REVIEWER_PROMPT,
+        role="regression",
+        system_prompt_template=REGRESSION_REVIEWER_PROMPT,
+        severity_weight=0.9,
+        required=False,
+        timeout_seconds=120.0,
     ),
 )

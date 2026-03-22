@@ -39,8 +39,7 @@ class TrustScorer:
         If *task_id* is supplied the score is scoped to that task; otherwise it
         spans all tasks in the store.
         """
-        receipts = self._store.list_receipts(task_id=task_id, limit=limit)
-        relevant = [r for r in receipts if r.action_type == action_class]
+        relevant = self._store.list_receipts(task_id=task_id, action_type=action_class, limit=limit)
 
         if len(relevant) < _MIN_EXECUTIONS:
             return None

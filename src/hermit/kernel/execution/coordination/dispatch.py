@@ -7,6 +7,9 @@ from typing import Any
 
 import structlog
 
+from hermit.kernel.task.state.outcomes import TERMINAL_TASK_STATUSES
+from hermit.runtime.capability.contracts.base import HookEvent
+
 log = structlog.get_logger()
 
 _POLL_INTERVAL_SECONDS = 0.5
@@ -140,6 +143,11 @@ class KernelDispatchService:
                                 "result_text": "heartbeat_timeout",
                             },
                         )
+                        self._emit_subtask_complete_for_task(
+                            attempt.task_id,
+                            success=False,
+                            error="heartbeat_timeout",
+                        )
 
     def _resolve_handler(self, step_attempt_id: str) -> Any:
         """Return the handler for the given step attempt based on step kind."""
@@ -207,6 +215,9 @@ class KernelDispatchService:
         Called when ``process_claimed_attempt`` itself raises an unhandled
         exception.  Without this, the step remains in an intermediate status
         and downstream DAG steps hang indefinitely.
+
+        Also emits ``SUBTASK_COMPLETE`` when the failure causes the parent
+        task to reach a terminal state.
         """
         if not step_attempt_id:
             return
@@ -225,7 +236,8 @@ class KernelDispatchService:
                 )
                 store.update_step(attempt.step_id, status="failed", finished_at=now)
             store.propagate_step_failure(attempt.task_id, attempt.step_id)
-            if not store.has_non_terminal_steps(attempt.task_id):
+            task_terminal = not store.has_non_terminal_steps(attempt.task_id)
+            if task_terminal:
                 store.update_task_status(
                     attempt.task_id,
                     "failed",
@@ -235,6 +247,12 @@ class KernelDispatchService:
                     },
                 )
             self._wake.set()
+            if task_terminal:
+                self._emit_subtask_complete_for_task(
+                    attempt.task_id,
+                    success=False,
+                    error="worker_exception",
+                )
         except Exception:
             log.exception(
                 "kernel_dispatch_force_fail_failed",
@@ -242,15 +260,89 @@ class KernelDispatchService:
             )
 
     def _on_attempt_completed(self, step_attempt_id: str) -> None:
-        """Wake the dispatch loop after a step completes.
+        """Wake the dispatch loop after a step completes and emit
+        ``SUBTASK_COMPLETE`` when the parent task reaches a terminal state.
 
         DAG activation (activate_waiting_dependents / propagate_step_failure) is
         handled by ``controller.finalize_result()`` which is called inside
-        ``process_claimed_attempt``.  This method only needs to wake the dispatch
-        loop so that newly-ready steps get claimed promptly.
+        ``process_claimed_attempt``.  This method wakes the dispatch loop so
+        that newly-ready steps get claimed promptly and fires the hook so that
+        metaloop, benchmark, and other consumers are notified.
         """
-        if step_attempt_id:
-            self._wake.set()
+        if not step_attempt_id:
+            return
+        self._wake.set()
+        self._maybe_emit_subtask_complete(step_attempt_id)
+
+    def _maybe_emit_subtask_complete(self, step_attempt_id: str) -> None:
+        """Check whether the parent task has reached a terminal state and
+        fire ``SUBTASK_COMPLETE`` if so.
+
+        This is the central emission point for the hook.  Both the normal
+        completion path (``_on_attempt_completed``) and the failure path
+        (``_force_fail_attempt``) funnel through here.
+        """
+        try:
+            store = self._runner.task_controller.store
+            attempt = store.get_step_attempt(step_attempt_id)
+            if attempt is None:
+                return
+            task = store.get_task(attempt.task_id)
+            if task is None:
+                return
+            if task.status not in TERMINAL_TASK_STATUSES:
+                return
+            success = task.status in ("completed", "succeeded")
+            error = None if success else (task.status or "failed")
+            self._emit_subtask_complete_for_task(attempt.task_id, success=success, error=error)
+        except Exception:
+            log.warning(
+                "subtask_complete_emit_failed",
+                step_attempt_id=step_attempt_id,
+                exc_info=True,
+            )
+
+    def _emit_subtask_complete_for_task(
+        self,
+        task_id: str,
+        *,
+        success: bool,
+        error: str | None = None,
+    ) -> None:
+        """Fire the ``SUBTASK_COMPLETE`` hook for a task that has reached
+        a terminal state.
+
+        Passes ``task_id``, ``success``, ``error``, ``store``, ``status``,
+        and ``settings`` so that all registered consumers (metaloop,
+        benchmark, etc.) receive the parameters they expect.
+        """
+        try:
+            pm = getattr(self._runner, "pm", None)
+            if pm is None:
+                return
+            store = self._runner.task_controller.store
+            status = "succeeded" if success else (error or "failed")
+            settings = getattr(pm, "settings", None)
+            pm.hooks.fire(
+                HookEvent.SUBTASK_COMPLETE,
+                task_id=task_id,
+                success=success,
+                error=error,
+                store=store,
+                status=status,
+                settings=settings,
+            )
+            log.debug(
+                "subtask_complete_emitted",
+                task_id=task_id,
+                success=success,
+            )
+        except Exception:
+            log.warning(
+                "subtask_complete_fire_failed",
+                task_id=task_id,
+                exc_info=True,
+            )
 
     def _check_deliberation_needed(self, step_attempt_id: str) -> bool:
         """Check if a step attempt requires deliberation before dispatch.

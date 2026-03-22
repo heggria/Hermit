@@ -5,7 +5,11 @@ import time
 from dataclasses import dataclass
 from typing import Any, cast
 
+import structlog
+
 from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, get_runtime_budget
+
+_log = structlog.get_logger()
 
 _OBSERVATION_ENVELOPE_KEY = "_hermit_observation"
 
@@ -338,6 +342,7 @@ class ObservationService:
             try:
                 self._tick()
             except Exception:
+                _log.warning("observation_service.tick_error", exc_info=True)
                 continue
 
     def _tick(self) -> None:

@@ -10,14 +10,24 @@ from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.coordination.observation import (
     ObservationTicket,
 )
+from hermit.kernel.execution.executor.formatting import (
+    compact_progress_text as _compact_progress_text,
+)
+from hermit.kernel.execution.executor.formatting import (
+    format_model_content as _format_model_content,
+)
+from hermit.kernel.execution.executor.formatting import (
+    progress_signature as _progress_signature,
+)
+from hermit.kernel.execution.executor.formatting import (
+    progress_summary_signature as _progress_summary_signature,
+)
+from hermit.kernel.execution.executor.formatting import (
+    truncate_middle as _truncate_middle,
+)
 from hermit.kernel.execution.executor.observation_handler import (
     ObservationHandler,
-    _compact_progress_text,
-    _format_model_content,
     _is_governed_action,
-    _progress_signature,
-    _progress_summary_signature,
-    _truncate_middle,
 )
 from hermit.kernel.policy.models.models import PolicyDecision, PolicyObligations
 from hermit.runtime.capability.registry.tools import ToolSpec

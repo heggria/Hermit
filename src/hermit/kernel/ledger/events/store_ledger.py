@@ -1848,14 +1848,21 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         row = self._row("SELECT * FROM receipts WHERE receipt_id = ?", (receipt_id,))
         return self._receipt_from_row(row) if row is not None else None
 
-    def list_receipts(self, *, task_id: str | None = None, limit: int = 50) -> list[ReceiptRecord]:
+    def list_receipts(
+        self, *, task_id: str | None = None, action_type: str | None = None, limit: int = 50
+    ) -> list[ReceiptRecord]:
+        clauses: list[str] = []
+        params_list: list[Any] = []
         if task_id:
-            query = "SELECT * FROM receipts WHERE task_id = ? ORDER BY created_at DESC LIMIT ?"
-            params: tuple[Any, ...] = (task_id, limit)
-        else:
-            query = "SELECT * FROM receipts ORDER BY created_at DESC LIMIT ?"
-            params = (limit,)
-        rows = self._rows(query, params)
+            clauses.append("task_id = ?")
+            params_list.append(task_id)
+        if action_type:
+            clauses.append("action_type = ?")
+            params_list.append(action_type)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        query = f"SELECT * FROM receipts {where} ORDER BY created_at DESC LIMIT ?"
+        params_list.append(limit)
+        rows = self._rows(query, tuple(params_list))
         return [self._receipt_from_row(row) for row in rows]
 
     def list_receipts_for_step(self, *, step_id: str, limit: int = 50) -> list[ReceiptRecord]:
