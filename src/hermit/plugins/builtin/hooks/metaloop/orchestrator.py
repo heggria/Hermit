@@ -229,9 +229,15 @@ class MetaLoopOrchestrator:
         lint_violations = 0
 
         # Count typecheck errors (pyright)
+        # Use .venv/bin/pyright directly since `uv run pyright` may not find
+        # the dev dependency when running from the uv tool environment.
         try:
+            from pathlib import Path as _Path
+
+            pyright_bin = _Path(workspace) / ".venv" / "bin" / "pyright"
+            pyright_cmd = str(pyright_bin) if pyright_bin.is_file() else "uv run pyright"
             proc = subprocess.run(
-                "uv run pyright 2>&1 | tail -3",
+                f"{pyright_cmd} 2>&1 | tail -3",
                 cwd=workspace,
                 capture_output=True,
                 text=True,
