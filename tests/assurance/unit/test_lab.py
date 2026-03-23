@@ -617,11 +617,8 @@ class TestReplayTask:
         lab = _make_lab()
         envelopes = make_governed_trace(num_steps=1, run_id="run-1")
 
-        # Set up recorder to return envelopes for the task
-        lab.recorder._traces = {"run-1": envelopes}
-        lab.recorder.get_trace.return_value = envelopes
-
-        from hermit.kernel.verification.assurance.models import ReplayResult
+        # Set up recorder to return envelopes via public API
+        lab.recorder.load_task_trace.return_value = envelopes
 
         mock_entry = ReplayEntry(
             entry_id="entry-1",
@@ -629,12 +626,8 @@ class TestReplayTask:
             run_id="run-1",
         )
         lab.replay_service.ingest.return_value = mock_entry
-        lab.replay_service.replay_with_assurance.return_value = ReplayResult(
-            replay_id="rpl-1",
-            entry_id="entry-1",
-            contract_violations=[],
-            diff_summary={"same": len(envelopes)},
-        )
+        lab.invariant_engine.check.return_value = []
+        lab.contract_engine.evaluate_post_run.return_value = []
 
         report = lab.replay_task("task-test")
 
@@ -644,7 +637,7 @@ class TestReplayTask:
 
     def test_replay_task_returns_none_for_unknown(self) -> None:
         lab = _make_lab()
-        lab.recorder._traces = {}
+        lab.recorder.load_task_trace.return_value = []
 
         report = lab.replay_task("nonexistent-task")
 
@@ -652,8 +645,7 @@ class TestReplayTask:
 
     def test_replay_task_returns_none_for_empty_trace(self) -> None:
         lab = _make_lab()
-        lab.recorder._traces = {"run-1": []}
-        lab.recorder.get_trace.return_value = []
+        lab.recorder.load_task_trace.return_value = []
 
         report = lab.replay_task("task-test")
 

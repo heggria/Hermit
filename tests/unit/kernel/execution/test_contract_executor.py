@@ -453,7 +453,7 @@ class TestAdmissibilityResolution:
 
 
 class TestSetAttemptPhase:
-    """Tests for the internal _set_attempt_phase helper."""
+    """Tests for the set_attempt_phase helper."""
 
     def test_phase_change_emits_event(self) -> None:
         executor, deps = _make_executor()
@@ -461,7 +461,7 @@ class TestSetAttemptPhase:
         deps["store"].get_step_attempt.return_value = attempt
         ctx = _make_attempt_ctx()
 
-        executor._set_attempt_phase(ctx, "contracting", reason="test_reason")
+        executor.set_attempt_phase(ctx, "contracting", reason="test_reason")
 
         deps["store"].append_event.assert_called_once()
         event_kwargs = deps["store"].append_event.call_args[1]
@@ -475,7 +475,7 @@ class TestSetAttemptPhase:
         deps["store"].get_step_attempt.return_value = attempt
         ctx = _make_attempt_ctx()
 
-        executor._set_attempt_phase(ctx, "contracting")
+        executor.set_attempt_phase(ctx, "contracting")
 
         deps["store"].append_event.assert_not_called()
         # Only the get_step_attempt call should have happened, no update
@@ -486,7 +486,7 @@ class TestSetAttemptPhase:
         deps["store"].get_step_attempt.return_value = None
         ctx = _make_attempt_ctx()
 
-        executor._set_attempt_phase(ctx, "contracting")
+        executor.set_attempt_phase(ctx, "contracting")
 
         deps["store"].append_event.assert_not_called()
 
@@ -496,7 +496,7 @@ class TestSetAttemptPhase:
         deps["store"].get_step_attempt.return_value = attempt
         ctx = _make_attempt_ctx()
 
-        executor._set_attempt_phase(ctx, "contracting")
+        executor.set_attempt_phase(ctx, "contracting")
 
         payload = deps["store"].append_event.call_args[1]["payload"]
         assert payload["previous_phase"] == "evaluating"

@@ -84,7 +84,7 @@ class _PluginManager:
         self.hooks = HooksEngine()
         self.post_run_results: list[str] = []
 
-    def on_session_start(self, session_id: str) -> None:
+    def on_session_start(self, session_id: str, *, runner: object = None) -> None:
         pass
 
     def on_session_end(self, session_id: str, _messages: list[dict[str, Any]]) -> None:

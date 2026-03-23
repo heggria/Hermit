@@ -627,7 +627,7 @@ class TestEdgeCases:
 
 
 class TestDispatchDeliberationGating:
-    """Verify that KernelDispatchService._check_deliberation_needed correctly
+    """Verify that KernelDispatchService.check_deliberation_needed correctly
     gates high-risk steps and bypasses low-risk steps at the dispatch layer.
 
     Uses a real KernelStore with real tasks/steps/attempts to exercise the
@@ -692,7 +692,7 @@ class TestDispatchDeliberationGating:
             risk_band="high",
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
 
         assert result is True
 
@@ -735,7 +735,7 @@ class TestDispatchDeliberationGating:
             risk_band="critical",
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is True
 
         updated_attempt = store.get_step_attempt(step_attempt_id)
@@ -759,7 +759,7 @@ class TestDispatchDeliberationGating:
             risk_band="low",
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is False
 
         # Verify attempt status was NOT changed
@@ -784,7 +784,7 @@ class TestDispatchDeliberationGating:
             risk_band="medium",
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is True
 
         updated_attempt = store.get_step_attempt(step_attempt_id)
@@ -808,7 +808,7 @@ class TestDispatchDeliberationGating:
             risk_band="medium",
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is False
 
         updated_attempt = store.get_step_attempt(step_attempt_id)
@@ -845,5 +845,5 @@ class TestDispatchDeliberationGating:
             context={},
         )
 
-        result = dispatch._check_deliberation_needed(attempt.step_attempt_id)
+        result = dispatch.check_deliberation_needed(attempt.step_attempt_id)
         assert result is False

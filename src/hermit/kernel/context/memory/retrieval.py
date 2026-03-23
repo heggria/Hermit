@@ -26,6 +26,7 @@ log = structlog.get_logger()
 _RRF_K = 60  # RRF constant
 _DEEP_QUERY_THRESHOLD = 50  # chars: above this -> deep path
 _DEFAULT_LIMIT = 10
+_BOOKKEEPING_KINDS = frozenset({"episode_index", "influence_link"})
 
 
 @dataclass
@@ -47,6 +48,7 @@ class RetrievalReport:
     total_candidates: int
     results: list[RetrievalResult] = field(default_factory=lambda: list[RetrievalResult]())
     retrieval_time_ms: float = 0.0
+    reranked: bool = False
 
 
 class HybridRetrievalService:
@@ -104,6 +106,15 @@ class HybridRetrievalService:
         start = time.monotonic()
         use_deep = force_deep or len(query) > _DEEP_QUERY_THRESHOLD
         mode = "deep" if use_deep else "fast"
+
+        if not memories:
+            return RetrievalReport(query=query, mode=mode, total_candidates=0)
+
+        # Filter out bookkeeping memory kinds that should not appear in retrieval
+        memories = [
+            m for m in memories
+            if getattr(m, "memory_kind", None) not in _BOOKKEEPING_KINDS
+        ]
 
         if not memories:
             return RetrievalReport(query=query, mode=mode, total_candidates=0)
@@ -174,6 +185,7 @@ class HybridRetrievalService:
             total_candidates=len(memories),
             results=results,
             retrieval_time_ms=round(elapsed, 2),
+            reranked=reranked,
         )
         log.debug(
             "hybrid_retrieval",

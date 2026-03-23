@@ -111,8 +111,8 @@ class TestFullDeliberationFlow:
         decision = svc.run_full_deliberation(
             task_id="task_001",
             step_id="step_001",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
             context={"goal": "refactor auth"},
         )
 
@@ -148,8 +148,8 @@ class TestFullDeliberationFlow:
         decision = svc.run_full_deliberation(
             task_id="t1",
             step_id="s1",
-            risk_band="low",
-            step_kind="read_local",
+            risk_level="low",
+            action_class="read_local",
             context={},
         )
 
@@ -172,8 +172,8 @@ class TestFullDeliberationFlow:
         route = svc.evaluate_and_route(
             task_id="t2",
             step_id="s2",
-            risk_band="critical",
-            step_kind="external_mutation",
+            risk_level="critical",
+            action_class="external_mutation",
         )
         assert route["deliberation_required"] is True
         debate_id = route["debate_id"]
@@ -223,8 +223,8 @@ class TestFullDeliberationFlow:
         svc.run_full_deliberation(
             task_id="t3",
             step_id="s3",
-            risk_band="high",
-            step_kind="patch_file",
+            risk_level="high",
+            action_class="patch_file",
             context={"file": "auth.py"},
         )
 
@@ -254,8 +254,8 @@ class TestFullDeliberationFlow:
         svc.run_full_deliberation(
             task_id="t4",
             step_id="s4",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
             context={},
         )
 

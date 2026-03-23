@@ -128,17 +128,17 @@ def _build_service(store: FakeDispatchStore, worker_count: int = 2) -> KernelDis
 
 
 # ---------------------------------------------------------------------------
-# Tests: _check_deliberation_needed
+# Tests: check_deliberation_needed
 # ---------------------------------------------------------------------------
 
 
 class TestCheckDeliberationNeeded:
-    """Edge cases for _check_deliberation_needed."""
+    """Edge cases for check_deliberation_needed."""
 
     def test_missing_attempt_returns_false(self) -> None:
         store = FakeDispatchStore()
         svc = _build_service(store)
-        assert svc._check_deliberation_needed("nonexistent") is False
+        assert svc.check_deliberation_needed("nonexistent") is False
 
     def test_missing_context_defaults_low_risk(self) -> None:
         """When context has no risk_band, default is 'low' which should not trigger."""
@@ -149,7 +149,7 @@ class TestCheckDeliberationNeeded:
         store.add_step(step)
         svc = _build_service(store)
         # low risk + execute kind → no deliberation
-        assert svc._check_deliberation_needed("sa-1") is False
+        assert svc.check_deliberation_needed("sa-1") is False
 
     def test_high_risk_triggers_deliberation(self) -> None:
         store = FakeDispatchStore()
@@ -158,7 +158,7 @@ class TestCheckDeliberationNeeded:
         store.add_attempt(attempt)
         store.add_step(step)
         svc = _build_service(store)
-        assert svc._check_deliberation_needed("sa-2") is True
+        assert svc.check_deliberation_needed("sa-2") is True
 
     def test_missing_step_defaults_to_execute_kind(self) -> None:
         """When step is not found, step_kind defaults to 'execute' which is not
@@ -172,7 +172,7 @@ class TestCheckDeliberationNeeded:
         # No step added — get_step returns None, defaults to "execute"
         svc = _build_service(store)
         # medium risk + "execute" (not a recognized action_class) → no deliberation
-        assert svc._check_deliberation_needed("sa-3") is False
+        assert svc.check_deliberation_needed("sa-3") is False
 
     def test_medium_risk_with_mutation_action_triggers(self) -> None:
         store = FakeDispatchStore()
@@ -181,7 +181,7 @@ class TestCheckDeliberationNeeded:
         store.add_attempt(attempt)
         store.add_step(step)
         svc = _build_service(store)
-        assert svc._check_deliberation_needed("sa-4") is True
+        assert svc.check_deliberation_needed("sa-4") is True
 
 
 # ---------------------------------------------------------------------------

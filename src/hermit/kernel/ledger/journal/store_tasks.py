@@ -282,14 +282,20 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return [self._task_from_row(row) for row in rows]
 
     def list_child_tasks(
-        self, *, parent_task_id: str, limit: int = 50
+        self, *, parent_task_id: str, limit: int | None = None
     ) -> list[TaskRecord]:
         """Return tasks whose parent_task_id matches the given value."""
         with self._lock:
-            rows = self._rows(
-                "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT ?",
-                (parent_task_id, limit),
-            )
+            if limit is not None:
+                rows = self._rows(
+                    "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (parent_task_id, limit),
+                )
+            else:
+                rows = self._rows(
+                    "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC",
+                    (parent_task_id,),
+                )
         return [self._task_from_row(row) for row in rows]
 
     def update_task_status(
@@ -311,6 +317,30 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 payload={"status": status, **(payload or {})},
             )
 
+    def update_task_budget(
+        self,
+        task_id: str,
+        *,
+        budget_tokens_used: int | None = None,
+        budget_tokens_limit: int | None = None,
+    ) -> None:
+        """Update budget tracking fields on a task."""
+        now = time.time()
+        sets: list[str] = ["updated_at = ?"]
+        params: list[Any] = [now]
+        if budget_tokens_used is not None:
+            sets.append("budget_tokens_used = ?")
+            params.append(budget_tokens_used)
+        if budget_tokens_limit is not None:
+            sets.append("budget_tokens_limit = ?")
+            params.append(budget_tokens_limit)
+        params.append(task_id)
+        with self._lock, self._conn:
+            self._conn.execute(
+                f"UPDATE tasks SET {', '.join(sets)} WHERE task_id = ?",
+                params,
+            )
+
     def get_last_task_for_conversation(self, conversation_id: str) -> TaskRecord | None:
         with self._lock:
             row = self._row(
@@ -329,17 +359,29 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         contract_ref: str | None = None,
         depends_on: list[str] | None = None,
         max_attempts: int = 1,
+        join_strategy: str | None = None,
+        input_bindings: dict[str, str] | None = None,
+        node_key: str | None = None,
+        verification_required: bool = False,
+        verifies: list[str] | None = None,
+        supersedes: list[str] | None = None,
     ) -> StepRecord:
         now = time.time()
         step_id = self._id("step")
+        resolved_join_strategy = join_strategy or "all_required"
+        resolved_input_bindings = dict(input_bindings or {})
+        resolved_verifies = list(verifies or [])
+        resolved_supersedes = list(supersedes or [])
         with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO steps (
                     step_id, task_id, kind, status, attempt, title, contract_ref,
-                    depends_on_json, max_attempts, started_at, created_at, updated_at
+                    depends_on_json, max_attempts, join_strategy, input_bindings_json,
+                    node_key, verification_required, verifies_json, supersedes_json,
+                    started_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
@@ -350,6 +392,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     contract_ref,
                     json.dumps(list(depends_on or []), ensure_ascii=False),
                     max(int(max_attempts or 1), 1),
+                    resolved_join_strategy,
+                    json.dumps(resolved_input_bindings, ensure_ascii=False),
+                    node_key,
+                    1 if verification_required else 0,
+                    json.dumps(resolved_verifies, ensure_ascii=False),
+                    json.dumps(resolved_supersedes, ensure_ascii=False),
                     now,
                     now,
                     now,
@@ -372,6 +420,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     "contract_ref": contract_ref,
                     "depends_on": list(depends_on or []),
                     "max_attempts": max(int(max_attempts or 1), 1),
+                    "join_strategy": resolved_join_strategy,
+                    "input_bindings": resolved_input_bindings,
+                    "node_key": node_key,
+                    "verification_required": verification_required,
+                    "verifies": resolved_verifies,
+                    "supersedes": resolved_supersedes,
                     "input_ref": None,
                     "output_ref": None,
                     "started_at": now,
@@ -387,6 +441,19 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
     def get_step(self, step_id: str) -> StepRecord | None:
         with self._lock:
             row = self._row("SELECT * FROM steps WHERE step_id = ?", (step_id,))
+        return self._step_from_row(row) if row is not None else None
+
+    def get_step_by_node_key(self, task_id: str, node_key: str) -> StepRecord | None:
+        """Look up a step by its ``node_key`` within a task.
+
+        Returns the matching :class:`StepRecord`, or ``None`` if no step has
+        that ``node_key`` in the given task.
+        """
+        with self._lock:
+            row = self._row(
+                "SELECT * FROM steps WHERE task_id = ? AND node_key = ? LIMIT 1",
+                (task_id, node_key),
+            )
         return self._step_from_row(row) if row is not None else None
 
     def update_step(
@@ -1022,6 +1089,213 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 },
             )
 
+    def list_stale_tasks(
+        self, threshold_seconds: float, limit: int = 50
+    ) -> list[TaskRecord]:
+        """Return tasks that have been idle longer than *threshold_seconds*.
+
+        Only considers tasks in active (non-terminal) statuses.
+        """
+        cutoff = time.time() - threshold_seconds
+        with self._lock:
+            rows = self._rows(
+                """
+                SELECT * FROM tasks
+                WHERE status IN ('running', 'blocked', 'queued', 'planning_ready', 'reconciling')
+                  AND updated_at < ?
+                ORDER BY updated_at ASC
+                LIMIT ?
+                """,
+                (cutoff, limit),
+            )
+        return [self._task_from_row(row) for row in rows]
+
+    def count_tasks_by_status(self) -> dict[str, int]:
+        """Return a mapping of task status to count across all tasks."""
+        with self._lock:
+            rows = self._rows(
+                "SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status"
+            )
+        return {str(row["status"]): int(row["cnt"]) for row in rows}
+
+    def count_completed_in_window(self, window_seconds: float) -> int:
+        """Count tasks that completed within the given look-back window."""
+        cutoff = time.time() - window_seconds
+        with self._lock:
+            row = self._row(
+                """
+                SELECT COUNT(*) AS cnt FROM tasks
+                WHERE status = 'completed' AND updated_at >= ?
+                """,
+                (cutoff,),
+            )
+        return int(row["cnt"]) if row is not None else 0
+
+    def list_recent_failures(
+        self, window_seconds: float, limit: int = 200
+    ) -> list[TaskRecord]:
+        """Return tasks that failed within the given look-back window."""
+        cutoff = time.time() - window_seconds
+        with self._lock:
+            rows = self._rows(
+                """
+                SELECT * FROM tasks
+                WHERE status = 'failed' AND updated_at >= ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (cutoff, limit),
+            )
+        return [self._task_from_row(row) for row in rows]
+
+    def list_active_tasks(self, *, limit: int = 200) -> list[TaskRecord]:
+        """Return tasks in active (non-terminal) states."""
+        with self._lock:
+            rows = self._rows(
+                """
+                SELECT * FROM tasks
+                WHERE status IN ('queued', 'running', 'blocked', 'planning_ready')
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        return [self._task_from_row(row) for row in rows]
+
+    def list_terminal_tasks_since(
+        self, *, since: float, limit: int = 200
+    ) -> list[TaskRecord]:
+        """Return tasks that reached a terminal state since the given timestamp."""
+        with self._lock:
+            rows = self._rows(
+                """
+                SELECT * FROM tasks
+                WHERE status IN ('completed', 'failed', 'cancelled')
+                  AND updated_at >= ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (since, limit),
+            )
+        return [self._task_from_row(row) for row in rows]
+
+    def has_active_task_with_goal(
+        self, goal: str, *, policy_profile: str | None = None
+    ) -> bool:
+        """Check if any active task contains the given goal substring.
+
+        Used by memory promotion hooks to prevent duplicate task creation.
+        """
+        if not goal:
+            return False
+        clauses = [
+            "status IN ('queued', 'running', 'blocked', 'planning_ready')",
+            "goal LIKE ?",
+        ]
+        params: list[Any] = [f"%{goal}%"]
+        if policy_profile is not None:
+            clauses.append("policy_profile = ?")
+            params.append(policy_profile)
+        where = " AND ".join(clauses)
+        with self._lock:
+            row = self._row(
+                f"SELECT COUNT(*) AS cnt FROM tasks WHERE {where}",
+                tuple(params),
+            )
+        return bool(row and int(row["cnt"]) > 0)
+
+    def batch_get_step_attempts(
+        self, step_attempt_ids: list[str]
+    ) -> dict[str, StepAttemptRecord]:
+        """Return a mapping of step_attempt_id -> StepAttemptRecord for the given ids."""
+        if not step_attempt_ids:
+            return {}
+        placeholders = ",".join("?" for _ in step_attempt_ids)
+        with self._lock:
+            rows = self._rows(
+                f"SELECT * FROM step_attempts WHERE step_attempt_id IN ({placeholders})",
+                tuple(step_attempt_ids),
+            )
+        return {
+            str(row["step_attempt_id"]): self._step_attempt_from_row(row) for row in rows
+        }
+
+    def list_events_for_tasks(
+        self,
+        task_ids: list[str],
+        *,
+        limit_per_task: int = 500,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return events grouped by task_id for multiple tasks."""
+        if not task_ids:
+            return {}
+        result: dict[str, list[dict[str, Any]]] = {}
+        for task_id in task_ids:
+            result[task_id] = self.list_events(task_id=task_id, limit=limit_per_task)
+        return result
+
+    def get_last_event_per_task(
+        self,
+        task_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Return the most recent event for each task_id."""
+        if not task_ids:
+            return {}
+        result: dict[str, dict[str, Any]] = {}
+        for task_id in task_ids:
+            events = self.list_events(task_id=task_id, limit=1)
+            if events:
+                result[task_id] = events[-1]
+        return result
+
+    def count_steps_by_status(self, task_id: str) -> dict[str, int]:
+        """Return a mapping of step status to count for a given task."""
+        with self._lock:
+            rows = self._rows(
+                "SELECT status, COUNT(*) AS cnt FROM steps WHERE task_id = ? GROUP BY status",
+                (task_id,),
+            )
+        return {str(row["status"]): int(row["cnt"]) for row in rows}
+
+    def list_steps(
+        self, *, task_id: str | None = None, limit: int = 200
+    ) -> list[StepRecord]:
+        """Return steps, optionally filtered by task_id."""
+        if task_id:
+            with self._lock:
+                rows = self._rows(
+                    "SELECT * FROM steps WHERE task_id = ? ORDER BY created_at ASC LIMIT ?",
+                    (task_id, limit),
+                )
+        else:
+            with self._lock:
+                rows = self._rows(
+                    "SELECT * FROM steps ORDER BY created_at ASC LIMIT ?",
+                    (limit,),
+                )
+        return [self._step_from_row(row) for row in rows]
+
+    def get_step_by_node_key(self, task_id: str, node_key: str) -> StepRecord | None:
+        """Return the step with the given node_key within a task, or None."""
+        with self._lock:
+            row = self._row(
+                "SELECT * FROM steps WHERE task_id = ? AND node_key = ? LIMIT 1",
+                (task_id, node_key),
+            )
+        return self._step_from_row(row) if row is not None else None
+
+    def get_key_to_step_id(self, task_id: str) -> dict[str, str]:
+        """Return a mapping of node_key -> step_id for all steps in a task.
+
+        Steps without a node_key are excluded from the mapping.
+        """
+        with self._lock:
+            rows = self._rows(
+                "SELECT step_id, node_key FROM steps WHERE task_id = ? AND node_key IS NOT NULL",
+                (task_id,),
+            )
+        return {str(row["node_key"]): str(row["step_id"]) for row in rows}
+
     def has_non_terminal_steps(self, task_id: str) -> bool:
         """Check if there are any non-terminal steps for a task."""
         row = self._row(
@@ -1035,7 +1309,9 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         )
         return bool(row and int(row["cnt"]) > 0)
 
-    _TERMINAL_ATTEMPT_STATUSES = frozenset({"succeeded", "failed", "cancelled", "superseded"})
+    _TERMINAL_ATTEMPT_STATUSES = frozenset({
+        "succeeded", "completed", "skipped", "failed", "cancelled", "superseded",
+    })
 
     def try_finalize_step_attempt(
         self,
@@ -1058,6 +1334,30 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             self.update_step_attempt(
                 step_attempt_id,
                 status=status,
+                finished_at=finished_at,
+            )
+            return True
+
+    def try_supersede_step_attempt(
+        self,
+        step_attempt_id: str,
+        *,
+        finished_at: float | None = None,
+    ) -> bool:
+        """Atomically mark a step attempt as superseded if it is not already terminal.
+
+        Returns True if the update was applied, False if the attempt was already
+        in a terminal state (another worker superseded or finalized it first).
+        """
+        with self._lock:
+            attempt = self.get_step_attempt(step_attempt_id)
+            if attempt is None:
+                return False
+            if attempt.status in self._TERMINAL_ATTEMPT_STATUSES:
+                return False
+            self.update_step_attempt(
+                step_attempt_id,
+                status="superseded",
                 finished_at=finished_at,
             )
             return True
@@ -1101,6 +1401,21 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         attempt = self.get_step_attempt(step_attempt_id)
         if attempt is None:
             return
+        # Resolve the effective waiting_reason: callers may pass either
+        # ``waiting_reason`` (DB column name) or ``status_reason`` (model
+        # field name).  ``status_reason`` takes precedence when
+        # ``waiting_reason`` is not explicitly provided so that the many
+        # call-sites using the model-level name actually persist the value.
+        effective_waiting_reason: str | None | object
+        if waiting_reason is not UNSET:
+            effective_waiting_reason = waiting_reason
+        elif status_reason is not UNSET:
+            effective_waiting_reason = status_reason
+        else:
+            effective_waiting_reason = UNSET
+        # ``attempt.status_reason`` holds the DB value (mapped from the
+        # ``waiting_reason`` column in ``_step_attempt_from_row``).
+        current_reason = attempt.status_reason
         payload = {
             "status": status or attempt.status,
             "queue_priority": sqlite_int(
@@ -1108,8 +1423,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 default=int(attempt.queue_priority or 0),
             ),
             "waiting_reason": sqlite_optional_text(
-                attempt.waiting_reason if waiting_reason is UNSET else waiting_reason,
-                default=sqlite_optional_text(attempt.waiting_reason),
+                current_reason if effective_waiting_reason is UNSET else effective_waiting_reason,
+                default=sqlite_optional_text(current_reason),
             ),
             "approval_id": sqlite_optional_text(
                 attempt.approval_id if approval_id is UNSET else approval_id,
@@ -1659,3 +1974,21 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 break
             yield from batch
             cursor = int(batch[-1]["event_seq"])
+
+    def count_events_by_type(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        event_type: str,
+    ) -> int:
+        """Count events matching entity_type, entity_id, and event_type."""
+        with self._lock:
+            row = self._row(
+                """
+                SELECT COUNT(*) AS cnt FROM events
+                WHERE entity_type = ? AND entity_id = ? AND event_type = ?
+                """,
+                (entity_type, entity_id, event_type),
+            )
+        return int(row["cnt"]) if row is not None else 0

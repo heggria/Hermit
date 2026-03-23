@@ -60,7 +60,7 @@ class TestShouldDeliberateActionClass:
         ]
         for risk in ("low", "medium", "high", "critical"):
             for action in readonly_actions:
-                assert svc.should_deliberate(risk, action) is False, (
+                assert svc.should_deliberate(risk_level=risk, action_class=action) is False, (
                     f"Expected False for readonly action={action!r} at risk={risk!r}"
                 )
 
@@ -68,20 +68,20 @@ class TestShouldDeliberateActionClass:
         svc = _make_service(tmp_path)
         mutation_actions = ["execute_command", "write_local", "patch_file", "rollback"]
         for action in mutation_actions:
-            assert svc.should_deliberate("critical", action) is True, (
+            assert svc.should_deliberate(risk_level="critical", action_class=action) is True, (
                 f"Expected True for mutation action={action!r} at risk='critical'"
             )
 
     def test_mutation_at_medium_triggers(self, tmp_path: Path) -> None:
         svc = _make_service(tmp_path)
-        assert svc.should_deliberate("medium", "execute_command") is True
-        assert svc.should_deliberate("medium", "write_local") is True
+        assert svc.should_deliberate(risk_level="medium", action_class="execute_command") is True
+        assert svc.should_deliberate(risk_level="medium", action_class="write_local") is True
 
     def test_unknown_action_never_triggers(self, tmp_path: Path) -> None:
         svc = _make_service(tmp_path)
         for risk in ("low", "medium", "high", "critical"):
-            assert svc.should_deliberate(risk, "unknown") is False
-            assert svc.should_deliberate(risk, "some_future_action") is False
+            assert svc.should_deliberate(risk_level=risk, action_class="unknown") is False
+            assert svc.should_deliberate(risk_level=risk, action_class="some_future_action") is False
 
     def test_low_risk_never_triggers(self, tmp_path: Path) -> None:
         svc = _make_service(tmp_path)
@@ -95,7 +95,7 @@ class TestShouldDeliberateActionClass:
             "approval_resolution",
         ]
         for action in actions:
-            assert svc.should_deliberate("low", action) is False, (
+            assert svc.should_deliberate(risk_level="low", action_class=action) is False, (
                 f"Expected False for action={action!r} at risk='low'"
             )
 
@@ -103,10 +103,10 @@ class TestShouldDeliberateActionClass:
         svc = _make_service(tmp_path)
         orchestration_actions = ["delegate_execution", "approval_resolution"]
         for action in orchestration_actions:
-            assert svc.should_deliberate("high", action) is True, (
+            assert svc.should_deliberate(risk_level="high", action_class=action) is True, (
                 f"Expected True for orchestration action={action!r} at risk='high'"
             )
-            assert svc.should_deliberate("medium", action) is False, (
+            assert svc.should_deliberate(risk_level="medium", action_class=action) is False, (
                 f"Expected False for orchestration action={action!r} at risk='medium'"
             )
 
@@ -147,7 +147,7 @@ class TestStaticCheckDeliberationNeeded:
         self, tmp_path: Path, risk: str, action: str
     ) -> None:
         svc = _make_service(tmp_path)
-        instance_result = svc.should_deliberate(risk, action)
+        instance_result = svc.should_deliberate(risk_level=risk, action_class=action)
         static_result = DeliberationService.check_deliberation_needed(
             risk_level=risk, action_class=action
         )

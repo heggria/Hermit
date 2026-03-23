@@ -257,7 +257,19 @@ class ProposalGenerator:
                     "expected_risk": result.expected_risk,
                     "expected_reward": result.expected_reward,
                 }
-                _ref, _hash = artifact_store.store_json(artifact_payload)
+                artifact_store.store_json(artifact_payload)
+            else:
+                # Parse failed — mark as completed with no output (not an error).
+                # Store a null-result artifact for audit completeness.
+                null_payload = {
+                    "artifact_type": "deliberation_llm_proposal",
+                    "debate_id": debate_id,
+                    "step_id": step.step_id,
+                    "attempt_id": attempt.step_attempt_id,
+                    "perspective": perspective.role,
+                    "result": "parse_failed",
+                }
+                artifact_store.store_json(null_payload)
 
             store.update_step_attempt(attempt.step_attempt_id, status="succeeded")
             store.update_step(step.step_id, status="completed")

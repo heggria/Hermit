@@ -74,7 +74,7 @@ class DeliberationService:
 
     # -- Query ----------------------------------------------------------------
 
-    def should_deliberate(self, risk_level: str, action_class: str) -> bool:
+    def should_deliberate(self, *, risk_level: str, action_class: str) -> bool:
         """Return True when the combination of risk and action class warrants deliberation.
 
         Policy:

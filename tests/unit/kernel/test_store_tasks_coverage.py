@@ -42,34 +42,24 @@ def test_list_child_tasks(tmp_path: Path) -> None:
     assert {c.task_id for c in children} == {c1.task_id, c2.task_id}
 
 
-# ── _check_dag_cycles ──────────────────────────────────────────────
+# ── DAG cycle detection (via StepDAGBuilder.validate) ─────────────
 
 
 def test_check_dag_cycles_detects_cycle(tmp_path: Path) -> None:
-    store = _setup(tmp_path)
-    task = _mk_task(store)
-    step_a = store.create_step(task_id=task.task_id, kind="a")
-    step_b = store.create_step(task_id=task.task_id, kind="b", depends_on=[step_a.step_id])
-    # Create a cycle: A depends on B (injected), B depends on A (already set)
-    # So adding a new step that depends on B, where A also depends on B, forms a cycle
-    # when B depends on A.
-    # Actually we need: inject A -> B dependency into A's depends_on,
-    # then any new step depending on A would see A -> B -> A cycle.
-    import json
+    """Cycle detection is performed by StepDAGBuilder.validate(), not by
+    store.create_step() directly.  Verify that the DAG builder correctly
+    rejects a cyclic graph."""
+    from hermit.kernel.task.services.dag_builder import StepDAGBuilder, StepNode
 
-    with store._get_conn():
-        store._get_conn().execute(
-            "UPDATE steps SET depends_on_json = ? WHERE step_id = ?",
-            (json.dumps([step_b.step_id]), step_a.step_id),
-        )
-    # Now: step_a depends on step_b, step_b depends on step_a => cycle
-    # Adding a new step depending on step_a triggers the cycle check
+    store = _setup(tmp_path)
+    # Build a cycle: A -> B -> A
+    nodes = [
+        StepNode(key="a", kind="execute", title="A", depends_on=["b"]),
+        StepNode(key="b", kind="execute", title="B", depends_on=["a"]),
+    ]
+    builder = StepDAGBuilder(store)
     with pytest.raises(ValueError, match="Cycle detected"):
-        store.create_step(
-            task_id=task.task_id,
-            kind="trigger_cycle",
-            depends_on=[step_a.step_id],
-        )
+        builder.validate(nodes)
 
 
 # ── get_step_by_node_key ───────────────────────────────────────────
@@ -111,6 +101,7 @@ def test_activate_waiting_dependents_all_required(tmp_path: Path) -> None:
     waiter = store.create_step(
         task_id=task.task_id,
         kind="waiter",
+        status="waiting",
         depends_on=[dep1.step_id, dep2.step_id],
         join_strategy="all_required",
     )
@@ -139,6 +130,7 @@ def test_activate_waiting_dependents_any_sufficient(tmp_path: Path) -> None:
     waiter = store.create_step(
         task_id=task.task_id,
         kind="waiter",
+        status="waiting",
         depends_on=[dep1.step_id, dep2.step_id],
         join_strategy="any_sufficient",
     )
@@ -159,6 +151,7 @@ def test_activate_waiting_dependents_majority(tmp_path: Path) -> None:
     waiter = store.create_step(
         task_id=task.task_id,
         kind="waiter",
+        status="waiting",
         depends_on=[dep1.step_id, dep2.step_id, dep3.step_id],
         join_strategy="majority",
     )
@@ -183,6 +176,7 @@ def test_activate_waiting_dependents_best_effort(tmp_path: Path) -> None:
     waiter = store.create_step(
         task_id=task.task_id,
         kind="waiter",
+        status="waiting",
         depends_on=[dep1.step_id, dep2.step_id],
         join_strategy="best_effort",
     )
@@ -209,6 +203,7 @@ def test_propagate_step_failure_all_required_cascades(tmp_path: Path) -> None:
     waiter = store.create_step(
         task_id=task.task_id,
         kind="waiter",
+        status="waiting",
         depends_on=[dep.step_id],
         join_strategy="all_required",
     )
@@ -231,6 +226,7 @@ def test_propagate_step_failure_any_sufficient_only_when_all_fail(tmp_path: Path
     waiter = store.create_step(
         task_id=task.task_id,
         kind="waiter",
+        status="waiting",
         depends_on=[dep1.step_id, dep2.step_id],
         join_strategy="any_sufficient",
     )
@@ -256,6 +252,7 @@ def test_propagate_step_failure_majority_when_over_half_fail(tmp_path: Path) -> 
     waiter = store.create_step(
         task_id=task.task_id,
         kind="waiter",
+        status="waiting",
         depends_on=[dep1.step_id, dep2.step_id, dep3.step_id],
         join_strategy="majority",
     )
@@ -277,11 +274,19 @@ def test_propagate_step_failure_recursive_cascade(tmp_path: Path) -> None:
     task = _mk_task(store)
     a = store.create_step(task_id=task.task_id, kind="a")
     b = store.create_step(
-        task_id=task.task_id, kind="b", depends_on=[a.step_id], join_strategy="all_required"
+        task_id=task.task_id,
+        kind="b",
+        status="waiting",
+        depends_on=[a.step_id],
+        join_strategy="all_required",
     )
     store.create_step_attempt(task_id=task.task_id, step_id=b.step_id, status="waiting")
     c = store.create_step(
-        task_id=task.task_id, kind="c", depends_on=[b.step_id], join_strategy="all_required"
+        task_id=task.task_id,
+        kind="c",
+        status="waiting",
+        depends_on=[b.step_id],
+        join_strategy="all_required",
     )
     store.create_step_attempt(task_id=task.task_id, step_id=c.step_id, status="waiting")
 
@@ -691,7 +696,7 @@ def test_list_recent_failures(tmp_path: Path) -> None:
     task = _mk_task(store, status="running")
     store.update_task_status(task.task_id, "failed")
 
-    failures = store.list_recent_failures()
+    failures = store.list_recent_failures(window_seconds=3600)
     assert any(t.task_id == task.task_id for t in failures)
 
 

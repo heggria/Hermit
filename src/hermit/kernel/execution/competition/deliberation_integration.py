@@ -113,6 +113,8 @@ class DeliberationIntegration:
                     output_artifact_kinds=["deliberation_llm_arbitration"],
                 ),
             },
+            # 0 = disabled (unrestricted) — all proposers share the same debate workspace,
+            # so workspace conflict checking would block parallel execution.
             conflict_limits={"max_same_workspace": 0, "max_same_module": 0},
         )
         return WorkerPoolManager(config)
@@ -124,8 +126,8 @@ class DeliberationIntegration:
         *,
         task_id: str,
         step_id: str,
-        risk_band: str,
-        step_kind: str,
+        risk_level: str,
+        action_class: str,
     ) -> dict[str, Any]:
         """Decide if deliberation is needed and route accordingly.
 
@@ -134,7 +136,7 @@ class DeliberationIntegration:
         appended to the ledger so the decision is auditable.
         """
         required = self.deliberation.should_deliberate(
-            risk_level=risk_band, action_class=step_kind
+            risk_level=risk_level, action_class=action_class
         )
 
         if not required:
@@ -142,13 +144,15 @@ class DeliberationIntegration:
                 "deliberation_integration.bypass",
                 task_id=task_id,
                 step_id=step_id,
-                risk_band=risk_band,
-                step_kind=step_kind,
+                risk_level=risk_level,
+                action_class=action_class,
             )
             return {"deliberation_required": False, "debate_id": None}
 
-        trigger = _TRIGGER_MAP.get(step_kind, DeliberationTrigger.high_risk_planning)
-        decision_point = f"task={task_id} step={step_id} risk={risk_band} kind={step_kind}"
+        trigger = _TRIGGER_MAP.get(action_class, DeliberationTrigger.high_risk_planning)
+        decision_point = (
+            f"task={task_id} step={step_id} risk={risk_level} kind={action_class}"
+        )
         bundle = self.deliberation.create_debate(decision_point, trigger)
 
         self.store.append_event(
@@ -158,8 +162,8 @@ class DeliberationIntegration:
             task_id=task_id,
             step_id=step_id,
             payload={
-                "risk_band": risk_band,
-                "step_kind": step_kind,
+                "risk_level": risk_level,
+                "action_class": action_class,
                 "trigger": trigger.value,
             },
         )
@@ -181,8 +185,8 @@ class DeliberationIntegration:
         *,
         task_id: str,
         step_id: str,
-        risk_band: str,
-        step_kind: str,
+        risk_level: str,
+        action_class: str,
         context: dict[str, Any],
     ) -> ArbitrationDecision:
         """Run the complete LLM-driven deliberation pipeline.
@@ -205,8 +209,8 @@ class DeliberationIntegration:
         route = self.evaluate_and_route(
             task_id=task_id,
             step_id=step_id,
-            risk_band=risk_band,
-            step_kind=step_kind,
+            risk_level=risk_level,
+            action_class=action_class,
         )
         if not route["deliberation_required"]:
             return ArbitrationDecision(
@@ -220,9 +224,12 @@ class DeliberationIntegration:
             )
 
         debate_id = route["debate_id"]
-        decision_point = f"task={task_id} step={step_id} risk={risk_band} kind={step_kind}"
+        decision_point = (
+            f"task={task_id} step={step_id} risk={risk_level} kind={action_class}"
+        )
 
         # 2. Create Team for this deliberation ensemble.
+        # program_id stores the parent task_id — teams are task-scoped, not program-scoped.
         team = self.store.create_team(
             program_id=task_id,
             title=f"deliberation:{debate_id}",
@@ -232,7 +239,11 @@ class DeliberationIntegration:
                 "critic": RoleSlotSpec(role="reviewer", count=3),
                 "arbitrator": RoleSlotSpec(role="verifier", count=1),
             },
-            metadata={"debate_id": debate_id, "risk_band": risk_band, "step_kind": step_kind},
+            metadata={
+                "debate_id": debate_id,
+                "risk_level": risk_level,
+                "action_class": action_class,
+            },
         )
 
         self.store.append_event(
@@ -248,9 +259,10 @@ class DeliberationIntegration:
             team_id=team.team_id,
             title="Generate Proposals",
             description="LLM-driven parallel proposal generation via planner slots",
-            status="active",
+            status="pending",
             acceptance_criteria=["At least 1 proposal generated"],
         )
+        self.store.update_milestone_status(ms_propose.milestone_id, "active")
 
         raw_proposals = self.proposer.generate_proposals(
             debate_id=debate_id,
@@ -281,10 +293,11 @@ class DeliberationIntegration:
             team_id=team.team_id,
             title="Generate Critiques",
             description="LLM-driven parallel critique generation via reviewer slots",
-            status="active",
+            status="pending",
             dependency_ids=[ms_propose.milestone_id],
             acceptance_criteria=["All proposals reviewed"],
         )
+        self.store.update_milestone_status(ms_critique.milestone_id, "active")
 
         bundle = self.deliberation.get_debate(debate_id)
         stored_proposals = bundle.proposals if bundle else []
@@ -317,10 +330,11 @@ class DeliberationIntegration:
             team_id=team.team_id,
             title="Arbitration",
             description="LLM-driven arbitration via verifier slot",
-            status="active",
+            status="pending",
             dependency_ids=[ms_critique.milestone_id],
             acceptance_criteria=["Decision produced"],
         )
+        self.store.update_milestone_status(ms_arbitrate.milestone_id, "active")
 
         decision_dict = self.resolve_debate(debate_id, task_id=task_id)
 
@@ -517,7 +531,7 @@ class DeliberationIntegration:
             event_type="deliberation.resolved",
             entity_type="deliberation",
             entity_id=debate_id,
-            task_id=None,
+            task_id=task_id or None,
             payload={
                 "decision_id": decision.decision_id,
                 "selected_candidate_id": decision.selected_candidate_id,

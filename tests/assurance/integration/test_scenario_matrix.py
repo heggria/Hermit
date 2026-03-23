@@ -53,10 +53,10 @@ class TestTraceVariants:
     def test_governed_trace_scales(self, num_steps: int) -> None:
         """make_governed_trace(num_steps) produces a valid governed trace.
 
-        Post-run contracts and invariants pass. The only violations come
-        from runtime ``approval.gating`` checks, which run per-envelope
-        without accumulated prior context (by design in the lab's
-        ``_check_runtime_contracts``).
+        Runtime contract checks now pass prior_envelopes as context, so
+        ``approval.gating`` correctly sees prior ``approval.granted``
+        events and does NOT fire on clean governed traces.  All contract,
+        invariant, and runtime checks produce zero violations.
         """
         lab = AssuranceLab()
         scenario = _make_scenario()
@@ -66,24 +66,9 @@ class TestTraceVariants:
 
         assert isinstance(report, AssuranceReport)
 
-        # All violations should be runtime approval.gating only -- one per step
-        for v in report.violations:
-            assert isinstance(v, ContractViolation)
-            assert v.contract_id == "approval.gating"
-            assert v.mode == "runtime"
-        assert len(report.violations) == num_steps
-
-        # Post-run contracts and invariants produce zero violations
-        post_run_violations = [
-            v
-            for v in report.violations
-            if isinstance(v, ContractViolation) and v.mode == "post_run"
-        ]
-        invariant_violations = [
-            v for v in report.violations if isinstance(v, InvariantViolation)
-        ]
-        assert len(post_run_violations) == 0
-        assert len(invariant_violations) == 0
+        # Clean governed traces produce zero violations
+        assert len(report.violations) == 0
+        assert report.status == "pass"
 
     def test_empty_trace_handled(self) -> None:
         """Empty trace list should be handled gracefully (no crash)."""
@@ -184,6 +169,12 @@ class TestViolationMatrix:
         # Remove the ref under test
         tool_refs[missing_ref] = None
 
+        # For approval_ref, the approval.gating contract checks whether
+        # approval.granted appears BEFORE tool_call.start in the trace
+        # (not whether approval_ref is set on the envelope).  To trigger
+        # the violation we must omit the approval.granted event entirely.
+        include_approval_events = missing_ref != "approval_ref"
+
         envelopes = [
             make_envelope(
                 run_id=run_id,
@@ -192,33 +183,42 @@ class TestViolationMatrix:
                 event_seq=0,
                 wallclock_at=now,
             ),
-            make_envelope(
-                run_id=run_id,
-                task_id=task_id,
-                event_type="approval.requested",
-                event_seq=1,
-                wallclock_at=now + 0.001,
-                step_id=step_id,
-                step_attempt_id=attempt_id,
-                approval_ref=approval_id,
-            ),
-            make_envelope(
-                run_id=run_id,
-                task_id=task_id,
-                event_type="approval.granted",
-                event_seq=2,
-                wallclock_at=now + 0.002,
-                step_id=step_id,
-                step_attempt_id=attempt_id,
-                approval_ref=approval_id,
-                decision_ref=decision_id,
-            ),
+        ]
+
+        seq = 1
+        if include_approval_events:
+            envelopes.extend([
+                make_envelope(
+                    run_id=run_id,
+                    task_id=task_id,
+                    event_type="approval.requested",
+                    event_seq=seq,
+                    wallclock_at=now + seq * 0.001,
+                    step_id=step_id,
+                    step_attempt_id=attempt_id,
+                    approval_ref=approval_id,
+                ),
+                make_envelope(
+                    run_id=run_id,
+                    task_id=task_id,
+                    event_type="approval.granted",
+                    event_seq=seq + 1,
+                    wallclock_at=now + (seq + 1) * 0.001,
+                    step_id=step_id,
+                    step_attempt_id=attempt_id,
+                    approval_ref=approval_id,
+                    decision_ref=decision_id,
+                ),
+            ])
+            seq += 2
+
+        envelopes.extend([
             make_envelope(
                 run_id=run_id,
                 task_id=task_id,
                 event_type="tool_call.start",
-                event_seq=3,
-                wallclock_at=now + 0.003,
+                event_seq=seq,
+                wallclock_at=now + seq * 0.001,
                 step_id=step_id,
                 step_attempt_id=attempt_id,
                 **tool_refs,
@@ -227,8 +227,8 @@ class TestViolationMatrix:
                 run_id=run_id,
                 task_id=task_id,
                 event_type="receipt.issued",
-                event_seq=4,
-                wallclock_at=now + 0.004,
+                event_seq=seq + 1,
+                wallclock_at=now + (seq + 1) * 0.001,
                 step_id=step_id,
                 step_attempt_id=attempt_id,
                 receipt_ref=receipt_id,
@@ -240,10 +240,10 @@ class TestViolationMatrix:
                 run_id=run_id,
                 task_id=task_id,
                 event_type="task.completed",
-                event_seq=5,
-                wallclock_at=now + 0.005,
+                event_seq=seq + 2,
+                wallclock_at=now + (seq + 2) * 0.001,
             ),
-        ]
+        ])
 
         report = lab.run_with_trace(scenario, envelopes)
 

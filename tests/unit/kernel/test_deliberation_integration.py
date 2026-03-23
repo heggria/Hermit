@@ -71,8 +71,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="low",
-            step_kind="read_local",
+            risk_level="low",
+            action_class="read_local",
         )
         assert result["deliberation_required"] is False
         assert result["debate_id"] is None
@@ -82,8 +82,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="medium",
-            step_kind="read_local",
+            risk_level="medium",
+            action_class="read_local",
         )
         assert result["deliberation_required"] is False
 
@@ -92,8 +92,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
         )
         assert result["deliberation_required"] is True
         assert result["debate_id"] is not None
@@ -104,8 +104,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="critical",
-            step_kind="delegate_execution",
+            risk_level="critical",
+            action_class="delegate_execution",
         )
         assert result["deliberation_required"] is True
         assert result["debate_id"] is not None
@@ -115,8 +115,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="medium",
-            step_kind="execute_command",
+            risk_level="medium",
+            action_class="execute_command",
         )
         assert result["deliberation_required"] is True
 
@@ -125,8 +125,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="medium",
-            step_kind="patch_file",
+            risk_level="medium",
+            action_class="patch_file",
         )
         assert result["deliberation_required"] is True
 
@@ -135,8 +135,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="medium",
-            step_kind="external_mutation",
+            risk_level="medium",
+            action_class="external_mutation",
         )
         assert result["deliberation_required"] is True
 
@@ -145,8 +145,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="medium",
-            step_kind="rollback",
+            risk_level="medium",
+            action_class="rollback",
         )
         assert result["deliberation_required"] is True
 
@@ -155,8 +155,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="patch_file",
+            risk_level="high",
+            action_class="patch_file",
         )
         events = store.list_events(event_type="deliberation.routed")
         assert len(events) >= 1
@@ -167,8 +167,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="patch_file",
+            risk_level="high",
+            action_class="patch_file",
         )
         debate_id = result["debate_id"]
         bundle = svc.deliberation.get_debate(debate_id)
@@ -180,8 +180,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = result["debate_id"]
         bundle = svc.deliberation.get_debate(debate_id)
@@ -197,8 +197,8 @@ class TestEvaluateAndRoute:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="critical",
-            step_kind="scheduler_mutation",
+            risk_level="critical",
+            action_class="scheduler_mutation",
         )
         debate_id = result["debate_id"]
         bundle = svc.deliberation.get_debate(debate_id)
@@ -214,8 +214,8 @@ class TestSubmitProposal:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -389,8 +389,8 @@ class TestSubmitCritique:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="patch_file",
+            risk_level="high",
+            action_class="patch_file",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -549,8 +549,8 @@ class TestResolveDebate:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -676,8 +676,8 @@ class TestGetDebateSummary:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -698,8 +698,8 @@ class TestGetDebateSummary:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="critical",
-            step_kind="external_mutation",
+            risk_level="critical",
+            action_class="external_mutation",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -753,8 +753,8 @@ class TestFullLifecycle:
         route_result = svc.evaluate_and_route(
             task_id="task_001",
             step_id="step_001",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
         )
         assert route_result["deliberation_required"] is True
         debate_id = route_result["debate_id"]
@@ -834,8 +834,8 @@ class TestFullLifecycle:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="low",
-            step_kind="read_local",
+            risk_level="low",
+            action_class="read_local",
         )
         assert result["deliberation_required"] is False
         artifact_files = list(arts.root_dir.rglob("*.json"))
@@ -854,8 +854,8 @@ class TestToContractPacket:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -928,8 +928,8 @@ class TestToContractPacket:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="execute_command",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -970,8 +970,8 @@ class TestSubmitExecutorFeasibility:
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
-            risk_band="high",
-            step_kind="patch_file",
+            risk_level="high",
+            action_class="patch_file",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None

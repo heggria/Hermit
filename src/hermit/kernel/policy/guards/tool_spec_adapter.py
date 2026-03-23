@@ -66,6 +66,12 @@ def build_action_request(
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     contract = contract_for(action_class)
     ingress = dict(attempt_ctx.ingress_metadata or {}) if attempt_ctx else {}
+    actor_principal_id = attempt_ctx.actor_principal_id if attempt_ctx else None
+    actor = (
+        {"kind": "principal", "principal_id": actor_principal_id, "agent_id": "hermit"}
+        if actor_principal_id
+        else {"kind": "agent", "agent_id": "hermit"}
+    )
     return ActionRequest(
         request_id=request_id,
         idempotency_key=request_id,
@@ -85,6 +91,7 @@ def build_action_request(
         if tool.requires_receipt is not None
         else contract.receipt_required,
         supports_preview=bool(tool.supports_preview),
+        actor=actor,
         context={
             "cwd": workspace_root,
             "repo_root": workspace_root,

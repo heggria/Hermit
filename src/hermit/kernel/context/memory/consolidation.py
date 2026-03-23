@@ -171,7 +171,7 @@ class ConsolidationService:
                 vec_b = self._embeddings.embed(b)
                 return self._embeddings.similarity(vec_a, vec_b)
             except Exception:
-                pass
+                log.warning("consolidation_pass_error", exc_info=True)
 
         # Token overlap fallback
         tokens_a = set(a.lower().split())

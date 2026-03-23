@@ -38,6 +38,7 @@
   "kernel.rollback.error.strategy_not_executable": "该回滚策略暂不可执行：{strategy}",
   "kernel.rollback.error.prestate_missing": "缺少回滚 prestate。",
   "kernel.rollback.error.artifact_missing": "无法加载回滚 artifact。",
+  "kernel.rollback.error.prestate_hash_mismatch": "回滚 prestate artifact 的哈希值与存储的内容哈希不匹配。",
   "kernel.approval.blocked_message": "{summary}{detail_block}\n\n审批编号：`{approval_id}`。确认后将从当前步骤继续执行。",
   "kernel.approval.model_prompt": "{summary}（审批编号：{approval_id}）。请使用 `/task approve {approval_id}`、`/task approve-always-directory {approval_id}`，或直接回复“批准一次 {approval_id}”/“始终允许此目录 {approval_id}”。",
   "kernel.approval.template.push.title": "确认推送远端",

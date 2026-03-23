@@ -13,12 +13,17 @@ from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.authority.grants import CapabilityGrantError, CapabilityGrantService
-from hermit.kernel.authority.workspaces import WorkspaceLeaseService, capture_execution_environment
+from hermit.kernel.authority.workspaces import (
+    WorkspaceLeaseQueued,
+    WorkspaceLeaseService,
+    capture_execution_environment,
+)
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.errors import ContractError
 from hermit.kernel.execution.competition.deliberation_integration import (
     DeliberationIntegration,
 )
+from hermit.kernel.execution.competition.deliberation_service import DeliberationService
 from hermit.kernel.execution.controller.contracts import contract_for
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
 from hermit.kernel.execution.controller.pattern_learner import TaskPatternLearner
@@ -28,6 +33,10 @@ from hermit.kernel.execution.coordination.observation import (
     ObservationTicket,
     normalize_observation_progress,
     normalize_observation_ticket,
+)
+from hermit.kernel.execution.executor.execution_helpers import (
+    is_governed_action,
+    load_witness_payload,
 )
 from hermit.kernel.execution.executor.snapshot import RuntimeSnapshotManager
 from hermit.kernel.execution.executor.witness import WitnessCapture
@@ -168,14 +177,6 @@ def _compact_progress_text(value: Any, *, limit: int = 240) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-def _is_governed_action(tool: ToolSpec, policy: PolicyDecision) -> bool:
-    if tool.readonly and policy.verdict == "allow":
-        return False
-    if policy.action_class in {"read_local", "network_read"} and not policy.requires_receipt:
-        return False
-    return policy.action_class != "ephemeral_ui_mutation"
-
-
 def _needs_witness(action_class: str) -> bool:
     return action_class in _WITNESS_REQUIRED_ACTIONS
 
@@ -216,6 +217,7 @@ class ToolExecutionResult:
     workspace_lease_id: str | None = None
     policy_ref: str | None = None
     witness_ref: str | None = None
+    deliberation_ref: str | None = None
     result_code: str = "succeeded"
     execution_status: str = "succeeded"
     state_applied: bool = False
@@ -308,7 +310,7 @@ class ToolExecutor:
                 payload=payload,
             )
         except Exception:
-            pass
+            log.debug("assurance.trace_failed", event_type=event_type, exc_info=True)
 
     def _set_attempt_phase(
         self,
@@ -477,7 +479,7 @@ class ToolExecutor:
         contract_ref, _evidence_case_ref, _authorization_plan_ref = self._contract_refs(attempt_ctx)
         if contract_ref is None:
             return None, None
-        if not self.receipt_service.verify_signature(receipt_id):
+        if not self.receipt_service.verify_receipt_bundle_signature(receipt_id):
             log.warning(
                 "receipt.signature_verification_failed",
                 receipt_id=receipt_id,
@@ -689,7 +691,7 @@ class ToolExecutor:
             policy_version=POLICY_RULES_VERSION,
         )
         action_type = tool.action_class or self.policy_engine.infer_action_class(tool)
-        governed = _is_governed_action(tool, policy)
+        governed = is_governed_action(tool, policy)
 
         self._trace(
             "policy.evaluated",
@@ -836,13 +838,9 @@ class ToolExecutor:
         deliberation_ref: str | None = None
         if governed and self._deliberation is not None:
             deliberation_risk = policy.risk_level or "medium"
-            routing = self._deliberation.evaluate_and_route(
-                task_id=attempt_ctx.task_id,
-                step_id=attempt_ctx.step_id,
-                risk_band=deliberation_risk,
-                step_kind=action_type,
-            )
-            if routing["deliberation_required"]:
+            if DeliberationService.check_deliberation_needed(
+                risk_level=deliberation_risk, action_class=action_type
+            ):
                 deliberation_context = {
                     "tool_name": tool_name,
                     "tool_input": tool_input,
@@ -854,8 +852,8 @@ class ToolExecutor:
                 deliberation_decision = self._deliberation.run_full_deliberation(
                     task_id=attempt_ctx.task_id,
                     step_id=attempt_ctx.step_id,
-                    risk_band=deliberation_risk,
-                    step_kind=action_type,
+                    risk_level=deliberation_risk,
+                    action_class=action_type,
                     context=deliberation_context,
                 )
 
@@ -957,6 +955,12 @@ class ToolExecutor:
                         "confidence": confidence,
                         "selected_candidate_id": (deliberation_decision.selected_candidate_id),
                     }
+                    if self.approval_copy:
+                        deliberation_requested_action["display_copy"] = (
+                            self.approval_copy.build_canonical_copy(
+                                deliberation_requested_action
+                            )
+                        )
                     approval_id = self.approval_service.request(
                         task_id=attempt_ctx.task_id,
                         step_id=attempt_ctx.step_id,
@@ -968,6 +972,13 @@ class ToolExecutor:
                         policy_result_ref=policy_ref,
                         decision_ref=dlb_decision_id,
                         state_witness_ref=witness_ref,
+                    )
+                    self._trace(
+                        "approval.requested",
+                        attempt_ctx,
+                        phase="awaiting_approval",
+                        approval_ref=approval_id,
+                        decision_ref=dlb_decision_id,
                     )
                     self.store.update_step_attempt(
                         attempt_ctx.step_attempt_id,
@@ -1258,11 +1269,39 @@ class ToolExecutor:
                 evidence_case_ref=getattr(evidence_case, "evidence_case_id", None),
                 action_type=action_type,
             )
-            workspace_lease_id = self._ensure_workspace_lease(
-                attempt_ctx=attempt_ctx,
-                action_request=action_request,
-                approval_mode=approval_mode,
-            )
+            try:
+                workspace_lease_id = self._ensure_workspace_lease(
+                    attempt_ctx=attempt_ctx,
+                    action_request=action_request,
+                    approval_mode=approval_mode,
+                )
+            except WorkspaceLeaseQueued as wlq:
+                self.store.update_step_attempt(
+                    attempt_ctx.step_attempt_id,
+                    status="waiting",
+                    waiting_reason=(
+                        f"Workspace busy, queued at position {wlq.position}"
+                    ),
+                )
+                self._trace(
+                    "execution.workspace_queued",
+                    attempt_ctx,
+                    queue_entry_id=wlq.queue_entry_id,
+                    position=wlq.position,
+                )
+                return ToolExecutionResult(
+                    model_content=(
+                        f"[Workspace Queued] {wlq}"
+                    ),
+                    raw_result={
+                        "queue_entry_id": wlq.queue_entry_id,
+                        "position": wlq.position,
+                    },
+                    blocked=True,
+                    result_code="workspace_queued",
+                    execution_status="waiting",
+                    state_applied=True,
+                )
             if workspace_lease_id is not None:
                 lease = self.store.get_workspace_lease(workspace_lease_id)
                 if lease is not None:
@@ -1326,6 +1365,7 @@ class ToolExecutor:
             try:
                 self.capability_service.enforce(
                     capability_grant_id,
+                    task_id=attempt_ctx.task_id,
                     action_class=action_type,
                     resource_scope=list(action_request.resource_scopes),
                     constraints=self._capability_constraints(
@@ -1518,9 +1558,22 @@ class ToolExecutor:
             workspace_lease_id=workspace_lease_id,
             policy_ref=policy_ref,
             witness_ref=witness_ref,
+            deliberation_ref=deliberation_ref,
             result_code="succeeded",
             execution_status=execution_status,
         )
+
+    def spawn_subtasks(
+        self,
+        *,
+        attempt_ctx: TaskExecutionContext,
+        descriptors: list[dict[str, Any]],
+    ) -> ToolExecutionResult:
+        """Create kernel-tracked child steps and suspend the parent step-attempt."""
+        from hermit.kernel.execution.executor.subtask_handler import SubtaskSpawner
+
+        spawner = SubtaskSpawner(store=self.store, executor=self)
+        return spawner.handle_spawn(attempt_ctx=attempt_ctx, descriptors=descriptors)
 
     def persist_suspended_state(
         self,
@@ -1989,7 +2042,7 @@ class ToolExecutor:
             else "succeeded"
         )
         action_type = tool.action_class or self.policy_engine.infer_action_class(tool)
-        governed = _is_governed_action(tool, policy)
+        governed = is_governed_action(tool, policy)
         model_content = (
             model_content_override
             if model_content_override is not None
@@ -3241,16 +3294,7 @@ class ToolExecutor:
         )
 
     def _load_witness_payload(self, witness_ref: str | None) -> dict[str, Any]:
-        if not witness_ref:
-            return {}
-        artifact = self.store.get_artifact(witness_ref)
-        if artifact is None:
-            return {}
-        try:
-            payload: Any = json.loads(self.artifact_store.read_text(artifact.uri))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        return load_witness_payload(self.store, self.artifact_store, witness_ref)
 
     def _handle_dispatch_denied(
         self,
@@ -3272,6 +3316,9 @@ class ToolExecutor:
         policy_result_ref: str | None,
         environment_ref: str | None,
     ) -> ToolExecutionResult:
+        # Release workspace lease to prevent indefinite hold after dispatch denial.
+        if workspace_lease_id is not None:
+            self.workspace_lease_service.release(workspace_lease_id)
         self.store.append_event(
             event_type="dispatch.denied",
             entity_type="capability_grant",

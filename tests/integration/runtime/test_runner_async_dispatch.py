@@ -60,7 +60,7 @@ class _PluginManager:
         self.post_run: list[str] = []
         self.ended: list[tuple[str, list[dict[str, object]]]] = []
 
-    def on_session_start(self, session_id: str) -> None:
+    def on_session_start(self, session_id: str, *, runner: object = None) -> None:
         self.started.append(session_id)
 
     def on_session_end(self, session_id: str, messages: list[dict[str, object]]) -> None:
@@ -122,6 +122,9 @@ class _Store:
 
     def get_step_attempt(self, _step_attempt_id: str):
         return self.step_attempt
+
+    def get_task(self, task_id: str):
+        return None
 
     def append_schedule_history(self, record) -> None:
         self.appended_history.append(record)

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from hermit.kernel.execution.coordination.observation import ObservationService
 from hermit.kernel.task.services.controller import AUTO_PARENT, TaskController
+from hermit.runtime.capability.contracts.base import HookEvent
 from hermit.runtime.control.lifecycle.session import SessionManager
 from hermit.runtime.provider_host.execution.runtime import (
     AgentResult,
@@ -180,7 +181,6 @@ class AgentRunner:
             from hermit.kernel.execution.competition.workspace import (
                 CompetitionWorkspaceManager,
             )
-            from hermit.runtime.capability.contracts.base import HookEvent
 
             store = getattr(self.agent, "kernel_store", None)
             tc = self.task_controller
@@ -257,7 +257,7 @@ class AgentRunner:
 
     def _ensure_session_started(self, session_id: str) -> None:
         if session_id not in self._session_started:
-            self.pm.on_session_start(session_id)
+            self.pm.on_session_start(session_id, runner=self)
             self._session_started.add(session_id)
 
     def close_session(self, session_id: str) -> None:
@@ -271,7 +271,7 @@ class AgentRunner:
         """Close current session and start a fresh one."""
         self.close_session(session_id)
         self.session_manager.get_or_create(session_id)
-        self.pm.on_session_start(session_id)
+        self.pm.on_session_start(session_id, runner=self)
         self._session_started.add(session_id)
 
     # ------------------------------------------------------------------
@@ -766,6 +766,17 @@ class AgentRunner:
             parent_task_id=parent_task_id,
             ingress_metadata=ingress_metadata,
         )
+        # Fire SUBTASK_SPAWN when a child task is created under a parent.
+        store = self._get_store()
+        if store is not None:
+            task_record = store.get_task(task_ctx.task_id)
+            if task_record is not None and task_record.parent_task_id:
+                self.pm.hooks.fire(
+                    HookEvent.SUBTASK_SPAWN,
+                    parent_task_id=task_record.parent_task_id,
+                    task_id=task_ctx.task_id,
+                    store=store,
+                )
         if run_opts.get("planning_mode", False):
             planning = PlanningService(
                 self.task_controller.store, getattr(self.agent, "artifact_store", None)

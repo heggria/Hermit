@@ -215,8 +215,6 @@ class AssuranceLab:
             replay_diff=replay_result.diff_summary,
         )
 
-        self.reporter.finalize(report)
-
         log.info(
             "assurance.run_replay_complete",
             entry_id=entry.entry_id,
@@ -225,7 +223,9 @@ class AssuranceLab:
         )
         return report
 
-    def replay_task(self, task_id: str) -> AssuranceReport | None:
+    def replay_task(
+        self, task_id: str, *, attribution_mode: str = "post_run"
+    ) -> AssuranceReport | None:
         """Load a task's trace from the recorder and replay through assurance.
 
         This is the main end-to-end entry point:
@@ -233,11 +233,7 @@ class AssuranceLab:
 
         Returns ``None`` if no trace is found for the given *task_id*.
         """
-        # Search all runs for envelopes matching this task_id
-        envelopes: list[TraceEnvelope] = []
-        for run_id in list(self.recorder._traces.keys()):
-            run_envelopes = self.recorder.get_trace(run_id, task_id=task_id)
-            envelopes.extend(run_envelopes)
+        envelopes = self.recorder.load_task_trace(task_id)
 
         if not envelopes:
             log.info("assurance.replay_task_no_trace", task_id=task_id)
@@ -253,7 +249,30 @@ class AssuranceLab:
             scenario_id=envelopes[0].scenario_id or "",
         )
 
-        return self.run_replay(entry, envelopes)
+        # Build scenario with the requested attribution mode
+        scenario = self.load_scenario(entry.scenario_id)
+        if scenario is None:
+            scenario = ScenarioSpec(
+                scenario_id=entry.scenario_id or task_id,
+                metadata=ScenarioMetadata(name=entry.scenario_id or task_id),
+                attribution_mode=attribution_mode,
+            )
+        else:
+            # Override attribution_mode for this replay
+            scenario = ScenarioSpec(
+                scenario_id=scenario.scenario_id,
+                metadata=scenario.metadata,
+                attribution_mode=attribution_mode,
+                fault_injection_plan=scenario.fault_injection_plan,
+                oracle=scenario.oracle,
+            )
+
+        return self._finalize_run(
+            run_id=run_id,
+            scenario=scenario,
+            envelopes=envelopes,
+            fault_handles=[],
+        )
 
     def replay_counterfactual_task(
         self,
@@ -267,11 +286,7 @@ class AssuranceLab:
 
         Returns ``None`` if no trace is found for the given *task_id*.
         """
-        # Search all runs for envelopes matching this task_id
-        envelopes: list[TraceEnvelope] = []
-        for run_id in list(self.recorder._traces.keys()):
-            run_envelopes = self.recorder.get_trace(run_id, task_id=task_id)
-            envelopes.extend(run_envelopes)
+        envelopes = self.recorder.load_task_trace(task_id)
 
         if not envelopes:
             log.info("assurance.replay_counterfactual_task_no_trace", task_id=task_id)
@@ -322,7 +337,6 @@ class AssuranceLab:
             replay_diff=replay_result.diff_summary,
         )
 
-        self.reporter.finalize(report)
         return report
 
     # ------------------------------------------------------------------
@@ -448,10 +462,13 @@ class AssuranceLab:
         envelopes: list[TraceEnvelope],
         scenario: ScenarioSpec,
     ) -> list[ContractViolation]:
-        """Run runtime contract checks per envelope."""
+        """Run runtime contract checks per envelope with accumulated context."""
         violations: list[ContractViolation] = []
-        for env in envelopes:
-            per_env = self.contract_engine.evaluate_runtime(env)
+        for i, env in enumerate(envelopes):
+            prior = envelopes[:i]
+            per_env = self.contract_engine.evaluate_runtime(
+                env, context={"prior_envelopes": prior}
+            )
             violations.extend(per_env)
         return violations
 

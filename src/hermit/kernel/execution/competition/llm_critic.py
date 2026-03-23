@@ -243,17 +243,29 @@ class CritiqueGenerator:
         try:
             critiques = self._review_all_proposals(critic_role, proposals, context)
 
-            artifact_payload = {
-                "artifact_type": "deliberation_llm_critique_batch",
-                "debate_id": debate_id,
-                "step_id": step.step_id,
-                "attempt_id": attempt.step_attempt_id,
-                "slot_id": slot.slot_id,
-                "critic_role": critic_role.role,
-                "critique_count": len(critiques),
-                "target_ids": [c.target_candidate_id for c in critiques],
-            }
-            _ref, _hash = artifact_store.store_json(artifact_payload)
+            if critiques:
+                artifact_payload = {
+                    "artifact_type": "deliberation_llm_critique_batch",
+                    "debate_id": debate_id,
+                    "step_id": step.step_id,
+                    "attempt_id": attempt.step_attempt_id,
+                    "slot_id": slot.slot_id,
+                    "critic_role": critic_role.role,
+                    "critique_count": len(critiques),
+                    "target_ids": [c.target_candidate_id for c in critiques],
+                }
+                artifact_store.store_json(artifact_payload)
+            else:
+                # No valid critiques parsed — store a null-result artifact for audit.
+                null_payload = {
+                    "artifact_type": "deliberation_llm_critique_batch",
+                    "debate_id": debate_id,
+                    "step_id": step.step_id,
+                    "attempt_id": attempt.step_attempt_id,
+                    "critic_role": critic_role.role,
+                    "result": "no_valid_critiques",
+                }
+                artifact_store.store_json(null_payload)
 
             store.update_step_attempt(attempt.step_attempt_id, status="succeeded")
             store.update_step(step.step_id, status="completed")

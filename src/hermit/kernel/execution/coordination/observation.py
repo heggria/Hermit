@@ -9,7 +9,7 @@ import structlog
 
 from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, get_runtime_budget
 
-_log = structlog.get_logger()
+log = structlog.get_logger()
 
 _OBSERVATION_ENVELOPE_KEY = "_hermit_observation"
 
@@ -220,87 +220,10 @@ class ObservationPollResult:
     should_resume: bool = False
 
 
-_SUBTASK_JOIN_OBSERVATION_KIND = "subtask_join"
-
-
-@dataclass
-class SubtaskJoinObservation:
-    """Observation ticket for a parent step waiting on spawned child steps.
-
-    Carried in the parent StepAttemptRecord's context under the key
-    ``"subtask_join_observation"`` so the JoinBarrierService can evaluate
-    completion without re-scanning the full DAG on every poll cycle.
-
-    Attributes:
-        child_step_ids: Ordered list of step_ids spawned by the parent step.
-        join_strategy: Determines when the barrier is considered satisfied.
-            Mirrors ``JoinStrategy`` values from ``join_barrier.py``.
-        parent_step_id: The step_id of the spawning (parent) step.
-        parent_attempt_id: The step_attempt_id of the parent attempt that
-            transitioned to 'observing' status.
-    """
-
-    child_step_ids: list[str]
-    join_strategy: str
-    parent_step_id: str
-    parent_attempt_id: str
-
-    # ------------------------------------------------------------------
-    # Serialisation helpers
-    # ------------------------------------------------------------------
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "kind": _SUBTASK_JOIN_OBSERVATION_KIND,
-            "child_step_ids": list(self.child_step_ids),
-            "join_strategy": self.join_strategy,
-            "parent_step_id": self.parent_step_id,
-            "parent_attempt_id": self.parent_attempt_id,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SubtaskJoinObservation:
-        child_ids = data.get("child_step_ids")
-        if not isinstance(child_ids, list):
-            child_ids = []
-        return cls(
-            child_step_ids=[str(s) for s in cast(list[Any], child_ids)],
-            join_strategy=str(data.get("join_strategy", "all_required") or "all_required"),
-            parent_step_id=str(data.get("parent_step_id", "") or ""),
-            parent_attempt_id=str(data.get("parent_attempt_id", "") or ""),
-        )
-
-
-def normalize_subtask_join_observation(value: Any) -> SubtaskJoinObservation | None:
-    """Coerce *value* to a :class:`SubtaskJoinObservation`, or return ``None``.
-
-    Accepts either an already-constructed instance or a plain ``dict`` whose
-    ``"kind"`` field equals ``"subtask_join"``.
-    """
-    if isinstance(value, SubtaskJoinObservation):
-        return value
-    if not isinstance(value, dict):
-        return None
-    d: dict[str, Any] = cast(dict[str, Any], value)
-    if d.get("kind") != _SUBTASK_JOIN_OBSERVATION_KIND:
-        return None
-    child_ids = d.get("child_step_ids")
-    if not isinstance(child_ids, list) or not child_ids:
-        return None
-    return SubtaskJoinObservation.from_dict(d)
-
-
 class ObservationService:
-    def __init__(
-        self,
-        runner: Any,
-        *,
-        budget: ExecutionBudget | None = None,
-        store: Any | None = None,
-    ) -> None:
+    def __init__(self, runner: Any, *, budget: ExecutionBudget | None = None) -> None:
         self._runner = runner
         self._budget = budget or get_runtime_budget()
-        self._store = store
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._resuming: set[str] = set()
@@ -309,7 +232,6 @@ class ObservationService:
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
-        self._recover_active_tickets()
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._loop,
@@ -323,26 +245,12 @@ class ObservationService:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
-    def _recover_active_tickets(self) -> None:
-        """On service start, query all active observation tickets from store."""
-        if self._store is None:
-            return
-        try:
-            active = self._store.list_active_observation_tickets()
-            if active:
-                import structlog
-
-                logger = structlog.get_logger()
-                logger.info("observation.recovery", active_tickets=len(active))
-        except Exception:
-            _log.warning("observation.recover_tickets_failed", exc_info=True)
-
     def _loop(self) -> None:
         while not self._stop.wait(self._budget.observation_poll_interval):
             try:
                 self._tick()
             except Exception:
-                _log.warning("observation_service.tick_error", exc_info=True)
+                log.debug("observation_poll_error", exc_info=True)
                 continue
 
     def _tick(self) -> None:
@@ -351,15 +259,9 @@ class ObservationService:
         tool_executor = getattr(agent, "tool_executor", None)
         if controller is None or tool_executor is None:
             return
-        self._enforce_timeouts(controller)
         attempts = controller.store.list_step_attempts(status="observing", limit=200)
         now = time.time()
-        stale_resolved = self._resolve_stale_observations(
-            controller.store, attempts, now
-        )
         for attempt in attempts:
-            if attempt.step_attempt_id in stale_resolved:
-                continue
             with self._lock:
                 if attempt.step_attempt_id in self._resuming:
                     continue
@@ -376,147 +278,3 @@ class ObservationService:
             finally:
                 with self._lock:
                     self._resuming.discard(attempt.step_attempt_id)
-
-    def _enforce_timeouts(self, controller: Any) -> None:
-        """Check active observation tickets for hard_deadline_at exceeded."""
-        store = getattr(controller, "store", self._store)
-        if store is None:
-            return
-        try:
-            active = store.list_active_observation_tickets()
-        except Exception:
-            return
-        now = time.time()
-        for ticket in active:
-            deadline = ticket.get("hard_deadline_at")
-            if deadline is not None and now > deadline:
-                ticket_id = ticket["ticket_id"]
-                step_attempt_id = ticket["step_attempt_id"]
-                try:
-                    store.timeout_observation(ticket_id, now=now)
-                    store.update_step_attempt(
-                        step_attempt_id,
-                        status="failed",
-                        status_reason="observation_timeout",
-                    )
-                except Exception:
-                    _log.warning("observation.enforce_timeout_failed", exc_info=True)
-
-    def _resolve_stale_observations(
-        self,
-        store: Any,
-        attempts: list[Any],
-        now: float,
-    ) -> set[str]:
-        """Auto-resolve observations that exceed the observation_window budget.
-
-        Returns the set of step_attempt_ids that were resolved as stale.
-        This prevents observations tied to subtasks with different task_ids
-        (e.g. memory promotion) from blocking DAG step progression
-        indefinitely.
-        """
-        window = self._budget.observation_window
-        if window <= 0:
-            return set()
-        resolved: set[str] = set()
-        for attempt in attempts:
-            age_ref = getattr(attempt, "claimed_at", None) or getattr(
-                attempt, "started_at", None
-            )
-            if age_ref is None:
-                continue
-            if (now - age_ref) <= window:
-                continue
-            step_attempt_id = attempt.step_attempt_id
-            _log.warning(
-                "observation.stale_auto_resolved",
-                step_attempt_id=step_attempt_id,
-                task_id=attempt.task_id,
-                step_id=attempt.step_id,
-                age_seconds=int(now - age_ref),
-                observation_window=window,
-            )
-            try:
-                store.update_step_attempt(
-                    step_attempt_id,
-                    status="failed",
-                    status_reason="observation_stale_timeout",
-                    finished_at=now,
-                )
-                store.update_step(
-                    attempt.step_id,
-                    status="failed",
-                    finished_at=now,
-                )
-                store.append_event(
-                    event_type="observation.stale_auto_resolved",
-                    entity_type="step_attempt",
-                    entity_id=step_attempt_id,
-                    task_id=attempt.task_id,
-                    step_id=attempt.step_id,
-                    actor="kernel",
-                    payload={
-                        "age_seconds": int(now - age_ref),
-                        "observation_window": window,
-                        "reason": "observation_stale_timeout",
-                    },
-                )
-                store.propagate_step_failure(attempt.task_id, attempt.step_id)
-                if not store.has_non_terminal_steps(attempt.task_id):
-                    store.update_task_status(
-                        attempt.task_id,
-                        "failed",
-                        payload={
-                            "result_preview": "observation_stale_timeout",
-                            "result_text": "observation_stale_timeout",
-                        },
-                    )
-                resolved.add(step_attempt_id)
-            except Exception:
-                _log.warning(
-                    "observation.stale_resolve_failed",
-                    step_attempt_id=step_attempt_id,
-                    exc_info=True,
-                )
-        return resolved
-
-    def persist_ticket(
-        self,
-        *,
-        task_id: str,
-        step_id: str,
-        step_attempt_id: str,
-        observer_kind: str,
-        poll_after_seconds: float = 5.0,
-        hard_deadline_at: float | None = None,
-        ready_patterns: list[Any] | None = None,
-        failure_patterns: list[Any] | None = None,
-        ticket_data: dict[str, Any] | None = None,
-    ) -> str | None:
-        """Persist an observation ticket to the store. Returns ticket_id or None."""
-        if self._store is None:
-            return None
-        try:
-            return self._store.create_observation_ticket(
-                task_id=task_id,
-                step_id=step_id,
-                step_attempt_id=step_attempt_id,
-                observer_kind=observer_kind,
-                poll_after_seconds=poll_after_seconds,
-                hard_deadline_at=hard_deadline_at,
-                ready_patterns=ready_patterns,
-                failure_patterns=failure_patterns,
-                ticket_data=ticket_data,
-            )
-        except Exception:
-            _log.warning("observation.persist_ticket_failed", exc_info=True)
-            return None
-
-    def resolve_ticket(self, ticket_id: str, *, status: str = "completed") -> None:
-        """Mark a durable observation ticket as resolved."""
-        if self._store is None:
-            return
-        try:
-            self._store.resolve_observation(ticket_id, status=status)
-        except Exception:
-            _log.warning("observation.resolve_ticket_failed", exc_info=True)

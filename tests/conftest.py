@@ -45,10 +45,17 @@ def _auto_close_kernel_stores() -> None:
     The monkey-patch is applied once via ``pytest_sessionstart``; this fixture
     only performs the cleanup sweep after each test.  Uses a deque for O(1)
     popleft and only processes stores created during the current test.
+
+    Stores that were created before this test (e.g. module-scoped or
+    session-scoped shared_store fixtures) are preserved — only stores
+    appended during the test's execution are closed.
     """
+    pre_existing = len(_current_test_stores)
     yield
-    while _current_test_stores:
-        store = _current_test_stores.popleft()
+    # Only close stores that were added during this test
+    new_count = len(_current_test_stores) - pre_existing
+    for _ in range(new_count):
+        store = _current_test_stores.pop()
         try:
             store.close()
         except Exception:

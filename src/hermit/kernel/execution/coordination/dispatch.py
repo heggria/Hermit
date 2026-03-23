@@ -129,6 +129,7 @@ class KernelDispatchService:
                     attempt.step_attempt_id,
                     status="failed",
                     waiting_reason="heartbeat_timeout",
+                    status_reason="heartbeat_timeout",
                     finished_at=now,
                 )
                 store.update_step(attempt.step_id, status="failed", finished_at=now)
@@ -352,7 +353,7 @@ class KernelDispatchService:
                 exc_info=True,
             )
 
-    def _check_deliberation_needed(self, step_attempt_id: str) -> bool:
+    def check_deliberation_needed(self, step_attempt_id: str) -> bool:
         """Check if a step attempt requires deliberation before dispatch.
 
         Reads risk_band from the attempt context and step_kind from the step,

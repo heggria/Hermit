@@ -150,8 +150,10 @@ class TraceRecorder:
         """
         if run_id is None:
             if not self._seq_counters:
-                raise ValueError("No run has been started. Call start_run() first.")
-            run_id = next(reversed(self._seq_counters))
+                # Auto-start a default run for runtime tracing
+                run_id = self.start_run(scenario_id="live")
+            else:
+                run_id = next(reversed(self._seq_counters))
 
         if run_id not in self._seq_counters:
             raise ValueError(f"Unknown run_id: {run_id}")

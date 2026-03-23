@@ -9,6 +9,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import structlog
+
 if TYPE_CHECKING:
     from hermit.kernel.task.models.records import BlackboardRecord
 
@@ -16,22 +18,23 @@ from hermit.kernel.authority.identity.models import PrincipalRecord
 from hermit.kernel.execution.competition.store import CompetitionStoreMixin
 from hermit.kernel.ledger.events.store_ledger import KernelLedgerStoreMixin
 from hermit.kernel.ledger.journal.store_assurance import AssuranceStoreMixin
+from hermit.kernel.ledger.journal.store_programs import ProgramStoreMixin
 from hermit.kernel.ledger.journal.store_records import KernelStoreRecordMixin
 from hermit.kernel.ledger.journal.store_scheduler import KernelSchedulerStoreMixin
+from hermit.kernel.ledger.journal.store_self_iterate import SelfIterateStoreMixin
 from hermit.kernel.ledger.journal.store_support import canonical_json as _canonical_json
 from hermit.kernel.ledger.journal.store_support import (
     canonical_json_from_raw as _canonical_json_from_raw,
 )
 from hermit.kernel.ledger.journal.store_support import sha256_hex as _sha256_hex
 from hermit.kernel.ledger.journal.store_tasks import KernelTaskStoreMixin
-from hermit.kernel.ledger.journal.store_programs import ProgramStoreMixin
-from hermit.kernel.ledger.journal.store_self_iterate import SelfIterateStoreMixin
-from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.journal.store_teams import KernelTeamStoreMixin
+from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
 from hermit.kernel.signals.store import SignalStoreMixin
 from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 
+_SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _SCHEMA_VERSION = "18"
 _MIGRATABLE_SCHEMA_VERSIONS = {
     "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
@@ -83,6 +86,7 @@ _KNOWN_KERNEL_TABLES = {
     "assurance_scenarios",
     "assurance_reports",
     "assurance_replay_entries",
+    "entity_links",
 }
 
 
@@ -138,6 +142,10 @@ class KernelStore(
         with self._lock:
             row = self._row("SELECT value FROM kernel_meta WHERE key = 'schema_version'")
         return str(row["value"]) if row is not None else ""
+
+    def get_schema_version(self) -> str:
+        """Public alias for :meth:`schema_version`."""
+        return self.schema_version()
 
     def _existing_tables(self) -> set[str]:
         cursor = self._conn.execute(
@@ -396,7 +404,8 @@ class KernelStore(
                     issued_at REAL NOT NULL,
                     expires_at REAL,
                     consumed_at REAL,
-                    revoked_at REAL
+                    revoked_at REAL,
+                    parent_grant_ref TEXT
                 );
                 CREATE TABLE IF NOT EXISTS approvals (
                     approval_id TEXT PRIMARY KEY,
@@ -769,6 +778,7 @@ class KernelStore(
                 "approvals", "fallback_contract_refs_json", "TEXT NOT NULL DEFAULT '[]'"
             )
             self._ensure_column("approvals", "expires_at", "REAL")
+            self._ensure_column("capability_grants", "parent_grant_ref", "TEXT")
             self._ensure_column("receipts", "receipt_class", "TEXT")
             self._ensure_column("receipts", "action_request_ref", "TEXT")
             self._ensure_column("receipts", "policy_result_ref", "TEXT")
@@ -848,13 +858,34 @@ class KernelStore(
                 );
                 """
             )
+            # -- programs table --
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS programs (
+                    program_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    goal TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    description TEXT NOT NULL DEFAULT '',
+                    priority TEXT NOT NULL DEFAULT 'normal',
+                    program_contract_ref TEXT,
+                    budget_limits_json TEXT NOT NULL DEFAULT '{}',
+                    milestone_ids_json TEXT NOT NULL DEFAULT '[]',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            # -- delegations table + indexes --
+            self._init_delegation_schema()
             self._init_signal_schema()
             self._init_competition_schema()
             self._init_assurance_schema()
             self._migrate_memory_schema_v4()
-            self._migrate_dag_schema_v11()
             self._migrate_kernel_convergence_v6()
             self._migrate_category_english_v8()
+            self._migrate_dag_schema_v11()
             self._migrate_memory_kind_index_v12()
             self._migrate_hash_chain_checkpoints_v13()
             self._migrate_verification_v14()
@@ -868,6 +899,12 @@ class KernelStore(
             self._ensure_column("step_attempts", "waiting_reason", "TEXT")
             self._ensure_column("step_attempts", "last_heartbeat_at", "REAL")
             self._ensure_column("step_attempts", "status_reason", "TEXT")
+            self._ensure_column(
+                "step_attempts", "join_strategy", "TEXT NOT NULL DEFAULT 'all_required'"
+            )
+            self._ensure_column(
+                "step_attempts", "input_bindings_json", "TEXT NOT NULL DEFAULT '{}'"
+            )
             # Ensure teams + milestones tables exist.
             self._conn.execute(
                 """
@@ -900,6 +937,31 @@ class KernelStore(
                 )
                 """
             )
+            # -- entity_links table (memory ↔ entity cross-references) --
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS entity_links (
+                    link_id TEXT PRIMARY KEY,
+                    entity TEXT NOT NULL,
+                    memory_id TEXT NOT NULL,
+                    relation TEXT NOT NULL DEFAULT 'related',
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entity_links_entity "
+                "ON entity_links(entity)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entity_links_memory "
+                "ON entity_links(memory_id)"
+            )
+            # -- event hash index for task-scoped hash chain queries --
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_task_hash "
+                "ON events(task_id, event_hash)"
+            )
             self._migrate_event_hashes_table()
             self._backfill_event_hash_chain()
             self._conn.execute(
@@ -911,6 +973,8 @@ class KernelStore(
             )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        if not _SAFE_IDENTIFIER.match(table) or not _SAFE_IDENTIFIER.match(column):
+            raise ValueError(f"Unsafe identifier: {table!r}.{column!r}")
         existing = {
             str(row["name"]) for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
         }
@@ -1092,6 +1156,11 @@ class KernelStore(
 
     def _ensure_columns_batch(self, table: str, columns: list[tuple[str, str]]) -> None:
         """Add multiple columns to a table with a single PRAGMA table_info query."""
+        if not _SAFE_IDENTIFIER.match(table):
+            raise ValueError(f"Unsafe table identifier: {table!r}")
+        for column, _definition in columns:
+            if not _SAFE_IDENTIFIER.match(column):
+                raise ValueError(f"Unsafe column identifier: {table!r}.{column!r}")
         existing = {
             str(row["name"])
             for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -1212,226 +1281,6 @@ class KernelStore(
                 ("verification_requirements_json", "TEXT"),
             ],
         )
-
-    # ------------------------------------------------------------------
-    # Blackboard CRUD
-    # ------------------------------------------------------------------
-
-    def insert_blackboard_entry(self, record: BlackboardRecord) -> None:
-        conn = self._get_conn()
-        with conn:
-            conn.execute(
-                """INSERT INTO blackboard_entries (
-                    entry_id, task_id, step_id, step_attempt_id, entry_type,
-                    content_json, confidence, supersedes_entry_id, status,
-                    resolution, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    record.entry_id,
-                    record.task_id,
-                    record.step_id,
-                    record.step_attempt_id,
-                    record.entry_type,
-                    _canonical_json(record.content),
-                    record.confidence,
-                    record.supersedes_entry_id,
-                    record.status,
-                    record.resolution,
-                    record.created_at or time.time(),
-                ),
-            )
-
-    def get_blackboard_entry(self, entry_id: str) -> BlackboardRecord | None:
-        row = self._row(
-            "SELECT * FROM blackboard_entries WHERE entry_id = ?", (entry_id,)
-        )
-        if row is None:
-            return None
-        return self._blackboard_entry_from_row(row)
-
-    def query_blackboard_entries(
-        self,
-        *,
-        task_id: str,
-        entry_type: str | None = None,
-        status: str | None = None,
-    ) -> list[BlackboardRecord]:
-        clauses = ["task_id = ?"]
-        params: list[Any] = [task_id]
-        if entry_type is not None:
-            clauses.append("entry_type = ?")
-            params.append(entry_type)
-        if status is not None:
-            clauses.append("status = ?")
-            params.append(status)
-        where = " AND ".join(clauses)
-        rows = self._rows(
-            f"SELECT * FROM blackboard_entries WHERE {where} ORDER BY created_at ASC",
-            params,
-        )
-        return [self._blackboard_entry_from_row(r) for r in rows]
-
-    def update_blackboard_entry_status(
-        self, entry_id: str, status: str, *, resolution: str | None = None
-    ) -> None:
-        conn = self._get_conn()
-        with conn:
-            if resolution is not None:
-                conn.execute(
-                    "UPDATE blackboard_entries SET status = ?, resolution = ?"
-                    " WHERE entry_id = ?",
-                    (status, resolution, entry_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE blackboard_entries SET status = ? WHERE entry_id = ?",
-                    (status, entry_id),
-                )
-
-    def _blackboard_entry_from_row(self, row: sqlite3.Row) -> BlackboardRecord:
-        from hermit.kernel.ledger.journal.store_support import json_loads
-        from hermit.kernel.task.models.records import BlackboardRecord as _BB
-
-        return _BB(
-            entry_id=str(row["entry_id"]),
-            task_id=str(row["task_id"]),
-            step_id=str(row["step_id"]),
-            step_attempt_id=row["step_attempt_id"],
-            entry_type=str(row["entry_type"]),
-            content=json_loads(row["content_json"]),
-            confidence=float(row["confidence"]),
-            supersedes_entry_id=row["supersedes_entry_id"],
-            status=str(row["status"]),
-            resolution=row["resolution"],
-            created_at=float(row["created_at"]),
-        )
-
-    # ------------------------------------------------------------------
-    # Observation ticket CRUD
-    # ------------------------------------------------------------------
-
-    def _migrate_observation_tickets_v16(self) -> None:
-        """Create observation_tickets table for durable observation tracking."""
-        self._get_conn().executescript(
-            """
-            CREATE TABLE IF NOT EXISTS observation_tickets (
-                ticket_id TEXT PRIMARY KEY,
-                task_id TEXT NOT NULL,
-                step_id TEXT NOT NULL,
-                step_attempt_id TEXT NOT NULL,
-                observer_kind TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'active',
-                poll_after_seconds REAL NOT NULL DEFAULT 5.0,
-                hard_deadline_at REAL,
-                ready_patterns_json TEXT NOT NULL DEFAULT '[]',
-                failure_patterns_json TEXT NOT NULL DEFAULT '[]',
-                ticket_data_json TEXT NOT NULL DEFAULT '{}',
-                created_at REAL NOT NULL,
-                last_polled_at REAL,
-                resolved_at REAL
-            );
-            CREATE INDEX IF NOT EXISTS idx_observation_tickets_status
-                ON observation_tickets(status, created_at);
-            CREATE INDEX IF NOT EXISTS idx_observation_tickets_attempt
-                ON observation_tickets(step_attempt_id, status);
-            """
-        )
-
-    def create_observation_ticket(
-        self,
-        *,
-        task_id: str,
-        step_id: str,
-        step_attempt_id: str,
-        observer_kind: str,
-        poll_after_seconds: float = 5.0,
-        hard_deadline_at: float | None = None,
-        ready_patterns: list[Any] | None = None,
-        failure_patterns: list[Any] | None = None,
-        ticket_data: dict[str, Any] | None = None,
-    ) -> str:
-        ticket_id = self._id("obs")
-        now = time.time()
-        conn = self._get_conn()
-        with conn:
-            conn.execute(
-                """
-                INSERT INTO observation_tickets (
-                    ticket_id, task_id, step_id, step_attempt_id, observer_kind,
-                    status, poll_after_seconds, hard_deadline_at,
-                    ready_patterns_json, failure_patterns_json, ticket_data_json,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    ticket_id, task_id, step_id, step_attempt_id, observer_kind,
-                    poll_after_seconds, hard_deadline_at,
-                    _canonical_json(ready_patterns or []),
-                    _canonical_json(failure_patterns or []),
-                    _canonical_json(ticket_data or {}),
-                    now,
-                ),
-            )
-        return ticket_id
-
-    def resolve_observation(
-        self, ticket_id: str, *, status: str = "completed", now: float | None = None
-    ) -> None:
-        ts = now or time.time()
-        conn = self._get_conn()
-        with conn:
-            conn.execute(
-                "UPDATE observation_tickets SET status = ?, resolved_at = ?"
-                " WHERE ticket_id = ?",
-                (status, ts, ticket_id),
-            )
-
-    def resolve_observations_for_attempt(
-        self, step_attempt_id: str, *, status: str = "resolved", now: float | None = None
-    ) -> list[str]:
-        """Resolve all active observation tickets for a step attempt."""
-        ts = now or time.time()
-        conn = self._get_conn()
-        rows = self._rows(
-            "SELECT ticket_id FROM observation_tickets"
-            " WHERE step_attempt_id = ? AND status = 'active'",
-            (step_attempt_id,),
-        )
-        resolved_ids: list[str] = []
-        for row in rows:
-            tid = str(row["ticket_id"])
-            with conn:
-                conn.execute(
-                    "UPDATE observation_tickets SET status = ?, resolved_at = ?"
-                    " WHERE ticket_id = ?",
-                    (status, ts, tid),
-                )
-            resolved_ids.append(tid)
-        return resolved_ids
-
-    def resolve_observations_for_task(
-        self, task_id: str, *, status: str = "cancelled", now: float | None = None
-    ) -> list[str]:
-        """Resolve all active observation tickets for a task."""
-        ts = now or time.time()
-        conn = self._get_conn()
-        rows = self._rows(
-            "SELECT ticket_id FROM observation_tickets"
-            " WHERE task_id = ? AND status = 'active'",
-            (task_id,),
-        )
-        resolved_ids: list[str] = []
-        for row in rows:
-            tid = str(row["ticket_id"])
-            with conn:
-                conn.execute(
-                    "UPDATE observation_tickets SET status = ?, resolved_at = ?"
-                    " WHERE ticket_id = ?",
-                    (status, ts, tid),
-                )
-            resolved_ids.append(tid)
-        return resolved_ids
-
 
     # ------------------------------------------------------------------
     # Blackboard CRUD
@@ -1800,6 +1649,46 @@ class KernelStore(
         cursor = self._conn.execute(query, tuple(params))
         return list(cursor.fetchall())
 
+    def ensure_schema(self, ddl: str) -> None:
+        """Execute DDL statements (CREATE TABLE IF NOT EXISTS, CREATE INDEX, etc.).
+
+        Used by memory subsystem modules (embeddings, graph, procedural) to
+        ensure their tables exist.  Since _init_schema() already creates all
+        known tables, this is largely a no-op but keeps the modules self-
+        contained for standalone or migration use.
+        """
+        with self._lock, self._conn:
+            self._conn.executescript(ddl)
+
+    def execute_raw(
+        self,
+        sql: str,
+        params: Any = (),
+        *,
+        write: bool = False,
+    ) -> list[sqlite3.Row]:
+        """Execute a raw SQL statement and return rows.
+
+        Used by memory subsystem modules (embeddings, graph, procedural) for
+        direct table access that is not covered by the mixin API.
+
+        Args:
+            sql: The SQL statement to execute.
+            params: Bind parameters (tuple or list).
+            write: If True, wrap in a transaction context manager.
+
+        Returns:
+            List of sqlite3.Row objects (empty for write statements).
+        """
+        resolved_params = tuple(params) if params else ()
+        if write:
+            with self._lock, self._conn:
+                self._conn.execute(sql, resolved_params)
+            return []
+        with self._lock:
+            cursor = self._conn.execute(sql, resolved_params)
+            return list(cursor.fetchall())
+
     def _infer_principal_type(self, value: str) -> str:
         normalized = value.strip().lower()
         if normalized in {"user", "operator", "human"}:
@@ -1856,7 +1745,8 @@ class KernelStore(
                 ),
             )
             row = self._row("SELECT * FROM principals WHERE principal_id = ?", (resolved_id,))
-        assert row is not None
+        if row is None:
+            raise RuntimeError(f"Failed to persist or retrieve principal {resolved_id!r}")
         return self._principal_from_row(row)
 
     def _ensure_principal_id(
@@ -2063,15 +1953,16 @@ class KernelStore(
         rows = self._rows("SELECT * FROM events ORDER BY event_seq ASC")
         previous_by_task: dict[str, str] = {}
         now = time.time()
+        existing_seqs: dict[int, str] = {
+            int(row["event_seq"]): str(row["event_hash"])
+            for row in self._rows("SELECT event_seq, event_hash FROM event_hashes")
+        }
         for row in rows:
             event_seq = int(row["event_seq"])
             task_key = str(row["task_id"]) if row["task_id"] is not None else ""
 
             # Check if hash already exists in event_hashes table
-            existing = self._row(
-                "SELECT event_hash FROM event_hashes WHERE event_seq = ?",
-                (event_seq,),
-            )
+            existing_hash = existing_seqs.get(event_seq)
 
             # Also check the legacy columns on the events table
             stored_hash = str(row["event_hash"] or "").strip()
@@ -2080,9 +1971,9 @@ class KernelStore(
 
             prev_event_hash = previous_by_task.get(task_key) if task_key else None
 
-            if existing is not None:
+            if existing_hash is not None:
                 # Already in event_hashes, use that as authoritative
-                stored_hash = str(existing["event_hash"])
+                stored_hash = existing_hash
             elif stored_hash and stored_prev == (prev_event_hash or "") and stored_algo:
                 # Legacy hash exists and is consistent; migrate to event_hashes
                 self._conn.execute(

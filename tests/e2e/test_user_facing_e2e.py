@@ -123,7 +123,7 @@ class _PluginManager:
         self.ended: list[str] = []
         self.post_run: list[str] = []
 
-    def on_session_start(self, session_id: str) -> None:
+    def on_session_start(self, session_id: str, *, runner: object = None) -> None:
         self.started.append(session_id)
 
     def on_session_end(self, session_id: str, _messages: list[dict[str, Any]]) -> None:

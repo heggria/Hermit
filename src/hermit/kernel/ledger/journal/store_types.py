@@ -38,6 +38,16 @@ class KernelStoreTypingBase:
 
     def _rows(self, query: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]: ...
 
+    def ensure_schema(self, ddl: str) -> None: ...
+
+    def execute_raw(
+        self,
+        sql: str,
+        params: Any = (),
+        *,
+        write: bool = False,
+    ) -> list[sqlite3.Row]: ...
+
     def _append_event_tx(
         self,
         *,
@@ -105,6 +115,8 @@ class KernelStoreTypingBase:
 
     def get_step(self, step_id: str) -> StepRecord | None: ...
 
+    def get_step_by_node_key(self, task_id: str, node_key: str) -> StepRecord | None: ...
+
     def get_step_attempt(self, step_attempt_id: str) -> StepAttemptRecord | None: ...
 
     def batch_get_step_attempts(
@@ -146,15 +158,21 @@ class KernelStoreTypingBase:
     def get_reconciliation(self, reconciliation_id: str) -> ReconciliationRecord | None: ...
 
     def list_approvals(
-        self, *, task_id: str | None = None, status: str | None = None, limit: int = 100
+        self,
+        *,
+        conversation_id: str | None = None,
+        task_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
     ) -> list[ApprovalRecord]: ...
 
     def list_events(
         self,
         *,
         task_id: str | None = None,
+        event_type: str | None = None,
         after_event_seq: int | None = None,
-        limit: int = 200,
+        limit: int = 100,
     ) -> list[dict[str, Any]]: ...
 
     def list_events_for_tasks(
@@ -177,6 +195,30 @@ class KernelStoreTypingBase:
     ) -> dict[str, list[Any]]: ...
 
     def batch_get_artifacts(self, artifact_ids: list[str]) -> dict[str, Any]: ...
+
+    def list_stale_tasks(
+        self, threshold_seconds: float, limit: int = 50
+    ) -> list[TaskRecord]: ...
+
+    def count_tasks_by_status(self) -> dict[str, int]: ...
+
+    def count_completed_in_window(self, window_seconds: float) -> int: ...
+
+    def list_recent_failures(
+        self, window_seconds: float, limit: int = 200
+    ) -> list[TaskRecord]: ...
+
+    def count_steps_by_status(self, task_id: str) -> dict[str, int]: ...
+
+    def list_steps(
+        self, *, task_id: str | None = None, limit: int = 200
+    ) -> list[StepRecord]: ...
+
+    def get_key_to_step_id(self, task_id: str) -> dict[str, str]: ...
+
+    def list_child_tasks(
+        self, *, parent_task_id: str, limit: int | None = None
+    ) -> list[TaskRecord]: ...
 
     def list_open_tasks_for_conversation(
         self, *, conversation_id: str, limit: int = 50

@@ -12,7 +12,14 @@ from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.verification.proofs.proofs import ProofService
 
+from hermit.kernel.ledger.journal.store_support import canonical_json as _canonical_json
+
 log = structlog.get_logger()
+
+
+def _get_signing_secret() -> str:
+    """Return the configured proof signing secret, or empty string if unset."""
+    return str(os.environ.get("HERMIT_PROOF_SIGNING_SECRET", "")).strip()
 
 
 class ReceiptService:
@@ -20,6 +27,93 @@ class ReceiptService:
         self.store = store
         self.artifact_store = artifact_store or ArtifactStore(store.db_path.parent / "artifacts")
         self.proofs = ProofService(store, self.artifact_store)
+
+    # ------------------------------------------------------------------
+    # Static signature helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _canonicalize(receipt_data: dict[str, Any]) -> str:
+        """Produce a deterministic canonical JSON string for signing.
+
+        Excludes the ``signature`` key and any keys whose value is ``None``
+        so that the canonical form is stable across optional-field changes.
+        """
+        filtered = {
+            k: v for k, v in receipt_data.items() if k != "signature" and v is not None
+        }
+        return _canonical_json(filtered)
+
+    @staticmethod
+    def _compute_signature(receipt_data: dict[str, Any]) -> str | None:
+        """Compute a v2 HMAC-SHA256 signature over canonical JSON of *receipt_data*.
+
+        Returns ``"v2:<hex>"`` if a signing secret is configured, otherwise ``None``.
+        """
+        secret = _get_signing_secret()
+        if not secret:
+            return None
+        payload_json = _canonical_json(receipt_data)
+        digest = hmac.new(
+            secret.encode("utf-8"),
+            payload_json.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return f"v2:{digest}"
+
+    @staticmethod
+    def _compute_legacy_signature(
+        receipt_id: str,
+        task_id: str,
+        step_id: str,
+        action_type: str,
+        result_code: str,
+    ) -> str | None:
+        """Compute a legacy 5-field HMAC-SHA256 signature.
+
+        Returns the raw hex digest if a signing secret is configured, otherwise ``None``.
+        """
+        secret = _get_signing_secret()
+        if not secret:
+            return None
+        message = f"{receipt_id}:{task_id}:{step_id}:{action_type}:{result_code}"
+        return hmac.new(
+            secret.encode("utf-8"),
+            message.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    @staticmethod
+    def verify_signature(
+        receipt_data: dict[str, Any],
+        signature: str | None,
+    ) -> bool:
+        """Verify a receipt signature (v2 canonical or legacy 5-field format).
+
+        Accepts both the v2 (``"v2:<hex>"``) format produced by
+        ``_compute_signature`` and the legacy raw hex format produced by
+        ``_compute_legacy_signature``.
+
+        Returns ``True`` if the signature matches, ``False`` otherwise.
+        If no signing secret is configured, returns ``False``.
+        """
+        secret = _get_signing_secret()
+        if not secret or not signature:
+            return False
+
+        # v2 canonical signature
+        if signature.startswith("v2:"):
+            expected = ReceiptService._compute_signature(receipt_data)
+            return expected is not None and hmac.compare_digest(signature, expected)
+
+        # Legacy 5-field signature
+        rid = str(receipt_data.get("receipt_id", ""))
+        tid = str(receipt_data.get("task_id", ""))
+        sid = str(receipt_data.get("step_id", ""))
+        atype = str(receipt_data.get("action_type", ""))
+        rcode = str(receipt_data.get("result_code", ""))
+        expected_legacy = ReceiptService._compute_legacy_signature(rid, tid, sid, atype, rcode)
+        return expected_legacy is not None and hmac.compare_digest(signature, expected_legacy)
 
     def issue(
         self,
@@ -92,7 +186,7 @@ class ReceiptService:
         self.proofs.ensure_receipt_bundle(receipt.receipt_id)
         return receipt.receipt_id
 
-    def verify_signature(self, receipt_id: str) -> bool:
+    def verify_receipt_bundle_signature(self, receipt_id: str) -> bool:
         """Verify the HMAC signature on a receipt's bundle.
 
         Returns True if the signature is valid or if no signing secret is configured

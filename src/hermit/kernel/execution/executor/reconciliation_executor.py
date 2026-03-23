@@ -17,7 +17,7 @@ from hermit.kernel.execution.recovery.reconcile import ReconcileOutcome
 from hermit.kernel.execution.recovery.reconciliations import ReconciliationService
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy.models.models import ActionRequest
-from hermit.kernel.task.models.records import ReconciliationRecord
+from hermit.kernel.task.models.records import ReconciliationRecord, TaskRecord
 
 MAX_AUTO_FOLLOWUPS: int = 3
 _FOLLOWUP_RESULT_CLASSES: frozenset[str] = frozenset({"violated", "unauthorized", "ambiguous"})
@@ -72,7 +72,7 @@ class ReconciliationExecutor:
         root_task_id = str(getattr(task, "parent_task_id", None) or "") or task_id
 
         # Count existing follow-ups (children whose goal starts with retry prefix).
-        existing_children: list[Any] = self.store.list_child_tasks(parent_task_id=root_task_id)
+        existing_children: list[TaskRecord] = self.store.list_child_tasks(parent_task_id=root_task_id)
         followup_count = sum(
             1
             for child in existing_children

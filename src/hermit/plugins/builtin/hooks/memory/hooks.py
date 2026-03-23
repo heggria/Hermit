@@ -52,7 +52,7 @@ def _build_memory_re(key: str) -> re.Pattern[str]:
     keywords = tr_list_all_locales(key)
     if not keywords:
         return re.compile(r"(?!)")  # never matches
-    escaped = [re.escape(k) for k in keywords]
+    escaped = [re.escape(k) if not any(c in k for c in r".\+*?[](){}^$|") else k for k in keywords]
     return re.compile(r"(" + "|".join(escaped) + r")", re.IGNORECASE)
 
 
@@ -109,12 +109,45 @@ def register(ctx: PluginContext) -> None:
 
     def _hook_session_end(session_id: str, messages: list[dict[str, Any]]) -> None:
         save_memories(engine, settings, session_id, messages)
-        _maybe_consolidate(settings)
+        _run_consolidation_if_available(settings)
 
     ctx.add_hook(HookEvent.SYSTEM_PROMPT, _hook_system_prompt, priority=20)
     ctx.add_hook(HookEvent.PRE_RUN, _hook_pre_run, priority=20)
     ctx.add_hook(HookEvent.POST_RUN, _hook_post_run, priority=20)
     ctx.add_hook(HookEvent.SESSION_END, _hook_session_end, priority=90)
+
+
+def _run_consolidation_if_available(settings: Any) -> None:
+    """Run memory consolidation if kernel store is available.
+
+    Called at SESSION_END after memory save. Failures are logged and swallowed
+    so they never break session teardown.
+    """
+    kernel_db_path = getattr(settings, "kernel_db_path", None)
+    if not kernel_db_path:
+        return
+    try:
+        from pathlib import Path
+
+        from hermit.kernel.context.memory.consolidation import ConsolidationService
+        from hermit.kernel.ledger.journal.store import KernelStore
+
+        store = KernelStore(Path(kernel_db_path))
+        try:
+            service = ConsolidationService()
+            report = service.run_consolidation(store)
+            log.info(
+                "session_end_consolidation_complete",
+                merged=report.merged_count,
+                strengthened=report.strengthened_count,
+                decayed=report.decayed_count,
+                insights=report.new_insights_count,
+                pitfalls=report.new_pitfalls_count,
+            )
+        finally:
+            store.close()
+    except Exception:
+        log.warning("session_end_consolidation_failed", exc_info=True)
 
 
 # --- Backward-compatible aliases ---
@@ -406,56 +439,3 @@ def _bump_session_index(state_file: Path) -> int:  # pyright: ignore[reportUnuse
     except Exception:
         log.warning("session_state_update_failed")
         return 1
-
-
-# ---------------------------------------------------------------------------
-# Consolidation trigger
-# ---------------------------------------------------------------------------
-
-_CONSOLIDATION_THROTTLE_SECONDS = 3 * 3600  # run at most once every 3 hours
-_CONSOLIDATION_THROTTLE_FILE = ".last_consolidation"
-
-
-def _maybe_consolidate(settings: Any) -> None:
-    """Run the memory consolidation dream cycle, throttled to avoid over-firing.
-
-    Skips silently when:
-    - ``settings.kernel_db_path`` is absent or falsy
-    - A throttle file written by the previous run is recent enough
-    """
-    import time
-    from pathlib import Path as _Path
-
-    kernel_db_path = getattr(settings, "kernel_db_path", None)
-    if not kernel_db_path:
-        return
-
-    memory_file = getattr(settings, "memory_file", None)
-    if memory_file is None:
-        return
-
-    throttle_file = _Path(memory_file).parent / _CONSOLIDATION_THROTTLE_FILE
-    if throttle_file.exists():
-        try:
-            last_run = float(throttle_file.read_text().strip())
-            if (time.time() - last_run) < _CONSOLIDATION_THROTTLE_SECONDS:
-                log.debug("memory_consolidation_throttled", throttle_file=str(throttle_file))
-                return
-        except Exception:
-            pass  # corrupt throttle file → proceed with consolidation
-
-    try:
-        from hermit.kernel.ledger.journal.store import KernelStore
-        from hermit.plugins.builtin.hooks.memory.services import get_services
-
-        store = KernelStore(_Path(kernel_db_path))
-        try:
-            services = get_services(store)
-            services.consolidation.run_consolidation(store)
-        finally:
-            store.close()
-
-        throttle_file.write_text(str(time.time()))
-        log.info("memory_consolidation_complete")
-    except Exception:
-        log.warning("memory_consolidation_failed", exc_info=True)

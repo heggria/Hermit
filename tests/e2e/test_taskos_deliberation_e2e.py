@@ -3,7 +3,7 @@
 Exercises the full deliberation gating pipeline:
   task + step + attempt creation → risk/kind evaluation →
   DeliberationService.check_deliberation_needed() →
-  KernelDispatchService._check_deliberation_needed() →
+  KernelDispatchService.check_deliberation_needed() →
   ledger event recording + status transitions.
 
 Uses real KernelStore (file-backed) with tmp_path.
@@ -98,7 +98,7 @@ class TestHighRiskTriggersDeliberationPending:
             store, step_kind="write_local", risk_band="high"
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is True
 
         # Verify: attempt moved to deliberation_pending
@@ -154,7 +154,7 @@ class TestCriticalRiskTriggersDeliberation:
             store, step_kind="execute_command", risk_band="critical"
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is True
 
         # Verify: attempt moved to deliberation_pending
@@ -209,7 +209,7 @@ class TestLowRiskBypassesDeliberationDirectDispatch:
             store, step_kind="execute", risk_band="low"
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is False
 
         # Verify: attempt status NOT changed — still running (ready for dispatch)
@@ -296,7 +296,7 @@ class TestMediumRiskKindDependentDeliberation:
             store, step_kind="write_local", risk_band="medium"
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is True
 
         updated_attempt = store.get_step_attempt(step_attempt_id)
@@ -319,7 +319,7 @@ class TestMediumRiskKindDependentDeliberation:
             store, step_kind="read_local", risk_band="medium"
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is False
 
         updated_attempt = store.get_step_attempt(step_attempt_id)
@@ -342,7 +342,7 @@ class TestMediumRiskKindDependentDeliberation:
             store, step_kind="patch_file", risk_band="medium"
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is True
 
         updated_attempt = store.get_step_attempt(step_attempt_id)
@@ -368,7 +368,7 @@ class TestMediumRiskKindDependentDeliberation:
             store, step_kind="network_read", risk_band="medium"
         )
 
-        result = dispatch._check_deliberation_needed(step_attempt_id)
+        result = dispatch.check_deliberation_needed(step_attempt_id)
         assert result is False
 
         updated_attempt = store.get_step_attempt(step_attempt_id)

@@ -214,7 +214,7 @@ class TestSessionHelpers:
 
     def test_ensure_session_started(self, runner: AgentRunner, mock_pm: MagicMock) -> None:
         runner._ensure_session_started("sess_1")
-        mock_pm.on_session_start.assert_called_once_with("sess_1")
+        mock_pm.on_session_start.assert_called_once_with("sess_1", runner=runner)
         assert "sess_1" in runner._session_started
 
     def test_ensure_session_started_idempotent(

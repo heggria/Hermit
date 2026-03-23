@@ -259,25 +259,39 @@ class ProofService:
         return receipt_bundle_ref
 
     def export_task_proof(self, task_id: str, detail: str = "full") -> dict[str, Any]:
+        # Normalize detail level; unknown values fall back to "full".
+        if detail not in ("summary", "standard", "full"):
+            detail = "full"
+
         task = self.store.get_task(task_id)
         if task is None:
             raise KeyError(f"Task not found: {task_id}")
 
         receipts = self.store.list_receipts(task_id=task_id, limit=500)
+
+        # Always ensure receipt bundles exist (even for summary) so proof_mode is
+        # accurate, but only load heavy payloads when required by the detail level.
         receipt_bundle_refs = [
             self.ensure_receipt_bundle(receipt.receipt_id) for receipt in receipts
         ]
-        receipt_bundles = [self._load_artifact_payload(ref_id) for ref_id in receipt_bundle_refs]
-        context_manifest_refs = sorted(
-            {
-                str(bundle.get("context_manifest_ref", "")).strip()
-                for bundle in receipt_bundles
-                if str(bundle.get("context_manifest_ref", "")).strip()
-            }
+        receipt_bundles = (
+            [self._load_artifact_payload(ref_id) for ref_id in receipt_bundle_refs]
+            if detail == "full"
+            else []
         )
-        context_manifests = [
-            self._load_artifact_payload(ref_id) for ref_id in context_manifest_refs
-        ]
+        context_manifest_refs: list[str] = []
+        context_manifests: list[dict[str, Any]] = []
+        if detail == "full":
+            context_manifest_refs = sorted(
+                {
+                    str(bundle.get("context_manifest_ref", "")).strip()
+                    for bundle in receipt_bundles
+                    if str(bundle.get("context_manifest_ref", "")).strip()
+                }
+            )
+            context_manifests = [
+                self._load_artifact_payload(ref_id) for ref_id in context_manifest_refs
+            ]
         contracts = (
             self.store.list_execution_contracts(task_id=task_id, limit=500)
             if hasattr(self.store, "list_execution_contracts")
@@ -299,16 +313,18 @@ class ProofService:
             else []
         )
         verification = self.verify_task_chain(task_id)
-        proof_payload = {
+
+        # -- Build the core payload (present in all tiers) --
+        proof_payload: dict[str, Any] = {
+            "detail": detail,
             "task_id": task_id,
             "exported_at": time.time(),
             "proof_mode": _PROOF_MODE_HASH_CHAINED,
             "proof_coverage": self._proof_coverage(receipts),
+            "receipt_count": len(receipts),
             "status": "verified" if verification["valid"] else "invalid_chain",
             "chain_verification": verification,
             "task_projection_summary": self.build_proof_summary(task_id)["projection"],
-            "receipt_bundles": receipt_bundles,
-            "context_manifests": context_manifests,
             "decision_refs": sorted(
                 {receipt.decision_ref for receipt in receipts if receipt.decision_ref}
             ),
@@ -325,32 +341,57 @@ class ProofService:
             "workspace_lease_refs": sorted(
                 {receipt.workspace_lease_ref for receipt in receipts if receipt.workspace_lease_ref}
             ),
-            "capability_grants": [
-                grant.__dict__ for grant in self._capability_grants_for_receipts(receipts)
-            ],
-            "workspace_leases": [
-                lease.__dict__ for lease in self._workspace_leases_for_receipts(receipts)
-            ],
             "execution_contract_refs": [record.contract_id for record in contracts],
             "evidence_case_refs": [record.evidence_case_id for record in evidence_cases],
             "authorization_plan_refs": [
                 record.authorization_plan_id for record in authorization_plans
             ],
             "reconciliation_refs": [record.reconciliation_id for record in reconciliations],
-            "execution_contracts": [record.__dict__ for record in contracts],
-            "evidence_cases": [record.__dict__ for record in evidence_cases],
-            "authorization_plans": [record.__dict__ for record in authorization_plans],
-            "reconciliations": [record.__dict__ for record in reconciliations],
-            "artifact_hash_index": self._artifact_hash_index(
-                task_id, receipts, receipt_bundle_refs, context_manifest_refs
-            ),
         }
-        proof_payload["chain_completeness"] = self._chain_completeness(
+
+        # -- Standard and full tiers include full governance records --
+        if detail in ("standard", "full"):
+            proof_payload["capability_grants"] = [
+                grant.__dict__ for grant in self._capability_grants_for_receipts(receipts)
+            ]
+            proof_payload["workspace_leases"] = [
+                lease.__dict__ for lease in self._workspace_leases_for_receipts(receipts)
+            ]
+            proof_payload["execution_contracts"] = [record.__dict__ for record in contracts]
+            proof_payload["evidence_cases"] = [record.__dict__ for record in evidence_cases]
+            proof_payload["authorization_plans"] = [
+                record.__dict__ for record in authorization_plans
+            ]
+            proof_payload["reconciliations"] = [record.__dict__ for record in reconciliations]
+
+        # -- Full tier includes heavy payload sections --
+        if detail == "full":
+            proof_payload["receipt_bundles"] = receipt_bundles
+            proof_payload["context_manifests"] = context_manifests
+            proof_payload["artifact_hash_index"] = self._artifact_hash_index(
+                task_id, receipts, receipt_bundle_refs, context_manifest_refs
+            )
+
+        # -- Chain completeness (condensed for summary, full for standard/full) --
+        chain_completeness = self._chain_completeness(
             receipts, contracts, evidence_cases, authorization_plans, reconciliations
         )
-        inclusion = self._receipt_inclusion_proofs(receipt_bundles)
-        proof_payload["receipt_merkle_root"] = inclusion["root"]
-        proof_payload["receipt_inclusion_proofs"] = inclusion["proofs"]
+        if detail == "summary":
+            # Strip per-receipt chain details to keep the summary small.
+            chain_completeness = {
+                k: v for k, v in chain_completeness.items() if k != "chains"
+            }
+        proof_payload["chain_completeness"] = chain_completeness
+
+        # -- Merkle inclusion proofs (full tier only) --
+        if detail == "full":
+            inclusion = self._receipt_inclusion_proofs(receipt_bundles)
+            proof_payload["receipt_merkle_root"] = inclusion["root"]
+            proof_payload["receipt_inclusion_proofs"] = inclusion["proofs"]
+        else:
+            # Still compute proof mode from receipt records (bundles already ensured).
+            inclusion = {"root": None, "proofs": {}}
+
         proof_payload["proof_mode"] = self._export_proof_mode(
             receipts, inclusion_enabled=bool(inclusion["proofs"])
         )
@@ -362,11 +403,12 @@ class ProofService:
                     verifiability="strong_signed_with_inclusion_proof",
                     signer_ref=self.signing_key_id if self.signing_secret else receipt.signer_ref,
                 )
+
         # Assurance report (standard and full detail only)
         if detail in ("standard", "full"):
             try:
-                if hasattr(self.store, "get_trace_envelopes"):
-                    raw_envelopes = self.store.get_trace_envelopes(task_id, limit=10000)
+                if hasattr(self.store, "get_trace_envelopes_by_task"):
+                    raw_envelopes = self.store.get_trace_envelopes_by_task(task_id, limit=10000)
                     if raw_envelopes:
                         envelopes: list[TraceEnvelope] = []
                         for row in raw_envelopes:
@@ -399,8 +441,9 @@ class ProofService:
                             envelopes=envelopes,
                         )
                         proof_payload["assurance_report"] = reporter.emit_json(report)
+                        log.debug("assurance_report_attached", task_id=task_id)
             except Exception:
-                pass  # Assurance report is optional — never break proof export
+                log.debug("assurance_report_skipped", task_id=task_id, reason="exception")
 
         signature_meta = self._signature_metadata(proof_payload, artifact_kind="proof.bundle")
         if signature_meta is not None:

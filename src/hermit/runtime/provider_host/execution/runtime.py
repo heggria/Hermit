@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any, TypeGuard, cast
 import structlog
 
 from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.kernel.authority.grants import CapabilityGrantError
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.errors import KernelError
 from hermit.kernel.execution.executor.executor import ToolExecutionResult, ToolExecutor
 from hermit.runtime.capability.registry.tools import ToolRegistry, serialize_tool_result
 from hermit.runtime.provider_host.shared.contracts import Provider, ProviderRequest, UsageMetrics
@@ -582,7 +584,50 @@ class AgentRuntime:
                 available_tools = [tool.name for tool in self.registry.list_tools()]
                 serialized = f"Error: Unknown tool '{tool_name}'. Available: {available_tools}"
                 exec_result = ToolExecutionResult(model_content=serialized, raw_result=serialized)
+            except CapabilityGrantError as exc:
+                log.warning(
+                    "capability_grant_error",
+                    tool=tool_name,
+                    error_code=exc.code,
+                    error=str(exc),
+                    task_id=task_context.task_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
+                )
+                serialized = f"[Capability Denied] {exc}"
+                exec_result = ToolExecutionResult(
+                    model_content=serialized,
+                    raw_result={"error": str(exc), "error_code": exc.code},
+                    denied=True,
+                    result_code="dispatch_denied",
+                    execution_status="dispatch_denied",
+                )
+            except KernelError as exc:
+                log.warning(
+                    "kernel_governance_error",
+                    tool=tool_name,
+                    error_code=exc.code,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    task_id=task_context.task_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
+                )
+                serialized = f"[Governance Error] {type(exc).__name__}: {exc}"
+                exec_result = ToolExecutionResult(
+                    model_content=serialized,
+                    raw_result={"error": str(exc), "error_code": exc.code},
+                    denied=True,
+                    result_code="governance_error",
+                    execution_status="governance_error",
+                )
             except Exception as exc:
+                log.error(
+                    "tool_execution_error",
+                    tool=tool_name,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    task_id=task_context.task_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
+                )
                 serialized = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
                 exec_result = ToolExecutionResult(model_content=serialized, raw_result=serialized)
 

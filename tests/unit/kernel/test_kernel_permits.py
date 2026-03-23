@@ -85,13 +85,19 @@ def test_capability_grant_service_issue_and_state_updates(monkeypatch: pytest.Mo
     [
         pytest.param(
             None,
-            {"grant_id": "missing", "action_class": "write_local", "resource_scope": ["/tmp"]},
+            {
+                "grant_id": "missing",
+                "task_id": "task",
+                "action_class": "write_local",
+                "resource_scope": ["/tmp"],
+            },
             "missing",
             id="missing-grant",
         ),
         pytest.param(
             SimpleNamespace(
                 grant_id="grant-1",
+                task_id="task",
                 status="consumed",
                 expires_at=None,
                 action_class="write_local",
@@ -99,13 +105,19 @@ def test_capability_grant_service_issue_and_state_updates(monkeypatch: pytest.Mo
                 constraints={},
                 workspace_lease_ref=None,
             ),
-            {"grant_id": "grant-1", "action_class": "write_local", "resource_scope": ["/tmp"]},
+            {
+                "grant_id": "grant-1",
+                "task_id": "task",
+                "action_class": "write_local",
+                "resource_scope": ["/tmp"],
+            },
             "inactive",
             id="inactive-grant",
         ),
         pytest.param(
             SimpleNamespace(
                 grant_id="grant-1",
+                task_id="task",
                 status="issued",
                 expires_at=999.0,
                 action_class="write_local",
@@ -113,13 +125,19 @@ def test_capability_grant_service_issue_and_state_updates(monkeypatch: pytest.Mo
                 constraints={},
                 workspace_lease_ref=None,
             ),
-            {"grant_id": "grant-1", "action_class": "write_local", "resource_scope": ["/tmp"]},
+            {
+                "grant_id": "grant-1",
+                "task_id": "task",
+                "action_class": "write_local",
+                "resource_scope": ["/tmp"],
+            },
             "expired",
             id="expired-grant",
         ),
         pytest.param(
             SimpleNamespace(
                 grant_id="grant-1",
+                task_id="task",
                 status="issued",
                 expires_at=None,
                 action_class="read_local",
@@ -127,13 +145,19 @@ def test_capability_grant_service_issue_and_state_updates(monkeypatch: pytest.Mo
                 constraints={},
                 workspace_lease_ref=None,
             ),
-            {"grant_id": "grant-1", "action_class": "write_local", "resource_scope": ["/tmp"]},
+            {
+                "grant_id": "grant-1",
+                "task_id": "task",
+                "action_class": "write_local",
+                "resource_scope": ["/tmp"],
+            },
             "action_mismatch",
             id="action-mismatch",
         ),
         pytest.param(
             SimpleNamespace(
                 grant_id="grant-1",
+                task_id="task",
                 status="issued",
                 expires_at=None,
                 action_class="write_local",
@@ -141,13 +165,19 @@ def test_capability_grant_service_issue_and_state_updates(monkeypatch: pytest.Mo
                 constraints={},
                 workspace_lease_ref=None,
             ),
-            {"grant_id": "grant-1", "action_class": "write_local", "resource_scope": ["/etc"]},
+            {
+                "grant_id": "grant-1",
+                "task_id": "task",
+                "action_class": "write_local",
+                "resource_scope": ["/etc"],
+            },
             "scope_mismatch",
             id="scope-mismatch",
         ),
         pytest.param(
             SimpleNamespace(
                 grant_id="grant-1",
+                task_id="task",
                 status="issued",
                 expires_at=None,
                 action_class="write_local",
@@ -161,6 +191,7 @@ def test_capability_grant_service_issue_and_state_updates(monkeypatch: pytest.Mo
             ),
             {
                 "grant_id": "grant-1",
+                "task_id": "task",
                 "action_class": "write_local",
                 "resource_scope": ["/tmp"],
                 "constraints": {"target_paths": ["/tmp/other.txt"]},
@@ -235,6 +266,7 @@ def test_capability_grant_service_validates_workspace_leases(
 
     store.grant = SimpleNamespace(
         grant_id="grant-1",
+        task_id="task",
         status="issued",
         expires_at=None,
         action_class="write_local",
@@ -243,12 +275,22 @@ def test_capability_grant_service_validates_workspace_leases(
         workspace_lease_ref="lease-1",
     )
     with pytest.raises(CapabilityGrantError, match="no longer active") as inactive:
-        service.enforce("grant-1", action_class="write_local", resource_scope=[str(tmp_path)])
+        service.enforce(
+            "grant-1",
+            task_id="task",
+            action_class="write_local",
+            resource_scope=[str(tmp_path)],
+        )
     assert inactive.value.code == "lease_inactive"
 
     store.lease = SimpleNamespace(status="active", expires_at=999.0, root_path=str(tmp_path))
     with pytest.raises(CapabilityGrantError, match="expired before dispatch") as expired:
-        service.enforce("grant-1", action_class="write_local", resource_scope=[str(tmp_path)])
+        service.enforce(
+            "grant-1",
+            task_id="task",
+            action_class="write_local",
+            resource_scope=[str(tmp_path)],
+        )
     assert expired.value.code == "lease_expired"
 
     store.lease = SimpleNamespace(status="active", expires_at=None, root_path=str(tmp_path))

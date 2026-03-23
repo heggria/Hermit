@@ -38,7 +38,7 @@ class _FakePluginManager:
         self.ended: list[tuple[str, list]] = []
         self.post_run: list[str] = []
 
-    def on_session_start(self, session_id: str) -> None:
+    def on_session_start(self, session_id: str, *, runner: object = None) -> None:
         self.started.append(session_id)
 
     def on_session_end(self, session_id: str, messages: list) -> None:
@@ -101,6 +101,9 @@ class _FakeStore:
 
     def resolve_approval(self, approval_id: str, **kwargs) -> None:
         self.resolved.append({"approval_id": approval_id, **kwargs})
+
+    def get_task(self, task_id: str):
+        return None
 
 
 class _FakeTaskController:

@@ -172,40 +172,40 @@ class TestDataclasses:
 class TestShouldDeliberate:
     def test_high_risk_mutation_deliberates(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("high", "execute_command") is True
-        assert svc.should_deliberate("critical", "write_local") is True
-        assert svc.should_deliberate("critical", "rollback") is True
+        assert svc.should_deliberate(risk_level="high", action_class="execute_command") is True
+        assert svc.should_deliberate(risk_level="critical", action_class="write_local") is True
+        assert svc.should_deliberate(risk_level="critical", action_class="rollback") is True
 
     def test_high_risk_readonly_skips(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("critical", "read_local") is False
-        assert svc.should_deliberate("high", "execute_command_readonly") is False
-        assert svc.should_deliberate("critical", "network_read") is False
-        assert svc.should_deliberate("high", "delegate_reasoning") is False
+        assert svc.should_deliberate(risk_level="critical", action_class="read_local") is False
+        assert svc.should_deliberate(risk_level="high", action_class="execute_command_readonly") is False
+        assert svc.should_deliberate(risk_level="critical", action_class="network_read") is False
+        assert svc.should_deliberate(risk_level="high", action_class="delegate_reasoning") is False
 
     def test_medium_risk_mutation_deliberates(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("medium", "execute_command") is True
-        assert svc.should_deliberate("medium", "write_local") is True
-        assert svc.should_deliberate("medium", "patch_file") is True
-        assert svc.should_deliberate("medium", "rollback") is True
-        assert svc.should_deliberate("medium", "vcs_mutation") is True
+        assert svc.should_deliberate(risk_level="medium", action_class="execute_command") is True
+        assert svc.should_deliberate(risk_level="medium", action_class="write_local") is True
+        assert svc.should_deliberate(risk_level="medium", action_class="patch_file") is True
+        assert svc.should_deliberate(risk_level="medium", action_class="rollback") is True
+        assert svc.should_deliberate(risk_level="medium", action_class="vcs_mutation") is True
 
     def test_medium_risk_readonly_skips(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("medium", "read_local") is False
-        assert svc.should_deliberate("medium", "execute_command_readonly") is False
+        assert svc.should_deliberate(risk_level="medium", action_class="read_local") is False
+        assert svc.should_deliberate(risk_level="medium", action_class="execute_command_readonly") is False
 
     def test_low_risk_never_deliberates(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("low", "execute_command") is False
-        assert svc.should_deliberate("low", "write_local") is False
-        assert svc.should_deliberate("low", "read_local") is False
+        assert svc.should_deliberate(risk_level="low", action_class="execute_command") is False
+        assert svc.should_deliberate(risk_level="low", action_class="write_local") is False
+        assert svc.should_deliberate(risk_level="low", action_class="read_local") is False
 
     def test_unknown_action_class_skips(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("critical", "unknown") is False
-        assert svc.should_deliberate("high", "some_future_action") is False
+        assert svc.should_deliberate(risk_level="critical", action_class="unknown") is False
+        assert svc.should_deliberate(risk_level="high", action_class="some_future_action") is False
 
 
 # -- Debate lifecycle ---------------------------------------------------------

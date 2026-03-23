@@ -34,16 +34,18 @@ _VERDICT_PRIORITY: dict[str, int] = {
 # template evidence. More dangerous classes (write_local, patch_file,
 # network_write, etc.) keep their original risk even when a known-good
 # pattern matches.
-_PATTERN_DOWNGRADE_SAFE_CLASSES = frozenset({
-    "read_local",
-    "network_read",
-    "delegate_reasoning",
-    "ephemeral_ui_mutation",
-    "execute_command",
-    "delegate_execution",
-    "approval_resolution",
-    "scheduler_mutation",
-})
+_PATTERN_DOWNGRADE_SAFE_CLASSES = frozenset(
+    {
+        "read_local",
+        "network_read",
+        "delegate_reasoning",
+        "ephemeral_ui_mutation",
+        "execute_command",
+        "delegate_execution",
+        "approval_resolution",
+        "scheduler_mutation",
+    }
+)
 
 
 @dataclass
@@ -642,6 +644,12 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
     # -- Task-pattern context annotation ------------------------------------
     outcomes = _apply_task_pattern(request, outcomes)
 
+    # -- Signal risk escalation ---------------------------------------------
+    _apply_signal_risk(request, outcomes)
+
+    # -- Trust-based risk downgrade -----------------------------------------
+    _apply_trust_adjustment(request, outcomes)
+
     return outcomes
 
 
@@ -797,6 +805,78 @@ def _apply_task_pattern(request: ActionRequest, outcomes: list[RuleOutcome]) -> 
             )
 
     return adjusted
+
+
+def _apply_signal_risk(request: ActionRequest, outcomes: list[RuleOutcome]) -> None:
+    """Escalate to require_approval if critical signals present."""
+    indicators = request.context.get("signal_risk_indicators", [])
+    if not isinstance(indicators, list):
+        return
+    critical_signals = [
+        s for s in indicators if isinstance(s, dict) and s.get("risk_level") == "critical"
+    ]
+    if critical_signals:
+        summary = str(critical_signals[0].get("summary", "unknown"))
+        outcomes.append(
+            RuleOutcome(
+                verdict="approval_required",
+                reasons=[
+                    PolicyReason(
+                        "signal_critical_escalation",
+                        f"Critical signal detected: {summary}",
+                        "warning",
+                    )
+                ],
+                obligations=PolicyObligations(
+                    require_receipt=True,
+                    require_approval=True,
+                    approval_risk_level="critical",
+                ),
+                approval_packet={
+                    "title": f"Critical signal escalation for {request.tool_name}",
+                    "summary": f"Critical signal: {summary}",
+                    "risk_level": "critical",
+                },
+                risk_level="critical",
+            )
+        )
+
+
+def _apply_trust_adjustment(request: ActionRequest, outcomes: list[RuleOutcome]) -> None:
+    """Downgrade risk for trusted action classes based on trust-score evidence."""
+    adjustment = request.context.get("trust_risk_adjustment")
+    if not adjustment or not isinstance(adjustment, dict):
+        return
+    suggested = str(adjustment.get("suggested_risk_band", ""))
+    current = str(adjustment.get("current_risk_band", ""))
+    if not suggested or not current or suggested == current:
+        return
+    if request.action_class not in _PATTERN_DOWNGRADE_SAFE_CLASSES:
+        return
+
+    reason_text = f"Trust adjustment: {current} → {suggested}"
+    adjusted: list[RuleOutcome] = []
+    changed = False
+    for outcome in outcomes:
+        if outcome.verdict == "approval_required" and outcome.risk_level != "critical":
+            adjusted.append(
+                RuleOutcome(
+                    verdict="allow_with_receipt",
+                    reasons=outcome.reasons + [PolicyReason("trust_risk_downgrade", reason_text)],
+                    obligations=PolicyObligations(
+                        require_receipt=True,
+                        require_approval=False,
+                    ),
+                    normalized_constraints=outcome.normalized_constraints,
+                    risk_level=suggested,
+                )
+            )
+            changed = True
+        else:
+            adjusted.append(outcome)
+    if changed:
+        outcomes.clear()
+        outcomes.extend(adjusted)
 
 
 def _evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:

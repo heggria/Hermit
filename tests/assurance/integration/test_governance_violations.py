@@ -786,14 +786,12 @@ class TestMultipleViolations:
 
 
 class TestCleanGovernedTrace:
-    """A properly governed trace should pass all invariant and post_run checks.
+    """A properly governed trace should pass all checks including runtime.
 
-    Note: The lab's _check_runtime_contracts evaluates each envelope in
-    isolation without passing prior envelopes as context.  This means
-    runtime contracts like approval.gating (which check ordering via
-    the ``before`` predicate) will fire even on a well-formed trace.
-    These tests verify the governed trace passes all invariant checks
-    and post_run contract checks, which is the substantive validation.
+    Runtime contract checks now pass prior_envelopes as context, so
+    ``approval.gating`` correctly sees prior ``approval.granted`` events
+    and does NOT fire on clean governed traces.  All contract, invariant,
+    and runtime checks produce zero violations.
     """
 
     def test_invariants_pass_for_governed_trace(self) -> None:
@@ -823,30 +821,32 @@ class TestCleanGovernedTrace:
 
         assert len(invariant_violations) == 0
 
-    def test_oracle_satisfied_with_allowed_runtime_failures(self) -> None:
-        """Oracle passes when runtime approval.gating violations are in allowed_failures.
+    def test_oracle_satisfied_with_clean_governed_trace(self) -> None:
+        """Oracle passes when governed trace produces zero violations.
 
-        The governed trace triggers runtime approval.gating violations due
-        to per-envelope evaluation.  When these are listed in allowed_failures
-        and max_unresolved_violations is set accordingly, the oracle passes.
+        Runtime contract checks now pass prior_envelopes as context, so
+        ``approval.gating`` correctly sees prior ``approval.granted``
+        events and does NOT fire on clean governed traces.  The oracle
+        passes because there are zero violations.
         """
         envelopes = make_governed_trace(num_steps=3)
 
         oracle = OracleSpec(
-            final_state="failed",  # matches the report status (blocker violations present)
+            final_state="completed",  # clean trace -> status="pass" -> final_state="completed"
             must_pass_contracts=[
                 "task.lifecycle",
                 "no_duplicate_execution",
                 "receipt.linkage",
             ],
-            allowed_failures=["approval.gating"],
             max_unresolved_violations=0,
         )
 
         lab = AssuranceLab()
         report = lab.run_with_trace(_scenario(attribution_mode="off"), envelopes)
 
-        # All violations are approval.gating which is in allowed_failures
+        # Clean governed trace: zero violations, status="pass"
+        assert len(report.violations) == 0
+        assert report.status == "pass"
         assert lab.check_oracle(report, oracle) is True
 
     def test_oracle_fails_when_post_run_contract_violated(self) -> None:
@@ -884,29 +884,22 @@ class TestCleanGovernedTrace:
         # Oracle rejects because must_pass contract is violated
         assert lab.check_oracle(report, oracle) is False
 
-    def test_report_runtime_violations_only(self) -> None:
-        """Governed trace only triggers runtime approval.gating violations.
+    def test_report_clean_for_governed_trace(self) -> None:
+        """Governed trace produces zero violations with context-aware runtime checks.
 
-        These are expected because _check_runtime_contracts evaluates each
-        envelope without prior context. All invariant and post_run checks
-        pass cleanly.
+        Runtime contract checks now pass prior_envelopes as context, so
+        ``approval.gating`` correctly sees prior ``approval.granted``
+        events.  A clean governed trace produces zero violations across
+        all check modes (runtime, post_run, invariant).
         """
         envelopes = make_governed_trace(num_steps=2)
 
         lab = AssuranceLab()
         report = lab.run_with_trace(_scenario(attribution_mode="off"), envelopes)
 
-        # Only runtime contract violations should be present
-        for v in report.violations:
-            assert isinstance(v, ContractViolation)
-            assert v.mode == "runtime"
-            assert v.contract_id == "approval.gating"
-
-        # No invariant violations in the mix
-        invariant_violations = [
-            v for v in report.violations if isinstance(v, InvariantViolation)
-        ]
-        assert invariant_violations == []
+        # Zero violations of any kind
+        assert len(report.violations) == 0
+        assert report.status == "pass"
 
     def test_governed_trace_with_many_steps(self) -> None:
         """Larger governed trace (10 steps) has zero invariant/post_run violations."""

@@ -181,9 +181,28 @@ class ArbitrationEngine:
             store.update_step(step.step_id, status="completed")
             return decision
         except Exception:
-            store.update_step_attempt(attempt.step_attempt_id, status="failed")
-            store.update_step(step.step_id, status="failed")
-            return self._fallback_decision(bundle, eligible, rejection_reasons, now)
+            log.warning(
+                "llm_arbitrator.llm_fallback",
+                debate_id=bundle.debate_id,
+                exc_info=True,
+            )
+            decision = self._fallback_decision(bundle, eligible, rejection_reasons, now)
+            # Fallback produced a valid decision — mark step succeeded.
+            artifact_payload = {
+                "artifact_type": "deliberation_llm_arbitration",
+                "debate_id": bundle.debate_id,
+                "step_id": step.step_id,
+                "attempt_id": attempt.step_attempt_id,
+                "slot_id": slot.slot_id,
+                "selected_candidate_id": decision.selected_candidate_id,
+                "confidence": decision.confidence,
+                "escalation_required": decision.escalation_required,
+                "fallback": True,
+            }
+            artifact_store.store_json(artifact_payload)
+            store.update_step_attempt(attempt.step_attempt_id, status="succeeded")
+            store.update_step(step.step_id, status="completed")
+            return decision
         finally:
             pool.release_slot(slot.slot_id)
 

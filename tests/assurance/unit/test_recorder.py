@@ -61,10 +61,11 @@ class TestRecord:
         env = recorder.record("first", "task-1", run_id=run_id)
         assert env.event_seq == 0
 
-    def test_record_without_run_raises(self) -> None:
+    def test_record_without_run_auto_starts(self) -> None:
         recorder = TraceRecorder()
-        with pytest.raises(ValueError, match="No run has been started"):
-            recorder.record("event", "task-1")
+        env = recorder.record("event", "task-1")
+        assert env.event_seq == 0
+        assert env.run_id  # auto-generated run_id
 
     def test_record_unknown_run_raises(self) -> None:
         recorder = TraceRecorder()

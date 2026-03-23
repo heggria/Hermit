@@ -105,6 +105,15 @@ class AsyncDispatcher:
             ingress_metadata=metadata,
             source_ref=source_ref or None,
         )
+        # Fire SUBTASK_SPAWN when a child task is created under a parent.
+        task_record = self.store.get_task(ctx.task_id)
+        if task_record is not None and task_record.parent_task_id:
+            self.pm.hooks.fire(
+                HookEvent.SUBTASK_SPAWN,
+                parent_task_id=task_record.parent_task_id,
+                task_id=ctx.task_id,
+                store=self.store,
+            )
         if run_opts.get("planning_mode", False):
             planning = PlanningService(
                 self.task_controller.store, getattr(self._runner.agent, "artifact_store", None)

@@ -91,7 +91,7 @@ class TestInit:
         svc = _svc(lambda facts: None)
         assert svc._formatter is not None
         assert svc._executor is not None
-        svc.__del__()
+        svc.close()
         assert svc._executor is None
 
     def test_with_locale(self) -> None:
@@ -100,7 +100,7 @@ class TestInit:
 
     def test_del_without_executor(self) -> None:
         svc = _svc()
-        svc.__del__()  # Should not raise
+        svc.close()  # Should not raise
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +438,7 @@ class TestFormatWithOptionalFormatter:
         result = svc._format_with_optional_formatter({"title": "T"})
         assert result is not None
         assert result.title == "FT"
-        svc.__del__()
+        svc.close()
 
     def test_formatter_returns_string(self) -> None:
         def fmt(facts):
@@ -448,7 +448,7 @@ class TestFormatWithOptionalFormatter:
         result = svc._format_with_optional_formatter({"title": "T"})
         assert result is not None
         assert result.summary == "Custom summary"
-        svc.__del__()
+        svc.close()
 
     def test_formatter_returns_empty_string(self) -> None:
         def fmt(facts):
@@ -457,7 +457,7 @@ class TestFormatWithOptionalFormatter:
         svc = _svc(fmt)
         result = svc._format_with_optional_formatter({"title": "T"})
         assert result is None
-        svc.__del__()
+        svc.close()
 
     def test_formatter_returns_none(self) -> None:
         def fmt(facts):
@@ -466,7 +466,7 @@ class TestFormatWithOptionalFormatter:
         svc = _svc(fmt)
         result = svc._format_with_optional_formatter({"title": "T"})
         assert result is None
-        svc.__del__()
+        svc.close()
 
     def test_formatter_raises_exception(self) -> None:
         def fmt(facts):
@@ -475,7 +475,7 @@ class TestFormatWithOptionalFormatter:
         svc = _svc(fmt)
         result = svc._format_with_optional_formatter({"title": "T"})
         assert result is None
-        svc.__del__()
+        svc.close()
 
     def test_formatter_timeout(self) -> None:
         import time
@@ -487,7 +487,7 @@ class TestFormatWithOptionalFormatter:
         svc = _svc(fmt, formatter_timeout_ms=1)
         result = svc._format_with_optional_formatter({"title": "T"})
         assert result is None
-        svc.__del__()
+        svc.close()
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +517,7 @@ class TestDescribe:
         action = _action()
         result = svc.describe(action)
         assert result.title == "FT"
-        svc.__del__()
+        svc.close()
 
     def test_template_fallback(self) -> None:
         svc = _svc()

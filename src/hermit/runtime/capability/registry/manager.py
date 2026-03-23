@@ -164,8 +164,8 @@ class PluginManager:
             base_prompt, preloaded_skills=preloaded_skills
         )
 
-    def on_session_start(self, session_id: str) -> None:
-        self.hooks.fire(HookEvent.SESSION_START, session_id=session_id)
+    def on_session_start(self, session_id: str, *, runner: Any = None) -> None:
+        self.hooks.fire(HookEvent.SESSION_START, session_id=session_id, runner=runner)
 
     def on_session_end(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         self.hooks.fire(HookEvent.SESSION_END, session_id=session_id, messages=messages)
