@@ -10,9 +10,8 @@ import structlog
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.ledger.journal.store import KernelStore
-from hermit.kernel.verification.proofs.proofs import ProofService
-
 from hermit.kernel.ledger.journal.store_support import canonical_json as _canonical_json
+from hermit.kernel.verification.proofs.proofs import ProofService
 
 log = structlog.get_logger()
 
@@ -39,9 +38,7 @@ class ReceiptService:
         Excludes the ``signature`` key and any keys whose value is ``None``
         so that the canonical form is stable across optional-field changes.
         """
-        filtered = {
-            k: v for k, v in receipt_data.items() if k != "signature" and v is not None
-        }
+        filtered = {k: v for k, v in receipt_data.items() if k != "signature" and v is not None}
         return _canonical_json(filtered)
 
     @staticmethod

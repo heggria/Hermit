@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -32,6 +33,12 @@ if TYPE_CHECKING:
     from hermit.kernel.ledger.journal.store import KernelStore
 
 log = structlog.get_logger()
+
+
+def _existing_py_files(changed_files: list[str], cwd: str) -> list[str]:
+    """Filter changed_files to .py files that exist on disk (sync helper)."""
+    return [f for f in changed_files if f.endswith(".py") and Path(os.path.join(cwd, f)).exists()]
+
 
 _PYTEST_SUMMARY_RE = re.compile(r"(\d+)\s+passed(?:.*?(\d+)\s+failed)?", re.IGNORECASE)
 _COVERAGE_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+(?:\.\d+)?)%")
@@ -235,10 +242,7 @@ class BenchmarkRunner:
         Tier 3 — Full (3-10min): ``make test`` (skips typecheck).
         """
         all_output_parts: list[str] = []
-        py_files = [
-            f for f in changed_files
-            if f.endswith(".py") and os.path.exists(os.path.join(cwd, f))
-        ]
+        py_files = _existing_py_files(changed_files, cwd)
         test_files = [f for f in py_files if "test" in f]
         src_files = [f for f in py_files if "test" not in f]
 
@@ -256,7 +260,9 @@ class BenchmarkRunner:
                 return "\n".join(all_output_parts), lint_rc, "tier1_lint"
 
         if test_files:
-            test_cmd = f"uv run pytest {' '.join(shlex.quote(f) for f in test_files)} -x -q --no-header"
+            test_cmd = (
+                f"uv run pytest {' '.join(shlex.quote(f) for f in test_files)} -x -q --no-header"
+            )
             test_out, test_rc = await self._exec(test_cmd, cwd)
             all_output_parts.append(test_out)
             if test_rc != 0:
@@ -295,10 +301,7 @@ class BenchmarkRunner:
     ) -> tuple[str, int, str]:
         """Run only Tier 1 (changed files).  Returns (stdout, returncode, tier)."""
         all_output_parts: list[str] = []
-        py_files = [
-            f for f in changed_files
-            if f.endswith(".py") and os.path.exists(os.path.join(cwd, f))
-        ]
+        py_files = _existing_py_files(changed_files, cwd)
         test_files = [f for f in py_files if "test" in f]
         src_files = [f for f in py_files if "test" not in f]
         lint_rc = 0
@@ -312,7 +315,9 @@ class BenchmarkRunner:
                 return "\n".join(all_output_parts), lint_rc, "tier1_lint"
 
         if test_files:
-            test_cmd = f"uv run pytest {' '.join(shlex.quote(f) for f in test_files)} -x -q --no-header"
+            test_cmd = (
+                f"uv run pytest {' '.join(shlex.quote(f) for f in test_files)} -x -q --no-header"
+            )
             test_out, test_rc = await self._exec(test_cmd, cwd)
             all_output_parts.append(test_out)
             if test_rc != 0:

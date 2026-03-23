@@ -105,7 +105,7 @@ class TestHighRiskTriggersDeliberationPending:
         updated_attempt = store.get_step_attempt(step_attempt_id)
         assert updated_attempt is not None
         assert updated_attempt.status == "deliberation_pending"
-        assert updated_attempt.waiting_reason == "deliberation_required"
+        assert updated_attempt.status_reason == "deliberation_required"
 
         # Verify: context enriched with deliberation metadata
         ctx = updated_attempt.context or {}
@@ -161,7 +161,7 @@ class TestCriticalRiskTriggersDeliberation:
         updated_attempt = store.get_step_attempt(step_attempt_id)
         assert updated_attempt is not None
         assert updated_attempt.status == "deliberation_pending"
-        assert updated_attempt.waiting_reason == "deliberation_required"
+        assert updated_attempt.status_reason == "deliberation_required"
 
         # Verify: context enriched with deliberation metadata
         ctx = updated_attempt.context or {}

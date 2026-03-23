@@ -143,6 +143,7 @@ class TestProfilesResolve:
             name="default",
             source_path=tmp_path / "config.toml",
             values={"provider": "claude"},
+            exists=True,
         )
         with (
             patch("hermit.runtime.assembly.config.get_settings", return_value=settings),
@@ -426,8 +427,8 @@ class TestSetup:
             result = runner.invoke(app, ["setup"], input="y\ntoken123\nhttps://proxy.com\n\n\nn\n")
         assert result.exit_code == 0
         content = (tmp_path / ".env").read_text()
-        assert "HERMIT_AUTH_TOKEN=token123" in content
-        assert "HERMIT_BASE_URL=https://proxy.com" in content
+        assert "HERMIT_CLAUDE_AUTH_TOKEN=token123" in content
+        assert "HERMIT_CLAUDE_BASE_URL=https://proxy.com" in content
 
     def test_setup_with_feishu(self, tmp_path: Path) -> None:
         settings = _fake_settings(tmp_path)
@@ -485,4 +486,4 @@ class TestSetup:
             )
         assert result.exit_code == 0
         content = (tmp_path / ".env").read_text()
-        assert "HERMIT_CUSTOM_HEADERS=X-Custom: val" in content
+        assert "HERMIT_CLAUDE_HEADERS=X-Custom: val" in content

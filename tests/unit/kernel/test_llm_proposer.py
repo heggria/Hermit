@@ -68,25 +68,35 @@ class TestProposalGenerator:
             return _make_provider(response_text)
 
         return ProposalGenerator(
-            factory, default_model="test-model", max_workers=2, perspectives=perspectives,
+            factory,
+            default_model="test-model",
+            max_workers=2,
+            perspectives=perspectives,
         )
 
     def test_generates_proposals_pool_gated(self, tmp_path: Path) -> None:
-        response = json.dumps({
-            "plan_summary": "test plan",
-            "contract_draft": {"steps": 1},
-            "expected_cost": "low",
-            "expected_risk": "low",
-            "expected_reward": "high",
-        })
+        response = json.dumps(
+            {
+                "plan_summary": "test plan",
+                "contract_draft": {"steps": 1},
+                "expected_cost": "low",
+                "expected_risk": "low",
+                "expected_reward": "high",
+            }
+        )
         gen = self._make_generator(response)
         store = KernelStore(tmp_path / "state.db")
         arts = ArtifactStore(tmp_path / "artifacts")
         pool = _make_pool()
 
         proposals = gen.generate_proposals(
-            "debate_1", "Should we refactor?", {},
-            task_id="t1", pool=pool, store=store, artifact_store=arts,
+            "debate_1",
+            "Should we refactor?",
+            {},
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         # Default 3 perspectives.
         assert len(proposals) == 3
@@ -111,8 +121,13 @@ class TestProposalGenerator:
         pool = _make_pool()
 
         proposals = gen.generate_proposals(
-            "debate_2", "dp", {},
-            task_id="t1", pool=pool, store=store, artifact_store=arts,
+            "debate_2",
+            "dp",
+            {},
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert len(proposals) == 2
         roles = {p.proposer_role for p in proposals}
@@ -125,8 +140,13 @@ class TestProposalGenerator:
         pool = _make_pool()
 
         proposals = gen.generate_proposals(
-            "debate_3", "dp", {},
-            task_id="t1", pool=pool, store=store, artifact_store=arts,
+            "debate_3",
+            "dp",
+            {},
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert len(proposals) == 0
 
@@ -142,8 +162,13 @@ class TestProposalGenerator:
         pool = _make_pool()
 
         proposals = gen.generate_proposals(
-            "debate_4", "dp", {},
-            task_id="t1", pool=pool, store=store, artifact_store=arts,
+            "debate_4",
+            "dp",
+            {},
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert len(proposals) == 0
         # Slots should be released even on failure.
@@ -158,13 +183,19 @@ class TestProposalGenerator:
 
         # Create a pool with 0 planner slots.
         config = WorkerPoolConfig(
-            pool_id="empty", team_id="test",
+            pool_id="empty",
+            team_id="test",
             slots={WorkerRole.planner: WorkerSlotConfig(role=WorkerRole.planner, max_active=0)},
         )
         empty_pool = WorkerPoolManager(config)
 
         proposals = gen.generate_proposals(
-            "debate_5", "dp", {},
-            task_id="t1", pool=empty_pool, store=store, artifact_store=arts,
+            "debate_5",
+            "dp",
+            {},
+            task_id="t1",
+            pool=empty_pool,
+            store=store,
+            artifact_store=arts,
         )
         assert len(proposals) == 0

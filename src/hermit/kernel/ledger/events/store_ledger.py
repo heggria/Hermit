@@ -129,10 +129,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
     ) -> list[ArtifactRecord]:
         """Return artifacts filtered by *kind*, optionally scoped to a task."""
         if task_id:
-            query = (
-                "SELECT * FROM artifacts WHERE kind = ? AND task_id = ? "
-                "ORDER BY created_at ASC"
-            )
+            query = "SELECT * FROM artifacts WHERE kind = ? AND task_id = ? ORDER BY created_at ASC"
             params: tuple[Any, ...] = (kind, task_id)
         else:
             query = "SELECT * FROM artifacts WHERE kind = ? ORDER BY created_at DESC"
@@ -148,8 +145,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         """
         with self._lock:
             rows = self._rows(
-                "SELECT artifact_id, kind FROM artifacts WHERE task_id = ? "
-                "ORDER BY created_at ASC",
+                "SELECT artifact_id, kind FROM artifacts WHERE task_id = ? ORDER BY created_at ASC",
                 (task_id,),
             )
         counts_by_kind: dict[str, int] = {}

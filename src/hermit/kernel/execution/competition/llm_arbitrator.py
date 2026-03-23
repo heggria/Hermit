@@ -101,9 +101,7 @@ class ArbitrationEngine:
             f"candidate {cid} has critical critique(s)" for cid in critically_critiqued
         ]
 
-        eligible = [
-            p for p in bundle.proposals if p.candidate_id not in critically_critiqued
-        ]
+        eligible = [p for p in bundle.proposals if p.candidate_id not in critically_critiqued]
 
         if not eligible:
             log.warning(
@@ -220,14 +218,11 @@ class ArbitrationEngine:
 
         candidates_section = ""
         for p in eligible:
-            critiques_for = [
-                c for c in bundle.critiques if c.target_candidate_id == p.candidate_id
-            ]
+            critiques_for = [c for c in bundle.critiques if c.target_candidate_id == p.candidate_id]
             critique_text = ""
             for c in critiques_for:
                 critique_text += (
-                    f"  - [{c.severity}] {c.critic_role}: {c.issue_type}"
-                    f" — {c.suggested_fix}\n"
+                    f"  - [{c.severity}] {c.critic_role}: {c.issue_type} — {c.suggested_fix}\n"
                 )
             if not critique_text:
                 critique_text = "  (no critiques)\n"
@@ -355,8 +350,7 @@ class ArbitrationEngine:
             selected_candidate_id=winner.candidate_id,
             rejection_reasons=rejection_reasons,
             merge_notes=(
-                f"[fallback] Selected {winner.proposer_role} proposal "
-                f"for {winner.target_scope}"
+                f"[fallback] Selected {winner.proposer_role} proposal for {winner.target_scope}"
             ),
             confidence=0.5,
             escalation_required=False,

@@ -83,10 +83,7 @@ class TestPredicateExists:
 
 class TestPredicateCount:
     def test_count_ge(self, engine: AssuranceContractEngine) -> None:
-        envs = [
-            make_envelope(event_type="tool_call.start", event_seq=i)
-            for i in range(3)
-        ]
+        envs = [make_envelope(event_type="tool_call.start", event_seq=i) for i in range(3)]
         pred = {"count": {"event": "tool_call.start", "op": ">=", "value": 3}}
         assert engine.evaluate_predicate(pred, envs) is True
 
@@ -96,9 +93,7 @@ class TestPredicateCount:
         assert engine.evaluate_predicate(pred, envs) is True
 
     def test_count_eq(self, engine: AssuranceContractEngine) -> None:
-        envs = [
-            make_envelope(event_type="receipt.issued", event_seq=i) for i in range(2)
-        ]
+        envs = [make_envelope(event_type="receipt.issued", event_seq=i) for i in range(2)]
         pred = {"count": {"event": "receipt.issued", "op": "==", "value": 2}}
         assert engine.evaluate_predicate(pred, envs) is True
 
@@ -175,9 +170,7 @@ class TestPredicateEq:
         assert result is False
 
     def test_eq_no_current(self, engine: AssuranceContractEngine) -> None:
-        result = engine.evaluate_predicate(
-            {"eq": {"field": "phase", "value": "execution"}}, []
-        )
+        result = engine.evaluate_predicate({"eq": {"field": "phase", "value": "execution"}}, [])
         assert result is False
 
 
@@ -233,9 +226,7 @@ class TestPredicateNested:
 
 
 class TestModeFiltering:
-    def test_runtime_ignores_post_run_contracts(
-        self, bare_engine: AssuranceContractEngine
-    ) -> None:
+    def test_runtime_ignores_post_run_contracts(self, bare_engine: AssuranceContractEngine) -> None:
         bare_engine.register(
             TraceContractSpec(
                 contract_id="post_only",
@@ -248,9 +239,7 @@ class TestModeFiltering:
         violations = bare_engine.evaluate_runtime(env)
         assert violations == []
 
-    def test_post_run_ignores_runtime_contracts(
-        self, bare_engine: AssuranceContractEngine
-    ) -> None:
+    def test_post_run_ignores_runtime_contracts(self, bare_engine: AssuranceContractEngine) -> None:
         bare_engine.register(
             TraceContractSpec(
                 contract_id="runtime_only",
@@ -263,9 +252,7 @@ class TestModeFiltering:
         violations = bare_engine.evaluate_post_run(envs)
         assert violations == []
 
-    def test_both_mode_checked_at_runtime(
-        self, bare_engine: AssuranceContractEngine
-    ) -> None:
+    def test_both_mode_checked_at_runtime(self, bare_engine: AssuranceContractEngine) -> None:
         bare_engine.register(
             TraceContractSpec(
                 contract_id="both_mode",
@@ -279,9 +266,7 @@ class TestModeFiltering:
         assert len(violations) == 1
         assert violations[0].contract_id == "both_mode"
 
-    def test_both_mode_checked_at_post_run(
-        self, bare_engine: AssuranceContractEngine
-    ) -> None:
+    def test_both_mode_checked_at_post_run(self, bare_engine: AssuranceContractEngine) -> None:
         bare_engine.register(
             TraceContractSpec(
                 contract_id="both_mode",
@@ -307,36 +292,28 @@ class TestBuiltinContractsGoodTrace:
         self, engine: AssuranceContractEngine, good_trace: list[TraceEnvelope]
     ) -> None:
         violations = engine.evaluate_post_run(good_trace)
-        lifecycle_violations = [
-            v for v in violations if v.contract_id == "task.lifecycle"
-        ]
+        lifecycle_violations = [v for v in violations if v.contract_id == "task.lifecycle"]
         assert lifecycle_violations == []
 
     def test_receipt_linkage_pass(
         self, engine: AssuranceContractEngine, good_trace: list[TraceEnvelope]
     ) -> None:
         violations = engine.evaluate_post_run(good_trace)
-        linkage_violations = [
-            v for v in violations if v.contract_id == "receipt.linkage"
-        ]
+        linkage_violations = [v for v in violations if v.contract_id == "receipt.linkage"]
         assert linkage_violations == []
 
     def test_no_duplicate_execution_pass(
         self, engine: AssuranceContractEngine, good_trace: list[TraceEnvelope]
     ) -> None:
         violations = engine.evaluate_post_run(good_trace)
-        dup_violations = [
-            v for v in violations if v.contract_id == "no_duplicate_execution"
-        ]
+        dup_violations = [v for v in violations if v.contract_id == "no_duplicate_execution"]
         assert dup_violations == []
 
     def test_bounded_stuck_pass(
         self, engine: AssuranceContractEngine, good_trace: list[TraceEnvelope]
     ) -> None:
         violations = engine.evaluate_post_run(good_trace)
-        stuck_violations = [
-            v for v in violations if v.contract_id == "bounded_stuck"
-        ]
+        stuck_violations = [v for v in violations if v.contract_id == "bounded_stuck"]
         assert stuck_violations == []
 
     def test_all_post_run_builtins_pass(
@@ -352,9 +329,7 @@ class TestBuiltinContractsGoodTrace:
         prior = []
         for env in good_trace:
             if env.event_type == "tool_call.start":
-                violations = engine.evaluate_runtime(
-                    env, context={"prior_envelopes": prior}
-                )
+                violations = engine.evaluate_runtime(env, context={"prior_envelopes": prior})
                 runtime_violations = [
                     v
                     for v in violations
@@ -395,16 +370,12 @@ class TestTaskLifecycleViolation:
             make_envelope(event_type="task.failed", event_seq=1),
         ]
         violations = engine.evaluate_post_run(envs)
-        lifecycle_violations = [
-            v for v in violations if v.contract_id == "task.lifecycle"
-        ]
+        lifecycle_violations = [v for v in violations if v.contract_id == "task.lifecycle"]
         assert lifecycle_violations == []
 
 
 class TestApprovalGatingViolation:
-    def test_tool_call_without_prior_approval(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_tool_call_without_prior_approval(self, engine: AssuranceContractEngine) -> None:
         env = make_envelope(
             event_type="tool_call.start",
             grant_ref="g-1",
@@ -414,9 +385,7 @@ class TestApprovalGatingViolation:
         ids = [v.contract_id for v in violations]
         assert "approval.gating" in ids
 
-    def test_tool_call_after_approval(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_tool_call_after_approval(self, engine: AssuranceContractEngine) -> None:
         prior = [
             make_envelope(event_type="approval.granted", event_seq=0),
         ]
@@ -427,16 +396,12 @@ class TestApprovalGatingViolation:
             lease_ref="l-1",
         )
         violations = engine.evaluate_runtime(env, context={"prior_envelopes": prior})
-        gating_violations = [
-            v for v in violations if v.contract_id == "approval.gating"
-        ]
+        gating_violations = [v for v in violations if v.contract_id == "approval.gating"]
         assert gating_violations == []
 
 
 class TestSideEffectAuthorizationViolation:
-    def test_tool_call_without_grant_ref(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_tool_call_without_grant_ref(self, engine: AssuranceContractEngine) -> None:
         prior = [make_envelope(event_type="approval.granted", event_seq=0)]
         env = make_envelope(
             event_type="tool_call.start",
@@ -447,9 +412,7 @@ class TestSideEffectAuthorizationViolation:
         ids = [v.contract_id for v in violations]
         assert "side_effect.authorization" in ids
 
-    def test_tool_call_with_grant_ref(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_tool_call_with_grant_ref(self, engine: AssuranceContractEngine) -> None:
         prior = [make_envelope(event_type="approval.granted", event_seq=0)]
         env = make_envelope(
             event_type="tool_call.start",
@@ -458,16 +421,12 @@ class TestSideEffectAuthorizationViolation:
             lease_ref="l-1",
         )
         violations = engine.evaluate_runtime(env, context={"prior_envelopes": prior})
-        auth_violations = [
-            v for v in violations if v.contract_id == "side_effect.authorization"
-        ]
+        auth_violations = [v for v in violations if v.contract_id == "side_effect.authorization"]
         assert auth_violations == []
 
 
 class TestReceiptLinkageViolation:
-    def test_receipt_missing_decision_ref(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_receipt_missing_decision_ref(self, engine: AssuranceContractEngine) -> None:
         envs = [
             make_envelope(event_type="task.created", event_seq=0),
             make_envelope(
@@ -482,9 +441,7 @@ class TestReceiptLinkageViolation:
         ids = [v.contract_id for v in violations]
         assert "receipt.linkage" in ids
 
-    def test_receipt_missing_grant_ref(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_receipt_missing_grant_ref(self, engine: AssuranceContractEngine) -> None:
         envs = [
             make_envelope(event_type="task.created", event_seq=0),
             make_envelope(
@@ -511,9 +468,7 @@ class TestReceiptLinkageViolation:
             make_envelope(event_type="task.completed", event_seq=2),
         ]
         violations = engine.evaluate_post_run(envs)
-        linkage_violations = [
-            v for v in violations if v.contract_id == "receipt.linkage"
-        ]
+        linkage_violations = [v for v in violations if v.contract_id == "receipt.linkage"]
         assert linkage_violations == []
 
 
@@ -565,9 +520,7 @@ class TestNoDuplicateExecutionViolation:
             make_envelope(event_type="task.completed", event_seq=3),
         ]
         violations = engine.evaluate_post_run(envs)
-        dup_violations = [
-            v for v in violations if v.contract_id == "no_duplicate_execution"
-        ]
+        dup_violations = [v for v in violations if v.contract_id == "no_duplicate_execution"]
         assert dup_violations == []
 
 
@@ -617,16 +570,12 @@ class TestBoundedStuckViolation:
             make_envelope(event_type="task.completed", event_seq=3, wallclock_at=now + 3.0),
         ]
         violations = engine.evaluate_post_run(envs)
-        stuck_violations = [
-            v for v in violations if v.contract_id == "bounded_stuck"
-        ]
+        stuck_violations = [v for v in violations if v.contract_id == "bounded_stuck"]
         assert stuck_violations == []
 
 
 class TestWorkspaceIsolationViolation:
-    def test_tool_call_without_lease_ref(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_tool_call_without_lease_ref(self, engine: AssuranceContractEngine) -> None:
         prior = [make_envelope(event_type="approval.granted", event_seq=0)]
         env = make_envelope(
             event_type="tool_call.start",
@@ -638,9 +587,7 @@ class TestWorkspaceIsolationViolation:
         ids = [v.contract_id for v in violations]
         assert "workspace.isolation" in ids
 
-    def test_tool_call_with_lease_ref(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_tool_call_with_lease_ref(self, engine: AssuranceContractEngine) -> None:
         prior = [make_envelope(event_type="approval.granted", event_seq=0)]
         env = make_envelope(
             event_type="tool_call.start",
@@ -649,9 +596,7 @@ class TestWorkspaceIsolationViolation:
             lease_ref="l-1",
         )
         violations = engine.evaluate_runtime(env, context={"prior_envelopes": prior})
-        isolation_violations = [
-            v for v in violations if v.contract_id == "workspace.isolation"
-        ]
+        isolation_violations = [v for v in violations if v.contract_id == "workspace.isolation"]
         assert isolation_violations == []
 
 
@@ -673,9 +618,7 @@ class TestContractRegistration:
         }
         assert expected == set(engine._contracts.keys())
 
-    def test_register_custom_contract(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_register_custom_contract(self, engine: AssuranceContractEngine) -> None:
         spec = TraceContractSpec(
             contract_id="custom.test",
             mode="post_run",
@@ -685,9 +628,7 @@ class TestContractRegistration:
         engine.register(spec)
         assert "custom.test" in engine._contracts
 
-    def test_register_replaces_existing(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_register_replaces_existing(self, engine: AssuranceContractEngine) -> None:
         spec = TraceContractSpec(
             contract_id="task.lifecycle",
             mode="post_run",
@@ -704,22 +645,16 @@ class TestContractRegistration:
 
 
 class TestViolationStructure:
-    def test_violation_has_correct_fields(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_violation_has_correct_fields(self, engine: AssuranceContractEngine) -> None:
         envs = [make_envelope(event_type="task.completed", event_seq=0)]
         violations = engine.evaluate_post_run(envs, task_id="task-abc")
-        lifecycle_v = next(
-            v for v in violations if v.contract_id == "task.lifecycle"
-        )
+        lifecycle_v = next(v for v in violations if v.contract_id == "task.lifecycle")
         assert lifecycle_v.severity == "blocker"
         assert lifecycle_v.mode == "post_run"
         assert lifecycle_v.task_id == "task-abc"
         assert lifecycle_v.remediation_hint != ""
 
-    def test_runtime_violation_captures_event_info(
-        self, engine: AssuranceContractEngine
-    ) -> None:
+    def test_runtime_violation_captures_event_info(self, engine: AssuranceContractEngine) -> None:
         env = make_envelope(event_type="tool_call.start", event_seq=42)
         violations = engine.evaluate_runtime(env, context={"prior_envelopes": []})
         assert len(violations) > 0

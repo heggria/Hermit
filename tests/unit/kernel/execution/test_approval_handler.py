@@ -98,6 +98,7 @@ def _make_attempt_ctx() -> SimpleNamespace:
         step_id="step-1",
         step_attempt_id="attempt-1",
         workspace_root="/tmp/ws",
+        actor_principal_id="principal_user",
     )
 
 
@@ -193,7 +194,7 @@ class TestDriftExpiry:
             entity_id="approval-1",
             task_id="task-1",
             step_id="step-1",
-            actor="kernel",
+            actor="principal_user",
             payload={
                 "approval_id": "approval-1",
                 "drift_expiry": past_time,

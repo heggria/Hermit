@@ -13,6 +13,7 @@ from hermit.kernel.execution.coordination.observation import ObservationService
 from hermit.kernel.task.services.controller import TaskController
 from hermit.kernel.task.services.planning import PlanningService
 from hermit.runtime.capability.contracts.base import HookEvent
+from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 from hermit.runtime.control.lifecycle.session import (
     SessionManager,
     sanitize_session_messages,
@@ -305,6 +306,9 @@ class RunnerTaskExecutor:
                 hooks and notification helpers).
         """
         task_ctx = self.task_controller.context_for_attempt(step_attempt_id)
+        # Set tool execution deadline from runtime budget.
+        budget = get_runtime_budget()
+        task_ctx.deadline = time.time() + budget.tool_hard_deadline
         session_id = task_ctx.conversation_id
         self.task_controller.ensure_conversation(session_id, source_channel=task_ctx.source_channel)
         session = self.session_manager.get_or_create(session_id)

@@ -26,16 +26,18 @@ log = structlog.get_logger()
 # Action classes that are inherently safe (read-only / no side effects).
 # Template-based policy suggestions are only injected for these classes to
 # prevent confusing skip-approval hints on dangerous action classes.
-_SKIP_APPROVAL_SAFE_CLASSES = frozenset({
-    "read_local",
-    "network_read",
-    "delegate_reasoning",
-    "ephemeral_ui_mutation",
-    "execute_command",
-    "delegate_execution",
-    "approval_resolution",
-    "scheduler_mutation",
-})
+_SKIP_APPROVAL_SAFE_CLASSES = frozenset(
+    {
+        "read_local",
+        "network_read",
+        "delegate_reasoning",
+        "ephemeral_ui_mutation",
+        "execute_command",
+        "delegate_execution",
+        "approval_resolution",
+        "scheduler_mutation",
+    }
+)
 
 
 class PolicyEvidenceEnricher:

@@ -147,7 +147,7 @@ class ObservationHandler:
             entity_id=attempt_ctx.step_attempt_id,
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
-            actor="kernel",
+            actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
             payload={
                 "tool_name": tool_name,
                 "observer_kind": observation.observer_kind,
@@ -644,6 +644,11 @@ class ObservationHandler:
             step_id=attempt.step_id,
             step_attempt_id=attempt.step_attempt_id,
             source_channel=task.source_channel,
+            actor_principal_id=(
+                getattr(task, "requested_by_principal_id", None)
+                or getattr(task, "owner_principal_id", None)
+                or "principal_user"
+            ),
             policy_profile=task.policy_profile,
             workspace_root=str(attempt.context.get("workspace_root", "") or ""),
         )

@@ -128,9 +128,7 @@ class TestTriggerOnce:
 class TestTriggerRepeated:
     def test_triggers_every_time(self) -> None:
         injector = FaultInjector(harness_mode=True)
-        handle = injector.arm(
-            FaultSpec(injection_point=INJ_QUEUE_DISPATCH, cardinality="repeated")
-        )
+        handle = injector.arm(FaultSpec(injection_point=INJ_QUEUE_DISPATCH, cardinality="repeated"))
 
         for _i in range(5):
             assert injector.trigger(handle) is True
@@ -263,18 +261,24 @@ class TestCheckTrigger:
         )
 
         # Missing "tool" key
-        assert injector.check_trigger(
-            INJ_QUEUE_DISPATCH,
-            {"event": "tool_call.start"},
-        ) == []
-
-        # Both present and matching
-        assert len(
+        assert (
             injector.check_trigger(
                 INJ_QUEUE_DISPATCH,
-                {"event": "tool_call.start", "tool": "bash"},
+                {"event": "tool_call.start"},
             )
-        ) == 1
+            == []
+        )
+
+        # Both present and matching
+        assert (
+            len(
+                injector.check_trigger(
+                    INJ_QUEUE_DISPATCH,
+                    {"event": "tool_call.start", "tool": "bash"},
+                )
+            )
+            == 1
+        )
 
     def test_returns_multiple_matches(self) -> None:
         injector = FaultInjector(harness_mode=True)

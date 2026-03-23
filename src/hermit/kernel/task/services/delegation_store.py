@@ -7,7 +7,11 @@ from typing import Any
 
 from hermit.kernel.ledger.journal.store_support import json_loads
 from hermit.kernel.ledger.journal.store_types import KernelStoreTypingBase
-from hermit.kernel.task.models.delegation import DelegationRecord, DelegationScope
+from hermit.kernel.task.models.delegation import (
+    ApprovalDelegationPolicy,
+    DelegationRecord,
+    DelegationScope,
+)
 
 
 class DelegationStoreMixin(KernelStoreTypingBase):
@@ -26,6 +30,7 @@ class DelegationStoreMixin(KernelStoreTypingBase):
                 status                 TEXT NOT NULL DEFAULT 'active',
                 delegation_grant_ref   TEXT,
                 recall_reason          TEXT,
+                approval_policy_json   TEXT,
                 created_at             REAL NOT NULL,
                 updated_at             REAL NOT NULL
             )
@@ -51,6 +56,7 @@ class DelegationStoreMixin(KernelStoreTypingBase):
         delegated_principal_id: str,
         scope: DelegationScope,
         delegation_grant_ref: str | None = None,
+        approval_delegation_policy: ApprovalDelegationPolicy | None = None,
         created_at: float | None = None,
     ) -> DelegationRecord:
         """Insert a new delegation record and return it."""
@@ -64,6 +70,16 @@ class DelegationStoreMixin(KernelStoreTypingBase):
             },
             ensure_ascii=False,
         )
+        approval_policy_json: str | None = None
+        if approval_delegation_policy is not None:
+            approval_policy_json = json.dumps(
+                {
+                    "auto_approve": approval_delegation_policy.auto_approve,
+                    "require_parent_approval": (approval_delegation_policy.require_parent_approval),
+                    "deny": approval_delegation_policy.deny,
+                },
+                ensure_ascii=False,
+            )
         with self._get_conn():
             self._get_conn().execute(
                 """
@@ -71,8 +87,9 @@ class DelegationStoreMixin(KernelStoreTypingBase):
                     delegation_id, parent_task_id, child_task_id,
                     delegated_principal_id, scope_json, status,
                     delegation_grant_ref, recall_reason,
+                    approval_policy_json,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?)
                 """,
                 (
                     delegation_id,
@@ -81,6 +98,7 @@ class DelegationStoreMixin(KernelStoreTypingBase):
                     delegated_principal_id,
                     scope_json,
                     delegation_grant_ref,
+                    approval_policy_json,
                     now,
                     now,
                 ),
@@ -97,7 +115,7 @@ class DelegationStoreMixin(KernelStoreTypingBase):
     def find_delegation_by_pair(
         self, parent_task_id: str, child_task_id: str
     ) -> DelegationRecord | None:
-        """Return the delegation linking *parent_task_id* → *child_task_id*, or *None*."""
+        """Return the delegation linking *parent_task_id* -> *child_task_id*, or *None*."""
         row = self._row(
             """
             SELECT * FROM delegations
@@ -150,7 +168,7 @@ class DelegationStoreMixin(KernelStoreTypingBase):
             )
 
     # ------------------------------------------------------------------
-    # Row → model
+    # Row -> model
     # ------------------------------------------------------------------
 
     def _delegation_from_row(self, row: sqlite3.Row) -> DelegationRecord:
@@ -161,6 +179,15 @@ class DelegationStoreMixin(KernelStoreTypingBase):
             max_steps=int(raw_scope.get("max_steps") or 0),
             budget_tokens=int(raw_scope.get("budget_tokens") or 0),
         )
+        approval_policy: ApprovalDelegationPolicy | None = None
+        raw_policy = row["approval_policy_json"]
+        if raw_policy is not None:
+            policy_data: dict[str, Any] = json_loads(raw_policy)
+            approval_policy = ApprovalDelegationPolicy(
+                auto_approve=list(policy_data.get("auto_approve") or []),
+                require_parent_approval=list(policy_data.get("require_parent_approval") or []),
+                deny=list(policy_data.get("deny") or []),
+            )
         return DelegationRecord(
             delegation_id=str(row["delegation_id"]),
             parent_task_id=str(row["parent_task_id"]),
@@ -170,6 +197,7 @@ class DelegationStoreMixin(KernelStoreTypingBase):
             status=str(row["status"]),
             delegation_grant_ref=row["delegation_grant_ref"],
             recall_reason=row["recall_reason"],
+            approval_delegation_policy=approval_policy,
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
         )

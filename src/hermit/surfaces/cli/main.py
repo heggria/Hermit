@@ -127,11 +127,45 @@ def _register_commands() -> None:
     import hermit.surfaces.cli._serve  # noqa: F401
 
 
+def _subapp_callback(sub_app: typer.Typer) -> None:
+    @sub_app.callback(invoke_without_command=True)
+    def _callback(ctx: typer.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            typer.echo(ctx.get_help())
+            raise typer.Exit()
+
+
+for _sub in (
+    plugin_app,
+    autostart_app,
+    schedule_app,
+    config_app,
+    profiles_app,
+    auth_app,
+    task_app,
+    memory_app,
+    task_capability_app,
+):
+    _subapp_callback(_sub)
+
 _register_commands()
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        from importlib.metadata import version
+
+        typer.echo(f"hermit {version('hermit-agent')}")
+        raise typer.Exit()
+
+
 @app.callback(invoke_without_command=True)
-def _main_callback(ctx: typer.Context) -> None:
+def _main_callback(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False, "--version", callback=_version_callback, is_eager=True, help="Show version."
+    ),
+) -> None:
     """Handle the no-subcommand case (show help)."""
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())

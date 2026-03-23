@@ -239,9 +239,7 @@ class ProposalGenerator:
         )
 
         try:
-            result = self._generate_single(
-                perspective, debate_id, decision_point, context
-            )
+            result = self._generate_single(perspective, debate_id, decision_point, context)
 
             # Store LLM output as artifact linked to step.
             if result is not None:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from dataclasses import asdict
 from typing import Any
 
@@ -29,7 +28,6 @@ class TaskDelegationService:
 
     def __init__(self, store: KernelStore) -> None:
         self.store = store
-        self._delegations: dict[str, DelegationRecord] = {}
 
     def delegate(
         self,
@@ -46,7 +44,10 @@ class TaskDelegationService:
         """
         parent = self.store.get_task(parent_task_id)
         if parent is None:
-            raise DelegationError("parent_not_found", f"Parent task not found: {parent_task_id}")
+            raise DelegationError(
+                "parent_not_found",
+                f"Parent task not found: {parent_task_id}",
+            )
         if parent.status not in ("running", "queued", "planning_ready"):
             raise DelegationError(
                 "parent_not_active",
@@ -68,20 +69,15 @@ class TaskDelegationService:
             requested_by=parent.owner_principal_id,
         )
 
-        now = time.time()
         delegation_id = self.store.generate_id("delegation")
-        record = DelegationRecord(
+        self.store.create_delegation(
             delegation_id=delegation_id,
             parent_task_id=parent_task_id,
             child_task_id=child.task_id,
             delegated_principal_id=delegated_principal_id,
             scope=scope,
-            status="active",
             approval_delegation_policy=approval_delegation_policy,
-            created_at=now,
-            updated_at=now,
         )
-        self._delegations[delegation_id] = record
 
         payload: dict[str, Any] = {
             "delegation_id": delegation_id,
@@ -118,7 +114,7 @@ class TaskDelegationService:
         reason: str = "operator_recall",
     ) -> None:
         """Recall a delegated child task, revoking its delegation."""
-        record = self._find_delegation(parent_task_id, child_task_id)
+        record = self.store.find_delegation_by_pair(parent_task_id, child_task_id)
         if record is None:
             raise DelegationError(
                 "delegation_not_found",
@@ -130,10 +126,11 @@ class TaskDelegationService:
                 f"Delegation {record.delegation_id} is {record.status}, cannot recall.",
             )
 
-        now = time.time()
-        record.status = "recalled"
-        record.recall_reason = reason
-        record.updated_at = now
+        self.store.update_delegation_status(
+            record.delegation_id,
+            status="recalled",
+            recall_reason=reason,
+        )
 
         self.store.update_task_status(child_task_id, "recalled")
 
@@ -164,15 +161,16 @@ class TaskDelegationService:
 
         Returns the parent_task_id if delegation was found, None otherwise.
         """
-        record = self._find_delegation_by_child(child_task_id)
+        record = self.store.find_delegation_by_child(child_task_id)
         if record is None:
             return None
         if record.status != "active":
             return None
 
-        now = time.time()
-        record.status = "completed"
-        record.updated_at = now
+        self.store.update_delegation_status(
+            record.delegation_id,
+            status="completed",
+        )
 
         self.store.append_event(
             event_type="delegation.completed",
@@ -197,10 +195,9 @@ class TaskDelegationService:
 
     def list_children(self, parent_task_id: str) -> list[dict[str, Any]]:
         """List child task summaries for a given parent task."""
+        records = self.store.list_delegations_for_parent(parent_task_id)
         results: list[dict[str, Any]] = []
-        for record in self._delegations.values():
-            if record.parent_task_id != parent_task_id:
-                continue
+        for record in records:
             child = self.store.get_task(record.child_task_id)
             results.append(
                 {
@@ -217,13 +214,7 @@ class TaskDelegationService:
 
     def get_delegation(self, parent_task_id: str, child_task_id: str) -> DelegationRecord | None:
         """Retrieve a specific delegation record."""
-        return self._find_delegation(parent_task_id, child_task_id)
-
-    def _find_delegation(self, parent_task_id: str, child_task_id: str) -> DelegationRecord | None:
-        for record in self._delegations.values():
-            if record.parent_task_id == parent_task_id and record.child_task_id == child_task_id:
-                return record
-        return None
+        return self.store.find_delegation_by_pair(parent_task_id, child_task_id)
 
     def check_delegation_approval_policy(
         self,
@@ -231,22 +222,16 @@ class TaskDelegationService:
         child_task_id: str,
         action_class: str,
     ) -> tuple[str, str | None]:
-        """Check whether a child task's approval can be auto-resolved by delegation policy.
+        """Check whether a child task's approval can be auto-resolved.
 
         Returns a tuple of (resolution, delegation_id):
-        - ('auto_approve', delegation_id) if policy auto-approves the action class
-        - ('require_parent_approval', delegation_id) if parent must explicitly approve
+        - ('auto_approve', delegation_id) if policy auto-approves
+        - ('require_parent_approval', delegation_id) if parent must approve
         - ('deny', delegation_id) if policy denies the action class
-        - ('no_policy', None) if no delegation record or no policy is configured
+        - ('no_policy', None) if no delegation record or no policy configured
         """
-        record = self._find_delegation_by_child(child_task_id)
+        record = self.store.find_delegation_by_child(child_task_id)
         if record is None or record.approval_delegation_policy is None:
             return ("no_policy", None)
         resolution = record.approval_delegation_policy.resolve(action_class)
         return (resolution, record.delegation_id)
-
-    def _find_delegation_by_child(self, child_task_id: str) -> DelegationRecord | None:
-        for record in self._delegations.values():
-            if record.child_task_id == child_task_id:
-                return record
-        return None

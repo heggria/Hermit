@@ -12,7 +12,7 @@ the ultimate end-to-end validation of the v0.3 architecture.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -75,11 +75,41 @@ def deliberation_integration(
     store: KernelStore,
     artifact_store: ArtifactStore,
 ) -> DeliberationIntegration:
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
     from hermit.kernel.execution.competition.deliberation_integration import (
         DeliberationIntegration,
     )
+    from hermit.kernel.execution.competition.llm_arbitrator import ArbitrationEngine
+    from hermit.kernel.execution.competition.llm_critic import CritiqueGenerator
+    from hermit.kernel.execution.competition.llm_proposer import ProposalGenerator
 
-    return DeliberationIntegration(store, artifact_store)
+    response = json.dumps(
+        {
+            "selected_candidate_id": "placeholder",
+            "confidence": 0.8,
+            "reasoning": "test",
+        }
+    )
+
+    def factory() -> Any:
+        p = MagicMock()
+        p.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": response}])
+        return p
+
+    proposer = ProposalGenerator(factory, default_model="test-model")
+    critic = CritiqueGenerator(factory, default_model="test-model")
+    arbitrator = ArbitrationEngine(factory, default_model="test-model")
+
+    return DeliberationIntegration(
+        store,
+        artifact_store,
+        proposer=proposer,
+        critic=critic,
+        arbitrator=arbitrator,
+    )
 
 
 @pytest.fixture
@@ -250,8 +280,8 @@ class TestCrossModuleChain:
         route_result = deliberation_integration.evaluate_and_route(
             task_id=task_id,
             step_id=step_id,
-            risk_band="high",
-            step_kind="planning",
+            risk_level="high",
+            action_class="execute_command",
         )
 
         assert route_result["deliberation_required"] is True
@@ -866,8 +896,8 @@ class TestCrossModuleBoundaryValidation:
         result = deliberation_integration.evaluate_and_route(
             task_id="task_low",
             step_id="step_low",
-            risk_band="low",
-            step_kind="read",
+            risk_level="low",
+            action_class="read_local",
         )
         assert result["deliberation_required"] is False
         assert result["debate_id"] is None

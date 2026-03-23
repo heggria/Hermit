@@ -150,9 +150,7 @@ class DeliberationIntegration:
             return {"deliberation_required": False, "debate_id": None}
 
         trigger = _TRIGGER_MAP.get(action_class, DeliberationTrigger.high_risk_planning)
-        decision_point = (
-            f"task={task_id} step={step_id} risk={risk_level} kind={action_class}"
-        )
+        decision_point = f"task={task_id} step={step_id} risk={risk_level} kind={action_class}"
         bundle = self.deliberation.create_debate(decision_point, trigger)
 
         self.store.append_event(
@@ -224,9 +222,7 @@ class DeliberationIntegration:
             )
 
         debate_id = route["debate_id"]
-        decision_point = (
-            f"task={task_id} step={step_id} risk={risk_level} kind={action_class}"
-        )
+        decision_point = f"task={task_id} step={step_id} risk={risk_level} kind={action_class}"
 
         # 2. Create Team for this deliberation ensemble.
         # program_id stores the parent task_id — teams are task-scoped, not program-scoped.

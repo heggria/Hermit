@@ -120,7 +120,7 @@ class SubtaskSpawner:
             entity_id=attempt_ctx.step_attempt_id,
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
-            actor="kernel",
+            actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
             payload={
                 "child_step_ids": child_step_ids,
                 "count": len(child_step_ids),

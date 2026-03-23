@@ -26,6 +26,7 @@ log = structlog.get_logger()
 
 if TYPE_CHECKING:
     from hermit.kernel import ArtifactStore, KernelStore, TaskController
+    from hermit.kernel.context.injection.provider_input import ProviderInputCompiler
     from hermit.kernel.execution.competition.deliberation_integration import DeliberationIntegration
 
 StreamCallback = Callable[[str, str], None]
@@ -127,6 +128,7 @@ class AgentRuntime:
         self.artifact_store: ArtifactStore | None = None
         self.task_controller: TaskController | None = None
         self.deliberation: DeliberationIntegration | None = None
+        self.provider_input_compiler: ProviderInputCompiler | None = None
 
     def clone(
         self,
@@ -308,6 +310,17 @@ class AgentRuntime:
             self.tool_executor, "clear_blocked_state"
         )
         clearer(step_attempt_id)
+        if self.provider_input_compiler is not None:
+            try:
+                if self.provider_input_compiler.check_context_staleness(
+                    task_context.step_attempt_id,
+                ):
+                    log.warning(
+                        "context_stale_on_resume",
+                        step_attempt_id=task_context.step_attempt_id,
+                    )
+            except Exception:
+                log.debug("context_staleness_check_failed_on_resume", exc_info=True)
         return self._run_from_messages(
             messages,
             start_turn=next_turn,
@@ -367,6 +380,23 @@ class AgentRuntime:
         usage = usage or UsageMetrics()
 
         for turn in range(start_turn, self.max_turns + 1):
+            if (
+                turn > start_turn
+                and task_context is not None
+                and self.provider_input_compiler is not None
+            ):
+                try:
+                    if self.provider_input_compiler.check_context_staleness(
+                        task_context.step_attempt_id,
+                    ):
+                        log.warning(
+                            "context_stale_mid_execution",
+                            step_attempt_id=task_context.step_attempt_id,
+                            turn=turn,
+                        )
+                except Exception:
+                    log.debug("context_staleness_check_failed", exc_info=True)
+
             messages = self._apply_appended_notes(messages, task_context)
             try:
                 response = self.provider.generate(

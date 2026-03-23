@@ -23,7 +23,7 @@ from hermit.kernel.verification.assurance.models import (
     TraceEnvelope,
 )
 from hermit.kernel.verification.assurance.reporting import AssuranceReporter
-from tests.assurance.conftest import make_envelope, make_governed_trace
+from tests.assurance.conftest import make_governed_trace
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -260,12 +260,8 @@ class TestJsonReport:
         assert len(json_out["violations"]) == 2
 
         # Find each violation in the list by its known fields
-        contract_v = next(
-            v for v in json_out["violations"] if "contract_id" in v
-        )
-        invariant_v = next(
-            v for v in json_out["violations"] if "invariant_id" in v
-        )
+        contract_v = next(v for v in json_out["violations"] if "contract_id" in v)
+        invariant_v = next(v for v in json_out["violations"] if "invariant_id" in v)
 
         assert contract_v["contract_id"] == "side_effect.authorization"
         assert contract_v["severity"] == "blocker"

@@ -31,22 +31,26 @@ def _make_integration(
     artifact_store = ArtifactStore(tmp_path / "artifacts")
 
     if proposal_response is None:
-        proposal_response = json.dumps({
-            "plan_summary": "Refactor module X",
-            "contract_draft": {"steps": 2},
-            "expected_cost": "low",
-            "expected_risk": "low",
-            "expected_reward": "high",
-        })
+        proposal_response = json.dumps(
+            {
+                "plan_summary": "Refactor module X",
+                "contract_draft": {"steps": 2},
+                "expected_cost": "low",
+                "expected_risk": "low",
+                "expected_reward": "high",
+            }
+        )
     if critique_response is None:
         critique_response = json.dumps([])
     if arbitration_response is None:
-        arbitration_response = json.dumps({
-            "selected_candidate_id": "placeholder",
-            "confidence": 0.9,
-            "reasoning": "Best overall approach",
-            "merge_notes": "Ready to execute",
-        })
+        arbitration_response = json.dumps(
+            {
+                "selected_candidate_id": "placeholder",
+                "confidence": 0.9,
+                "reasoning": "Best overall approach",
+                "merge_notes": "Ready to execute",
+            }
+        )
 
     def proposer_factory() -> Any:
         p = MagicMock()
@@ -167,9 +171,7 @@ class TestTeamMilestoneLifecycle:
 
         for ms in milestones:
             assert ms.status == "completed", f"Milestone '{ms.title}' not completed"
-            assert ms.completed_at is not None, (
-                f"Milestone '{ms.title}' missing completed_at"
-            )
+            assert ms.completed_at is not None, f"Milestone '{ms.title}' missing completed_at"
 
     def test_team_completed_after_deliberation(self, tmp_path: Path) -> None:
         """Team status transitions to 'completed' after deliberation finishes."""

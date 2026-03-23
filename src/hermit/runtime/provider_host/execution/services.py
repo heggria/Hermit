@@ -285,6 +285,10 @@ def build_runtime(
 
     trace_recorder = TraceRecorder(store=kernel_store)
 
+    from hermit.kernel.signals.protocol import SignalProtocol
+
+    signal_protocol = SignalProtocol(kernel_store)
+
     tool_executor = ToolExecutor(
         registry=registry,
         store=kernel_store,
@@ -300,6 +304,7 @@ def build_runtime(
         tool_output_limit=settings.tool_output_limit,
         deliberation=deliberation,
         trace_recorder=trace_recorder,
+        signal_protocol=signal_protocol,
     )
     runtime = AgentRuntime(
         provider=provider,
@@ -318,6 +323,11 @@ def build_runtime(
     runtime.artifact_store = artifact_store
     runtime.task_controller = TaskController(kernel_store)
     runtime.deliberation = deliberation
+
+    from hermit.kernel.context.injection.provider_input import ProviderInputCompiler
+
+    runtime.provider_input_compiler = ProviderInputCompiler(kernel_store, artifact_store)
+
     pm.configure_subagent_runtime(runtime)
     return runtime, pm
 

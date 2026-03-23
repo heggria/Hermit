@@ -8,13 +8,17 @@ import structlog
 
 from hermit.infra.system.i18n import tr, tr_list_all_locales
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
+from hermit.kernel.context.memory.decay_models import FreshnessState
 from hermit.kernel.context.memory.governance import MemoryGovernanceService
+from hermit.kernel.context.memory.taxonomy import MemoryType, classify_memory_type
 from hermit.kernel.context.memory.text import shares_topic, summary_prompt, topic_tokens
 from hermit.kernel.context.models.context import TaskExecutionContext, WorkingStateSnapshot
 from hermit.kernel.ledger.journal.store_support import canonical_json as _canonical_json
 from hermit.kernel.ledger.journal.store_support import sha256_hex as _sha256_hex
 from hermit.kernel.task.models.records import BeliefRecord, MemoryRecord
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
+
+log = structlog.get_logger()
 
 
 def _greeting_queries() -> set[str]:
@@ -92,11 +96,19 @@ class ContextCompiler:
         artifact_store: ArtifactStore | None = None,
         retrieval_service: Any | None = None,
         store: Any | None = None,
+        episodic_service: Any | None = None,
+        procedural_service: Any | None = None,
+        anti_pattern_service: Any | None = None,
+        decay_service: Any | None = None,
     ) -> None:
         self.governance = governance or MemoryGovernanceService()
         self.artifact_store = artifact_store
         self._retrieval_service = retrieval_service
         self._store = store
+        self._episodic_service = episodic_service
+        self._procedural_service = procedural_service
+        self._anti_pattern_service = anti_pattern_service
+        self._decay_service = decay_service
 
     def compile(
         self,
@@ -213,6 +225,79 @@ class ContextCompiler:
                 }
             )
 
+        # --- Episodic context: link memories to task execution episodes ---
+        episodic_context: list[dict[str, Any]] = []
+        if self._episodic_service is not None and self._store is not None:
+            try:
+                episode_memories = self._episodic_service.query_by_episode(
+                    context.task_id,
+                    self._store,
+                )
+                for em in episode_memories[:5]:
+                    episodic_context.append(
+                        {
+                            "memory_id": em.memory_id,
+                            "claim_text": em.claim_text,
+                            "category": em.category,
+                            "task_id": em.task_id,
+                        }
+                        if hasattr(em, "memory_id")
+                        else {"episode": str(em)}
+                    )
+            except Exception:
+                log.debug("episodic_context_fallback")
+
+        # --- Procedural context: match procedures against current query ---
+        procedural_context: list[dict[str, Any]] = []
+        if self._procedural_service is not None and self._store is not None:
+            try:
+                procedures = self._procedural_service.match_procedures(
+                    query_text,
+                    self._store,
+                    limit=3,
+                )
+                for proc in procedures:
+                    procedural_context.append(
+                        {
+                            "procedure_id": proc.procedure_id,
+                            "trigger_pattern": proc.trigger_pattern,
+                            "steps": proc.steps,
+                            "confidence": proc.confidence,
+                        }
+                        if hasattr(proc, "procedure_id")
+                        else {"procedure": str(proc)}
+                    )
+            except Exception:
+                log.debug("procedural_context_fallback")
+
+        # --- Anti-pattern pitfall detection ---
+        pitfall_warnings: list[dict[str, Any]] = []
+        if self._anti_pattern_service is not None and self._store is not None:
+            try:
+                pitfalls = self._anti_pattern_service.detect_pitfalls(
+                    self._store,
+                    min_decisions=5,
+                    failure_rate_threshold=0.5,
+                )
+                for p in pitfalls[:3]:
+                    pitfall_warnings.append(
+                        {
+                            "memory_id": p.memory_id,
+                            "claim_text": p.claim_text,
+                            "failure_rate": p.failure_rate,
+                            "category": p.category,
+                        }
+                        if hasattr(p, "memory_id")
+                        else {"pitfall": str(p)}
+                    )
+            except Exception:
+                log.debug("anti_pattern_fallback")
+
+        # Merge pitfall warnings into recent_notes for downstream visibility
+        merged_recent_notes = list(recent_notes or [])
+        for pw in pitfall_warnings:
+            merged_recent_notes.append({"kind": "pitfall_warning", **pw})
+
         payload = {
             "kind": "context.pack/v3",
             "static_memory": static_memory,
@@ -223,9 +308,11 @@ class ContextCompiler:
             "step_summary": dict(step_summary or {}),
             "policy_summary": dict(policy_summary or {}),
             "planning_state": dict(planning_state or {}),
+            "episodic_context": episodic_context,
+            "procedural_context": procedural_context,
             "carry_forward": dict(carry_forward or {}) or None,
             "continuation_guidance": dict(continuation_guidance or {}) or None,
-            "recent_notes": list(recent_notes or []),
+            "recent_notes": merged_recent_notes,
             "relevant_artifact_refs": list(relevant_artifact_refs or []),
             "ingress_artifact_refs": list(ingress_artifact_refs or []),
             "focus_summary": dict(focus_summary or {}) or None,
@@ -253,9 +340,11 @@ class ContextCompiler:
             step_summary=dict(step_summary or {}),
             policy_summary=dict(policy_summary or {}),
             planning_state=dict(planning_state or {}),
+            episodic_context=episodic_context,
+            procedural_context=procedural_context,
             carry_forward=dict(carry_forward or {}) or None,
             continuation_guidance=dict(continuation_guidance or {}) or None,
-            recent_notes=list(recent_notes or []),
+            recent_notes=merged_recent_notes,
             relevant_artifact_refs=list(relevant_artifact_refs or []),
             ingress_artifact_refs=list(ingress_artifact_refs or []),
             focus_summary=dict(focus_summary or {}) or None,
@@ -340,6 +429,32 @@ class ContextCompiler:
             score += 10.0
         score += 5.0 if memory.trust_tier == "durable" else 0.0
         score += float(memory.updated_at or 0.0) / 1_000_000_000_000.0
+
+        # Apply taxonomy classification for type-aware prioritization
+        try:
+            mem_type = classify_memory_type(memory)
+            if mem_type == MemoryType.PROCEDURAL:
+                score *= 1.2
+            elif mem_type == MemoryType.EPISODIC:
+                score *= 1.1
+        except Exception:
+            pass
+
+        # Apply decay-aware freshness weighting
+        if self._decay_service is not None:
+            try:
+                assessment = self._decay_service.evaluate_freshness(memory)
+                if assessment is not None:
+                    state = assessment.freshness_state
+                    if state == FreshnessState.EXPIRED:
+                        score *= 0.1
+                    elif state == FreshnessState.STALE:
+                        score *= 0.5
+                    elif state == FreshnessState.AGING:
+                        score *= 0.8
+            except Exception:
+                pass
+
         return score
 
     @staticmethod

@@ -75,7 +75,21 @@ def load_profile_catalog(base_dir: Path) -> ProfileCatalog:
             plugins={},
         )
 
-    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, PermissionError, IsADirectoryError, OSError) as exc:
+        import structlog
+
+        structlog.get_logger().warning("config_toml_parse_error", path=str(path), error=str(exc))
+        return ProfileCatalog(
+            path=path,
+            exists=True,
+            default_profile=None,
+            disabled_builtin_plugins=[],
+            profiles={},
+            plugins={},
+        )
+
     default_profile = raw.get("default_profile")
     disabled_builtin_plugins_raw = raw.get("disabled_builtin_plugins", [])
     profiles_raw = raw.get("profiles", {})

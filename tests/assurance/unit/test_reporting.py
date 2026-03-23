@@ -573,9 +573,7 @@ class TestCompareReports:
     def test_changed_severity_detected(
         self, reporter: AssuranceReporter, envelopes: list[TraceEnvelope]
     ) -> None:
-        cv_old = _make_contract_violation(
-            severity="high", violation_id="cv-sev", detected_at=100.0
-        )
+        cv_old = _make_contract_violation(severity="high", violation_id="cv-sev", detected_at=100.0)
         baseline = reporter.build_report(
             run_id="run-c3a",
             scenario_id="scn-c3",

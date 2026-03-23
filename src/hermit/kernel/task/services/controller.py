@@ -200,6 +200,7 @@ class TaskController:
             step_id=step.step_id,
             step_attempt_id=attempt.step_attempt_id,
             source_channel=source_channel,
+            actor_principal_id=(task.requested_by_principal_id or requested_by or "principal_user"),
             policy_profile=policy_profile,
             workspace_root=workspace_root,
             ingress_metadata=metadata,
@@ -258,6 +259,9 @@ class TaskController:
                     step_id=root_step_id,
                     step_attempt_id=root_attempt.step_attempt_id if root_attempt else "",
                     source_channel=source_channel,
+                    actor_principal_id=(
+                        task.requested_by_principal_id or requested_by or "principal_user"
+                    ),
                     policy_profile=policy_profile,
                     workspace_root=workspace_root,
                     ingress_metadata=metadata,
@@ -343,6 +347,7 @@ class TaskController:
             step_id=step.step_id,
             step_attempt_id=attempt.step_attempt_id,
             source_channel=source_channel,
+            actor_principal_id=(task.requested_by_principal_id or requested_by or "principal_user"),
             policy_profile=policy_profile,
             workspace_root=workspace_root,
             ingress_metadata=metadata,
@@ -399,6 +404,9 @@ class TaskController:
             step_id=step.step_id,
             step_attempt_id=attempt.step_attempt_id,
             source_channel=task.source_channel,
+            actor_principal_id=(
+                task.requested_by_principal_id or task.owner_principal_id or "principal_user"
+            ),
             policy_profile=task.policy_profile,
             workspace_root=workspace_root,
             ingress_metadata=dict(ingress_metadata or {}),
@@ -429,6 +437,9 @@ class TaskController:
             step_id=attempt.step_id,
             step_attempt_id=step_attempt_id,
             source_channel=task.source_channel,
+            actor_principal_id=(
+                task.requested_by_principal_id or task.owner_principal_id or "principal_user"
+            ),
             policy_profile=task.policy_profile,
             workspace_root=str(attempt.context.get("workspace_root", "") or ""),
             ingress_metadata=dict(attempt.context.get("ingress_metadata", {}) or {}),
@@ -510,6 +521,9 @@ class TaskController:
                 step_id=attempt.step_id,
                 step_attempt_id=successor.step_attempt_id,
                 source_channel=task.source_channel,
+                actor_principal_id=(
+                    task.requested_by_principal_id or task.owner_principal_id or "principal_user"
+                ),
                 policy_profile=task.policy_profile,
                 workspace_root=str(successor_context.get("workspace_root", "") or ""),
                 ingress_metadata=dict(successor_context.get("ingress_metadata", {}) or {}),
@@ -533,6 +547,9 @@ class TaskController:
             step_id=attempt.step_id,
             step_attempt_id=step_attempt_id,
             source_channel=task.source_channel,
+            actor_principal_id=(
+                task.requested_by_principal_id or task.owner_principal_id or "principal_user"
+            ),
             policy_profile=task.policy_profile,
             workspace_root=str(context.get("workspace_root", "") or ""),
             ingress_metadata=dict(context.get("ingress_metadata", {}) or {}),

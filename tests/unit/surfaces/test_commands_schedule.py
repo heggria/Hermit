@@ -349,7 +349,7 @@ class TestScheduleEnableDisable:
 
     def test_enable_not_found(self) -> None:
         mock_store = MagicMock()
-        mock_store.update_schedule.return_value = False
+        mock_store.get_schedule.return_value = None
         with patch(
             "hermit.surfaces.cli._commands_schedule.get_schedule_store",
             return_value=mock_store,

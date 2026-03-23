@@ -231,7 +231,7 @@ class DriftHandler:
                 entity_id=current.approval_id,
                 task_id=current.task_id,
                 step_id=current.step_id,
-                actor="kernel",
+                actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
                 payload={
                     "approval_id": current.approval_id,
                     "drift_kind": drift_reason,
@@ -300,7 +300,7 @@ class DriftHandler:
             entity_id=current.step_attempt_id,
             task_id=current.task_id,
             step_id=current.step_id,
-            actor="kernel",
+            actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
             payload={
                 "step_attempt_id": current.step_attempt_id,
                 "superseded_by_step_attempt_id": successor.step_attempt_id,

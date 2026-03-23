@@ -1,4 +1,5 @@
 """Tests verifying to_contract_packet reads cached decisions, not re-arbitrating."""
+
 from __future__ import annotations
 
 import json
@@ -6,8 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.execution.competition.deliberation_integration import (
@@ -25,16 +24,16 @@ def _make_tracking_arbitrator() -> tuple[ArbitrationEngine, MagicMock]:
     Returns (engine, provider_mock) so tests can inspect how many times
     the LLM provider was actually invoked.
     """
-    response = json.dumps({
-        "selected_candidate_id": "placeholder",
-        "confidence": 0.8,
-        "reasoning": "test",
-    })
+    response = json.dumps(
+        {
+            "selected_candidate_id": "placeholder",
+            "confidence": 0.8,
+            "reasoning": "test",
+        }
+    )
 
     provider = MagicMock()
-    provider.generate.return_value = SimpleNamespace(
-        content=[{"type": "text", "text": response}]
-    )
+    provider.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": response}])
 
     def factory() -> Any:
         return provider
@@ -118,9 +117,7 @@ def _setup_debate_with_two_proposals(
 class TestContractPacketCaching:
     """Verify that to_contract_packet uses cached arbitration results after fix #2."""
 
-    def test_to_contract_after_resolve_uses_cached_decision(
-        self, tmp_path: Path
-    ) -> None:
+    def test_to_contract_after_resolve_uses_cached_decision(self, tmp_path: Path) -> None:
         """After resolve_debate(), to_contract_packet() must NOT call the LLM again.
 
         The provider mock tracks call count. resolve_debate() triggers one
@@ -129,7 +126,7 @@ class TestContractPacketCaching:
         provider call count must not increase between the two calls.
         """
         svc, _store, _arts, provider_mock = _make_integration_with_tracking(tmp_path)
-        debate_id, cand_a, _cand_b = _setup_debate_with_two_proposals(svc)
+        debate_id, _cand_a, _cand_b = _setup_debate_with_two_proposals(svc)
 
         # resolve_debate triggers arbitration
         svc.resolve_debate(debate_id, task_id="t1")
@@ -173,8 +170,8 @@ class TestContractPacketCaching:
         This ensures backward compatibility — the cache is an optimization,
         not a hard requirement.
         """
-        svc, _store, _arts, provider_mock = _make_integration_with_tracking(tmp_path)
-        debate_id, cand_a, _cand_b = _setup_debate_with_two_proposals(svc)
+        svc, _store, _arts, _provider_mock = _make_integration_with_tracking(tmp_path)
+        debate_id, _cand_a, _cand_b = _setup_debate_with_two_proposals(svc)
 
         # Skip resolve_debate — go straight to to_contract_packet.
         # The cache is empty, so it should fall through to live arbitration.

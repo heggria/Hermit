@@ -112,8 +112,16 @@ class TestListChildrenWithMissingTask:
 
 
 class TestFindDelegationByChildNotFound:
-    """Cover line 222: _find_delegation_by_child returns None when no match."""
+    """Cover store.find_delegation_by_child returning None when no match."""
 
-    def test_find_delegation_by_child_returns_none(self, service: TaskDelegationService) -> None:
-        result = service._find_delegation_by_child("nonexistent_child")
+    def test_find_delegation_by_child_returns_none(
+        self, store: KernelStore, service: TaskDelegationService
+    ) -> None:
+        result = store.find_delegation_by_child("nonexistent_child")
         assert result is None
+        # Also verify the public API handles no-delegation gracefully
+        resolution, did = service.check_delegation_approval_policy(
+            child_task_id="nonexistent_child", action_class="read"
+        )
+        assert resolution == "no_policy"
+        assert did is None

@@ -124,6 +124,7 @@ class ToolExecutor:
         tool_output_limit: int = 4000,
         deliberation: DeliberationIntegration | None = None,
         trace_recorder: TraceRecorder | None = None,
+        signal_protocol: Any | None = None,
     ) -> None:
         from hermit.kernel.execution.suspension.git_worktree import GitWorktreeInspector
 
@@ -161,6 +162,7 @@ class ToolExecutor:
         self.tool_output_limit = tool_output_limit
         self._deliberation = deliberation
         self.trace_recorder = trace_recorder
+        self.signal_protocol = signal_protocol
 
         # -- Delegate handlers --
         self._request_builder = RequestBuilder(

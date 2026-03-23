@@ -23,17 +23,17 @@ from hermit.kernel.ledger.journal.store import KernelStore
 
 def _make_arbitrator() -> ArbitrationEngine:
     """Create an ArbitrationEngine with a mock provider that falls back."""
-    response = json.dumps({
-        "selected_candidate_id": "placeholder",
-        "confidence": 0.8,
-        "reasoning": "test",
-    })
+    response = json.dumps(
+        {
+            "selected_candidate_id": "placeholder",
+            "confidence": 0.8,
+            "reasoning": "test",
+        }
+    )
 
     def factory() -> Any:
         p = MagicMock()
-        p.generate.return_value = SimpleNamespace(
-            content=[{"type": "text", "text": response}]
-        )
+        p.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": response}])
         return p
 
     return ArbitrationEngine(factory, default_model="test-model")

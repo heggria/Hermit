@@ -93,7 +93,9 @@ class AssuranceStoreMixin(KernelStoreTypingBase):
     ) -> dict:
         """Insert a trace envelope record. Returns the created row as a dict."""
         now = time.time()
-        serialized = canonical_json(envelope_json) if isinstance(envelope_json, dict) else envelope_json
+        serialized = (
+            canonical_json(envelope_json) if isinstance(envelope_json, dict) else envelope_json
+        )
         conn = self._get_conn()
         with conn:
             conn.execute(
@@ -138,7 +140,9 @@ class AssuranceStoreMixin(KernelStoreTypingBase):
             clauses.append("event_type = ?")
             params.append(event_type)
         where = " AND ".join(clauses)
-        sql = f"SELECT * FROM assurance_trace_envelopes WHERE {where} ORDER BY event_seq ASC LIMIT ?"
+        sql = (
+            f"SELECT * FROM assurance_trace_envelopes WHERE {where} ORDER BY event_seq ASC LIMIT ?"
+        )
         params.append(limit)
         rows = self._rows(sql, params)
         return [_row_to_dict(r) for r in rows]
@@ -157,7 +161,9 @@ class AssuranceStoreMixin(KernelStoreTypingBase):
             clauses.append("event_type = ?")
             params.append(event_type)
         where = " AND ".join(clauses)
-        sql = f"SELECT * FROM assurance_trace_envelopes WHERE {where} ORDER BY event_seq ASC LIMIT ?"
+        sql = (
+            f"SELECT * FROM assurance_trace_envelopes WHERE {where} ORDER BY event_seq ASC LIMIT ?"
+        )
         params.append(limit)
         rows = self._rows(sql, params)
         return [_row_to_dict(r) for r in rows]

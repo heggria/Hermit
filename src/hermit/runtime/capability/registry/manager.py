@@ -175,6 +175,19 @@ class PluginManager:
         for spec in self._all_commands:
             runner.add_command(spec.name, spec.handler, spec.help_text, spec.cli_only)
 
+    # Allowed keys that PRE_RUN hook dict results may contain (besides "prompt").
+    # Unknown keys are logged as warnings and dropped to prevent hooks from
+    # injecting arbitrary control signals into the runner.
+    _ALLOWED_RUN_OPTS = frozenset(
+        {
+            "prompt",
+            "disable_tools",
+            "planning_mode",
+            "readonly_only",
+            "policy_profile",
+        }
+    )
+
     def on_pre_run(self, prompt: str, **kwargs: Any) -> tuple[str, dict[str, Any]]:
         """Fire PRE_RUN hooks.
 
@@ -182,6 +195,9 @@ class PluginManager:
         - str: replaces the prompt (backward compatible)
         - dict: {"prompt": "...", ...} to replace prompt AND pass control
           signals (e.g. disable_tools=True) to the runner.
+
+        Dict return values are validated against ``_ALLOWED_RUN_OPTS``.
+        Unknown keys are logged and dropped.
         """
         run_opts: dict[str, Any] = {}
         results = self.hooks.fire(HookEvent.PRE_RUN, prompt=prompt, **kwargs)
@@ -193,8 +209,21 @@ class PluginManager:
                 prompt_value = result_map.get("prompt")
                 if prompt_value is not None:
                     prompt = str(prompt_value)
+
+                unknown_keys = set(result_map.keys()) - self._ALLOWED_RUN_OPTS
+                if unknown_keys:
+                    log.warning(
+                        "pre_run_hook_unknown_keys",
+                        unknown_keys=sorted(unknown_keys),
+                        allowed_keys=sorted(self._ALLOWED_RUN_OPTS - {"prompt"}),
+                    )
+
                 run_opts.update(
-                    {key: value for key, value in result_map.items() if key != "prompt"}
+                    {
+                        key: value
+                        for key, value in result_map.items()
+                        if key != "prompt" and key in self._ALLOWED_RUN_OPTS
+                    }
                 )
         return prompt, run_opts
 

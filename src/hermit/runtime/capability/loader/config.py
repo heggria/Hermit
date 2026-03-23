@@ -50,9 +50,7 @@ def _resolve_plugin_variables(manifest: PluginManifest, settings: Any) -> dict[s
     return resolved
 
 
-def has_missing_required_variables(
-    manifest: PluginManifest, resolved: dict[str, Any]
-) -> list[str]:
+def has_missing_required_variables(manifest: PluginManifest, resolved: dict[str, Any]) -> list[str]:
     """Return names of required variables that are still None or empty.
 
     Callers (e.g. loader) can use this to decide whether to skip entry

@@ -57,7 +57,7 @@ class ApprovalHandler:
                 entity_id=approval_record.approval_id,
                 task_id=approval_record.task_id,
                 step_id=approval_record.step_id,
-                actor="kernel",
+                actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
                 payload={
                     "approval_id": approval_record.approval_id,
                     "drift_expiry": approval_record.drift_expiry,
@@ -84,7 +84,7 @@ class ApprovalHandler:
                 entity_id=approval_record.approval_id,
                 task_id=approval_record.task_id,
                 step_id=approval_record.step_id,
-                actor="kernel",
+                actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
                 payload={
                     "approved_fingerprint": approved_fingerprint,
                     "current_fingerprint": current_fingerprint,

@@ -1,4 +1,5 @@
 """Extended ArbitrationEngine tests: post_execution_reviews, confidence bounds, slot paths."""
+
 from __future__ import annotations
 
 import json
@@ -27,9 +28,7 @@ from hermit.kernel.ledger.journal.store import KernelStore
 
 def _make_provider(text: str) -> MagicMock:
     provider = MagicMock()
-    provider.generate.return_value = SimpleNamespace(
-        content=[{"type": "text", "text": text}]
-    )
+    provider.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": text}])
     return provider
 
 
@@ -109,12 +108,14 @@ def _make_review(
 class TestArbitrationEngineExtended:
     def test_confidence_lower_bound_clamped(self, tmp_path: Path) -> None:
         """LLM returns confidence=-0.5, verify decision.confidence == 0.0."""
-        response = json.dumps({
-            "selected_candidate_id": "c1",
-            "confidence": -0.5,
-            "reasoning": "negative confidence edge",
-            "merge_notes": "clamped",
-        })
+        response = json.dumps(
+            {
+                "selected_candidate_id": "c1",
+                "confidence": -0.5,
+                "reasoning": "negative confidence edge",
+                "merge_notes": "clamped",
+            }
+        )
         engine = _make_engine(response)
         store = KernelStore(tmp_path / "state.db")
         arts = ArtifactStore(tmp_path / "artifacts")
@@ -124,7 +125,11 @@ class TestArbitrationEngineExtended:
             proposals=[_make_proposal("c1"), _make_proposal("c2", "architect")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.confidence == 0.0
         assert decision.selected_candidate_id == "c1"
@@ -139,15 +144,19 @@ class TestArbitrationEngineExtended:
             def capture_generate(request: Any) -> SimpleNamespace:
                 captured_requests.append(request)
                 return SimpleNamespace(
-                    content=[{
-                        "type": "text",
-                        "text": json.dumps({
-                            "selected_candidate_id": "c1",
-                            "confidence": 0.9,
-                            "reasoning": "reviewed",
-                            "merge_notes": "ok",
-                        }),
-                    }]
+                    content=[
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "selected_candidate_id": "c1",
+                                    "confidence": 0.9,
+                                    "reasoning": "reviewed",
+                                    "merge_notes": "ok",
+                                }
+                            ),
+                        }
+                    ]
                 )
 
             provider.generate.side_effect = capture_generate
@@ -165,7 +174,11 @@ class TestArbitrationEngineExtended:
         )
 
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
 
         # LLM was called
@@ -183,12 +196,14 @@ class TestArbitrationEngineExtended:
 
     def test_arbitrate_creates_step_and_attempt(self, tmp_path: Path) -> None:
         """Verify store.create_step and store.create_step_attempt are called for 2+ eligible."""
-        response = json.dumps({
-            "selected_candidate_id": "c1",
-            "confidence": 0.8,
-            "reasoning": "good",
-            "merge_notes": "proceed",
-        })
+        response = json.dumps(
+            {
+                "selected_candidate_id": "c1",
+                "confidence": 0.8,
+                "reasoning": "good",
+                "merge_notes": "proceed",
+            }
+        )
         engine = _make_engine(response)
         store = KernelStore(tmp_path / "state.db")
         arts = ArtifactStore(tmp_path / "artifacts")
@@ -215,7 +230,11 @@ class TestArbitrationEngineExtended:
             proposals=[_make_proposal("c1"), _make_proposal("c2", "architect")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
 
         assert len(step_calls) == 1
@@ -231,12 +250,14 @@ class TestArbitrationEngineExtended:
 
     def test_arbitrate_stores_artifact_on_success(self, tmp_path: Path) -> None:
         """Verify artifact with type deliberation_llm_arbitration is stored."""
-        response = json.dumps({
-            "selected_candidate_id": "c2",
-            "confidence": 0.75,
-            "reasoning": "solid plan",
-            "merge_notes": "go ahead",
-        })
+        response = json.dumps(
+            {
+                "selected_candidate_id": "c2",
+                "confidence": 0.75,
+                "reasoning": "solid plan",
+                "merge_notes": "go ahead",
+            }
+        )
         engine = _make_engine(response)
         store = KernelStore(tmp_path / "state.db")
         arts_path = tmp_path / "artifacts"
@@ -257,7 +278,11 @@ class TestArbitrationEngineExtended:
             proposals=[_make_proposal("c1"), _make_proposal("c2", "architect")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
 
         assert decision.selected_candidate_id == "c2"
@@ -272,6 +297,7 @@ class TestArbitrationEngineExtended:
 
     def test_fallback_merge_notes_contain_marker(self, tmp_path: Path) -> None:
         """Verify [fallback] appears in merge_notes when LLM fails."""
+
         def failing_factory() -> MagicMock:
             p = MagicMock()
             p.generate.side_effect = RuntimeError("LLM down")
@@ -286,7 +312,11 @@ class TestArbitrationEngineExtended:
             proposals=[_make_proposal("c1"), _make_proposal("c2", "architect")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
 
         assert decision.selected_candidate_id == "c1"

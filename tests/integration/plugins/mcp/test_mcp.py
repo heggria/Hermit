@@ -341,9 +341,7 @@ disabled_builtin_plugins = ["github"]
         assert vars_resolved["api_token"] is None
         assert config_resolved["argv"] == ["run"]
         assert config_resolved["headers"]["Authorization"] == "Bearer "
-        assert errors == [
-            {"plugin": "demo", "variable": "api_token", "env_vars": []}
-        ]
+        assert errors == [{"plugin": "demo", "variable": "api_token", "env_vars": []}]
 
 
 # ── mcp_loader plugin (.mcp.json parsing) ────────────────────────

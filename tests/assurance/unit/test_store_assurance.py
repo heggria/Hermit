@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 
 import pytest
@@ -26,9 +27,7 @@ class TestAssuranceSchema:
         conn = store._get_conn()
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "assurance_trace_envelopes" in tables
         assert "assurance_scenarios" in tables
@@ -39,9 +38,7 @@ class TestAssuranceSchema:
         conn = store._get_conn()
         indexes = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='index'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
         }
         expected = {
             "idx_assurance_trace_run",
@@ -126,12 +123,22 @@ class TestTraceEnvelopes:
     def test_get_trace_envelopes_filtered_by_task(self, store: KernelStore) -> None:
         now = time.time()
         store.create_trace_envelope(
-            trace_id="t1", run_id="run-X", task_id="task-1",
-            event_seq=0, event_type="a", envelope_json={}, wallclock_at=now,
+            trace_id="t1",
+            run_id="run-X",
+            task_id="task-1",
+            event_seq=0,
+            event_type="a",
+            envelope_json={},
+            wallclock_at=now,
         )
         store.create_trace_envelope(
-            trace_id="t2", run_id="run-X", task_id="task-2",
-            event_seq=1, event_type="b", envelope_json={}, wallclock_at=now,
+            trace_id="t2",
+            run_id="run-X",
+            task_id="task-2",
+            event_seq=1,
+            event_type="b",
+            envelope_json={},
+            wallclock_at=now,
         )
 
         results = store.get_trace_envelopes("run-X", task_id="task-1")
@@ -141,12 +148,22 @@ class TestTraceEnvelopes:
     def test_get_trace_envelopes_filtered_by_event_type(self, store: KernelStore) -> None:
         now = time.time()
         store.create_trace_envelope(
-            trace_id="t1", run_id="run-Y", task_id="task-1",
-            event_seq=0, event_type="approval.requested", envelope_json={}, wallclock_at=now,
+            trace_id="t1",
+            run_id="run-Y",
+            task_id="task-1",
+            event_seq=0,
+            event_type="approval.requested",
+            envelope_json={},
+            wallclock_at=now,
         )
         store.create_trace_envelope(
-            trace_id="t2", run_id="run-Y", task_id="task-1",
-            event_seq=1, event_type="receipt.issued", envelope_json={}, wallclock_at=now,
+            trace_id="t2",
+            run_id="run-Y",
+            task_id="task-1",
+            event_seq=1,
+            event_type="receipt.issued",
+            envelope_json={},
+            wallclock_at=now,
         )
 
         results = store.get_trace_envelopes("run-Y", event_type="receipt.issued")
@@ -157,8 +174,13 @@ class TestTraceEnvelopes:
         now = time.time()
         for i in range(10):
             store.create_trace_envelope(
-                trace_id=f"t-{i}", run_id="run-limit", task_id="task-1",
-                event_seq=i, event_type="evt", envelope_json={}, wallclock_at=now + i,
+                trace_id=f"t-{i}",
+                run_id="run-limit",
+                task_id="task-1",
+                event_seq=i,
+                event_type="evt",
+                envelope_json={},
+                wallclock_at=now + i,
             )
 
         results = store.get_trace_envelopes("run-limit", limit=3)
@@ -358,9 +380,7 @@ class TestReplayEntries:
 
     def test_list_replay_entries_with_limit(self, store: KernelStore) -> None:
         for i in range(10):
-            store.create_replay_entry(
-                f"r-{i}", "scn-1", f"run-{i}", None, "live", False, "{}"
-            )
+            store.create_replay_entry(f"r-{i}", "scn-1", f"run-{i}", None, "live", False, "{}")
 
         results = store.list_replay_entries(limit=4)
         assert len(results) == 4
@@ -387,24 +407,36 @@ class TestConstraints:
     def test_duplicate_trace_id_rejected(self, store: KernelStore) -> None:
         now = time.time()
         store.create_trace_envelope(
-            "dup-trace", "run-1", "task-1", 0, "evt", "{}", now,
+            "dup-trace",
+            "run-1",
+            "task-1",
+            0,
+            "evt",
+            "{}",
+            now,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.IntegrityError):
             store.create_trace_envelope(
-                "dup-trace", "run-1", "task-1", 1, "evt", "{}", now,
+                "dup-trace",
+                "run-1",
+                "task-1",
+                1,
+                "evt",
+                "{}",
+                now,
             )
 
     def test_duplicate_scenario_id_rejected(self, store: KernelStore) -> None:
         store.create_scenario("dup-scn", 1, "{}")
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.IntegrityError):
             store.create_scenario("dup-scn", 2, "{}")
 
     def test_duplicate_report_id_rejected(self, store: KernelStore) -> None:
         store.create_report("dup-rpt", None, None, "pass", None, "{}")
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.IntegrityError):
             store.create_report("dup-rpt", None, None, "fail", None, "{}")
 
     def test_duplicate_replay_entry_id_rejected(self, store: KernelStore) -> None:
         store.create_replay_entry("dup-re", None, None, None, "live", False, "{}")
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.IntegrityError):
             store.create_replay_entry("dup-re", None, None, None, "live", False, "{}")

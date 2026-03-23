@@ -1,4 +1,5 @@
 """Tests for slot exhaustion edge cases in LLM services."""
+
 from __future__ import annotations
 
 import json
@@ -15,7 +16,7 @@ from hermit.kernel.execution.competition.deliberation import (
     DeliberationTrigger,
 )
 from hermit.kernel.execution.competition.llm_arbitrator import ArbitrationEngine
-from hermit.kernel.execution.competition.llm_critic import CriticRole, CritiqueGenerator
+from hermit.kernel.execution.competition.llm_critic import CritiqueGenerator
 from hermit.kernel.execution.competition.llm_proposer import (
     ProposalGenerator,
     ProposalPerspective,
@@ -28,15 +29,12 @@ from hermit.kernel.execution.workers.models import (
 from hermit.kernel.execution.workers.pool import WorkerPoolManager
 from hermit.kernel.ledger.journal.store import KernelStore
 
-
 # -- helpers ------------------------------------------------------------------
 
 
 def _make_provider(text: str) -> MagicMock:
     provider = MagicMock()
-    provider.generate.return_value = SimpleNamespace(
-        content=[{"type": "text", "text": text}]
-    )
+    provider.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": text}])
     return provider
 
 
@@ -75,11 +73,13 @@ class TestArbitratorSlotUnavailable:
 
     def test_arbitrator_slot_unavailable_returns_fallback(self, tmp_path: Path) -> None:
         """Pool with max_active=0 for verifier returns fallback with confidence=0.5."""
-        response = json.dumps({
-            "selected_candidate_id": "c1",
-            "confidence": 0.9,
-            "reasoning": "should not be reached",
-        })
+        response = json.dumps(
+            {
+                "selected_candidate_id": "c1",
+                "confidence": 0.9,
+                "reasoning": "should not be reached",
+            }
+        )
 
         def factory() -> Any:
             return _make_provider(response)
@@ -92,9 +92,7 @@ class TestArbitratorSlotUnavailable:
             pool_id="empty_verifier",
             team_id="test",
             slots={
-                WorkerRole.verifier: WorkerSlotConfig(
-                    role=WorkerRole.verifier, max_active=0
-                ),
+                WorkerRole.verifier: WorkerSlotConfig(role=WorkerRole.verifier, max_active=0),
             },
         )
         pool = WorkerPoolManager(config)
@@ -103,7 +101,11 @@ class TestArbitratorSlotUnavailable:
             proposals=[_make_proposal("c1"), _make_proposal("c2", "architect")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
 
         assert decision.confidence == 0.5
@@ -117,12 +119,16 @@ class TestCriticSlotUnavailable:
 
     def test_critic_slot_unavailable_returns_empty(self, tmp_path: Path) -> None:
         """Pool with max_active=0 for reviewer produces no critiques."""
-        response = json.dumps([{
-            "target_candidate_id": "cand_1",
-            "issue_type": "security",
-            "severity": "high",
-            "suggested_fix": "should not be reached",
-        }])
+        response = json.dumps(
+            [
+                {
+                    "target_candidate_id": "cand_1",
+                    "issue_type": "security",
+                    "severity": "high",
+                    "suggested_fix": "should not be reached",
+                }
+            ]
+        )
 
         def factory() -> Any:
             return _make_provider(response)
@@ -135,9 +141,7 @@ class TestCriticSlotUnavailable:
             pool_id="empty_reviewer",
             team_id="test",
             slots={
-                WorkerRole.reviewer: WorkerSlotConfig(
-                    role=WorkerRole.reviewer, max_active=0
-                ),
+                WorkerRole.reviewer: WorkerSlotConfig(role=WorkerRole.reviewer, max_active=0),
             },
         )
         pool = WorkerPoolManager(config)
@@ -182,9 +186,7 @@ class TestProposerSlotUnavailable:
             pool_id="empty_planner",
             team_id="test",
             slots={
-                WorkerRole.planner: WorkerSlotConfig(
-                    role=WorkerRole.planner, max_active=0
-                ),
+                WorkerRole.planner: WorkerSlotConfig(role=WorkerRole.planner, max_active=0),
             },
         )
         pool = WorkerPoolManager(config)
@@ -207,13 +209,15 @@ class TestSlotRelease:
 
     def test_all_slots_released_after_parallel_execution(self, tmp_path: Path) -> None:
         """Run proposer with 3 perspectives and verify all slots released."""
-        response = json.dumps({
-            "plan_summary": "parallel plan",
-            "contract_draft": {"steps": 1},
-            "expected_cost": "low",
-            "expected_risk": "low",
-            "expected_reward": "medium",
-        })
+        response = json.dumps(
+            {
+                "plan_summary": "parallel plan",
+                "contract_draft": {"steps": 1},
+                "expected_cost": "low",
+                "expected_risk": "low",
+                "expected_reward": "medium",
+            }
+        )
 
         def factory() -> Any:
             return _make_provider(response)
@@ -236,9 +240,7 @@ class TestSlotRelease:
             pool_id="parallel",
             team_id="test",
             slots={
-                WorkerRole.planner: WorkerSlotConfig(
-                    role=WorkerRole.planner, max_active=3
-                ),
+                WorkerRole.planner: WorkerSlotConfig(role=WorkerRole.planner, max_active=3),
             },
         )
         pool = WorkerPoolManager(config)
@@ -266,9 +268,7 @@ class TestSlotRelease:
             provider.generate.side_effect = RuntimeError("provider exploded")
             return provider
 
-        gen = ProposalGenerator(
-            failing_factory, default_model="test-model", max_workers=3
-        )
+        gen = ProposalGenerator(failing_factory, default_model="test-model", max_workers=3)
         store = KernelStore(tmp_path / "state.db")
         arts = ArtifactStore(tmp_path / "artifacts")
 
@@ -276,9 +276,7 @@ class TestSlotRelease:
             pool_id="exception",
             team_id="test",
             slots={
-                WorkerRole.planner: WorkerSlotConfig(
-                    role=WorkerRole.planner, max_active=3
-                ),
+                WorkerRole.planner: WorkerSlotConfig(role=WorkerRole.planner, max_active=3),
             },
         )
         pool = WorkerPoolManager(config)

@@ -27,37 +27,43 @@ logger = structlog.get_logger()
 # -- Deliberation trigger policy based on ActionClass -------------------------
 #
 # Read-only actions never need deliberation regardless of risk_level.
-_READONLY_ACTIONS: frozenset[str] = frozenset({
-    "read_local",
-    "network_read",
-    "execute_command_readonly",
-    "delegate_reasoning",
-    "ephemeral_ui_mutation",
-})
+_READONLY_ACTIONS: frozenset[str] = frozenset(
+    {
+        "read_local",
+        "network_read",
+        "execute_command_readonly",
+        "delegate_reasoning",
+        "ephemeral_ui_mutation",
+    }
+)
 
 # Mutation actions that warrant deliberation at medium risk.
-_MEDIUM_RISK_DELIBERATION_ACTIONS: frozenset[str] = frozenset({
-    "write_local",
-    "patch_file",
-    "execute_command",
-    "network_write",
-    "external_mutation",
-    "vcs_mutation",
-    "publication",
-    "rollback",
-    "scheduler_mutation",
-})
+_MEDIUM_RISK_DELIBERATION_ACTIONS: frozenset[str] = frozenset(
+    {
+        "write_local",
+        "patch_file",
+        "execute_command",
+        "network_write",
+        "external_mutation",
+        "vcs_mutation",
+        "publication",
+        "rollback",
+        "scheduler_mutation",
+    }
+)
 
 # Mutation actions that warrant deliberation at high/critical risk.
 # (superset of medium — includes orchestration and governance mutations)
-_HIGH_RISK_DELIBERATION_ACTIONS: frozenset[str] = _MEDIUM_RISK_DELIBERATION_ACTIONS | frozenset({
-    "delegate_execution",
-    "approval_resolution",
-    "credentialed_api_call",
-    "memory_write",
-    "attachment_ingest",
-    "patrol_execution",
-})
+_HIGH_RISK_DELIBERATION_ACTIONS: frozenset[str] = _MEDIUM_RISK_DELIBERATION_ACTIONS | frozenset(
+    {
+        "delegate_execution",
+        "approval_resolution",
+        "credentialed_api_call",
+        "memory_write",
+        "attachment_ingest",
+        "patrol_execution",
+    }
+)
 
 
 def _gen_id(prefix: str) -> str:

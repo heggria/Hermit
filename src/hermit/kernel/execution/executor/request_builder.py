@@ -153,7 +153,7 @@ class RequestBuilder:
                 entity_id=entity_id,
                 task_id=attempt_ctx.task_id,
                 step_id=attempt_ctx.step_id,
-                actor="kernel",
+                actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
                 payload={"artifact_ref": artifact.artifact_id, **(payload_summary or {})},
             )
         return artifact.artifact_id

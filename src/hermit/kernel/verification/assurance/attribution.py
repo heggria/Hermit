@@ -46,14 +46,16 @@ _ROLE_MITIGATOR = "mitigator"
 _ROLE_UNKNOWN = "unknown"
 
 # Event types that signal recovery actions
-_RECOVERY_EVENT_TYPES = frozenset({
-    "recovery.started",
-    "recovery.completed",
-    "rollback.started",
-    "rollback.completed",
-    "reconciliation.started",
-    "reconciliation.completed",
-})
+_RECOVERY_EVENT_TYPES = frozenset(
+    {
+        "recovery.started",
+        "recovery.completed",
+        "rollback.started",
+        "rollback.completed",
+        "reconciliation.started",
+        "reconciliation.completed",
+    }
+)
 
 
 class FailureAttributionEngine:
@@ -94,10 +96,15 @@ class FailureAttributionEngine:
         # the first-divergence candidate (earliest by event_seq) comes
         # first.  This ensures select_root_cause prefers it when there
         # are no counterfactual results.
-        candidates = [n.node_id for n in nodes if n.node_type in (
-            _NODE_TYPE_CONTRACT_VIOLATION,
-            _NODE_TYPE_INVARIANT_VIOLATION,
-        )]
+        candidates = [
+            n.node_id
+            for n in nodes
+            if n.node_type
+            in (
+                _NODE_TYPE_CONTRACT_VIOLATION,
+                _NODE_TYPE_INVARIANT_VIOLATION,
+            )
+        ]
         if first_div and first_div in candidates:
             candidates.remove(first_div)
             candidates.insert(0, first_div)
@@ -105,7 +112,10 @@ class FailureAttributionEngine:
         selected = ""
         if candidates:
             selected = self.select_root_cause(
-                candidates, nodes, edges, counterfactual_results,
+                candidates,
+                nodes,
+                edges,
+                counterfactual_results,
             )
 
         root_id = selected or first_div or ""
@@ -115,9 +125,7 @@ class FailureAttributionEngine:
 
         propagation_chain = self._extract_propagation_chain(nodes, edges, root_id)
 
-        counterfactual_ids = [
-            r.replay_id for r in (counterfactual_results or [])
-        ]
+        counterfactual_ids = [r.replay_id for r in (counterfactual_results or [])]
 
         evidence_refs = self._collect_evidence_refs(envelopes, violations)
 
@@ -126,7 +134,8 @@ class FailureAttributionEngine:
         failure_sig = self._compute_failure_signature(violations)
 
         confidence = self._compute_confidence(
-            candidates, counterfactual_results,
+            candidates,
+            counterfactual_results,
         )
 
         case = AttributionCase(
@@ -219,11 +228,13 @@ class FailureAttributionEngine:
             # Link violation to its originating event if present
             event_id = getattr(v, "event_id", None)
             if event_id and event_id in trace_id_to_node_id:
-                edges.append(AttributionEdge(
-                    source=trace_id_to_node_id[event_id],
-                    target=v.violation_id,
-                    edge_type="caused_by",
-                ))
+                edges.append(
+                    AttributionEdge(
+                        source=trace_id_to_node_id[event_id],
+                        target=v.violation_id,
+                        edge_type="caused_by",
+                    )
+                )
 
         # Build edges from envelope relationships
         # Index by causation_id for caused_by edges
@@ -243,11 +254,13 @@ class FailureAttributionEngine:
         # then A caused B
         for env in envelopes:
             if env.causation_id and env.causation_id in trace_id_to_node_id:
-                edges.append(AttributionEdge(
-                    source=trace_id_to_node_id[env.causation_id],
-                    target=env.trace_id,
-                    edge_type="caused_by",
-                ))
+                edges.append(
+                    AttributionEdge(
+                        source=trace_id_to_node_id[env.causation_id],
+                        target=env.trace_id,
+                        edge_type="caused_by",
+                    )
+                )
 
         # propagates_to: events sharing the same correlation_id
         for _corr_id, node_ids in correlation_index.items():
@@ -260,11 +273,13 @@ class FailureAttributionEngine:
                     seq_map[env.trace_id] = env.event_seq
             sorted_ids = sorted(node_ids, key=lambda nid: seq_map.get(nid, 0))
             for i in range(len(sorted_ids) - 1):
-                edges.append(AttributionEdge(
-                    source=sorted_ids[i],
-                    target=sorted_ids[i + 1],
-                    edge_type="propagates_to",
-                ))
+                edges.append(
+                    AttributionEdge(
+                        source=sorted_ids[i],
+                        target=sorted_ids[i + 1],
+                        edge_type="propagates_to",
+                    )
+                )
 
         # guards: approval events that guard tool_call events
         for env in envelopes:
@@ -275,11 +290,13 @@ class FailureAttributionEngine:
                         other.event_type == "approval.granted"
                         and other.approval_ref == env.approval_ref
                     ):
-                        edges.append(AttributionEdge(
-                            source=other.trace_id,
-                            target=env.trace_id,
-                            edge_type="guards",
-                        ))
+                        edges.append(
+                            AttributionEdge(
+                                source=other.trace_id,
+                                target=env.trace_id,
+                                edge_type="guards",
+                            )
+                        )
                         break
 
         # mitigates: recovery events connected to preceding failure events
@@ -289,11 +306,13 @@ class FailureAttributionEngine:
                 and env.causation_id
                 and env.causation_id in trace_id_to_node_id
             ):
-                edges.append(AttributionEdge(
-                    source=env.trace_id,
-                    target=trace_id_to_node_id[env.causation_id],
-                    edge_type="mitigates",
-                ))
+                edges.append(
+                    AttributionEdge(
+                        source=env.trace_id,
+                        target=trace_id_to_node_id[env.causation_id],
+                        edge_type="mitigates",
+                    )
+                )
 
         return nodes, edges
 
@@ -315,9 +334,7 @@ class FailureAttributionEngine:
             return None
 
         # Build a lookup from trace_id -> event_seq
-        seq_by_trace: dict[str, int] = {
-            env.trace_id: env.event_seq for env in envelopes
-        }
+        seq_by_trace: dict[str, int] = {env.trace_id: env.event_seq for env in envelopes}
 
         best_id: str | None = None
         best_seq: float = float("inf")
@@ -404,8 +421,7 @@ class FailureAttributionEngine:
                 continue
 
             successors = [
-                s for s in forward.get(nid, [])
-                if s not in visited and s != root_cause_id
+                s for s in forward.get(nid, []) if s not in visited and s != root_cause_id
             ]
 
             if not successors:
@@ -419,12 +435,14 @@ class FailureAttributionEngine:
         # Rebuild nodes with assigned roles
         classified: list[AttributionNode] = []
         for n in nodes:
-            classified.append(AttributionNode(
-                node_id=n.node_id,
-                node_type=n.node_type,
-                ref=n.ref,
-                role=roles.get(n.node_id, _ROLE_UNKNOWN),
-            ))
+            classified.append(
+                AttributionNode(
+                    node_id=n.node_id,
+                    node_type=n.node_type,
+                    ref=n.ref,
+                    role=roles.get(n.node_id, _ROLE_UNKNOWN),
+                )
+            )
         return classified
 
     # -- root cause selection -----------------------------------------------
@@ -451,7 +469,8 @@ class FailureAttributionEngine:
 
         if counterfactual_results:
             best = self._select_by_counterfactual(
-                candidates, counterfactual_results,
+                candidates,
+                counterfactual_results,
             )
             if best:
                 return best
@@ -488,9 +507,7 @@ class FailureAttributionEngine:
                     remaining = len(result.contract_violations)
                     # Accumulate remaining violations across replays
                     # that removed this candidate.
-                    remaining_scores[cand] = (
-                        remaining_scores.get(cand, 0) + remaining
-                    )
+                    remaining_scores[cand] = remaining_scores.get(cand, 0) + remaining
 
         if not remaining_scores:
             return ""
@@ -586,9 +603,7 @@ class FailureAttributionEngine:
                 key = f"invariant:{v.invariant_id}"
             type_counts[key] = type_counts.get(key, 0) + 1
 
-        parts = sorted(
-            f"{k}x{c}" if c > 1 else k for k, c in type_counts.items()
-        )
+        parts = sorted(f"{k}x{c}" if c > 1 else k for k, c in type_counts.items())
         return "|".join(parts)
 
     def _compute_confidence(

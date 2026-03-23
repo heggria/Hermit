@@ -327,9 +327,7 @@ class PoolAwareDispatchService:
                 getattr(attempt, "context", None),
             )
             ctx: dict[str, Any] = (
-                cast(dict[str, Any], attempt_context)
-                if isinstance(attempt_context, dict)
-                else {}
+                cast(dict[str, Any], attempt_context) if isinstance(attempt_context, dict) else {}
             )
             supervisor_id = cast(str | None, ctx.get("supervisor_id"))
             workspace = cast(str | None, ctx.get("workspace"))

@@ -125,9 +125,7 @@ class TestRecord:
     def test_logical_clock_increments(self) -> None:
         recorder = TraceRecorder()
         run_id = recorder.start_run()
-        clocks = [
-            recorder.record("e", "t", run_id=run_id).logical_clock for _ in range(5)
-        ]
+        clocks = [recorder.record("e", "t", run_id=run_id).logical_clock for _ in range(5)]
         assert clocks == [0, 1, 2, 3, 4]
 
 

@@ -88,11 +88,11 @@ def setup() -> None:
             default="claude-3-7-sonnet-latest",
         )
         lines += [
-            f"HERMIT_AUTH_TOKEN={auth_token}",
-            f"HERMIT_BASE_URL={base_url}",
+            f"HERMIT_CLAUDE_AUTH_TOKEN={auth_token}",
+            f"HERMIT_CLAUDE_BASE_URL={base_url}",
         ]
         if custom_headers:
-            lines.append(f"HERMIT_CUSTOM_HEADERS={custom_headers}")
+            lines.append(f"HERMIT_CLAUDE_HEADERS={custom_headers}")
         lines.append(f"HERMIT_MODEL={model}")
     else:
         api_key = typer.prompt(
@@ -196,12 +196,22 @@ def profiles_resolve(name: str | None = None) -> None:
     """Resolve one profile as Hermit would read it from config.toml."""
     settings = get_settings()
     resolved = resolve_profile(settings.base_dir, name)
+    _SENSITIVE_KEYS = {
+        "claude_api_key",
+        "claude_auth_token",
+        "feishu_app_secret",
+        "openai_api_key",
+    }
+    safe_values = {
+        k: ("***" if k in _SENSITIVE_KEYS and v else v) for k, v in resolved.values.items()
+    }
     payload = {
         "requested_profile": name,
         "resolved_profile": resolved.name,
         "config_file": str(resolved.source_path),
         "config_file_exists": resolved.source_path.exists(),
-        "values": resolved.values,
+        "exists": resolved.exists,
+        "values": safe_values,
     }
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -221,7 +231,7 @@ def init(base_dir: Path | None = None) -> None:
     """Initialize the local Hermit workspace."""
     settings = get_settings()
     if base_dir is not None:
-        settings.base_dir = base_dir
+        settings = settings.model_copy(update={"base_dir": base_dir})
     ensure_workspace(settings)
     typer.echo(
         t(

@@ -22,6 +22,7 @@ class TaskExecutionContext:
     workspace_root: str = ""
     ingress_metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
+    deadline: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +36,7 @@ class TaskExecutionContext:
             "workspace_root": self.workspace_root,
             "ingress_metadata": dict(self.ingress_metadata),
             "created_at": self.created_at,
+            "deadline": self.deadline,
         }
 
     @classmethod
@@ -52,7 +54,12 @@ class TaskExecutionContext:
             workspace_root=str(data.get("workspace_root", "")),
             ingress_metadata=dict(data.get("ingress_metadata", {}) or {}),
             created_at=float(data.get("created_at", time.time())),
+            deadline=float(data["deadline"]) if data.get("deadline") is not None else None,
         )
+
+    def deadline_exceeded(self) -> bool:
+        """Return True if the deadline has passed."""
+        return self.deadline is not None and time.time() > self.deadline
 
 
 @dataclass

@@ -1,4 +1,5 @@
 """Tests verifying confidence-based deliberation gate behavior."""
+
 from __future__ import annotations
 
 import json
@@ -35,22 +36,26 @@ def _make_integration(
 
     # Default LLM responses.
     if proposal_response is None:
-        proposal_response = json.dumps({
-            "plan_summary": "Refactor module X",
-            "contract_draft": {"steps": 2},
-            "expected_cost": "low",
-            "expected_risk": "low",
-            "expected_reward": "high",
-        })
+        proposal_response = json.dumps(
+            {
+                "plan_summary": "Refactor module X",
+                "contract_draft": {"steps": 2},
+                "expected_cost": "low",
+                "expected_risk": "low",
+                "expected_reward": "high",
+            }
+        )
     if critique_response is None:
         critique_response = json.dumps([])
     if arbitration_response is None:
-        arbitration_response = json.dumps({
-            "selected_candidate_id": "placeholder",
-            "confidence": 0.9,
-            "reasoning": "Best overall approach",
-            "merge_notes": "Ready to execute",
-        })
+        arbitration_response = json.dumps(
+            {
+                "selected_candidate_id": "placeholder",
+                "confidence": 0.9,
+                "reasoning": "Best overall approach",
+                "merge_notes": "Ready to execute",
+            }
+        )
 
     def proposer_factory() -> Any:
         p = MagicMock()
@@ -104,13 +109,15 @@ class TestExecutorDeliberationGate:
         store = KernelStore(tmp_path / "state.db")
         artifact_store = ArtifactStore(tmp_path / "artifacts")
 
-        proposal_response = json.dumps({
-            "plan_summary": "Safe incremental deploy",
-            "contract_draft": {"steps": 1},
-            "expected_cost": "low",
-            "expected_risk": "low",
-            "expected_reward": "high",
-        })
+        proposal_response = json.dumps(
+            {
+                "plan_summary": "Safe incremental deploy",
+                "contract_draft": {"steps": 1},
+                "expected_cost": "low",
+                "expected_risk": "low",
+                "expected_reward": "high",
+            }
+        )
 
         def proposer_factory() -> Any:
             p = MagicMock()
@@ -124,12 +131,16 @@ class TestExecutorDeliberationGate:
 
         def arbitrator_factory() -> Any:
             p = MagicMock()
-            p.generate.return_value = _make_provider_response(json.dumps({
-                "selected_candidate_id": "placeholder",
-                "confidence": 0.85,
-                "reasoning": "test",
-                "merge_notes": "",
-            }))
+            p.generate.return_value = _make_provider_response(
+                json.dumps(
+                    {
+                        "selected_candidate_id": "placeholder",
+                        "confidence": 0.85,
+                        "reasoning": "test",
+                        "merge_notes": "",
+                    }
+                )
+            )
             return p
 
         # Single perspective produces exactly 1 proposal — the arbitrator's
@@ -138,9 +149,7 @@ class TestExecutorDeliberationGate:
             proposer_factory,
             default_model="test-model",
             max_workers=1,
-            perspectives=(
-                ProposalPerspective(role="conservative", system_prompt="be cautious"),
-            ),
+            perspectives=(ProposalPerspective(role="conservative", system_prompt="be cautious"),),
         )
         critic = CritiqueGenerator(
             critic_factory,
@@ -173,15 +182,15 @@ class TestExecutorDeliberationGate:
 
     def test_low_confidence_returns_decision(self, tmp_path: Path) -> None:
         """Mock LLM returns confidence 0.5 — decision is valid but confidence is inspectable."""
-        arbitration_response = json.dumps({
-            "selected_candidate_id": "placeholder",
-            "confidence": 0.5,
-            "reasoning": "Marginal advantage over alternatives",
-            "merge_notes": "Consider additional review",
-        })
-        svc, _store, _arts = _make_integration(
-            tmp_path, arbitration_response=arbitration_response
+        arbitration_response = json.dumps(
+            {
+                "selected_candidate_id": "placeholder",
+                "confidence": 0.5,
+                "reasoning": "Marginal advantage over alternatives",
+                "merge_notes": "Consider additional review",
+            }
         )
+        svc, _store, _arts = _make_integration(tmp_path, arbitration_response=arbitration_response)
 
         decision = svc.run_full_deliberation(
             task_id="task_lc",
@@ -257,15 +266,15 @@ class TestExecutorDeliberationGate:
 
     def test_very_low_confidence_decision(self, tmp_path: Path) -> None:
         """Mock LLM returns confidence 0.2 — decision has very low confidence."""
-        arbitration_response = json.dumps({
-            "selected_candidate_id": "placeholder",
-            "confidence": 0.2,
-            "reasoning": "Uncertain — insufficient information",
-            "merge_notes": "Needs human review",
-        })
-        svc, _store, _arts = _make_integration(
-            tmp_path, arbitration_response=arbitration_response
+        arbitration_response = json.dumps(
+            {
+                "selected_candidate_id": "placeholder",
+                "confidence": 0.2,
+                "reasoning": "Uncertain — insufficient information",
+                "merge_notes": "Needs human review",
+            }
         )
+        svc, _store, _arts = _make_integration(tmp_path, arbitration_response=arbitration_response)
 
         decision = svc.run_full_deliberation(
             task_id="task_vlc",
@@ -302,9 +311,7 @@ class TestExecutorDeliberationGate:
         all_events = store.list_events(limit=200)
         event_types = [e["event_type"] for e in all_events]
 
-        assert "deliberation.routed" in event_types, (
-            f"Missing deliberation.routed in {event_types}"
-        )
+        assert "deliberation.routed" in event_types, f"Missing deliberation.routed in {event_types}"
         assert "deliberation.proposal_submitted" in event_types, (
             f"Missing deliberation.proposal_submitted in {event_types}"
         )

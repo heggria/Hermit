@@ -172,20 +172,16 @@ class AssuranceContractEngine:
         # ---- Combinators ----
         if "all" in predicate:
             return all(
-                self.evaluate_predicate(p, envelopes, current=current)
-                for p in predicate["all"]
+                self.evaluate_predicate(p, envelopes, current=current) for p in predicate["all"]
             )
 
         if "any" in predicate:
             return any(
-                self.evaluate_predicate(p, envelopes, current=current)
-                for p in predicate["any"]
+                self.evaluate_predicate(p, envelopes, current=current) for p in predicate["any"]
             )
 
         if "not" in predicate:
-            return not self.evaluate_predicate(
-                predicate["not"], envelopes, current=current
-            )
+            return not self.evaluate_predicate(predicate["not"], envelopes, current=current)
 
         # ---- Existence ----
         if "exists" in predicate:
@@ -237,7 +233,9 @@ class AssuranceContractEngine:
         # ---- bounded_gap (wallclock gap check) ----
         if "bounded_gap" in predicate:
             spec = predicate["bounded_gap"]
-            return self._bounded_gap(envelopes, spec["event_type"], spec.get("max_seconds", _DEFAULT_STUCK_TTL_SECONDS))
+            return self._bounded_gap(
+                envelopes, spec["event_type"], spec.get("max_seconds", _DEFAULT_STUCK_TTL_SECONDS)
+            )
 
         # ---- every (apply sub-predicate to all matching events) ----
         if "every" in predicate:
@@ -247,9 +245,7 @@ class AssuranceContractEngine:
             matching = [e for e in envelopes if e.event_type == event_type]
             if not matching:
                 return True
-            return all(
-                self.evaluate_predicate(sub, envelopes, current=e) for e in matching
-            )
+            return all(self.evaluate_predicate(sub, envelopes, current=e) for e in matching)
 
         log.warning("predicate.unsupported", keys=list(predicate.keys()))
         return False
@@ -259,9 +255,7 @@ class AssuranceContractEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _check_ordering(
-        envelopes: list[TraceEnvelope], first_type: str, second_type: str
-    ) -> bool:
+    def _check_ordering(envelopes: list[TraceEnvelope], first_type: str, second_type: str) -> bool:
         """Return True if *first_type* appears before *second_type* by event_seq."""
         first_seq: int | None = None
         second_seq: int | None = None
@@ -282,9 +276,7 @@ class AssuranceContractEngine:
         return actual == value
 
     @staticmethod
-    def _field_in_set(
-        envelope: TraceEnvelope | None, field: str, values: list[Any]
-    ) -> bool:
+    def _field_in_set(envelope: TraceEnvelope | None, field: str, values: list[Any]) -> bool:
         if envelope is None:
             return False
         actual = getattr(envelope, field, None)
@@ -298,9 +290,7 @@ class AssuranceContractEngine:
         return val is not None
 
     @staticmethod
-    def _no_duplicate_pairs(
-        envelopes: list[TraceEnvelope], field1: str, field2: str
-    ) -> bool:
+    def _no_duplicate_pairs(envelopes: list[TraceEnvelope], field1: str, field2: str) -> bool:
         """Return True if no two envelopes share the same (field1, field2) pair."""
         seen: Counter[tuple[Any, Any]] = Counter()
         for e in envelopes:
@@ -324,9 +314,7 @@ class AssuranceContractEngine:
 
         Measures wallclock gap between consecutive events of *event_type*.
         """
-        timestamps = sorted(
-            e.wallclock_at for e in envelopes if e.event_type == event_type
-        )
+        timestamps = sorted(e.wallclock_at for e in envelopes if e.event_type == event_type)
         for i in range(1, len(timestamps)):
             if timestamps[i] - timestamps[i - 1] > max_seconds:
                 return False
@@ -350,7 +338,7 @@ class AssuranceContractEngine:
             return True
 
         if "event_types" in spec.scope and envelope.event_type not in spec.scope["event_types"]:
-                return False
+            return False
 
         if "action_class" in spec.scope:
             action = envelope.payload.get("action_class")
@@ -404,8 +392,7 @@ class AssuranceContractEngine:
                     }
                 },
                 remediation_hint=(
-                    "approval.granted must appear in the trace before "
-                    "tool_call.start."
+                    "approval.granted must appear in the trace before tool_call.start."
                 ),
             )
         )
@@ -418,9 +405,7 @@ class AssuranceContractEngine:
                 mode="runtime",
                 severity="blocker",
                 assert_expr={"has_field": "grant_ref"},
-                remediation_hint=(
-                    "tool_call.start events must carry a grant_ref."
-                ),
+                remediation_hint=("tool_call.start events must carry a grant_ref."),
             )
         )
 
@@ -442,8 +427,7 @@ class AssuranceContractEngine:
                     }
                 },
                 remediation_hint=(
-                    "Every receipt.issued event must carry decision_ref "
-                    "and grant_ref."
+                    "Every receipt.issued event must carry decision_ref and grant_ref."
                 ),
             )
         )
@@ -461,8 +445,7 @@ class AssuranceContractEngine:
                     }
                 },
                 remediation_hint=(
-                    "No two events may share the same "
-                    "(step_attempt_id, receipt_ref) pair."
+                    "No two events may share the same (step_attempt_id, receipt_ref) pair."
                 ),
             )
         )
@@ -495,8 +478,7 @@ class AssuranceContractEngine:
                 severity="blocker",
                 assert_expr={"has_field": "lease_ref"},
                 remediation_hint=(
-                    "tool_call.start events must carry a lease_ref for "
-                    "workspace isolation."
+                    "tool_call.start events must carry a lease_ref for workspace isolation."
                 ),
             )
         )

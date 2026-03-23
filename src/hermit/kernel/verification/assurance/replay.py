@@ -100,9 +100,7 @@ class ReplayService:
         if not envelopes:
             raise ValueError("Cannot replay an empty trace")
 
-        replayed_head_hash = hashlib.sha256(
-            envelopes[-1].trace_id.encode()
-        ).hexdigest()
+        replayed_head_hash = hashlib.sha256(envelopes[-1].trace_id.encode()).hexdigest()
 
         trace_path = [env.trace_id for env in envelopes]
 
@@ -361,9 +359,7 @@ class ReplayService:
 
         # Recovered: replayed envelopes with recovery-related event types
         _RECOVERY_TYPES = {"recovery.started", "recovery.completed", "reconciliation.resolved"}
-        recovered = sum(
-            1 for env in replayed if env.event_type in _RECOVERY_TYPES
-        )
+        recovered = sum(1 for env in replayed if env.event_type in _RECOVERY_TYPES)
 
         return {
             "same": same,
@@ -397,9 +393,7 @@ class ReplayService:
         sanitized: list[TraceEnvelope] = []
 
         for env in envelopes:
-            new_payload = {
-                k: v for k, v in env.payload.items() if k not in redact_set
-            }
+            new_payload = {k: v for k, v in env.payload.items() if k not in redact_set}
             sanitized.append(replace(env, payload=new_payload))
 
         log.debug(

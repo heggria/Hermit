@@ -466,9 +466,7 @@ class AssuranceLab:
         violations: list[ContractViolation] = []
         for i, env in enumerate(envelopes):
             prior = envelopes[:i]
-            per_env = self.contract_engine.evaluate_runtime(
-                env, context={"prior_envelopes": prior}
-            )
+            per_env = self.contract_engine.evaluate_runtime(env, context={"prior_envelopes": prior})
             violations.extend(per_env)
         return violations
 

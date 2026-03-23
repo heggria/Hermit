@@ -175,7 +175,8 @@ class TestBuildCausalGraph:
         assert type_map[iv.violation_id] == _NODE_TYPE_INVARIANT_VIOLATION
 
     def test_causation_id_creates_caused_by_edges(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         id_parent = _uid("trace")
         id_child = _uid("trace")
@@ -192,7 +193,8 @@ class TestBuildCausalGraph:
         assert caused_by[0].target == id_child
 
     def test_correlation_id_creates_propagates_to_edges(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         corr = _uid("corr")
         id_1 = _uid("trace")
@@ -215,7 +217,8 @@ class TestBuildCausalGraph:
         assert prop_edges[1].target == id_3
 
     def test_approval_ref_creates_guards_edge(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         approval = _uid("approval")
         id_approval = _uid("trace")
@@ -243,7 +246,8 @@ class TestBuildCausalGraph:
         assert guards[0].target == id_tool
 
     def test_recovery_events_create_mitigates_edges(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         id_failure = _uid("trace")
         id_recovery = _uid("trace")
@@ -269,7 +273,8 @@ class TestBuildCausalGraph:
         assert recovery_node.node_type == _NODE_TYPE_RECOVERY_ACTION
 
     def test_violation_linked_to_event_via_event_id(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         id_event = _uid("trace")
         viol = _contract_violation(event_id=id_event)
@@ -277,10 +282,7 @@ class TestBuildCausalGraph:
         envelopes = [_envelope(trace_id=id_event, event_seq=0)]
         _nodes, edges = engine.build_causal_graph(envelopes, [viol])
 
-        linked = [
-            e for e in edges
-            if e.target == viol.violation_id and e.edge_type == "caused_by"
-        ]
+        linked = [e for e in edges if e.target == viol.violation_id and e.edge_type == "caused_by"]
         assert len(linked) == 1
         assert linked[0].source == id_event
 
@@ -294,13 +296,15 @@ class TestFindFirstDivergence:
     """Tests for FailureAttributionEngine.find_first_divergence."""
 
     def test_returns_none_when_no_violations(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         envelopes = [_envelope(event_seq=0)]
         assert engine.find_first_divergence(envelopes, []) is None
 
     def test_picks_earliest_by_event_seq(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         id_early = _uid("trace")
         id_late = _uid("trace")
@@ -317,7 +321,8 @@ class TestFindFirstDivergence:
         assert result == "v-early"
 
     def test_falls_back_to_detected_at_when_no_event_id(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         now = time.time()
         v1 = _contract_violation(violation_id="v-1", detected_at=now + 10)
@@ -327,7 +332,8 @@ class TestFindFirstDivergence:
         assert result == "v-2"
 
     def test_handles_mixed_contract_and_invariant(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         id_first = _uid("trace")
         id_second = _uid("trace")
@@ -359,7 +365,8 @@ class TestClassifyNodes:
         assert result[0].role == _ROLE_ROOT_CAUSE
 
     def test_enabler_assigned_to_predecessor(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         nodes = [
             AttributionNode(node_id="enabler", node_type="event", ref="enabler"),
@@ -375,7 +382,8 @@ class TestClassifyNodes:
         assert role_map["enabler"] == _ROLE_ENABLER
 
     def test_propagator_and_victim_assigned(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         # root -> mid -> leaf
         nodes = [
@@ -395,7 +403,8 @@ class TestClassifyNodes:
         assert role_map["leaf"] == _ROLE_VICTIM
 
     def test_mitigator_assigned_to_recovery_node(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         nodes = [
             AttributionNode(node_id="root", node_type="contract_violation", ref="root"),
@@ -410,7 +419,8 @@ class TestClassifyNodes:
         assert role_map["recovery"] == _ROLE_MITIGATOR
 
     def test_unconnected_nodes_remain_unknown(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         nodes = [
             AttributionNode(node_id="root", node_type="contract_violation", ref="root"),
@@ -423,7 +433,8 @@ class TestClassifyNodes:
         assert role_map["unrelated"] == _ROLE_UNKNOWN
 
     def test_classify_preserves_node_metadata(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         nodes = [
             AttributionNode(
@@ -446,12 +457,14 @@ class TestSelectRootCause:
     """Tests for FailureAttributionEngine.select_root_cause."""
 
     def test_returns_empty_when_no_candidates(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         assert engine.select_root_cause([], [], []) == ""
 
     def test_prefers_earliest_without_counterfactuals(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         nodes = [
             AttributionNode(node_id="first", node_type="contract_violation", ref="first"),
@@ -462,7 +475,8 @@ class TestSelectRootCause:
         assert result == "first"
 
     def test_prefers_counterfactual_with_most_eliminations(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         nodes = [
             AttributionNode(node_id="a", node_type="contract_violation", ref="a"),
@@ -500,13 +514,17 @@ class TestSelectRootCause:
         )
 
         result = engine.select_root_cause(
-            ["a", "b"], nodes, [], [replay_remove_a, replay_remove_b],
+            ["a", "b"],
+            nodes,
+            [],
+            [replay_remove_a, replay_remove_b],
         )
         # "b" eliminated more violations (0 remaining vs 2 remaining)
         assert result == "b"
 
     def test_falls_back_to_earliest_when_counterfactuals_dont_match(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         nodes = [
             AttributionNode(node_id="x", node_type="contract_violation", ref="x"),
@@ -538,7 +556,8 @@ class TestAttributeFlow:
     """End-to-end tests for FailureAttributionEngine.attribute."""
 
     def test_complete_attribution_case_structure(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         envelopes, violations, ids = _make_linear_causal_trace()
 
@@ -555,7 +574,8 @@ class TestAttributeFlow:
         assert case.failure_signature != ""
 
     def test_empty_violations_produce_empty_attribution(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         envelopes = [_envelope(event_seq=0), _envelope(event_seq=1)]
         case = engine.attribute(envelopes, [])
@@ -566,7 +586,8 @@ class TestAttributeFlow:
         assert case.confidence == 0.0
 
     def test_propagation_chain_populated(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         envelopes, violations, _ids = _make_linear_causal_trace()
         case = engine.attribute(envelopes, violations)
@@ -575,7 +596,8 @@ class TestAttributeFlow:
         assert case.propagation_chain[0] == case.selected_root_cause
 
     def test_multiple_violations_select_earliest_root_cause(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         id_1 = _uid("trace")
         id_2 = _uid("trace")
@@ -596,7 +618,8 @@ class TestAttributeFlow:
         assert case.selected_root_cause == "v-early"
 
     def test_counterfactuals_influence_root_cause_selection(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         id_a = _uid("trace")
         id_b = _uid("trace")
@@ -637,7 +660,9 @@ class TestAttributeFlow:
         )
 
         case = engine.attribute(
-            envelopes, [v_a, v_b], counterfactual_results=[cf, cf2],
+            envelopes,
+            [v_a, v_b],
+            counterfactual_results=[cf, cf2],
         )
 
         # v-b should be selected because removing it eliminated all violations
@@ -646,7 +671,8 @@ class TestAttributeFlow:
         assert case.confidence >= 0.8
 
     def test_fix_hints_collected_from_violations(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         envelopes = [_envelope(event_seq=0)]
         v = _contract_violation(remediation_hint="Check approval flow")
@@ -655,7 +681,8 @@ class TestAttributeFlow:
         assert "Check approval flow" in case.fix_hints
 
     def test_evidence_refs_collected(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         receipt = _uid("receipt")
         env = _envelope(event_seq=0, receipt_ref=receipt, artifact_refs=["art-1"])
@@ -668,7 +695,8 @@ class TestAttributeFlow:
         assert v.violation_id in case.evidence_refs
 
     def test_failure_signature_format(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         envelopes = [_envelope(event_seq=0)]
         v1 = _contract_violation(contract_id="approval.gating")
@@ -680,7 +708,8 @@ class TestAttributeFlow:
         assert "invariant:state.transition" in case.failure_signature
 
     def test_recovery_nodes_classified_as_mitigator(
-        self, engine: FailureAttributionEngine,
+        self,
+        engine: FailureAttributionEngine,
     ) -> None:
         id_fail = _uid("trace")
         id_recovery = _uid("trace")

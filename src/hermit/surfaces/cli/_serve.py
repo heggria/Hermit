@@ -455,8 +455,28 @@ def reload(adapter: str = "feishu") -> None:
 @app.command()
 def sessions() -> None:
     """List known sessions."""
+    import datetime
+
+    from ._helpers import get_kernel_store
+
     settings = get_settings()
     ensure_workspace(settings)
-    manager = SessionManager(settings.sessions_dir, settings.session_idle_timeout_seconds)
-    for sid in manager.list_sessions():
-        typer.echo(sid)
+
+    store = get_kernel_store()
+    conversations = (
+        store.list_conversation_records(limit=50)
+        if hasattr(store, "list_conversation_records")
+        else []
+    )
+
+    if conversations:
+        for conv in conversations:
+            ts = conv.updated_at or conv.created_at
+            ts_str = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "N/A"
+            status = conv.status or "-"
+            channel = conv.source_channel or "-"
+            typer.echo(f"  [{conv.conversation_id}]  {status}  {channel}  {ts_str}")
+    else:
+        manager = SessionManager(settings.sessions_dir, settings.session_idle_timeout_seconds)
+        for sid in manager.list_sessions():
+            typer.echo(sid)

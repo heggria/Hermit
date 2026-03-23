@@ -78,6 +78,14 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             rows = self._rows("SELECT conversation_id FROM conversations ORDER BY updated_at DESC")
         return [str(row["conversation_id"]) for row in rows]
 
+    def list_conversation_records(self, *, limit: int = 50) -> list[ConversationRecord]:
+        with self._lock:
+            rows = self._rows(
+                "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            )
+        return [self._conversation_from_row(row) for row in rows]
+
     def update_conversation_metadata(self, conversation_id: str, metadata: dict[str, Any]) -> None:
         now = time.time()
         with self._lock, self._conn:

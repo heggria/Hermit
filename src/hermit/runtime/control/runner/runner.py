@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime  # noqa: F401 — used by test monkeypatching (runner_module.datetime)
 import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING
 from hermit.kernel.execution.coordination.observation import ObservationService
 from hermit.kernel.task.services.controller import AUTO_PARENT, TaskController
 from hermit.runtime.capability.contracts.base import HookEvent
+from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 from hermit.runtime.control.lifecycle.session import SessionManager
 from hermit.runtime.provider_host.execution.runtime import (
     AgentResult,
@@ -189,11 +191,7 @@ class AgentRunner:
             if store is None or tc is None:
                 return
 
-            ws_mgr = (
-                CompetitionWorkspaceManager(Path(workspace_root))
-                if workspace_root
-                else None
-            )
+            ws_mgr = CompetitionWorkspaceManager(Path(workspace_root)) if workspace_root else None
             competition_service = CompetitionService(
                 store=store,
                 task_controller=tc,
@@ -766,6 +764,9 @@ class AgentRunner:
             parent_task_id=parent_task_id,
             ingress_metadata=ingress_metadata,
         )
+        # Set tool execution deadline from runtime budget.
+        _budget = get_runtime_budget()
+        task_ctx.deadline = time.time() + _budget.tool_hard_deadline
         # Fire SUBTASK_SPAWN when a child task is created under a parent.
         store = self._get_store()
         if store is not None:

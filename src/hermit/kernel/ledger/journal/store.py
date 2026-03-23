@@ -9,8 +9,6 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import structlog
-
 if TYPE_CHECKING:
     from hermit.kernel.task.models.records import BlackboardRecord
 
@@ -33,12 +31,25 @@ from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
 from hermit.kernel.signals.store import SignalStoreMixin
 from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
+from hermit.kernel.verification.benchmark.history import BenchmarkHistoryStoreMixin
 
 _SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _SCHEMA_VERSION = "18"
 _MIGRATABLE_SCHEMA_VERSIONS = {
-    "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
-    "15", "16", "17", _SCHEMA_VERSION,
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16",
+    "17",
+    _SCHEMA_VERSION,
 }
 _KNOWN_KERNEL_TABLES = {
     "conversations",
@@ -87,6 +98,7 @@ _KNOWN_KERNEL_TABLES = {
     "assurance_reports",
     "assurance_replay_entries",
     "entity_links",
+    "benchmark_history",
 }
 
 
@@ -108,6 +120,7 @@ class KernelStore(
     SelfIterateStoreMixin,
     ProgramStoreMixin,
     KernelTeamStoreMixin,
+    BenchmarkHistoryStoreMixin,
 ):
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -123,7 +136,6 @@ class KernelStore(
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._validate_existing_schema()
         self._init_schema()
-
 
     def _get_conn(self) -> sqlite3.Connection:
         return self._conn
@@ -879,9 +891,11 @@ class KernelStore(
             )
             # -- delegations table + indexes --
             self._init_delegation_schema()
+            self._ensure_column("delegations", "approval_policy_json", "TEXT")
             self._init_signal_schema()
             self._init_competition_schema()
             self._init_assurance_schema()
+            self._ensure_benchmark_history_table()
             self._migrate_memory_schema_v4()
             self._migrate_kernel_convergence_v6()
             self._migrate_category_english_v8()
@@ -950,17 +964,14 @@ class KernelStore(
                 """
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_entity_links_entity "
-                "ON entity_links(entity)"
+                "CREATE INDEX IF NOT EXISTS idx_entity_links_entity ON entity_links(entity)"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_entity_links_memory "
-                "ON entity_links(memory_id)"
+                "CREATE INDEX IF NOT EXISTS idx_entity_links_memory ON entity_links(memory_id)"
             )
             # -- event hash index for task-scoped hash chain queries --
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_events_task_hash "
-                "ON events(task_id, event_hash)"
+                "CREATE INDEX IF NOT EXISTS idx_events_task_hash ON events(task_id, event_hash)"
             )
             self._migrate_event_hashes_table()
             self._backfill_event_hash_chain()
@@ -1153,7 +1164,6 @@ class KernelStore(
             """
         )
 
-
     def _ensure_columns_batch(self, table: str, columns: list[tuple[str, str]]) -> None:
         """Add multiple columns to a table with a single PRAGMA table_info query."""
         if not _SAFE_IDENTIFIER.match(table):
@@ -1162,8 +1172,7 @@ class KernelStore(
             if not _SAFE_IDENTIFIER.match(column):
                 raise ValueError(f"Unsafe column identifier: {table!r}.{column!r}")
         existing = {
-            str(row["name"])
-            for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            str(row["name"]) for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
         }
         for column, definition in columns:
             if column not in existing:
@@ -1400,8 +1409,13 @@ class KernelStore(
                 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    ticket_id, task_id, step_id, step_attempt_id, observer_kind,
-                    poll_after_seconds, hard_deadline_at,
+                    ticket_id,
+                    task_id,
+                    step_id,
+                    step_attempt_id,
+                    observer_kind,
+                    poll_after_seconds,
+                    hard_deadline_at,
                     _canonical_json(ready_patterns or []),
                     _canonical_json(failure_patterns or []),
                     _canonical_json(ticket_data or {}),
@@ -1509,34 +1523,34 @@ class KernelStore(
         )
         result: list[dict[str, Any]] = []
         for row in rows:
-            result.append({
-                "ticket_id": str(row["ticket_id"]),
-                "task_id": str(row["task_id"]),
-                "step_id": str(row["step_id"]),
-                "step_attempt_id": str(row["step_attempt_id"]),
-                "observer_kind": str(row["observer_kind"]),
-                "status": str(row["status"]),
-                "poll_after_seconds": float(row["poll_after_seconds"]),
-                "hard_deadline_at": (
-                    float(row["hard_deadline_at"]) if row["hard_deadline_at"] else None
-                ),
-                "ready_patterns": _jl(row["ready_patterns_json"]),
-                "failure_patterns": _jl(row["failure_patterns_json"]),
-                "ticket_data": _jl(row["ticket_data_json"]),
-                "created_at": float(row["created_at"]),
-                "last_polled_at": (
-                    float(row["last_polled_at"]) if row["last_polled_at"] else None
-                ),
-                "resolved_at": None,
-            })
+            result.append(
+                {
+                    "ticket_id": str(row["ticket_id"]),
+                    "task_id": str(row["task_id"]),
+                    "step_id": str(row["step_id"]),
+                    "step_attempt_id": str(row["step_attempt_id"]),
+                    "observer_kind": str(row["observer_kind"]),
+                    "status": str(row["status"]),
+                    "poll_after_seconds": float(row["poll_after_seconds"]),
+                    "hard_deadline_at": (
+                        float(row["hard_deadline_at"]) if row["hard_deadline_at"] else None
+                    ),
+                    "ready_patterns": _jl(row["ready_patterns_json"]),
+                    "failure_patterns": _jl(row["failure_patterns_json"]),
+                    "ticket_data": _jl(row["ticket_data_json"]),
+                    "created_at": float(row["created_at"]),
+                    "last_polled_at": (
+                        float(row["last_polled_at"]) if row["last_polled_at"] else None
+                    ),
+                    "resolved_at": None,
+                }
+            )
         return result
 
     def get_observation_ticket(self, ticket_id: str) -> dict[str, Any] | None:
         from hermit.kernel.ledger.journal.store_support import json_loads as _jl
 
-        row = self._row(
-            "SELECT * FROM observation_tickets WHERE ticket_id = ?", (ticket_id,)
-        )
+        row = self._row("SELECT * FROM observation_tickets WHERE ticket_id = ?", (ticket_id,))
         if row is None:
             return None
         return {
@@ -1806,62 +1820,68 @@ class KernelStore(
         causation_id: str | None = None,
         correlation_id: str | None = None,
     ) -> str:
-        actor_principal_id = self._ensure_principal_id(actor)
-        payload_json = _canonical_json(payload or {})
-        occurred_at = time.time()
-        prev_event_hash = self._latest_task_event_hash(task_id)
-        event_hash = self._compute_event_hash(
-            event_id=event_id,
-            task_id=task_id,
-            step_id=step_id,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            event_type=event_type,
-            actor=actor_principal_id,
-            payload_json=payload_json,
-            occurred_at=occurred_at,
-            causation_id=causation_id,
-            correlation_id=correlation_id,
-            prev_event_hash=prev_event_hash,
-        )
-        # Insert event row — also write hash columns for backward compatibility
-        # with code that reads event_hash directly from the events table.
-        cursor = self._conn.execute(
-            """
-            INSERT INTO events (
-                event_id, task_id, step_id, entity_type, entity_id, event_type,
-                actor_principal_id, payload_json, occurred_at, causation_id, correlation_id,
-                event_hash, prev_event_hash, hash_chain_algo
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event_id,
-                task_id,
-                step_id,
-                entity_type,
-                entity_id,
-                event_type,
-                actor_principal_id,
-                payload_json,
-                occurred_at,
-                causation_id,
-                correlation_id,
-                event_hash,
-                prev_event_hash,
-                "sha256-v1",
-            ),
-        )
-        # Insert into the append-only event_hashes table (authoritative source).
-        event_seq = cursor.lastrowid
-        self._conn.execute(
-            """
-            INSERT INTO event_hashes
-                (event_seq, task_id, event_hash, prev_event_hash,
-                 hash_chain_algo, computed_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (event_seq, task_id, event_hash, prev_event_hash, "sha256-v1", occurred_at),
-        )
+        # Acquire the RLock to serialize hash chain reads and writes.
+        # Most callers already hold self._lock (e.g. ``with self._lock, self._conn:``),
+        # but some (observation ticket methods) only hold a connection transaction.
+        # Using the reentrant lock here provides defense in depth — callers that
+        # already hold it will not deadlock.
+        with self._lock:
+            actor_principal_id = self._ensure_principal_id(actor)
+            payload_json = _canonical_json(payload or {})
+            occurred_at = time.time()
+            prev_event_hash = self._latest_task_event_hash(task_id)
+            event_hash = self._compute_event_hash(
+                event_id=event_id,
+                task_id=task_id,
+                step_id=step_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                event_type=event_type,
+                actor=actor_principal_id,
+                payload_json=payload_json,
+                occurred_at=occurred_at,
+                causation_id=causation_id,
+                correlation_id=correlation_id,
+                prev_event_hash=prev_event_hash,
+            )
+            # Insert event row — also write hash columns for backward compatibility
+            # with code that reads event_hash directly from the events table.
+            cursor = self._conn.execute(
+                """
+                INSERT INTO events (
+                    event_id, task_id, step_id, entity_type, entity_id, event_type,
+                    actor_principal_id, payload_json, occurred_at, causation_id, correlation_id,
+                    event_hash, prev_event_hash, hash_chain_algo
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    task_id,
+                    step_id,
+                    entity_type,
+                    entity_id,
+                    event_type,
+                    actor_principal_id,
+                    payload_json,
+                    occurred_at,
+                    causation_id,
+                    correlation_id,
+                    event_hash,
+                    prev_event_hash,
+                    "sha256-v1",
+                ),
+            )
+            # Insert into the append-only event_hashes table (authoritative source).
+            event_seq = cursor.lastrowid
+            self._conn.execute(
+                """
+                INSERT INTO event_hashes
+                    (event_seq, task_id, event_hash, prev_event_hash,
+                     hash_chain_algo, computed_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (event_seq, task_id, event_hash, prev_event_hash, "sha256-v1", occurred_at),
+            )
         return event_id
 
     def _latest_task_event_hash(self, task_id: str | None) -> str | None:

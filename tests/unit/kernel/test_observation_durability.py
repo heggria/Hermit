@@ -724,4 +724,3 @@ def test_resolve_stale_observations_zero_window(tmp_path: Path) -> None:
     resolved = svc._resolve_stale_observations(store, attempts, now)
 
     assert len(resolved) == 0
-

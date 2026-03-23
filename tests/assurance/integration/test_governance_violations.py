@@ -769,9 +769,7 @@ class TestMultipleViolations:
         assert len(report.violations) >= 2
 
         # For invariant violations, check trace_slice_start ordering
-        invariant_violations = [
-            v for v in report.violations if isinstance(v, InvariantViolation)
-        ]
+        invariant_violations = [v for v in report.violations if isinstance(v, InvariantViolation)]
         if len(invariant_violations) >= 2:
             for i in range(len(invariant_violations) - 1):
                 assert (

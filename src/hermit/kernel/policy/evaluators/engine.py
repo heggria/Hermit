@@ -42,6 +42,7 @@ class PolicyEngine:
         decision = merge_outcomes(
             outcomes, action_class=request.action_class, default_risk=request.risk_hint
         )
+        decision.rule_outcomes = [outcome.to_dict() for outcome in outcomes]
         if decision.approval_packet is not None:
             packet = dict(decision.approval_packet)
             packet.setdefault("title", f"Approve action via {request.tool_name}")

@@ -37,6 +37,8 @@ MAX_FOLLOWUP_FANOUT = 2
 MAX_QUEUE_DEPTH = 100
 MAX_BENCHMARK_REPAIR_CYCLES = 2
 PHASE_TIMEOUT_IMPLEMENT = 900  # 15 minutes
+PHASE_TIMEOUT_PLANNING = 600  # 10 minutes
+PHASE_TIMEOUT_REVIEWING = 600  # 10 minutes
 POLL_INTERVAL_ACTIVE = 10.0  # seconds
 POLL_INTERVAL_IDLE = 60.0  # seconds
 _IDLE_TICKS_THRESHOLD = 6  # consecutive idle ticks before switching to idle interval
@@ -229,9 +231,7 @@ class MetaLoopOrchestrator:
         for lesson in all_lessons:
             summary = str(lesson.get("summary", ""))
             category = str(lesson.get("category", ""))
-            summary_keywords = {
-                w for w in str(summary).lower().split() if len(w) >= 3
-            }
+            summary_keywords = {w for w in str(summary).lower().split() if len(w) >= 3}
             overlap = len(goal_keywords & summary_keywords)
             category_boost = 1.5 if category in ("mistake", "rollback_pattern") else 1.0
             score = overlap * category_boost
@@ -477,7 +477,9 @@ class MetaLoopOrchestrator:
             spec_data = cast(SpecDict, metadata.get("generated_spec", {}))
             research_data = cast(SpecDict, metadata.get("research", {}))
             if spec_data:
-                self._run_decomposition(state.spec_id, spec_data, research_data, attempt=state.attempt)
+                self._run_decomposition(
+                    state.spec_id, spec_data, research_data, attempt=state.attempt
+                )
                 baseline = self._capture_baseline_metrics()
                 self._update_metadata(state.spec_id, "pre_implementation_baseline", baseline)
                 verification_plan = cast(list[SpecDict], spec_data.get("verification_plan", []))
@@ -624,16 +626,10 @@ class MetaLoopOrchestrator:
             "count": len(findings_dicts),
             "sources": sorted({str(f.source) for f in report.findings}),
             "prior_lessons": [
-            {
-                "lesson_id": (
-                        ls.get("lesson_id", "")
-                ),
-                "category": (
-                        ls.get("category", "")
-                ),
-                "summary": (
-                        ls.get("summary", "")
-                ),
+                {
+                    "lesson_id": (ls.get("lesson_id", "")),
+                    "category": (ls.get("category", "")),
+                    "summary": (ls.get("summary", "")),
                 }
                 for ls in prior_lessons
             ],
@@ -1011,7 +1007,7 @@ class MetaLoopOrchestrator:
                 nodes=nodes,
                 policy_profile="autonomous",
                 workspace_root=self._workspace_root,
-        )
+            )
         except Exception as exc:
             log.exception(
                 "metaloop_dag_creation_failed",
@@ -1042,11 +1038,7 @@ class MetaLoopOrchestrator:
                 max_retries=self._max_retries,
             )
         task_id_attr = getattr(task, "task_id", None)
-        dag_task_id = (
-            str(task_id_attr)
-            if task_id_attr is not None
-            else None
-        )
+        dag_task_id = str(task_id_attr) if task_id_attr is not None else None
         # Write dag_task_id and implementing_started_at directly — avoid
         # advance_phase self-transition which races with the poller's
         # _check_implementing_timeout reading the same spec in the same tick.
@@ -1090,7 +1082,7 @@ class MetaLoopOrchestrator:
             metadata = _parse_metadata(data.get("metadata"))
 
         decomposition = _coerce_dict(metadata.get("decomposition_plan", {}))
-        steps = cast(list[SpecDict], decomposition.get("steps", []))
+        _steps = cast(list[SpecDict], decomposition.get("steps", []))
         spec_data = cast(SpecDict, metadata.get("generated_spec", {}))
 
         # Extract changed file paths from spec's file_plan (authoritative source)
@@ -1520,18 +1512,14 @@ class MetaLoopOrchestrator:
                 statistical_analysis=cast(
                     dict[str, Any] | None, benchmark_data.get("statistical_analysis")
                 ),
-                metadata=cast(
-                    dict[str, Any], benchmark_data.get("metadata", {})
-                ),
+                metadata=cast(dict[str, Any], benchmark_data.get("metadata", {})),
                 error_details=tuple(error_details),
                 raw_output=str(benchmark_data.get("raw_output", "")),
                 verification_results=tuple(
                     _coerce_dict(item)
                     for item in _coerce_list(benchmark_data.get("verification_results", ()))
                 ),
-                delta_info=cast(
-                    dict[str, Any], benchmark_data.get("delta_info", {})
-                ),
+                delta_info=cast(dict[str, Any], benchmark_data.get("delta_info", {})),
                 tier_reached=str(benchmark_data.get("tier_reached", "")),
                 strategy_used=str(benchmark_data.get("strategy_used", "")),
             )
@@ -2005,9 +1993,7 @@ class SpecBacklogPoller:
         self._cleanup_worktree(spec_id)
         self._backlog.mark_failed(
             spec_id,
-            error=(
-                f"IMPLEMENTING timed out after {int(elapsed)}s (dag_task_id={dag_task_id})"
-            ),
+            error=(f"IMPLEMENTING timed out after {int(elapsed)}s (dag_task_id={dag_task_id})"),
             max_retries=self._orchestrator.max_retries,
         )
         return True

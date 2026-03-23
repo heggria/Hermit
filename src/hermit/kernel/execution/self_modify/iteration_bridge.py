@@ -202,10 +202,7 @@ class LaneTracker:
     def get_all_lanes(self, iteration_id: str) -> dict[str, list[dict[str, Any]]]:
         """Return all artifacts grouped by lane as plain dicts."""
         by_lane = self._artifacts.get(iteration_id, {})
-        return {
-            lane.value: [a.to_dict() for a in artifacts]
-            for lane, artifacts in by_lane.items()
-        }
+        return {lane.value: [a.to_dict() for a in artifacts] for lane, artifacts in by_lane.items()}
 
     def missing_artifacts(
         self,
@@ -277,9 +274,7 @@ class BridgeVerdict:
     lesson_pack: IterationLessonPack | None = None
     next_seed_goal: str | None = None
     benchmark_results: dict[str, Any] = field(default_factory=_default_benchmark_results)
-    lane_artifacts: dict[str, list[dict[str, Any]]] = field(
-        default_factory=_default_lane_artifacts
-    )
+    lane_artifacts: dict[str, list[dict[str, Any]]] = field(default_factory=_default_lane_artifacts)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for MCP / plugin consumption."""

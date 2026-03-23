@@ -93,7 +93,7 @@ class RecoveryHandler:
             entity_id=attempt_ctx.step_attempt_id,
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
-            actor="kernel",
+            actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
             payload={
                 "tool_name": tool_name,
                 "capability_grant_ref": capability_grant_id,
@@ -204,7 +204,7 @@ class RecoveryHandler:
             entity_id=capability_grant_id,
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
-            actor="kernel",
+            actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
             payload={
                 "capability_grant_ref": capability_grant_id,
                 "decision_ref": decision_id,

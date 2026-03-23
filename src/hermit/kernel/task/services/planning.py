@@ -265,6 +265,11 @@ class PlanningService:
                 step_id=attempt.step_id,
                 step_attempt_id=attempt.step_attempt_id,
                 source_channel=task.source_channel,
+                actor_principal_id=(
+                    getattr(task, "requested_by_principal_id", None)
+                    or getattr(task, "owner_principal_id", None)
+                    or "principal_user"
+                ),
                 policy_profile=task.policy_profile,
                 workspace_root=str(attempt.context.get("workspace_root", "") or ""),
                 ingress_metadata=dict(attempt.context.get("ingress_metadata", {}) or {}),

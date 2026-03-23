@@ -23,17 +23,17 @@ from hermit.kernel.ledger.journal.store import KernelStore
 
 def _make_arbitrator(response_text: str | None = None) -> ArbitrationEngine:
     if response_text is None:
-        response_text = json.dumps({
-            "selected_candidate_id": "placeholder",
-            "confidence": 0.8,
-            "reasoning": "test",
-        })
+        response_text = json.dumps(
+            {
+                "selected_candidate_id": "placeholder",
+                "confidence": 0.8,
+                "reasoning": "test",
+            }
+        )
 
     def factory() -> Any:
         p = MagicMock()
-        p.generate.return_value = SimpleNamespace(
-            content=[{"type": "text", "text": response_text}]
-        )
+        p.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": response_text}])
         return p
 
     return ArbitrationEngine(factory, default_model="test-model")
@@ -81,7 +81,9 @@ class TestShouldDeliberateActionClass:
         svc = _make_service(tmp_path)
         for risk in ("low", "medium", "high", "critical"):
             assert svc.should_deliberate(risk_level=risk, action_class="unknown") is False
-            assert svc.should_deliberate(risk_level=risk, action_class="some_future_action") is False
+            assert (
+                svc.should_deliberate(risk_level=risk, action_class="some_future_action") is False
+            )
 
     def test_low_risk_never_triggers(self, tmp_path: Path) -> None:
         svc = _make_service(tmp_path)
@@ -143,9 +145,7 @@ class TestStaticCheckDeliberationNeeded:
             ("medium", "approval_resolution"),
         ],
     )
-    def test_matches_instance_method(
-        self, tmp_path: Path, risk: str, action: str
-    ) -> None:
+    def test_matches_instance_method(self, tmp_path: Path, risk: str, action: str) -> None:
         svc = _make_service(tmp_path)
         instance_result = svc.should_deliberate(risk_level=risk, action_class=action)
         static_result = DeliberationService.check_deliberation_needed(

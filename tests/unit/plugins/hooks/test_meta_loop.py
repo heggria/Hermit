@@ -19,7 +19,6 @@ from hermit.plugins.builtin.hooks.metaloop.backlog import SpecBacklog
 from hermit.plugins.builtin.hooks.metaloop.models import (
     ALLOWED_TRANSITIONS,
     MAX_REVISION_CYCLES,
-    TERMINAL_PHASES,
     IterationState,
     PipelinePhase,
 )

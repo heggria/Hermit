@@ -72,7 +72,9 @@ class ReconciliationExecutor:
         root_task_id = str(getattr(task, "parent_task_id", None) or "") or task_id
 
         # Count existing follow-ups (children whose goal starts with retry prefix).
-        existing_children: list[TaskRecord] = self.store.list_child_tasks(parent_task_id=root_task_id)
+        existing_children: list[TaskRecord] = self.store.list_child_tasks(
+            parent_task_id=root_task_id
+        )
         followup_count = sum(
             1
             for child in existing_children
@@ -315,8 +317,7 @@ class ReconciliationExecutor:
 
         expected_effects = [
             str(path)
-            for path in cast(list[Any] | None, getattr(contract, "expected_effects", None))
-            or []
+            for path in cast(list[Any] | None, getattr(contract, "expected_effects", None)) or []
             if path is not None
         ]
 

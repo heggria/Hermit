@@ -112,8 +112,7 @@ class HybridRetrievalService:
 
         # Filter out bookkeeping memory kinds that should not appear in retrieval
         memories = [
-            m for m in memories
-            if getattr(m, "memory_kind", None) not in _BOOKKEEPING_KINDS
+            m for m in memories if getattr(m, "memory_kind", None) not in _BOOKKEEPING_KINDS
         ]
 
         if not memories:
@@ -222,8 +221,8 @@ class HybridRetrievalService:
 
         # Layer 4: Precompute query-side values for shares_topic
         query_norm = normalize_topic(query)
-        query_paths = frozenset(re.findall(r"/[\w./-]+", query))
-        query_bigrams = frozenset(
+        _query_paths = frozenset(re.findall(r"/[\w./-]+", query))
+        _query_bigrams = frozenset(
             query_norm[i : i + 2] for i in range(max(0, len(query_norm) - 1))
         )
 

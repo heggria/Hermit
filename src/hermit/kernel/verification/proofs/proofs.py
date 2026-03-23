@@ -378,9 +378,7 @@ class ProofService:
         )
         if detail == "summary":
             # Strip per-receipt chain details to keep the summary small.
-            chain_completeness = {
-                k: v for k, v in chain_completeness.items() if k != "chains"
-            }
+            chain_completeness = {k: v for k, v in chain_completeness.items() if k != "chains"}
         proof_payload["chain_completeness"] = chain_completeness
 
         # -- Merkle inclusion proofs (full tier only) --

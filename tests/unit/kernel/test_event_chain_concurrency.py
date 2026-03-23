@@ -30,16 +30,14 @@ def test_concurrent_appends_produce_valid_chain(tmp_path):
         errors: list[str] = []
 
         def append_event(i: int) -> str:
-            with store._get_conn():
-                return store._append_event_tx(
-                    event_id=store.generate_id("event"),
-                    event_type="test.concurrent",
-                    entity_type="task",
-                    entity_id=task_id,
-                    task_id=task_id,
-                    actor="kernel",
-                    payload={"index": i},
-                )
+            return store.append_event(
+                event_type="test.concurrent",
+                entity_type="task",
+                entity_id=task_id,
+                task_id=task_id,
+                actor="kernel",
+                payload={"index": i},
+            )
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             futures = [pool.submit(append_event, i) for i in range(n_events)]
@@ -80,16 +78,14 @@ def test_concurrent_appends_to_different_tasks(tmp_path):
         n_events_per_task = 20
 
         def append_for_task(task_id: str, i: int) -> str:
-            with store._get_conn():
-                return store._append_event_tx(
-                    event_id=store.generate_id("event"),
-                    event_type="test.multi",
-                    entity_type="task",
-                    entity_id=task_id,
-                    task_id=task_id,
-                    actor="kernel",
-                    payload={"index": i},
-                )
+            return store.append_event(
+                event_type="test.multi",
+                entity_type="task",
+                entity_id=task_id,
+                task_id=task_id,
+                actor="kernel",
+                payload={"index": i},
+            )
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             futures = []

@@ -1,4 +1,5 @@
 """Exhaustive ActionClass coverage for deliberation trigger logic."""
+
 from __future__ import annotations
 
 import json
@@ -63,17 +64,17 @@ _ALL_RISK_LEVELS = ["low", "medium", "high", "critical"]
 
 def _make_arbitrator(response_text: str | None = None) -> ArbitrationEngine:
     if response_text is None:
-        response_text = json.dumps({
-            "selected_candidate_id": "placeholder",
-            "confidence": 0.8,
-            "reasoning": "test",
-        })
+        response_text = json.dumps(
+            {
+                "selected_candidate_id": "placeholder",
+                "confidence": 0.8,
+                "reasoning": "test",
+            }
+        )
 
     def factory() -> Any:
         p = MagicMock()
-        p.generate.return_value = SimpleNamespace(
-            content=[{"type": "text", "text": response_text}]
-        )
+        p.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": response_text}])
         return p
 
     return ArbitrationEngine(factory, default_model="test-model")
@@ -94,14 +95,10 @@ class TestReadonlyNeverTriggers:
 
     @pytest.mark.parametrize("action", _READONLY, ids=lambda a: f"action={a}")
     @pytest.mark.parametrize("risk", _ALL_RISK_LEVELS, ids=lambda r: f"risk={r}")
-    def test_readonly_never_triggers(
-        self, tmp_path: Path, action: str, risk: str
-    ) -> None:
+    def test_readonly_never_triggers(self, tmp_path: Path, action: str, risk: str) -> None:
         svc = _make_service(tmp_path)
         result = svc.should_deliberate(risk_level=risk, action_class=action)
-        assert result is False, (
-            f"Readonly action {action!r} must not trigger at risk={risk!r}"
-        )
+        assert result is False, f"Readonly action {action!r} must not trigger at risk={risk!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -113,25 +110,17 @@ class TestMediumMutationsTrigger:
     """Medium-risk mutation actions trigger at medium, high, and critical risk."""
 
     @pytest.mark.parametrize("action", _MEDIUM_MUTATIONS, ids=lambda a: f"action={a}")
-    @pytest.mark.parametrize(
-        "risk", ["medium", "high", "critical"], ids=lambda r: f"risk={r}"
-    )
-    def test_triggers_at_medium_and_above(
-        self, tmp_path: Path, action: str, risk: str
-    ) -> None:
+    @pytest.mark.parametrize("risk", ["medium", "high", "critical"], ids=lambda r: f"risk={r}")
+    def test_triggers_at_medium_and_above(self, tmp_path: Path, action: str, risk: str) -> None:
         svc = _make_service(tmp_path)
         result = svc.should_deliberate(risk_level=risk, action_class=action)
-        assert result is True, (
-            f"Mutation action {action!r} should trigger at risk={risk!r}"
-        )
+        assert result is True, f"Mutation action {action!r} should trigger at risk={risk!r}"
 
     @pytest.mark.parametrize("action", _MEDIUM_MUTATIONS, ids=lambda a: f"action={a}")
     def test_does_not_trigger_at_low(self, tmp_path: Path, action: str) -> None:
         svc = _make_service(tmp_path)
         result = svc.should_deliberate(risk_level="low", action_class=action)
-        assert result is False, (
-            f"Mutation action {action!r} must not trigger at risk='low'"
-        )
+        assert result is False, f"Mutation action {action!r} must not trigger at risk='low'"
 
 
 # ---------------------------------------------------------------------------
@@ -142,35 +131,21 @@ class TestMediumMutationsTrigger:
 class TestHighOnlyMutations:
     """High-risk-only mutation actions trigger at high and critical only."""
 
-    @pytest.mark.parametrize(
-        "action", _HIGH_ONLY_MUTATIONS, ids=lambda a: f"action={a}"
-    )
-    @pytest.mark.parametrize(
-        "risk", ["high", "critical"], ids=lambda r: f"risk={r}"
-    )
-    def test_triggers_at_high_and_critical(
-        self, tmp_path: Path, action: str, risk: str
-    ) -> None:
+    @pytest.mark.parametrize("action", _HIGH_ONLY_MUTATIONS, ids=lambda a: f"action={a}")
+    @pytest.mark.parametrize("risk", ["high", "critical"], ids=lambda r: f"risk={r}")
+    def test_triggers_at_high_and_critical(self, tmp_path: Path, action: str, risk: str) -> None:
         svc = _make_service(tmp_path)
         result = svc.should_deliberate(risk_level=risk, action_class=action)
-        assert result is True, (
-            f"High-only action {action!r} should trigger at risk={risk!r}"
-        )
+        assert result is True, f"High-only action {action!r} should trigger at risk={risk!r}"
 
-    @pytest.mark.parametrize(
-        "action", _HIGH_ONLY_MUTATIONS, ids=lambda a: f"action={a}"
-    )
-    @pytest.mark.parametrize(
-        "risk", ["medium", "low"], ids=lambda r: f"risk={r}"
-    )
+    @pytest.mark.parametrize("action", _HIGH_ONLY_MUTATIONS, ids=lambda a: f"action={a}")
+    @pytest.mark.parametrize("risk", ["medium", "low"], ids=lambda r: f"risk={r}")
     def test_does_not_trigger_at_medium_or_low(
         self, tmp_path: Path, action: str, risk: str
     ) -> None:
         svc = _make_service(tmp_path)
         result = svc.should_deliberate(risk_level=risk, action_class=action)
-        assert result is False, (
-            f"High-only action {action!r} must not trigger at risk={risk!r}"
-        )
+        assert result is False, f"High-only action {action!r} must not trigger at risk={risk!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -183,14 +158,10 @@ class TestNeverTriggerActions:
 
     @pytest.mark.parametrize("action", _NEVER_TRIGGER, ids=lambda a: f"action={a!r}")
     @pytest.mark.parametrize("risk", _ALL_RISK_LEVELS, ids=lambda r: f"risk={r}")
-    def test_never_triggers(
-        self, tmp_path: Path, action: str, risk: str
-    ) -> None:
+    def test_never_triggers(self, tmp_path: Path, action: str, risk: str) -> None:
         svc = _make_service(tmp_path)
         result = svc.should_deliberate(risk_level=risk, action_class=action)
-        assert result is False, (
-            f"Action {action!r} must not trigger at risk={risk!r}"
-        )
+        assert result is False, f"Action {action!r} must not trigger at risk={risk!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -219,13 +190,9 @@ class TestStaticMethodConsistency:
         _REPRESENTATIVE_PAIRS,
         ids=lambda pair: f"{pair}" if isinstance(pair, str) else None,
     )
-    def test_static_matches_instance(
-        self, tmp_path: Path, risk: str, action: str
-    ) -> None:
+    def test_static_matches_instance(self, tmp_path: Path, risk: str, action: str) -> None:
         svc = _make_service(tmp_path)
-        instance_result = svc.should_deliberate(
-            risk_level=risk, action_class=action
-        )
+        instance_result = svc.should_deliberate(risk_level=risk, action_class=action)
         static_result = DeliberationService.check_deliberation_needed(
             risk_level=risk, action_class=action
         )

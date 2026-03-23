@@ -18,7 +18,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from textwrap import dedent
 from typing import Any, cast
 
 from hermit.infra.system.i18n import tr
@@ -73,38 +72,22 @@ def _find_executable() -> Path | None:
     return Path(found) if found else None
 
 
-def _build_plist(exe: Path, adapter: str, log_dir: Path) -> str:
+def _build_plist(exe: Path, adapter: str, log_dir: Path) -> bytes:
     label = _label(adapter)
-    stdout_log = log_dir / f"{adapter}-stdout.log"
-    stderr_log = log_dir / f"{adapter}-stderr.log"
-    return dedent(f"""\
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>Label</key>
-            <string>{label}</string>
-            <key>ProgramArguments</key>
-            <array>
-                <string>{exe}</string>
-                <string>serve</string>
-                <string>--adapter</string>
-                <string>{adapter}</string>
-            </array>
-            <key>RunAtLoad</key>
-            <true/>
-            <key>KeepAlive</key>
-            <true/>
-            <key>StandardOutPath</key>
-            <string>{stdout_log}</string>
-            <key>StandardErrorPath</key>
-            <string>{stderr_log}</string>
-            <key>WorkingDirectory</key>
-            <string>{Path.home()}</string>
-        </dict>
-        </plist>
-    """)
+    base_dir = _current_base_dir()
+    default_base = Path.home() / ".hermit"
+    plist_dict: dict[str, Any] = {
+        "Label": label,
+        "ProgramArguments": [str(exe), "serve", "--adapter", adapter],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "StandardOutPath": str(log_dir / f"{adapter}-stdout.log"),
+        "StandardErrorPath": str(log_dir / f"{adapter}-stderr.log"),
+        "WorkingDirectory": str(Path.home()),
+    }
+    if base_dir != default_base:
+        plist_dict["EnvironmentVariables"] = {"HERMIT_BASE_DIR": str(base_dir)}
+    return plistlib.dumps(plist_dict)
 
 
 def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
@@ -146,7 +129,7 @@ def _list_managed_plists() -> list[Path]:
     """Return all Hermit LaunchAgent plist files in ~/Library/LaunchAgents."""
     if not _LAUNCH_AGENTS_DIR.exists():
         return []
-    return sorted(_LAUNCH_AGENTS_DIR.glob(f"{_LABEL_PREFIX}*.plist"))
+    return sorted(_LAUNCH_AGENTS_DIR.glob(f"{_LABEL_PREFIX}.*.plist"))
 
 
 def existing_adapters() -> list[str]:
@@ -158,6 +141,9 @@ def existing_adapters() -> list[str]:
         if adapter:
             adapters.add(adapter)
     return sorted(adapters)
+
+
+_KNOWN_ADAPTERS = {"feishu", "slack", "telegram"}
 
 
 def enable(adapter: str = "feishu", log_dir: Path | None = None) -> str:
@@ -174,6 +160,17 @@ def enable(adapter: str = "feishu", log_dir: Path | None = None) -> str:
             "Auto-start via launchd is only supported on macOS.",
         )
 
+    if not adapter or not adapter.strip():
+        return _t("autostart.enable.invalid_adapter", "Invalid adapter name: empty.")
+
+    if adapter not in _KNOWN_ADAPTERS:
+        return _t(
+            "autostart.enable.unknown_adapter",
+            "Unknown adapter '{adapter}'. Known adapters: {known}",
+            adapter=adapter,
+            known=", ".join(sorted(_KNOWN_ADAPTERS)),
+        )
+
     exe = _find_executable()
     if exe is None:
         return _t(
@@ -182,7 +179,7 @@ def enable(adapter: str = "feishu", log_dir: Path | None = None) -> str:
         )
 
     if log_dir is None:
-        log_dir = Path.home() / ".hermit" / "logs"
+        log_dir = _current_base_dir() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     _LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -192,7 +189,7 @@ def enable(adapter: str = "feishu", log_dir: Path | None = None) -> str:
     if plist.exists() and _is_loaded(adapter):
         _launchctl("unload", str(plist))
 
-    plist.write_text(_build_plist(exe, adapter, log_dir), encoding="utf-8")
+    plist.write_bytes(_build_plist(exe, adapter, log_dir))
 
     result = _launchctl("load", str(plist))
     if result.returncode != 0:

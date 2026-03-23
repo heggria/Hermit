@@ -125,7 +125,7 @@ class WitnessCapture:
             entity_id=attempt_ctx.step_attempt_id,
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
-            actor="kernel",
+            actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
             payload={
                 "state_witness_ref": witness_ref,
                 "tool_name": action_request.tool_name,

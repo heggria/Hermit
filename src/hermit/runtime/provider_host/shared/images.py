@@ -163,9 +163,7 @@ def _compress_with_pillow(
     return best_media_type, best_bytes
 
 
-def _encode_candidates_with_pillow(
-    image: Any, media_type: str
-) -> Iterator[tuple[str, bytes]]:
+def _encode_candidates_with_pillow(image: Any, media_type: str) -> Iterator[tuple[str, bytes]]:
     """Yield compression candidates lazily so callers can exit early."""
     if media_type == "image/png":
         yield "image/png", _save_png(image)

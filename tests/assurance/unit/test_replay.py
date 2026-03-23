@@ -50,13 +50,9 @@ class TestIngest:
         assert entry.entry_id.startswith("replay-")
         assert entry.sanitized is False
 
-    def test_ingest_with_sanitize(
-        self, svc: ReplayService, trace: list[TraceEnvelope]
-    ) -> None:
+    def test_ingest_with_sanitize(self, svc: ReplayService, trace: list[TraceEnvelope]) -> None:
         retention = EvidenceRetention(redact_fields=["secret_values"])
-        entry = svc.ingest(
-            "run-2", trace, sanitize=True, retention=retention
-        )
+        entry = svc.ingest("run-2", trace, sanitize=True, retention=retention)
 
         assert entry.sanitized is True
         assert entry.event_head_hash != ""
@@ -159,9 +155,7 @@ class TestCounterfactualToggleApproval:
         entry = svc.ingest("run-1", trace)
 
         # Find an approval.granted envelope
-        granted_env = next(
-            env for env in trace if env.event_type == "approval.granted"
-        )
+        granted_env = next(env for env in trace if env.event_type == "approval.granted")
 
         mutations = [
             CounterfactualMutation(
@@ -204,9 +198,7 @@ class TestCounterfactualToggleApproval:
 
 
 class TestCounterfactualReplace:
-    def test_replace_event_diverges(
-        self, svc: ReplayService, trace: list[TraceEnvelope]
-    ) -> None:
+    def test_replace_event_diverges(self, svc: ReplayService, trace: list[TraceEnvelope]) -> None:
         entry = svc.ingest("run-1", trace)
         target = trace[1]
 
@@ -291,31 +283,23 @@ class TestDiffTraces:
         assert diff["extra"] == []
         assert diff["reordered"] == 0
 
-    def test_missing_detection(
-        self, svc: ReplayService, trace: list[TraceEnvelope]
-    ) -> None:
+    def test_missing_detection(self, svc: ReplayService, trace: list[TraceEnvelope]) -> None:
         shorter = trace[:-1]
         diff = svc.diff_traces(trace, shorter)
 
         assert trace[-1].trace_id in diff["missing"]
         assert diff["extra"] == []
 
-    def test_extra_detection(
-        self, svc: ReplayService, trace: list[TraceEnvelope]
-    ) -> None:
+    def test_extra_detection(self, svc: ReplayService, trace: list[TraceEnvelope]) -> None:
         from tests.assurance.conftest import make_envelope
 
-        extended = list(trace) + [
-            make_envelope(event_type="extra.event", event_seq=999)
-        ]
+        extended = list(trace) + [make_envelope(event_type="extra.event", event_seq=999)]
         diff = svc.diff_traces(trace, extended)
 
         assert len(diff["extra"]) == 1
         assert diff["missing"] == []
 
-    def test_reordered_detection(
-        self, svc: ReplayService, trace: list[TraceEnvelope]
-    ) -> None:
+    def test_reordered_detection(self, svc: ReplayService, trace: list[TraceEnvelope]) -> None:
         reordered = list(trace)
         reordered[1], reordered[2] = reordered[2], reordered[1]
         diff = svc.diff_traces(trace, reordered)
@@ -323,9 +307,7 @@ class TestDiffTraces:
         assert diff["reordered"] >= 2
         assert diff["same"] == len(trace)  # content is the same, just reordered
 
-    def test_recovered_counts_recovery_events(
-        self, svc: ReplayService
-    ) -> None:
+    def test_recovered_counts_recovery_events(self, svc: ReplayService) -> None:
         from tests.assurance.conftest import make_envelope
 
         original = [make_envelope(event_type="task.created", event_seq=0)]
@@ -345,9 +327,7 @@ class TestDiffTraces:
 
 
 class TestSanitizeTrace:
-    def test_removes_redacted_fields(
-        self, svc: ReplayService
-    ) -> None:
+    def test_removes_redacted_fields(self, svc: ReplayService) -> None:
         from tests.assurance.conftest import make_envelope
 
         envelopes = [
@@ -371,9 +351,7 @@ class TestSanitizeTrace:
         assert sanitized[0].payload == {"safe_data": "ok"}
         assert sanitized[1].payload == {"metric": 42}
 
-    def test_sanitize_does_not_mutate_originals(
-        self, svc: ReplayService
-    ) -> None:
+    def test_sanitize_does_not_mutate_originals(self, svc: ReplayService) -> None:
         from tests.assurance.conftest import make_envelope
 
         original_payload = {"secret": "value", "keep": "data"}
@@ -389,9 +367,7 @@ class TestSanitizeTrace:
         assert sanitized[0] is not env
         assert "secret" not in sanitized[0].payload
 
-    def test_sanitize_no_redact_fields_returns_copies(
-        self, svc: ReplayService
-    ) -> None:
+    def test_sanitize_no_redact_fields_returns_copies(self, svc: ReplayService) -> None:
         from tests.assurance.conftest import make_envelope
 
         envelopes = [make_envelope(event_seq=0, payload={"data": 1})]
@@ -409,9 +385,7 @@ class TestSanitizeTrace:
 
 
 class TestReplayWithAssurance:
-    def test_replay_with_no_engines(
-        self, svc: ReplayService, trace: list[TraceEnvelope]
-    ) -> None:
+    def test_replay_with_no_engines(self, svc: ReplayService, trace: list[TraceEnvelope]) -> None:
         """Without engines, result has no violations."""
         entry = svc.ingest("run-1", trace)
         result = svc.replay_with_assurance(entry, trace)
@@ -436,9 +410,7 @@ class TestReplayWithAssurance:
         )
         inv_engine.check.return_value = [inv_violation]
 
-        result = svc.replay_with_assurance(
-            entry, trace, invariant_engine=inv_engine
-        )
+        result = svc.replay_with_assurance(entry, trace, invariant_engine=inv_engine)
 
         assert len(result.contract_violations) == 1
         cv = result.contract_violations[0]
@@ -463,17 +435,13 @@ class TestReplayWithAssurance:
         )
         contract_engine.evaluate_post_run.return_value = [cv]
 
-        result = svc.replay_with_assurance(
-            entry, trace, contract_engine=contract_engine
-        )
+        result = svc.replay_with_assurance(entry, trace, contract_engine=contract_engine)
 
         assert len(result.contract_violations) == 1
         assert result.contract_violations[0] is cv
         contract_engine.evaluate_post_run.assert_called_once_with(trace)
 
-    def test_replay_with_both_engines(
-        self, svc: ReplayService, trace: list[TraceEnvelope]
-    ) -> None:
+    def test_replay_with_both_engines(self, svc: ReplayService, trace: list[TraceEnvelope]) -> None:
         """Both invariant and contract violations are combined."""
         entry = svc.ingest("run-1", trace)
 
@@ -500,7 +468,8 @@ class TestReplayWithAssurance:
         ]
 
         result = svc.replay_with_assurance(
-            entry, trace,
+            entry,
+            trace,
             invariant_engine=inv_engine,
             contract_engine=contract_engine,
         )

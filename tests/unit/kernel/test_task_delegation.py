@@ -215,10 +215,14 @@ def test_parent_failure_cascades_cancel_to_running_children(
     child2 = store.get_task(child2_id)
     assert child2 is not None
     if child2.status not in ("completed", "failed", "cancelled"):
-        store.update_task_status(child2_id, "cancelled", payload={
-            "reason": "parent_failed",
-            "cascaded_from": parent_task.task_id,
-        })
+        store.update_task_status(
+            child2_id,
+            "cancelled",
+            payload={
+                "reason": "parent_failed",
+                "cascaded_from": parent_task.task_id,
+            },
+        )
 
     # Completed child should remain completed
     child1 = store.get_task(child1_id)

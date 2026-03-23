@@ -28,9 +28,7 @@ from hermit.kernel.ledger.journal.store import KernelStore
 
 def _make_provider(text: str) -> MagicMock:
     provider = MagicMock()
-    provider.generate.return_value = SimpleNamespace(
-        content=[{"type": "text", "text": text}]
-    )
+    provider.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": text}])
     return provider
 
 
@@ -68,16 +66,24 @@ def _make_bundle(
 
 def _make_proposal(cid: str = "c1", role: str = "engineer") -> CandidateProposal:
     return CandidateProposal(
-        candidate_id=cid, proposer_role=role, target_scope="scope",
-        plan_summary=f"Plan by {role}", contract_draft={"steps": 1},
-        expected_cost="low", expected_risk="low", expected_reward="high",
+        candidate_id=cid,
+        proposer_role=role,
+        target_scope="scope",
+        plan_summary=f"Plan by {role}",
+        contract_draft={"steps": 1},
+        expected_cost="low",
+        expected_risk="low",
+        expected_reward="high",
     )
 
 
 def _make_critique(target: str, severity: str = "medium") -> CritiqueRecord:
     return CritiqueRecord(
-        critique_id=f"crit_{target}", target_candidate_id=target,
-        critic_role="reviewer", issue_type="correctness", severity=severity,
+        critique_id=f"crit_{target}",
+        target_candidate_id=target,
+        critic_role="reviewer",
+        issue_type="correctness",
+        severity=severity,
     )
 
 
@@ -100,7 +106,11 @@ class TestArbitrationEngine:
         pool = _make_pool()
 
         decision = engine.arbitrate(
-            _make_bundle(), task_id="t1", pool=pool, store=store, artifact_store=arts,
+            _make_bundle(),
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.escalation_required is True
 
@@ -115,7 +125,11 @@ class TestArbitrationEngine:
             critiques=[_make_critique("c1", "critical"), _make_critique("c2", "critical")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.escalation_required is True
         assert len(decision.rejection_reasons) == 2
@@ -131,18 +145,24 @@ class TestArbitrationEngine:
             critiques=[_make_critique("c2", "critical")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.selected_candidate_id == "c1"
         assert decision.confidence == 1.0
 
     def test_llm_selects_candidate(self, tmp_path: Path) -> None:
-        response = json.dumps({
-            "selected_candidate_id": "c2",
-            "confidence": 0.85,
-            "reasoning": "c2 is better balanced",
-            "merge_notes": "proceed with caution",
-        })
+        response = json.dumps(
+            {
+                "selected_candidate_id": "c2",
+                "confidence": 0.85,
+                "reasoning": "c2 is better balanced",
+                "merge_notes": "proceed with caution",
+            }
+        )
         engine = _make_engine(response)
         store = KernelStore(tmp_path / "state.db")
         arts = ArtifactStore(tmp_path / "artifacts")
@@ -152,7 +172,11 @@ class TestArbitrationEngine:
             proposals=[_make_proposal("c1"), _make_proposal("c2", "architect")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.selected_candidate_id == "c2"
         assert decision.confidence == 0.85
@@ -172,7 +196,11 @@ class TestArbitrationEngine:
             proposals=[_make_proposal("c1"), _make_proposal("c2", "architect")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.selected_candidate_id == "c1"
         assert "[fallback]" in decision.merge_notes
@@ -192,7 +220,11 @@ class TestArbitrationEngine:
             proposals=[_make_proposal("c1"), _make_proposal("c2", "architect")],
         )
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.selected_candidate_id == "c1"
         assert "[fallback]" in decision.merge_notes
@@ -207,6 +239,10 @@ class TestArbitrationEngine:
 
         bundle = _make_bundle(proposals=[_make_proposal("c1"), _make_proposal("c2")])
         decision = engine.arbitrate(
-            bundle, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.confidence == 1.0

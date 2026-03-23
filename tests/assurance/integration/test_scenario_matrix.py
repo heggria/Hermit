@@ -140,9 +140,7 @@ class TestViolationMatrix:
             ("lease_ref", "workspace.isolation"),
         ],
     )
-    def test_missing_ref_detected(
-        self, missing_ref: str, expected_contract: str
-    ) -> None:
+    def test_missing_ref_detected(self, missing_ref: str, expected_contract: str) -> None:
         """Build trace with one ref missing -- correct contract catches it."""
         lab = AssuranceLab()
         scenario = _make_scenario()
@@ -187,75 +185,75 @@ class TestViolationMatrix:
 
         seq = 1
         if include_approval_events:
-            envelopes.extend([
+            envelopes.extend(
+                [
+                    make_envelope(
+                        run_id=run_id,
+                        task_id=task_id,
+                        event_type="approval.requested",
+                        event_seq=seq,
+                        wallclock_at=now + seq * 0.001,
+                        step_id=step_id,
+                        step_attempt_id=attempt_id,
+                        approval_ref=approval_id,
+                    ),
+                    make_envelope(
+                        run_id=run_id,
+                        task_id=task_id,
+                        event_type="approval.granted",
+                        event_seq=seq + 1,
+                        wallclock_at=now + (seq + 1) * 0.001,
+                        step_id=step_id,
+                        step_attempt_id=attempt_id,
+                        approval_ref=approval_id,
+                        decision_ref=decision_id,
+                    ),
+                ]
+            )
+            seq += 2
+
+        envelopes.extend(
+            [
                 make_envelope(
                     run_id=run_id,
                     task_id=task_id,
-                    event_type="approval.requested",
+                    event_type="tool_call.start",
                     event_seq=seq,
                     wallclock_at=now + seq * 0.001,
                     step_id=step_id,
                     step_attempt_id=attempt_id,
-                    approval_ref=approval_id,
+                    **tool_refs,
                 ),
                 make_envelope(
                     run_id=run_id,
                     task_id=task_id,
-                    event_type="approval.granted",
+                    event_type="receipt.issued",
                     event_seq=seq + 1,
                     wallclock_at=now + (seq + 1) * 0.001,
                     step_id=step_id,
                     step_attempt_id=attempt_id,
-                    approval_ref=approval_id,
+                    receipt_ref=receipt_id,
+                    grant_ref=grant_id,
+                    lease_ref=lease_id,
                     decision_ref=decision_id,
                 ),
-            ])
-            seq += 2
-
-        envelopes.extend([
-            make_envelope(
-                run_id=run_id,
-                task_id=task_id,
-                event_type="tool_call.start",
-                event_seq=seq,
-                wallclock_at=now + seq * 0.001,
-                step_id=step_id,
-                step_attempt_id=attempt_id,
-                **tool_refs,
-            ),
-            make_envelope(
-                run_id=run_id,
-                task_id=task_id,
-                event_type="receipt.issued",
-                event_seq=seq + 1,
-                wallclock_at=now + (seq + 1) * 0.001,
-                step_id=step_id,
-                step_attempt_id=attempt_id,
-                receipt_ref=receipt_id,
-                grant_ref=grant_id,
-                lease_ref=lease_id,
-                decision_ref=decision_id,
-            ),
-            make_envelope(
-                run_id=run_id,
-                task_id=task_id,
-                event_type="task.completed",
-                event_seq=seq + 2,
-                wallclock_at=now + (seq + 2) * 0.001,
-            ),
-        ])
+                make_envelope(
+                    run_id=run_id,
+                    task_id=task_id,
+                    event_type="task.completed",
+                    event_seq=seq + 2,
+                    wallclock_at=now + (seq + 2) * 0.001,
+                ),
+            ]
+        )
 
         report = lab.run_with_trace(scenario, envelopes)
 
         violated_contracts = {
-            v.contract_id
-            for v in report.violations
-            if isinstance(v, ContractViolation)
+            v.contract_id for v in report.violations if isinstance(v, ContractViolation)
         }
         violated_invariants = {
-            v.invariant_id
-            for v in report.violations
-            if isinstance(v, InvariantViolation)
+            v.invariant_id for v in report.violations if isinstance(v, InvariantViolation)
         }
         all_violated = violated_contracts | violated_invariants
 
@@ -271,9 +269,7 @@ class TestViolationMatrix:
             ("receipt.issued", "governance.receipt_for_mutation"),
         ],
     )
-    def test_missing_event_detected(
-        self, missing_event: str, expected_violation: str
-    ) -> None:
+    def test_missing_event_detected(self, missing_event: str, expected_violation: str) -> None:
         """Build trace without this event -- correct checker catches it."""
         lab = AssuranceLab()
         scenario = _make_scenario()
@@ -285,14 +281,10 @@ class TestViolationMatrix:
         report = lab.run_with_trace(scenario, filtered)
 
         violated_contracts = {
-            v.contract_id
-            for v in report.violations
-            if isinstance(v, ContractViolation)
+            v.contract_id for v in report.violations if isinstance(v, ContractViolation)
         }
         violated_invariants = {
-            v.invariant_id
-            for v in report.violations
-            if isinstance(v, InvariantViolation)
+            v.invariant_id for v in report.violations if isinstance(v, InvariantViolation)
         }
         all_violated = violated_contracts | violated_invariants
 
@@ -346,9 +338,7 @@ class TestInvariantMatrix:
         report = lab.run_with_trace(scenario, envelopes)
 
         invariant_ids = {
-            v.invariant_id
-            for v in report.violations
-            if isinstance(v, InvariantViolation)
+            v.invariant_id for v in report.violations if isinstance(v, InvariantViolation)
         }
         assert "trace.hash_chain_continuity" in invariant_ids
 
@@ -394,9 +384,7 @@ class TestInvariantMatrix:
         report = lab.run_with_trace(scenario, envelopes)
 
         invariant_ids = {
-            v.invariant_id
-            for v in report.violations
-            if isinstance(v, InvariantViolation)
+            v.invariant_id for v in report.violations if isinstance(v, InvariantViolation)
         }
         assert "scheduler.total_order_per_task" in invariant_ids
 
@@ -447,9 +435,7 @@ class TestInvariantMatrix:
         report = lab.run_with_trace(scenario, envelopes)
 
         invariant_ids = {
-            v.invariant_id
-            for v in report.violations
-            if isinstance(v, InvariantViolation)
+            v.invariant_id for v in report.violations if isinstance(v, InvariantViolation)
         }
         assert "scheduler.single_winner_per_task" in invariant_ids
 
@@ -579,9 +565,7 @@ class TestAttributionMatrix:
         assert len(report.attribution.root_cause_candidates) >= 1
         assert report.attribution.selected_root_cause != ""
         # The propagation chain should include the root cause
-        assert report.attribution.selected_root_cause in (
-            report.attribution.propagation_chain
-        )
+        assert report.attribution.selected_root_cause in (report.attribution.propagation_chain)
 
     def test_no_violations_no_attribution(self) -> None:
         """Clean trace (no tool_call) -- attribution is None."""

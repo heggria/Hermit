@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,6 +21,9 @@ from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.execution.competition.deliberation_integration import (
     DeliberationIntegration,
 )
+from hermit.kernel.execution.competition.llm_arbitrator import ArbitrationEngine
+from hermit.kernel.execution.competition.llm_critic import CritiqueGenerator
+from hermit.kernel.execution.competition.llm_proposer import ProposalGenerator
 from hermit.kernel.execution.controller.supervisor_protocol import TaskContractPacket
 from hermit.kernel.ledger.journal.store import KernelStore
 
@@ -37,7 +42,31 @@ def stores(tmp_path: Path) -> tuple[KernelStore, ArtifactStore]:
 @pytest.fixture()
 def integration(stores: tuple[KernelStore, ArtifactStore]) -> DeliberationIntegration:
     store, artifact_store = stores
-    return DeliberationIntegration(store, artifact_store)
+
+    response = json.dumps(
+        {
+            "selected_candidate_id": "placeholder",
+            "confidence": 0.8,
+            "reasoning": "test",
+        }
+    )
+
+    def factory() -> Any:
+        p = MagicMock()
+        p.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": response}])
+        return p
+
+    proposer = ProposalGenerator(factory, default_model="test-model")
+    critic = CritiqueGenerator(factory, default_model="test-model")
+    arbitrator = ArbitrationEngine(factory, default_model="test-model")
+
+    return DeliberationIntegration(
+        store,
+        artifact_store,
+        proposer=proposer,
+        critic=critic,
+        arbitrator=arbitrator,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +84,8 @@ class TestPreExecutionCompetition:
         result = integration.evaluate_and_route(
             task_id="task_001",
             step_id="step_001",
-            risk_band="high",
-            step_kind="planning",
+            risk_level="high",
+            action_class="execute_command",
         )
         assert result["deliberation_required"] is True
         assert result["debate_id"] is not None
@@ -73,8 +102,8 @@ class TestPreExecutionCompetition:
         route_result = integration.evaluate_and_route(
             task_id="task_001",
             step_id="step_001",
-            risk_band="high",
-            step_kind="planning",
+            risk_level="high",
+            action_class="execute_command",
         )
         assert route_result["deliberation_required"] is True
         debate_id = route_result["debate_id"]
@@ -254,8 +283,8 @@ class TestLowRiskBypass:
         result = integration.evaluate_and_route(
             task_id="task_003",
             step_id="step_003",
-            risk_band="low",
-            step_kind="respond",
+            risk_level="low",
+            action_class="read_local",
         )
         assert result["deliberation_required"] is False
         assert result["debate_id"] is None
@@ -268,8 +297,8 @@ class TestLowRiskBypass:
         integration.evaluate_and_route(
             task_id="task_004",
             step_id="step_004",
-            risk_band="low",
-            step_kind="respond",
+            risk_level="low",
+            action_class="read_local",
         )
         # DeliberationService should have no debates tracked
         assert len(integration.deliberation._debates) == 0
@@ -282,8 +311,8 @@ class TestLowRiskBypass:
         result = integration.evaluate_and_route(
             task_id="task_005",
             step_id="step_005",
-            risk_band="medium",
-            step_kind="respond",
+            risk_level="medium",
+            action_class="read_local",
         )
         assert result["deliberation_required"] is False
         assert result["debate_id"] is None
@@ -296,8 +325,8 @@ class TestLowRiskBypass:
         result = integration.evaluate_and_route(
             task_id="task_006",
             step_id="step_006",
-            risk_band="medium",
-            step_kind="planning",
+            risk_level="medium",
+            action_class="write_local",
         )
         assert result["deliberation_required"] is True
         assert result["debate_id"] is not None
@@ -323,8 +352,8 @@ class TestArtifactVerification:
         route = integration.evaluate_and_route(
             task_id="task_art",
             step_id="step_art",
-            risk_band="high",
-            step_kind="patch",
+            risk_level="high",
+            action_class="patch_file",
         )
         debate_id = route["debate_id"]
 
@@ -428,8 +457,8 @@ class TestEscalation:
         route = integration.evaluate_and_route(
             task_id="task_esc",
             step_id="step_esc",
-            risk_band="critical",
-            step_kind="deploy",
+            risk_level="critical",
+            action_class="external_mutation",
         )
         debate_id = route["debate_id"]
         assert route["deliberation_required"] is True
@@ -494,8 +523,8 @@ class TestEscalation:
         route = integration.evaluate_and_route(
             task_id="task_single_esc",
             step_id="step_single_esc",
-            risk_band="high",
-            step_kind="rollback",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = route["debate_id"]
 
@@ -560,8 +589,8 @@ class TestEdgeCases:
         route = integration.evaluate_and_route(
             task_id="task_conf",
             step_id="step_conf",
-            risk_band="high",
-            step_kind="planning",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = route["debate_id"]
 
@@ -586,8 +615,8 @@ class TestEdgeCases:
         route = integration.evaluate_and_route(
             task_id="task_feas",
             step_id="step_feas",
-            risk_band="high",
-            step_kind="planning",
+            risk_level="high",
+            action_class="execute_command",
         )
         debate_id = route["debate_id"]
 
@@ -700,7 +729,7 @@ class TestDispatchDeliberationGating:
         updated_attempt = store.get_step_attempt(step_attempt_id)
         assert updated_attempt is not None
         assert updated_attempt.status == "deliberation_pending"
-        assert updated_attempt.waiting_reason == "deliberation_required"
+        assert updated_attempt.status_reason == "deliberation_required"
         ctx = updated_attempt.context or {}
         assert ctx.get("deliberation_risk_band") == "high"
         assert ctx.get("deliberation_step_kind") == "write_local"

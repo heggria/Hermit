@@ -77,9 +77,7 @@ class StalenessGuard:
                     # C11: Resolve any active observation tickets for the stale
                     # task so they do not remain orphaned after timeout.
                     try:
-                        self.store.resolve_observations_for_task(
-                            task.task_id, status="cancelled"
-                        )
+                        self.store.resolve_observations_for_task(task.task_id, status="cancelled")
                     except Exception:
                         log.warning(
                             "staleness_guard.observation_cleanup_failed",

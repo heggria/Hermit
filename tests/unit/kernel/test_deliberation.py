@@ -44,17 +44,17 @@ def _make_pool() -> WorkerPoolManager:
 
 def _make_arbitrator(response_text: str | None = None) -> ArbitrationEngine:
     if response_text is None:
-        response_text = json.dumps({
-            "selected_candidate_id": "placeholder",
-            "confidence": 0.8,
-            "reasoning": "test",
-        })
+        response_text = json.dumps(
+            {
+                "selected_candidate_id": "placeholder",
+                "confidence": 0.8,
+                "reasoning": "test",
+            }
+        )
 
     def factory() -> Any:
         p = MagicMock()
-        p.generate.return_value = SimpleNamespace(
-            content=[{"type": "text", "text": response_text}]
-        )
+        p.generate.return_value = SimpleNamespace(content=[{"type": "text", "text": response_text}])
         return p
 
     return ArbitrationEngine(factory, default_model="test-model")
@@ -179,7 +179,10 @@ class TestShouldDeliberate:
     def test_high_risk_readonly_skips(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
         assert svc.should_deliberate(risk_level="critical", action_class="read_local") is False
-        assert svc.should_deliberate(risk_level="high", action_class="execute_command_readonly") is False
+        assert (
+            svc.should_deliberate(risk_level="high", action_class="execute_command_readonly")
+            is False
+        )
         assert svc.should_deliberate(risk_level="critical", action_class="network_read") is False
         assert svc.should_deliberate(risk_level="high", action_class="delegate_reasoning") is False
 
@@ -194,7 +197,10 @@ class TestShouldDeliberate:
     def test_medium_risk_readonly_skips(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
         assert svc.should_deliberate(risk_level="medium", action_class="read_local") is False
-        assert svc.should_deliberate(risk_level="medium", action_class="execute_command_readonly") is False
+        assert (
+            svc.should_deliberate(risk_level="medium", action_class="execute_command_readonly")
+            is False
+        )
 
     def test_low_risk_never_deliberates(self, tmp_path: Path) -> None:
         svc, _, _, _ = _make_service(tmp_path)
@@ -265,7 +271,11 @@ class TestArbitration:
         svc.add_proposal(bundle.debate_id, _make_proposal("c2", "architect"))
 
         decision = svc.arbitrate(
-            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle.debate_id,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.selected_candidate_id == "c1"
         assert decision.escalation_required is False
@@ -276,11 +286,16 @@ class TestArbitration:
         svc.add_proposal(bundle.debate_id, _make_proposal("c1"))
         svc.add_proposal(bundle.debate_id, _make_proposal("c2"))
         svc.add_critique(
-            bundle.debate_id, _make_critique("c1", severity="critical", critique_id="cr1"),
+            bundle.debate_id,
+            _make_critique("c1", severity="critical", critique_id="cr1"),
         )
 
         decision = svc.arbitrate(
-            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle.debate_id,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.selected_candidate_id == "c2"
 
@@ -289,11 +304,16 @@ class TestArbitration:
         bundle = svc.create_debate("dp", DeliberationTrigger.benchmark_dispute)
         svc.add_proposal(bundle.debate_id, _make_proposal("c1"))
         svc.add_critique(
-            bundle.debate_id, _make_critique("c1", severity="critical", critique_id="cr1"),
+            bundle.debate_id,
+            _make_critique("c1", severity="critical", critique_id="cr1"),
         )
 
         decision = svc.arbitrate(
-            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle.debate_id,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.selected_candidate_id is None
         assert decision.escalation_required is True
@@ -303,7 +323,11 @@ class TestArbitration:
         bundle = svc.create_debate("dp", DeliberationTrigger.ambiguous_spec)
 
         decision = svc.arbitrate(
-            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle.debate_id,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.escalation_required is True
 
@@ -317,11 +341,16 @@ class TestArbitration:
         bundle = svc.create_debate("dp", DeliberationTrigger.high_risk_planning)
         svc.add_proposal(bundle.debate_id, _make_proposal("c1"))
         svc.add_critique(
-            bundle.debate_id, _make_critique("c1", severity="medium", critique_id="cr1"),
+            bundle.debate_id,
+            _make_critique("c1", severity="medium", critique_id="cr1"),
         )
 
         decision = svc.arbitrate(
-            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+            bundle.debate_id,
+            task_id="t1",
+            pool=pool,
+            store=store,
+            artifact_store=arts,
         )
         assert decision.selected_candidate_id == "c1"
         assert decision.escalation_required is False

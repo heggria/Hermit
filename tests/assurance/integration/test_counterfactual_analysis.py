@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import time
 import uuid
-
 from dataclasses import replace
 
 from hermit.kernel.verification.assurance.contracts import AssuranceContractEngine
@@ -23,7 +22,6 @@ from hermit.kernel.verification.assurance.models import (
 )
 from hermit.kernel.verification.assurance.replay import ReplayService
 from tests.assurance.conftest import make_envelope, make_governed_trace
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -54,38 +52,65 @@ def _make_denied_trace(
 
     return [
         make_envelope(
-            run_id=run_id, task_id=task_id, event_type="task.created",
-            event_seq=0, wallclock_at=now,
+            run_id=run_id,
+            task_id=task_id,
+            event_type="task.created",
+            event_seq=0,
+            wallclock_at=now,
         ),
         make_envelope(
-            run_id=run_id, task_id=task_id, event_type="approval.requested",
-            event_seq=1, wallclock_at=now + 0.001,
-            step_id="step-0", step_attempt_id="attempt-0",
+            run_id=run_id,
+            task_id=task_id,
+            event_type="approval.requested",
+            event_seq=1,
+            wallclock_at=now + 0.001,
+            step_id="step-0",
+            step_attempt_id="attempt-0",
             approval_ref=approval_ref,
         ),
         make_envelope(
-            run_id=run_id, task_id=task_id, event_type="approval.denied",
-            event_seq=2, wallclock_at=now + 0.002,
-            step_id="step-0", step_attempt_id="attempt-0",
-            approval_ref=approval_ref, decision_ref=decision_ref,
+            run_id=run_id,
+            task_id=task_id,
+            event_type="approval.denied",
+            event_seq=2,
+            wallclock_at=now + 0.002,
+            step_id="step-0",
+            step_attempt_id="attempt-0",
+            approval_ref=approval_ref,
+            decision_ref=decision_ref,
         ),
         make_envelope(
-            run_id=run_id, task_id=task_id, event_type="tool_call.start",
-            event_seq=3, wallclock_at=now + 0.003,
-            step_id="step-0", step_attempt_id="attempt-0",
-            grant_ref=grant_ref, lease_ref=lease_ref,
-            decision_ref=decision_ref, approval_ref=approval_ref,
+            run_id=run_id,
+            task_id=task_id,
+            event_type="tool_call.start",
+            event_seq=3,
+            wallclock_at=now + 0.003,
+            step_id="step-0",
+            step_attempt_id="attempt-0",
+            grant_ref=grant_ref,
+            lease_ref=lease_ref,
+            decision_ref=decision_ref,
+            approval_ref=approval_ref,
         ),
         make_envelope(
-            run_id=run_id, task_id=task_id, event_type="receipt.issued",
-            event_seq=4, wallclock_at=now + 0.004,
-            step_id="step-0", step_attempt_id="attempt-0",
-            receipt_ref=receipt_ref, grant_ref=grant_ref,
-            lease_ref=lease_ref, decision_ref=decision_ref,
+            run_id=run_id,
+            task_id=task_id,
+            event_type="receipt.issued",
+            event_seq=4,
+            wallclock_at=now + 0.004,
+            step_id="step-0",
+            step_attempt_id="attempt-0",
+            receipt_ref=receipt_ref,
+            grant_ref=grant_ref,
+            lease_ref=lease_ref,
+            decision_ref=decision_ref,
         ),
         make_envelope(
-            run_id=run_id, task_id=task_id, event_type="task.completed",
-            event_seq=5, wallclock_at=now + 0.005,
+            run_id=run_id,
+            task_id=task_id,
+            event_type="task.completed",
+            event_seq=5,
+            wallclock_at=now + 0.005,
         ),
     ]
 
@@ -150,7 +175,9 @@ class TestToggleApproval:
         envelopes = make_governed_trace(num_steps=1)
         replay_service = ReplayService()
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="toggle-deny",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="toggle-deny",
         )
 
         # Find the approval.granted envelope
@@ -186,7 +213,9 @@ class TestToggleApproval:
         envelopes = _make_denied_trace()
         replay_service = ReplayService()
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="toggle-grant",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="toggle-grant",
         )
 
         # Verify original trace has approval.gating violation
@@ -233,12 +262,16 @@ class TestToggleApproval:
         ce = AssuranceContractEngine()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="root-cause",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="root-cause",
         )
 
         # Original has violations
-        original_contract_ids, original_inv_ids = _collect_violation_ids(
-            envelopes, invariant_engine=ie, contract_engine=ce,
+        original_contract_ids, _original_inv_ids = _collect_violation_ids(
+            envelopes,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
         assert "approval.gating" in original_contract_ids
 
@@ -254,16 +287,17 @@ class TestToggleApproval:
 
         # Use counterfactual_with_assurance for full checking
         cf_result = replay_service.counterfactual_with_assurance(
-            entry, envelopes, mutations,
-            invariant_engine=ie, contract_engine=ce,
+            entry,
+            envelopes,
+            mutations,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
 
         # The counterfactual result should have fewer violations than original
         # because toggling approval.denied -> approval.granted fixes approval.gating
         cf_contract_ids = {
-            v.contract_id
-            for v in cf_result.contract_violations
-            if isinstance(v, ContractViolation)
+            v.contract_id for v in cf_result.contract_violations if isinstance(v, ContractViolation)
         }
         assert "approval.gating" not in cf_contract_ids
 
@@ -290,7 +324,9 @@ class TestDropEvent:
         ie = InvariantEngine()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="drop-receipt",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="drop-receipt",
         )
 
         # Verify original has no receipt_for_mutation violation
@@ -329,12 +365,15 @@ class TestDropEvent:
         ce = AssuranceContractEngine()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="drop-approval",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="drop-approval",
         )
 
         # Verify original passes approval.gating
         contract_ids_before, _ = _collect_violation_ids(
-            envelopes, contract_engine=ce,
+            envelopes,
+            contract_engine=ce,
         )
         assert "approval.gating" not in contract_ids_before
 
@@ -357,7 +396,8 @@ class TestDropEvent:
         mutated = replay_service._apply_mutation(mutated, mutations[0])
 
         contract_ids_after, _ = _collect_violation_ids(
-            mutated, contract_engine=ce,
+            mutated,
+            contract_engine=ce,
         )
         # Without approval.granted, the runtime check on tool_call.start will fail
         assert "approval.gating" in contract_ids_after
@@ -379,12 +419,16 @@ class TestReplaceEvent:
         ce = AssuranceContractEngine()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="replace-grant",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="replace-grant",
         )
 
         # Verify original passes side_effect.authorization and authority_chain_complete
         contract_ids_before, inv_ids_before = _collect_violation_ids(
-            envelopes, invariant_engine=ie, contract_engine=ce,
+            envelopes,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
         assert "side_effect.authorization" not in contract_ids_before
         assert "governance.authority_chain_complete" not in inv_ids_before
@@ -414,7 +458,9 @@ class TestReplaceEvent:
 
         # Check for violations
         contract_ids_after, inv_ids_after = _collect_violation_ids(
-            mutated, invariant_engine=ie, contract_engine=ce,
+            mutated,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
         # side_effect.authorization requires grant_ref on tool_call.start
         assert "side_effect.authorization" in contract_ids_after
@@ -437,7 +483,9 @@ class TestAdvanceRestartEpoch:
         replay_service = ReplayService()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="restart-epoch",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="restart-epoch",
         )
 
         # All original envelopes should have restart_epoch=0
@@ -445,9 +493,7 @@ class TestAdvanceRestartEpoch:
 
         # Find the first tool_call.start
         tool_env = next(e for e in envelopes if e.event_type == "tool_call.start")
-        tool_idx = next(
-            i for i, e in enumerate(envelopes) if e.trace_id == tool_env.trace_id
-        )
+        tool_idx = next(i for i, e in enumerate(envelopes) if e.trace_id == tool_env.trace_id)
 
         mutations = [
             CounterfactualMutation(
@@ -466,15 +512,11 @@ class TestAdvanceRestartEpoch:
 
         # Events before the target should still be epoch 0
         for i in range(tool_idx):
-            assert mutated[i].restart_epoch == 0, (
-                f"Event at index {i} should still have epoch 0"
-            )
+            assert mutated[i].restart_epoch == 0, f"Event at index {i} should still have epoch 0"
 
         # Events from the target onward should have epoch 1
         for i in range(tool_idx, len(mutated)):
-            assert mutated[i].restart_epoch == 1, (
-                f"Event at index {i} should have epoch 1"
-            )
+            assert mutated[i].restart_epoch == 1, f"Event at index {i} should have epoch 1"
 
         # The diff should show diverged events for all modified envelopes
         assert result.diff_summary["diverged"] == len(envelopes) - tool_idx
@@ -556,9 +598,7 @@ class TestReplayDiff:
         # Find approval.granted and toggle it
         granted_env = next(e for e in envelopes if e.event_type == "approval.granted")
         replayed = [
-            replace(e, event_type="approval.denied")
-            if e.trace_id == granted_env.trace_id
-            else e
+            replace(e, event_type="approval.denied") if e.trace_id == granted_env.trace_id else e
             for e in envelopes
         ]
 
@@ -655,12 +695,16 @@ class TestMultipleMutations:
         ce = AssuranceContractEngine()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="combined",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="combined",
         )
 
         # Verify original is clean
         assert not _has_any_blocker_or_high(
-            envelopes, invariant_engine=ie, contract_engine=ce,
+            envelopes,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
 
         # Find the approval.granted and receipt.issued envelopes
@@ -696,7 +740,9 @@ class TestMultipleMutations:
 
         # Check for both categories of violations
         contract_ids, inv_ids = _collect_violation_ids(
-            mutated, invariant_engine=ie, contract_engine=ce,
+            mutated,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
 
         # approval.gating should fail (no approval.granted before tool_call.start)
@@ -791,9 +837,7 @@ class TestReplayCorpusManagement:
         assert entry.sanitized is False
 
         # Head hash should be SHA-256 of the last envelope's trace_id
-        expected_hash = hashlib.sha256(
-            envelopes[-1].trace_id.encode()
-        ).hexdigest()
+        expected_hash = hashlib.sha256(envelopes[-1].trace_id.encode()).hexdigest()
         assert entry.event_head_hash == expected_hash
 
         # Entry should be stored in the corpus
@@ -805,7 +849,9 @@ class TestReplayCorpusManagement:
         replay_service = ReplayService()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="hash-validate",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="hash-validate",
         )
 
         result = replay_service.replay(entry, envelopes)
@@ -823,7 +869,9 @@ class TestReplayCorpusManagement:
         replay_service = ReplayService()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="hash-mismatch",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="hash-mismatch",
         )
 
         # Create a different trace (different trace_ids -> different head hash)
@@ -910,9 +958,7 @@ class TestReplayCorpusManagement:
 
         assert entry.sanitized is True
         # Entry should still be created with correct hash
-        expected_hash = hashlib.sha256(
-            envelopes[-1].trace_id.encode()
-        ).hexdigest()
+        expected_hash = hashlib.sha256(envelopes[-1].trace_id.encode()).hexdigest()
         assert entry.event_head_hash == expected_hash
 
     def test_ingest_empty_trace_raises(self) -> None:
@@ -920,7 +966,7 @@ class TestReplayCorpusManagement:
         replay_service = ReplayService()
         try:
             replay_service.ingest("run-empty", [], scenario_id="empty")
-            assert False, "Should have raised ValueError"
+            raise AssertionError("Should have raised ValueError")
         except ValueError as exc:
             assert "empty" in str(exc).lower()
 
@@ -929,12 +975,14 @@ class TestReplayCorpusManagement:
         envelopes = make_governed_trace(num_steps=1)
         replay_service = ReplayService()
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="replay-empty",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="replay-empty",
         )
 
         try:
             replay_service.replay(entry, [])
-            assert False, "Should have raised ValueError"
+            raise AssertionError("Should have raised ValueError")
         except ValueError as exc:
             assert "empty" in str(exc).lower()
 
@@ -955,7 +1003,9 @@ class TestCounterfactualWithAssurance:
         ce = AssuranceContractEngine()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="noop",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="noop",
         )
 
         # Use a mutation targeting a non-existent trace_id (becomes no-op)
@@ -969,15 +1019,17 @@ class TestCounterfactualWithAssurance:
         ]
 
         result = replay_service.counterfactual_with_assurance(
-            entry, envelopes, mutations,
-            invariant_engine=ie, contract_engine=ce,
+            entry,
+            envelopes,
+            mutations,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
 
         # No violations should be introduced by a no-op mutation
         # (the assurance checks should still pass on the unmodified trace)
         blocker_violations = [
-            v for v in result.contract_violations
-            if v.severity in ("blocker", "high")
+            v for v in result.contract_violations if v.severity in ("blocker", "high")
         ]
         assert len(blocker_violations) == 0
 
@@ -996,7 +1048,9 @@ class TestCounterfactualWithAssurance:
         ce = AssuranceContractEngine()
 
         entry = replay_service.ingest(
-            envelopes[0].run_id, envelopes, scenario_id="cascade",
+            envelopes[0].run_id,
+            envelopes,
+            scenario_id="cascade",
         )
 
         # Drop all approval.granted events
@@ -1012,8 +1066,11 @@ class TestCounterfactualWithAssurance:
         ]
 
         result = replay_service.counterfactual_with_assurance(
-            entry, envelopes, mutations,
-            invariant_engine=ie, contract_engine=ce,
+            entry,
+            envelopes,
+            mutations,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
 
         # The diff should show the dropped events
@@ -1022,9 +1079,7 @@ class TestCounterfactualWithAssurance:
         # counterfactual_with_assurance runs invariant + post_run checks.
         # Dropping events creates seq gaps -> trace.hash_chain_continuity
         violation_ids = {
-            v.contract_id
-            for v in result.contract_violations
-            if isinstance(v, ContractViolation)
+            v.contract_id for v in result.contract_violations if isinstance(v, ContractViolation)
         }
         invariant_ids = {
             v.invariant_id
@@ -1041,6 +1096,8 @@ class TestCounterfactualWithAssurance:
             mutated = replay_service._apply_mutation(mutated, m)
 
         contract_ids, _ = _collect_violation_ids(
-            mutated, invariant_engine=ie, contract_engine=ce,
+            mutated,
+            invariant_engine=ie,
+            contract_engine=ce,
         )
         assert "approval.gating" in contract_ids

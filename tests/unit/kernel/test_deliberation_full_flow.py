@@ -40,24 +40,28 @@ def _make_integration(
 
     # Default LLM responses.
     if proposal_response is None:
-        proposal_response = json.dumps({
-            "plan_summary": "Refactor module X",
-            "contract_draft": {"steps": 2},
-            "expected_cost": "low",
-            "expected_risk": "low",
-            "expected_reward": "high",
-        })
+        proposal_response = json.dumps(
+            {
+                "plan_summary": "Refactor module X",
+                "contract_draft": {"steps": 2},
+                "expected_cost": "low",
+                "expected_risk": "low",
+                "expected_reward": "high",
+            }
+        )
     if critique_response is None:
         # Use a placeholder that references cand IDs dynamically.
         # We return empty critiques by default for simplicity.
         critique_response = json.dumps([])
     if arbitration_response is None:
-        arbitration_response = json.dumps({
-            "selected_candidate_id": "placeholder",
-            "confidence": 0.9,
-            "reasoning": "Best overall approach",
-            "merge_notes": "Ready to execute",
-        })
+        arbitration_response = json.dumps(
+            {
+                "selected_candidate_id": "placeholder",
+                "confidence": 0.9,
+                "reasoning": "Best overall approach",
+                "merge_notes": "Ready to execute",
+            }
+        )
 
     def proposer_factory() -> Any:
         p = MagicMock()
@@ -240,16 +244,16 @@ class TestFullDeliberationFlow:
 
     def test_critique_artifacts_stored(self, tmp_path: Path) -> None:
         """When critiques are generated, they are stored as artifacts."""
-        critique_response = json.dumps([
-            {
-                "target_candidate_id": "WILL_BE_WRONG",
-                "issue_type": "perf",
-                "severity": "medium",
-            },
-        ])
-        svc, _store, arts = _make_integration(
-            tmp_path, critique_response=critique_response
+        critique_response = json.dumps(
+            [
+                {
+                    "target_candidate_id": "WILL_BE_WRONG",
+                    "issue_type": "perf",
+                    "severity": "medium",
+                },
+            ]
         )
+        svc, _store, arts = _make_integration(tmp_path, critique_response=critique_response)
 
         svc.run_full_deliberation(
             task_id="t4",

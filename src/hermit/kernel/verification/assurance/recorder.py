@@ -265,11 +265,7 @@ class TraceRecorder:
         """
         lo = center_event_seq - window
         hi = center_event_seq + window
-        return [
-            e
-            for e in self._traces.get(run_id, [])
-            if lo <= e.event_seq <= hi
-        ]
+        return [e for e in self._traces.get(run_id, []) if lo <= e.event_seq <= hi]
 
     def load_trace(self, run_id: str) -> list[TraceEnvelope]:
         """Load trace envelopes for a run.
