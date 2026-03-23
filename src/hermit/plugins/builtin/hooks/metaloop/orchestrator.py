@@ -21,6 +21,7 @@ from typing import Any, cast
 
 import structlog
 
+from hermit.kernel.execution.self_modify._metadata_utils import parse_metadata as _parse_metadata
 from hermit.plugins.builtin.hooks.metaloop.backlog import SpecBacklog
 from hermit.plugins.builtin.hooks.metaloop.models import (
     MAX_REVISION_CYCLES,
@@ -61,19 +62,6 @@ def _run_async(awaitable: Awaitable[Any]) -> Any:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, _as_coroutine(awaitable)).result()
     return asyncio.run(_as_coroutine(awaitable))
-
-
-def _parse_metadata(raw: str | SpecDict | None) -> SpecDict:
-    """Parse metadata from DB row (may be JSON string or dict)."""
-    if raw is None:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        result = json.loads(raw)
-        return cast(SpecDict, result) if isinstance(result, dict) else {}
-    except (json.JSONDecodeError, TypeError):
-        return {}
 
 
 def _serialize_metadata(meta: SpecDict) -> str:

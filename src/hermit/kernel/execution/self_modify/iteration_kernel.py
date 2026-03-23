@@ -26,6 +26,8 @@ from typing import Any
 
 import structlog
 
+from hermit.kernel.execution.self_modify._metadata_utils import parse_metadata
+
 __all__ = [
     "ITERATION_TRANSITIONS",
     "MAX_SEED_CHAIN_DEPTH",
@@ -377,15 +379,8 @@ class IterationKernel:
             )
 
         # Update the metadata state tracking too.
-        import json
-
         raw_meta = entry.get("metadata")
-        meta: dict = {}
-        if raw_meta:
-            try:
-                meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
+        meta = parse_metadata(raw_meta)
         meta["state"] = new_state.value
 
         updated = self._store.update_spec_status(
@@ -430,18 +425,9 @@ class IterationKernel:
         if current != IterationState.reconciling:
             return False
 
-        import json
-
         raw_meta = entry.get("metadata")
-        if not raw_meta:
-            return False
-
-        try:
-            meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
-        except (json.JSONDecodeError, TypeError):
-            return False
-
-        if not isinstance(meta, dict):
+        meta = parse_metadata(raw_meta)
+        if not meta:
             return False
 
         # 1. Benchmark results must be present and non-empty.
@@ -545,18 +531,9 @@ class IterationKernel:
         if entry is None:
             raise KeyError(f"Iteration not found: {iteration_id}")
 
-        import json
-
         raw_meta = entry.get("metadata")
-        if not raw_meta:
-            return None
-
-        try:
-            meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
-        except (json.JSONDecodeError, TypeError):
-            return None
-
-        if not isinstance(meta, dict):
+        meta = parse_metadata(raw_meta)
+        if not meta:
             return None
 
         next_goal = meta.get("next_seed")
@@ -597,8 +574,6 @@ class IterationKernel:
         if the chain exceeds :data:`MAX_SEED_CHAIN_DEPTH` or if *new_spec_id*
         already appears in the ancestry (circular chain).
         """
-        import json
-
         visited: set[str] = {new_spec_id}
         current = parent_iteration_id
         depth = 1
@@ -622,13 +597,8 @@ class IterationKernel:
                 break
 
             raw_meta = entry.get("metadata")
-            if not raw_meta:
-                break
-            try:
-                meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
-            except (json.JSONDecodeError, TypeError):
-                break
-            if not isinstance(meta, dict):
+            meta = parse_metadata(raw_meta)
+            if not meta:
                 break
 
             current = meta.get("parent_iteration_id")
@@ -640,8 +610,6 @@ class IterationKernel:
         Searches for entries where metadata.iteration_id matches. Falls back
         to using iteration_id as spec_id for simpler lookups.
         """
-        import json
-
         # First: try direct spec_id lookup (fast path).
         entry = self._store.get_spec_entry(iteration_id)
         if entry is not None:
@@ -651,13 +619,10 @@ class IterationKernel:
         entries = self._store.list_spec_backlog(limit=500)
         for e in entries:
             raw = e.get("metadata")
-            if not raw:
+            meta = parse_metadata(raw)
+            if not meta:
                 continue
-            try:
-                meta = json.loads(raw) if isinstance(raw, str) else raw
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if isinstance(meta, dict) and meta.get("iteration_id") == iteration_id:
+            if meta.get("iteration_id") == iteration_id:
                 return e
 
         return None

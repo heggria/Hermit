@@ -985,7 +985,7 @@ class IterationBridge:
 
         meta["proof_chain_hash"] = chain_hash
 
-        self._store.update_spec_status(  # type: ignore[union-attr]
+        self._store.update_spec_status(
             spec_id,
             entry.get("status", "accepted"),
             metadata=meta,
@@ -1015,7 +1015,7 @@ class IterationBridge:
         if unexplained_drift is not None:
             meta["unexplained_drift"] = unexplained_drift
 
-        self._store.update_spec_status(  # type: ignore[union-attr]
+        self._store.update_spec_status(
             spec_id,
             entry.get("status", "reconciling"),
             metadata=meta,
@@ -1033,7 +1033,7 @@ class IterationBridge:
 
         meta["pr_info"] = pr_info
 
-        self._store.update_spec_status(  # type: ignore[union-attr]
+        self._store.update_spec_status(
             spec_id,
             entry.get("status", "pr_created"),
             metadata=meta,

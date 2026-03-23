@@ -257,7 +257,7 @@ class ProposalGenerator:
                     "expected_risk": result.expected_risk,
                     "expected_reward": result.expected_reward,
                 }
-                artifact_store.store_json(artifact_payload)
+                _ref, _hash = artifact_store.store_json(artifact_payload)
 
             store.update_step_attempt(attempt.step_attempt_id, status="succeeded")
             store.update_step(step.step_id, status="completed")

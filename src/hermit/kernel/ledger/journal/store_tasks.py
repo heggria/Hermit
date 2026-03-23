@@ -281,6 +281,17 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
         return [self._task_from_row(row) for row in rows]
 
+    def list_child_tasks(
+        self, *, parent_task_id: str, limit: int = 50
+    ) -> list[TaskRecord]:
+        """Return tasks whose parent_task_id matches the given value."""
+        with self._lock:
+            rows = self._rows(
+                "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT ?",
+                (parent_task_id, limit),
+            )
+        return [self._task_from_row(row) for row in rows]
+
     def update_task_status(
         self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
     ) -> None:
@@ -1569,6 +1580,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         self,
         *,
         task_id: str | None = None,
+        event_type: str | None = None,
         after_event_seq: int | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
@@ -1577,6 +1589,9 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         if task_id:
             clauses.append("e.task_id = ?")
             params.append(task_id)
+        if event_type:
+            clauses.append("e.event_type = ?")
+            params.append(event_type)
         if after_event_seq is not None:
             clauses.append("e.event_seq > ?")
             params.append(after_event_seq)

@@ -253,7 +253,7 @@ class CritiqueGenerator:
                 "critique_count": len(critiques),
                 "target_ids": [c.target_candidate_id for c in critiques],
             }
-            artifact_store.store_json(artifact_payload)
+            _ref, _hash = artifact_store.store_json(artifact_payload)
 
             store.update_step_attempt(attempt.step_attempt_id, status="succeeded")
             store.update_step(step.step_id, status="completed")

@@ -288,9 +288,16 @@ class TestMetaLoopOrchestrator:
         mock_bench.test_passed = 10
         mock_bench.coverage = 95.0
         mock_bench.lint_violations = 0
+        mock_bench.typecheck_errors = 0
         mock_bench.duration_seconds = 1.0
         mock_bench.regression_detected = False
         mock_bench.compared_to_baseline = {}
+        mock_bench.delta_info = {}
+        mock_bench.tier_reached = ""
+        mock_bench.strategy_used = ""
+        mock_bench.verification_results = ()
+        mock_bench.error_details = ()
+        mock_bench.raw_output = ""
 
         with (
             patch(
@@ -303,6 +310,7 @@ class TestMetaLoopOrchestrator:
                 new_callable=AsyncMock,
                 return_value=mock_bench,
             ),
+            patch.object(orchestrator, "_run_council_review", return_value=None),
         ):
             # Walk through phases until we hit a terminal state
             phases_seen = [PipelinePhase.PENDING]

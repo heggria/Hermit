@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.execution.executor.execution_helpers import (
+    load_witness_payload as _load_witness_payload,
+)
 from hermit.kernel.execution.executor.witness import WitnessCapture
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy.models.models import ActionRequest
@@ -56,13 +58,4 @@ class WitnessHandler:
         return self._witness.validate(witness_ref, action_request, attempt_ctx)
 
     def load_witness_payload(self, witness_ref: str | None) -> dict[str, Any]:
-        if not witness_ref:
-            return {}
-        artifact = self.store.get_artifact(witness_ref)
-        if artifact is None:
-            return {}
-        try:
-            payload: Any = json.loads(self.artifact_store.read_text(artifact.uri))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+        return _load_witness_payload(self.store, self.artifact_store, witness_ref)

@@ -679,7 +679,7 @@ class TestDispatchDeliberationGating:
         self,
         stores: tuple[KernelStore, ArtifactStore],
     ) -> None:
-        """A step with risk_band='high' should be gated by deliberation."""
+        """A step with risk_band='high' and a mutation action_class should be gated."""
         store, _artifact_store = stores
         from hermit.kernel.execution.coordination.dispatch import KernelDispatchService
 
@@ -688,7 +688,7 @@ class TestDispatchDeliberationGating:
 
         _task_id, step_id, step_attempt_id = self._create_attempt(
             store,
-            step_kind="planning",
+            step_kind="write_local",
             risk_band="high",
         )
 
@@ -700,10 +700,10 @@ class TestDispatchDeliberationGating:
         updated_attempt = store.get_step_attempt(step_attempt_id)
         assert updated_attempt is not None
         assert updated_attempt.status == "deliberation_pending"
-        assert updated_attempt.status_reason == "deliberation_required"
+        assert updated_attempt.waiting_reason == "deliberation_required"
         ctx = updated_attempt.context or {}
         assert ctx.get("deliberation_risk_band") == "high"
-        assert ctx.get("deliberation_step_kind") == "planning"
+        assert ctx.get("deliberation_step_kind") == "write_local"
 
         # Verify step was moved to deliberation_pending
         updated_step = store.get_step(step_id)
@@ -722,7 +722,7 @@ class TestDispatchDeliberationGating:
         self,
         stores: tuple[KernelStore, ArtifactStore],
     ) -> None:
-        """A step with risk_band='critical' should be gated by deliberation."""
+        """A step with risk_band='critical' and a mutation action_class should be gated."""
         store, _artifact_store = stores
         from hermit.kernel.execution.coordination.dispatch import KernelDispatchService
 
@@ -731,7 +731,7 @@ class TestDispatchDeliberationGating:
 
         _task_id, _step_id, step_attempt_id = self._create_attempt(
             store,
-            step_kind="deploy",
+            step_kind="external_mutation",
             risk_band="critical",
         )
 
@@ -767,11 +767,11 @@ class TestDispatchDeliberationGating:
         assert updated_attempt is not None
         assert updated_attempt.status == "running"
 
-    def test_medium_risk_planning_triggers_deliberation(
+    def test_medium_risk_mutation_triggers_deliberation(
         self,
         stores: tuple[KernelStore, ArtifactStore],
     ) -> None:
-        """Medium risk + planning step kind should trigger deliberation at dispatch level."""
+        """Medium risk + mutation action_class should trigger deliberation at dispatch level."""
         store, _artifact_store = stores
         from hermit.kernel.execution.coordination.dispatch import KernelDispatchService
 
@@ -780,7 +780,7 @@ class TestDispatchDeliberationGating:
 
         _task_id, _step_id, step_attempt_id = self._create_attempt(
             store,
-            step_kind="planning",
+            step_kind="write_local",
             risk_band="medium",
         )
 
@@ -791,11 +791,11 @@ class TestDispatchDeliberationGating:
         assert updated_attempt is not None
         assert updated_attempt.status == "deliberation_pending"
 
-    def test_medium_risk_respond_bypasses_deliberation(
+    def test_medium_risk_readonly_bypasses_deliberation(
         self,
         stores: tuple[KernelStore, ArtifactStore],
     ) -> None:
-        """Medium risk + non-critical step kind (respond) should bypass deliberation."""
+        """Medium risk + readonly action_class should bypass deliberation."""
         store, _artifact_store = stores
         from hermit.kernel.execution.coordination.dispatch import KernelDispatchService
 
@@ -804,7 +804,7 @@ class TestDispatchDeliberationGating:
 
         _task_id, _step_id, step_attempt_id = self._create_attempt(
             store,
-            step_kind="respond",
+            step_kind="read_local",
             risk_band="medium",
         )
 

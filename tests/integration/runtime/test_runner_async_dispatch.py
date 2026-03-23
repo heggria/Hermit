@@ -336,6 +336,7 @@ def test_runner_enqueue_approval_resume_handles_missing_deny_and_grant() -> None
                 "status": "denied",
                 "resolved_by": "user",
                 "resolution": {"status": "denied", "mode": "denied", "reason": "not-safe"},
+                "expected_status": "pending",
             },
         ),
         (
@@ -344,6 +345,7 @@ def test_runner_enqueue_approval_resume_handles_missing_deny_and_grant() -> None
                 "status": "granted",
                 "resolved_by": "user",
                 "resolution": {"status": "granted", "mode": "mutable_workspace"},
+                "expected_status": "pending",
             },
         ),
     ]

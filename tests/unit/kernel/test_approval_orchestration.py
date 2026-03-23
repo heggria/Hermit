@@ -370,6 +370,7 @@ class TestApprovalTimeoutService:
                 "mode": "denied",
                 "reason": "approval_timeout",
             },
+            expected_status="pending",
         )
         # Should emit timed_out event but NOT escalation event
         assert store.append_event.call_count == 1

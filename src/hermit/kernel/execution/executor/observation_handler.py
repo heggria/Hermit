@@ -11,6 +11,9 @@ from hermit.kernel.execution.coordination.observation import (
     normalize_observation_progress,
     normalize_observation_ticket,
 )
+from hermit.kernel.execution.executor.execution_helpers import (
+    is_governed_action as _is_governed_action,
+)
 from hermit.kernel.execution.executor.formatting import (
     compact_progress_text as _compact_progress_text,
 )
@@ -35,14 +38,6 @@ if TYPE_CHECKING:
     from hermit.kernel.execution.executor.executor import ToolExecutionResult
 
 _RUNTIME_SNAPSHOT_KEY = "runtime_snapshot"
-
-
-def _is_governed_action(tool: ToolSpec, policy: PolicyDecision) -> bool:
-    if tool.readonly and policy.verdict == "allow":
-        return False
-    if policy.action_class in {"read_local", "network_read"} and not policy.requires_receipt:
-        return False
-    return policy.action_class != "ephemeral_ui_mutation"
 
 
 class ObservationHandler:

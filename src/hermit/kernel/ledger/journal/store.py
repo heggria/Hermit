@@ -868,6 +868,38 @@ class KernelStore(
             self._ensure_column("step_attempts", "waiting_reason", "TEXT")
             self._ensure_column("step_attempts", "last_heartbeat_at", "REAL")
             self._ensure_column("step_attempts", "status_reason", "TEXT")
+            # Ensure teams + milestones tables exist.
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS teams (
+                    team_id TEXT PRIMARY KEY,
+                    program_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    workspace_id TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    role_assembly_json TEXT NOT NULL DEFAULT '{}',
+                    context_boundary_json TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL,
+                    updated_at REAL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS milestones (
+                    milestone_id TEXT PRIMARY KEY,
+                    team_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    dependency_ids_json TEXT NOT NULL DEFAULT '[]',
+                    acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL,
+                    completed_at REAL
+                )
+                """
+            )
             self._migrate_event_hashes_table()
             self._backfill_event_hash_chain()
             self._conn.execute(

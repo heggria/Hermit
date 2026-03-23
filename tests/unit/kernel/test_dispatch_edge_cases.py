@@ -270,7 +270,7 @@ class TestHeartbeatTimeout:
         sa_id, kwargs = store.updates[0]
         assert sa_id == "sa-1"
         assert kwargs["status"] == "failed"
-        assert kwargs["status_reason"] == "heartbeat_timeout"
+        assert kwargs["waiting_reason"] == "heartbeat_timeout"
 
     def test_heartbeat_falls_back_to_claimed_at(self) -> None:
         """When no heartbeat reported, uses claimed_at as last beat."""
@@ -398,7 +398,7 @@ class TestForceFailAttempt:
         assert len(store.updates) >= 1
         _, kwargs = store.updates[0]
         assert kwargs["status"] == "failed"
-        assert kwargs["status_reason"] == "worker_exception"
+        assert kwargs["waiting_reason"] == "worker_exception"
 
     def test_force_fail_already_terminal_skips_update(self) -> None:
         store = FakeDispatchStore()
