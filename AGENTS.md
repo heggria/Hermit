@@ -89,7 +89,7 @@ Tests:
 make test
 ```
 
-`pyproject.toml` requires Python `>= 3.13`. Do not run the CLI with Python 3.11.
+`pyproject.toml` requires Python `>= 3.11`.
 
 Unified environment control entrypoints:
 

@@ -19,9 +19,9 @@ def _require(path: str, needle: str) -> None:
 
 def main() -> int:
     checks = {
-        "README.md": [SYNC_COMMAND, "Python `3.13+`"],
-        "README.zh-CN.md": [SYNC_COMMAND, "Python `3.13+`"],
-        "docs/getting-started.md": [SYNC_COMMAND, "Python `3.13+`"],
+        "README.md": [SYNC_COMMAND, "Python `3.11+`"],
+        "README.zh-CN.md": [SYNC_COMMAND, "Python `3.11+`"],
+        "docs/getting-started.md": [SYNC_COMMAND, "Python `3.11+`"],
     }
     for path, needles in checks.items():
         for needle in needles:

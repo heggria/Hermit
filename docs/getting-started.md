@@ -10,11 +10,11 @@ Every code block below is copy-paste ready.
 
 ## Prerequisites
 
-Requires Python `3.13+` and [`uv`](https://docs.astral.sh/uv/).
+Requires Python `3.11+` and [`uv`](https://docs.astral.sh/uv/).
 
 | Requirement | Version | Check |
 |---|---|---|
-| Python | 3.13+ | `python3 --version` |
+| Python | 3.11+ | `python3 --version` |
 | uv | latest | `uv --version` |
 | API key | Anthropic or OpenAI | see [Connecting a Provider](#connecting-a-provider-like-installing-a-driver) |
 
@@ -41,7 +41,7 @@ make install
 
 Both paths run the same installer. It will:
 
-1. Install Hermit via `uv tool install` with Python 3.13
+1. Install Hermit via `uv tool install` with Python 3.11+
 2. Run `hermit init` to create `~/.hermit/`
 3. Auto-detect API keys from your shell, `~/.claude/settings.json`, and `~/.codex/auth.json`
 
@@ -245,21 +245,21 @@ Make sure at least one of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `HERMIT_AUTH
 hermit auth status
 ```
 
-### `Python >= 3.13 required`
+### `Python >= 3.11 required`
 
-Hermit requires Python 3.13 or later. Check your version:
+Hermit requires Python 3.11 or later. Check your version:
 
 ```bash
 python3 --version
 ```
 
-If you have an older version, install 3.13+ via `uv`:
+If you have an older version, install 3.11+ via `uv`:
 
 ```bash
-uv python install 3.13
+uv python install 3.11
 ```
 
-The installer uses `--python 3.13` automatically, so this is only relevant for source installs via `uv sync`.
+The installer uses `--python 3.11` automatically, so this is only relevant for source installs via `uv sync`.
 
 ### Task stuck in `blocked` status
 
