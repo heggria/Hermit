@@ -9,6 +9,10 @@ from typing import Any, cast
 
 import structlog
 
+from hermit.kernel.execution.competition.deliberation_integration import (
+    DeliberationIntegration,
+)
+
 from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
@@ -236,6 +240,7 @@ class ToolExecutor:
         progress_summarizer: ProgressSummaryFormatter | None = None,
         progress_summary_keepalive_seconds: float = 15.0,
         tool_output_limit: int = 4000,
+        deliberation: DeliberationIntegration | None = None,
     ) -> None:
         self.registry = registry
         self.store = store
@@ -268,6 +273,7 @@ class ToolExecutor:
             float(progress_summary_keepalive_seconds or 0.0), 0.0
         )
         self.tool_output_limit = tool_output_limit
+        self._deliberation = deliberation
 
     def _set_attempt_phase(
         self,
@@ -783,6 +789,188 @@ class ToolExecutor:
                     execution_status="blocked",
                     state_applied=True,
                 )
+
+        # -- Deliberation gate: high-risk mutation actions trigger LLM debate --
+        deliberation_ref: str | None = None
+        if governed and self._deliberation is not None:
+            deliberation_risk = policy.risk_level or "medium"
+            routing = self._deliberation.evaluate_and_route(
+                task_id=attempt_ctx.task_id,
+                step_id=attempt_ctx.step_id,
+                risk_band=deliberation_risk,
+                step_kind=action_type,
+            )
+            if routing["deliberation_required"]:
+                deliberation_context = {
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "risk_level": deliberation_risk,
+                    "action_class": action_type,
+                    "task_id": attempt_ctx.task_id,
+                    "step_id": attempt_ctx.step_id,
+                }
+                deliberation_decision = self._deliberation.run_full_deliberation(
+                    task_id=attempt_ctx.task_id,
+                    step_id=attempt_ctx.step_id,
+                    risk_band=deliberation_risk,
+                    step_kind=action_type,
+                    context=deliberation_context,
+                )
+
+                # Store deliberation artifact for receipt linkage.
+                debate_id = deliberation_decision.debate_id
+                if debate_id:
+                    dlb_payload = {
+                        "artifact_type": "deliberation_gate_record",
+                        "debate_id": debate_id,
+                        "task_id": attempt_ctx.task_id,
+                        "step_id": attempt_ctx.step_id,
+                        "tool_name": tool_name,
+                        "action_class": action_type,
+                        "selected_candidate_id": deliberation_decision.selected_candidate_id,
+                        "confidence": deliberation_decision.confidence,
+                        "escalation_required": deliberation_decision.escalation_required,
+                        "merge_notes": deliberation_decision.merge_notes,
+                    }
+                    deliberation_ref, _ = self.artifact_store.store_json(dlb_payload)
+
+                confidence = deliberation_decision.confidence
+
+                if deliberation_decision.escalation_required or confidence < 0.3:
+                    # Hard block: all proposals rejected or confidence too low.
+                    reason = (
+                        "deliberation_escalation"
+                        if deliberation_decision.escalation_required
+                        else "deliberation_low_confidence"
+                    )
+                    dlb_decision_id = self.decision_service.record(
+                        task_id=attempt_ctx.task_id,
+                        step_id=attempt_ctx.step_id,
+                        step_attempt_id=attempt_ctx.step_attempt_id,
+                        decision_type="deliberation_gate",
+                        verdict="deny",
+                        reason=f"Deliberation {reason}: confidence={confidence:.2f}",
+                        evidence_refs=[
+                            ref
+                            for ref in [action_ref, policy_ref, deliberation_ref]
+                            if ref
+                        ],
+                        policy_ref=policy_ref,
+                        action_type=action_type,
+                    )
+                    self.store.update_step_attempt(
+                        attempt_ctx.step_attempt_id,
+                        status="blocked",
+                        waiting_reason=reason,
+                        state_witness_ref=witness_ref,
+                        decision_id=dlb_decision_id,
+                    )
+                    self.store.update_step(attempt_ctx.step_id, status="blocked")
+                    self.store.update_task_status(attempt_ctx.task_id, "blocked")
+                    return ToolExecutionResult(
+                        model_content=(
+                            f"[Deliberation Blocked] {reason} — "
+                            f"confidence={confidence:.2f}, human review required."
+                        ),
+                        raw_result={"deliberation_decision": deliberation_decision},
+                        blocked=True,
+                        suspended=True,
+                        waiting_kind="awaiting_deliberation",
+                        policy_decision=policy,
+                        decision_id=dlb_decision_id,
+                        policy_ref=policy_ref,
+                        witness_ref=witness_ref,
+                        result_code="deliberation_blocked",
+                        execution_status="blocked",
+                        state_applied=True,
+                    )
+
+                elif confidence < 0.7:
+                    # Soft escalation: require human approval.
+                    dlb_decision_id = self.decision_service.record(
+                        task_id=attempt_ctx.task_id,
+                        step_id=attempt_ctx.step_id,
+                        step_attempt_id=attempt_ctx.step_attempt_id,
+                        decision_type="deliberation_gate",
+                        verdict="require_approval",
+                        reason=(
+                            f"Deliberation passed with low confidence ({confidence:.2f}). "
+                            f"Selected: {deliberation_decision.selected_candidate_id}."
+                        ),
+                        evidence_refs=[
+                            ref
+                            for ref in [action_ref, policy_ref, deliberation_ref]
+                            if ref
+                        ],
+                        policy_ref=policy_ref,
+                        action_type=action_type,
+                    )
+                    approval_msg = (
+                        f"[Deliberation Review] confidence={confidence:.2f}\n"
+                        f"Selected: {deliberation_decision.selected_candidate_id}\n"
+                        f"Notes: {deliberation_decision.merge_notes[:200]}"
+                    )
+                    approval_id = self.approval_service.request(
+                        task_id=attempt_ctx.task_id,
+                        step_id=attempt_ctx.step_id,
+                        step_attempt_id=attempt_ctx.step_attempt_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        action_request=action_request,
+                        policy_decision=policy,
+                        reason=approval_msg,
+                    )
+                    self.store.update_step_attempt(
+                        attempt_ctx.step_attempt_id,
+                        status="blocked",
+                        waiting_reason="deliberation_approval_required",
+                        approval_id=approval_id,
+                        decision_id=dlb_decision_id,
+                        state_witness_ref=witness_ref,
+                    )
+                    self.store.update_step(attempt_ctx.step_id, status="blocked")
+                    self.store.update_task_status(attempt_ctx.task_id, "blocked")
+                    return ToolExecutionResult(
+                        model_content=approval_msg,
+                        raw_result={"deliberation_decision": deliberation_decision},
+                        blocked=True,
+                        suspended=True,
+                        waiting_kind="awaiting_approval",
+                        approval_id=approval_id,
+                        approval_message=approval_msg,
+                        policy_decision=policy,
+                        decision_id=dlb_decision_id,
+                        policy_ref=policy_ref,
+                        witness_ref=witness_ref,
+                        result_code="deliberation_approval_required",
+                        execution_status="blocked",
+                        state_applied=True,
+                    )
+
+                else:
+                    # High confidence: proceed. Record decision for audit.
+                    dlb_decision_id = self.decision_service.record(
+                        task_id=attempt_ctx.task_id,
+                        step_id=attempt_ctx.step_id,
+                        step_attempt_id=attempt_ctx.step_attempt_id,
+                        decision_type="deliberation_gate",
+                        verdict="allow",
+                        reason=(
+                            f"Deliberation passed with confidence={confidence:.2f}. "
+                            f"Selected: {deliberation_decision.selected_candidate_id}."
+                        ),
+                        evidence_refs=[
+                            ref
+                            for ref in [action_ref, policy_ref, deliberation_ref]
+                            if ref
+                        ],
+                        policy_ref=policy_ref,
+                        action_type=action_type,
+                    )
+                    self.store.update_step_attempt(
+                        attempt_ctx.step_attempt_id,
+                        decision_id=dlb_decision_id,
+                    )
 
         if policy.verdict == "deny":
             self._set_attempt_phase(attempt_ctx, "settling", reason="policy_denied")
