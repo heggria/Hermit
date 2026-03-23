@@ -208,7 +208,7 @@ def test_force_fail_attempt_diamond_dag_propagation(
     store.update_step_attempt(
         claimed_b.step_attempt_id,
         status="failed",
-        waiting_reason="worker_exception",
+        status_reason="worker_exception",
         finished_at=crash_time,
     )
     # 2. Mark the step as failed
@@ -218,7 +218,7 @@ def test_force_fail_attempt_diamond_dag_propagation(
     failed_attempt = store.get_step_attempt(claimed_b.step_attempt_id)
     assert failed_attempt is not None
     assert failed_attempt.status == "failed"
-    assert failed_attempt.waiting_reason == "worker_exception"
+    assert failed_attempt.status_reason == "worker_exception"
     assert store.get_step(key_map["b"]).status == "failed"
 
     # 3. Propagate failure through the DAG

@@ -90,7 +90,7 @@ The kernel already has a substantial foundation: a DAG execution system with joi
 
 **StepAttemptRecord** (`records.py:59-103`):
 - 37 fields covering the full governed execution lifecycle
-- Key fields: `step_attempt_id`, `task_id`, `step_id`, `attempt`, `status`, `context` (dict), `queue_priority`, `waiting_reason`, `approval_id`, `decision_id`, `capability_grant_id`, `workspace_lease_id`
+- Key fields: `step_attempt_id`, `task_id`, `step_id`, `attempt`, `status`, `context` (dict), `queue_priority`, `status_reason`, `approval_id`, `decision_id`, `capability_grant_id`, `workspace_lease_id`
 - Artifact references: `state_witness_ref`, `context_pack_ref`, `working_state_ref`, `environment_ref`, `action_request_ref`, `policy_result_ref`, `approval_packet_ref`, `execution_contract_ref`, `evidence_case_ref`, `authorization_plan_ref`, `reconciliation_ref`, `pending_execution_ref`
 - Reentry support: `reentry_boundary`, `reentry_reason`, `resume_from_ref`
 - Supersession: `superseded_by_step_attempt_id`

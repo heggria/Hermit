@@ -430,10 +430,12 @@ class WebhookServer:
             host=self._config.host,
             port=self._config.port,
         )
-        if self._config.control_secret is None:
-            _log.warning(  # type: ignore[call-arg]
-                "webhook_no_control_secret",
-                detail="Control API endpoints are unauthenticated; set control_secret in webhooks.json",
+        if not self._config.control_secret:
+            _log.error(  # type: ignore[call-arg]
+                "webhook_control_api_unauthenticated",
+                detail="Control API endpoints (approvals, rollbacks, projections) are running "
+                "WITHOUT authentication. Set HERMIT_WEBHOOK_CONTROL_SECRET or "
+                "webhook_control_secret in config to secure these endpoints.",
             )
         for route in self._config.routes:
             if route.secret is None:

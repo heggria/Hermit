@@ -154,29 +154,30 @@ class TestCheckDeliberationNeeded:
     def test_high_risk_triggers_deliberation(self) -> None:
         store = FakeDispatchStore()
         attempt = _fake_attempt(step_attempt_id="sa-2", context={"risk_band": "high"})
-        step = _fake_step(step_id="s-1", kind="execute")
+        step = _fake_step(step_id="s-1", kind="execute_command")
         store.add_attempt(attempt)
         store.add_step(step)
         svc = _build_service(store)
         assert svc._check_deliberation_needed("sa-2") is True
 
     def test_missing_step_defaults_to_execute_kind(self) -> None:
-        """When step is not found, step_kind defaults to 'execute'."""
+        """When step is not found, step_kind defaults to 'execute' which is not
+        in _MEDIUM_RISK_DELIBERATION_ACTIONS, so medium risk should not trigger."""
         store = FakeDispatchStore()
         attempt = _fake_attempt(
             step_attempt_id="sa-3",
             context={"risk_band": "medium"},
         )
         store.add_attempt(attempt)
-        # No step added — get_step returns None
+        # No step added — get_step returns None, defaults to "execute"
         svc = _build_service(store)
-        # medium risk + execute kind → no deliberation
+        # medium risk + "execute" (not a recognized action_class) → no deliberation
         assert svc._check_deliberation_needed("sa-3") is False
 
-    def test_medium_risk_with_planning_kind_triggers(self) -> None:
+    def test_medium_risk_with_mutation_action_triggers(self) -> None:
         store = FakeDispatchStore()
         attempt = _fake_attempt(step_attempt_id="sa-4", context={"risk_band": "medium"})
-        step = _fake_step(step_id="s-1", kind="planning")
+        step = _fake_step(step_id="s-1", kind="write_local")
         store.add_attempt(attempt)
         store.add_step(step)
         svc = _build_service(store)
@@ -202,7 +203,7 @@ class TestDispatchNoReadyAttempts:
         # Simulate a future in-flight
         fake_future = MagicMock()
         fake_future.done.return_value = False
-        svc._futures[fake_future] = "sa-1"
+        svc.futures[fake_future] = "sa-1"
         assert svc._capacity_available() is False
 
 
@@ -269,7 +270,7 @@ class TestHeartbeatTimeout:
         sa_id, kwargs = store.updates[0]
         assert sa_id == "sa-1"
         assert kwargs["status"] == "failed"
-        assert kwargs["waiting_reason"] == "heartbeat_timeout"
+        assert kwargs["status_reason"] == "heartbeat_timeout"
 
     def test_heartbeat_falls_back_to_claimed_at(self) -> None:
         """When no heartbeat reported, uses claimed_at as last beat."""
@@ -344,9 +345,9 @@ class TestCapacityCheck:
         svc = _build_service(store, worker_count=4)
         f1 = MagicMock()
         f1.done.return_value = False
-        svc._futures[f1] = "sa-1"
+        svc.futures[f1] = "sa-1"
         assert svc._capacity_available() is True
-        assert len(svc._futures) < svc._worker_count
+        assert len(svc.futures) < svc.worker_count
 
     def test_capacity_at_worker_count(self) -> None:
         store = FakeDispatchStore()
@@ -354,7 +355,7 @@ class TestCapacityCheck:
         for i in range(2):
             f = MagicMock()
             f.done.return_value = False
-            svc._futures[f] = f"sa-{i}"
+            svc.futures[f] = f"sa-{i}"
         assert svc._capacity_available() is False
 
     def test_capacity_restored_after_reap(self) -> None:
@@ -363,7 +364,7 @@ class TestCapacityCheck:
         f1 = MagicMock()
         f1.done.return_value = True
         f1.result.return_value = None
-        svc._futures[f1] = "sa-1"
+        svc.futures[f1] = "sa-1"
         svc._reap_futures()
         assert svc._capacity_available() is True
 
@@ -377,13 +378,13 @@ class TestForceFailAttempt:
     def test_force_fail_empty_id_is_noop(self) -> None:
         store = FakeDispatchStore()
         svc = _build_service(store)
-        svc._force_fail_attempt("")
+        svc.force_fail_attempt("")
         assert store.updates == []
 
     def test_force_fail_nonexistent_attempt_is_noop(self) -> None:
         store = FakeDispatchStore()
         svc = _build_service(store)
-        svc._force_fail_attempt("nonexistent")
+        svc.force_fail_attempt("nonexistent")
         assert store.updates == []
 
     def test_force_fail_marks_attempt_failed(self) -> None:
@@ -393,11 +394,11 @@ class TestForceFailAttempt:
         store.add_attempt(attempt)
         store.add_step(step)
         svc = _build_service(store)
-        svc._force_fail_attempt("sa-1")
+        svc.force_fail_attempt("sa-1")
         assert len(store.updates) >= 1
         _, kwargs = store.updates[0]
         assert kwargs["status"] == "failed"
-        assert kwargs["waiting_reason"] == "worker_exception"
+        assert kwargs["status_reason"] == "worker_exception"
 
     def test_force_fail_already_terminal_skips_update(self) -> None:
         store = FakeDispatchStore()
@@ -406,7 +407,7 @@ class TestForceFailAttempt:
         store.add_attempt(attempt)
         store.add_step(step)
         svc = _build_service(store)
-        svc._force_fail_attempt("sa-1")
+        svc.force_fail_attempt("sa-1")
         # No status update for already-terminal attempt
         status_updates = [u for u in store.updates if u[1].get("status") == "failed"]
         assert len(status_updates) == 0

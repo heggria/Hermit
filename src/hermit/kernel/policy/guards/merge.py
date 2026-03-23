@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import structlog
+
 from hermit.kernel.policy.guards.rules import RuleOutcome
 from hermit.kernel.policy.models.models import PolicyDecision, PolicyObligations, PolicyReason
+
+_log = structlog.get_logger()
 
 _PRIORITY = {
     "deny": 5,
@@ -42,6 +46,13 @@ def merge_outcomes(
         if approval_packet is None and outcome.approval_packet is not None:
             approval_packet = outcome.approval_packet
     effective_action_class = chosen.action_class_override or action_class
+    _log.debug(
+        "guard.merge",
+        verdict=chosen.verdict,
+        action_class=effective_action_class,
+        risk_level=risk_level,
+        outcome_count=len(outcomes),
+    )
     return PolicyDecision(
         verdict=chosen.verdict,
         action_class=effective_action_class,

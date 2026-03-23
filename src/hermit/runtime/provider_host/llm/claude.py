@@ -5,6 +5,8 @@ import time
 from collections.abc import Iterable
 from typing import Any, cast
 
+import structlog
+
 from hermit.runtime.capability.registry.tools import ToolSpec
 from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, get_runtime_budget
 from hermit.runtime.provider_host.shared.contracts import (
@@ -21,8 +23,10 @@ from hermit.runtime.provider_host.shared.messages import (
     split_internal_tool_context,
 )
 
-_LLM_CONCURRENCY_LIMIT = 8  # Max concurrent API calls
+_LLM_CONCURRENCY_LIMIT = 16  # Max concurrent API calls
 _llm_semaphore = threading.Semaphore(_LLM_CONCURRENCY_LIMIT)
+
+log = structlog.get_logger()
 
 _CACHE_CONTROL_EPHEMERAL: dict[str, str] = {"type": "ephemeral"}
 
@@ -132,6 +136,15 @@ def _is_content_filter_error(exc: BaseException) -> bool:
     return "sensitive_words_detected" in str(exc)
 
 
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Return True if *exc* indicates a rate-limit (429) or overloaded error."""
+    text = str(exc).lower()
+    if "429" in text or "rate_limit" in text or "overloaded" in text:
+        return True
+    status = getattr(exc, "status_code", None)
+    return status == 429
+
+
 def _nudge_payload_for_retry(payload: dict, attempt: int) -> dict:
     """Return a copy of *payload* with a metadata hint to vary the request hash on retry."""
     return {**payload, "metadata": {"retry_hint": f"attempt_{attempt}"}}
@@ -239,6 +252,12 @@ class ClaudeProvider(Provider):
                     if _is_content_filter_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
                         last_exc = exc
                         continue
+                    if _is_rate_limit_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
+                        delay = min(30, 2**_attempt)
+                        log.warning("claude_rate_limit_retry", attempt=_attempt, delay=delay)
+                        time.sleep(delay)
+                        last_exc = exc
+                        continue
                     raise
             else:
                 raise last_exc  # type: ignore[misc]
@@ -277,6 +296,12 @@ class ClaudeProvider(Provider):
                     break
                 except Exception as exc:
                     if _is_content_filter_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
+                        last_exc = exc
+                        continue
+                    if _is_rate_limit_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
+                        delay = min(30, 2**_attempt)
+                        log.warning("claude_rate_limit_retry", attempt=_attempt, delay=delay)
+                        time.sleep(delay)
                         last_exc = exc
                         continue
                     raise

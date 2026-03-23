@@ -456,6 +456,12 @@ class TestBenchmarkRunnerDeltaComparison:
 
 
 class TestBenchmarkRunnerTieredStrategy:
+    @pytest.fixture(autouse=True)
+    def _fake_file_exists(self) -> None:
+        """Changed files are synthetic in tests — skip the existence check."""
+        with patch("hermit.plugins.builtin.hooks.benchmark.runner.os.path.exists", return_value=True):
+            yield
+
     @pytest.mark.asyncio()
     async def test_tiered_all_tiers_pass(self, runner: BenchmarkRunner) -> None:
         """When all tiers pass, tier_reached should be tier3_full."""

@@ -63,36 +63,36 @@ class TestInit:
     def test_default_worker_count(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner)
-        assert svc._worker_count == 4
+        assert svc.worker_count == 4
 
     def test_worker_count_clamped_to_1_from_zero(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner, worker_count=0)
-        assert svc._worker_count == 1
+        assert svc.worker_count == 1
 
     def test_worker_count_clamped_to_1_from_negative(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner, worker_count=-5)
-        assert svc._worker_count == 1
+        assert svc.worker_count == 1
 
     def test_worker_count_clamped_to_1_from_none(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner, worker_count=None)  # type: ignore[arg-type]
-        assert svc._worker_count == 1
+        assert svc.worker_count == 1
 
     def test_custom_worker_count(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner, worker_count=8)
-        assert svc._worker_count == 8
+        assert svc.worker_count == 8
 
     def test_internal_state_initialized(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner)
-        assert isinstance(svc._stop, threading.Event)
-        assert isinstance(svc._wake, threading.Event)
-        assert svc._thread is None
-        assert isinstance(svc._futures, dict)
-        assert len(svc._futures) == 0
+        assert isinstance(svc.stop_event, threading.Event)
+        assert isinstance(svc.wake_event, threading.Event)
+        assert svc.thread is None
+        assert isinstance(svc.futures, dict)
+        assert len(svc.futures) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +108,8 @@ class TestStartStop:
         svc = KernelDispatchService(runner)
         svc.start()
         try:
-            assert svc._thread is not None
-            assert svc._thread.is_alive()
+            assert svc.thread is not None
+            assert svc.thread.is_alive()
         finally:
             svc.stop()
 
@@ -120,22 +120,22 @@ class TestStartStop:
         svc = KernelDispatchService(runner)
         svc.start()
         svc.stop()
-        assert svc._stop.is_set()
+        assert svc.stop_event.is_set()
 
     def test_stop_without_start(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner)
         svc.stop()  # should not raise
-        assert svc._stop.is_set()
+        assert svc.stop_event.is_set()
 
 
 class TestWake:
     def test_wake_sets_wake_event(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner)
-        assert not svc._wake.is_set()
+        assert not svc.wake_event.is_set()
         svc.wake()
-        assert svc._wake.is_set()
+        assert svc.wake_event.is_set()
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ class TestCapacityAvailable:
         svc = KernelDispatchService(runner, worker_count=2)
         # Add one fake future
         fake_future = MagicMock(spec=concurrent.futures.Future)
-        svc._futures[fake_future] = "sa-1"
+        svc.futures[fake_future] = "sa-1"
         assert svc._capacity_available() is True
 
     def test_capacity_not_available_at_limit(self) -> None:
@@ -162,7 +162,7 @@ class TestCapacityAvailable:
         svc = KernelDispatchService(runner, worker_count=2)
         for i in range(2):
             fake_future = MagicMock(spec=concurrent.futures.Future)
-            svc._futures[fake_future] = f"sa-{i}"
+            svc.futures[fake_future] = f"sa-{i}"
         assert svc._capacity_available() is False
 
 
@@ -175,16 +175,16 @@ class TestOnAttemptCompleted:
     def test_truthy_id_sets_wake(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner)
-        svc._wake.clear()
-        svc._on_attempt_completed("sa-1")
-        assert svc._wake.is_set()
+        svc.wake_event.clear()
+        svc.on_attempt_completed("sa-1")
+        assert svc.wake_event.is_set()
 
     def test_empty_id_does_not_set_wake(self) -> None:
         runner = _make_runner()
         svc = KernelDispatchService(runner)
-        svc._wake.clear()
-        svc._on_attempt_completed("")
-        assert not svc._wake.is_set()
+        svc.wake_event.clear()
+        svc.on_attempt_completed("")
+        assert not svc.wake_event.is_set()
 
 
 # ---------------------------------------------------------------------------
@@ -199,11 +199,11 @@ class TestReapFutures:
 
         future = concurrent.futures.Future()
         future.set_result(None)
-        svc._futures[future] = "sa-1"
+        svc.futures[future] = "sa-1"
 
         svc._reap_futures()
-        assert len(svc._futures) == 0
-        assert svc._wake.is_set()
+        assert len(svc.futures) == 0
+        assert svc.wake_event.is_set()
 
     def test_failed_future_triggers_force_fail(self) -> None:
         store = MagicMock()
@@ -215,10 +215,10 @@ class TestReapFutures:
 
         future = concurrent.futures.Future()
         future.set_exception(RuntimeError("boom"))
-        svc._futures[future] = "sa-1"
+        svc.futures[future] = "sa-1"
 
         svc._reap_futures()
-        assert len(svc._futures) == 0
+        assert len(svc.futures) == 0
         store.update_step_attempt.assert_called()
         store.update_step.assert_called()
 
@@ -228,10 +228,10 @@ class TestReapFutures:
 
         future = MagicMock(spec=concurrent.futures.Future)
         future.done.return_value = False
-        svc._futures[future] = "sa-1"
+        svc.futures[future] = "sa-1"
 
         svc._reap_futures()
-        assert len(svc._futures) == 1
+        assert len(svc.futures) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +244,7 @@ class TestForceFailAttempt:
         store = MagicMock()
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._force_fail_attempt("")
+        svc.force_fail_attempt("")
         store.get_step_attempt.assert_not_called()
 
     def test_none_attempt_returns_early(self) -> None:
@@ -252,7 +252,7 @@ class TestForceFailAttempt:
         store.get_step_attempt.return_value = None
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._force_fail_attempt("sa-1")
+        svc.force_fail_attempt("sa-1")
         store.update_step_attempt.assert_not_called()
 
     @pytest.mark.parametrize("terminal_status", ["failed", "succeeded", "completed", "skipped"])
@@ -264,7 +264,7 @@ class TestForceFailAttempt:
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
 
-        svc._force_fail_attempt("sa-1")
+        svc.force_fail_attempt("sa-1")
         # update_step_attempt should NOT be called for status update
         store.update_step_attempt.assert_not_called()
         # but propagate_step_failure IS still called
@@ -278,7 +278,7 @@ class TestForceFailAttempt:
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
 
-        svc._force_fail_attempt("sa-1")
+        svc.force_fail_attempt("sa-1")
         store.update_step_attempt.assert_called_once()
         call_kwargs = store.update_step_attempt.call_args
         assert call_kwargs[1]["status"] == "failed" or call_kwargs[0][1] == "failed"
@@ -293,7 +293,7 @@ class TestForceFailAttempt:
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
 
-        svc._force_fail_attempt("sa-1")
+        svc.force_fail_attempt("sa-1")
         store.update_task_status.assert_called_once_with(
             "task-1",
             "failed",
@@ -311,7 +311,7 @@ class TestForceFailAttempt:
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
 
-        svc._force_fail_attempt("sa-1")
+        svc.force_fail_attempt("sa-1")
         store.update_task_status.assert_not_called()
 
     def test_wake_set_after_force_fail(self) -> None:
@@ -321,10 +321,10 @@ class TestForceFailAttempt:
         store.has_non_terminal_steps.return_value = True
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._wake.clear()
+        svc.wake_event.clear()
 
-        svc._force_fail_attempt("sa-1")
-        assert svc._wake.is_set()
+        svc.force_fail_attempt("sa-1")
+        assert svc.wake_event.is_set()
 
     def test_exception_in_force_fail_logged_not_raised(self) -> None:
         store = MagicMock()
@@ -333,7 +333,7 @@ class TestForceFailAttempt:
         svc = KernelDispatchService(runner)
 
         # Should not raise
-        svc._force_fail_attempt("sa-1")
+        svc.force_fail_attempt("sa-1")
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +491,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         # Attempt should be set to ready
         update_calls = store.update_step_attempt.call_args_list
@@ -522,7 +522,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         update_calls = store.update_step_attempt.call_args_list
         assert len(update_calls) >= 1
@@ -551,7 +551,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         update_calls = store.update_step_attempt.call_args_list
         assert len(update_calls) >= 1
@@ -588,7 +588,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         # First attempt recovered normally, second superseded
         update_calls = store.update_step_attempt.call_args_list
@@ -623,7 +623,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         # sa-1 (attempt=1) should be superseded, sa-2 (attempt=2) kept
         update_calls = store.update_step_attempt.call_args_list
@@ -651,7 +651,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         # No supersession should happen
         superseded_calls = [
@@ -691,7 +691,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         store.update_task_status.assert_called()
         task_call = store.update_task_status.call_args
@@ -720,7 +720,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         store.update_task_status.assert_not_called()
 
@@ -749,7 +749,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         store.update_task_status.assert_not_called()
 
@@ -760,7 +760,7 @@ class TestRecoverInterruptedAttempts:
 
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
-        svc._recover_interrupted_attempts()
+        svc.recover_interrupted_attempts()
 
         # Should have called list_step_attempts for each inflight status + "ready" twice
         status_args = [
@@ -784,7 +784,7 @@ class TestLoop:
         svc = KernelDispatchService(runner)
 
         # Set stop before starting the loop
-        svc._stop.set()
+        svc.stop_event.set()
         svc._loop()  # should return immediately
 
     def test_loop_claims_and_submits_attempt(self) -> None:
@@ -812,7 +812,7 @@ class TestLoop:
             original_reap()
             iteration_count[0] += 1
             if iteration_count[0] >= 2:
-                svc._stop.set()
+                svc.stop_event.set()
 
         svc._reap_futures = counting_reap  # type: ignore[assignment]
         svc._loop()

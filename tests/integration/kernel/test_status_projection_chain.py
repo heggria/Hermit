@@ -129,7 +129,7 @@ def hierarchy(store: KernelStore) -> dict[str, str]:
     store.update_step_attempt(
         attempt_w2.step_attempt_id,
         status="awaiting_approval",
-        waiting_reason="Pending operator confirmation",
+        status_reason="Pending operator confirmation",
         approval_id=approval_w2.approval_id,
     )
 
@@ -383,7 +383,7 @@ class TestAttemptLevel:
         assert proj.step_id == hierarchy["step_w2_id"]
         assert proj.attempt_number == 1
         assert proj.status == "awaiting_approval"
-        assert proj.waiting_reason == "Pending operator confirmation"
+        assert proj.status_reason == "Pending operator confirmation"
         assert proj.has_approval is True
         assert proj.started_at > 0
 
@@ -393,7 +393,7 @@ class TestAttemptLevel:
 
         assert proj.status == "running"
         assert proj.has_approval is False  # not linked yet
-        assert proj.waiting_reason == ""
+        assert proj.status_reason == ""
 
     def test_attempt_not_found_raises(self, store: KernelStore) -> None:
         svc = StatusProjectionService(store)
@@ -449,7 +449,7 @@ class TestFormattedSummaries:
 
         assert hierarchy["attempt_w2_id"] in summary
         assert "[awaiting_approval]" in summary
-        assert "Waiting reason: Pending operator confirmation" in summary
+        assert "Status reason: Pending operator confirmation" in summary
         assert "Has approval: yes" in summary
         assert "Started:" in summary
 

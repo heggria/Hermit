@@ -72,7 +72,7 @@ def test_enqueue_resume_requeues_blocked_attempt_with_resume_mode(tmp_path: Path
     assert store.get_task(ctx.task_id).status == "queued"  # type: ignore[union-attr]
     assert store.get_step(ctx.step_id).status == "ready"  # type: ignore[union-attr]
     assert attempt is not None and attempt.status == "ready"
-    assert attempt.waiting_reason is None
+    assert attempt.status_reason is None
     assert attempt.context["execution_mode"] == "resume"
     assert attempt.context["ingress_metadata"]["entry_prompt"] == "resume prompt"
 
@@ -159,14 +159,14 @@ def test_kernel_dispatch_recovery_requeues_async_running_attempts(tmp_path: Path
     store.claim_next_ready_step_attempt()
 
     service = KernelDispatchService(SimpleNamespace(task_controller=controller), worker_count=1)
-    service._recover_interrupted_attempts()
+    service.recover_interrupted_attempts()
 
     async_attempt = store.get_step_attempt(async_ctx.step_attempt_id)
     sync_attempt = store.get_step_attempt(sync_ctx.step_attempt_id)
     async_task = store.get_task(async_ctx.task_id)
 
     assert async_attempt is not None and async_attempt.status == "ready"
-    assert async_attempt.waiting_reason == "worker_interrupted_requeued"
+    assert async_attempt.status_reason == "worker_interrupted_requeued"
     assert async_attempt.context["recovered_after_interrupt"] is True
     assert async_attempt.context["reentry_required"] is True
     assert async_attempt.context["reentry_boundary"] == "policy_reentry"
@@ -175,7 +175,7 @@ def test_kernel_dispatch_recovery_requeues_async_running_attempts(tmp_path: Path
     # failed with 'worker_interrupted_sync_orphaned', since the dispatch service
     # does not own their lifecycle.
     assert sync_attempt is not None and sync_attempt.status == "failed"
-    assert sync_attempt.waiting_reason == "worker_interrupted_sync_orphaned"
+    assert sync_attempt.status_reason == "worker_interrupted_sync_orphaned"
 
 
 def test_runner_process_claimed_attempt_run_emits_notify_and_records_scheduler_history(
@@ -316,20 +316,20 @@ def test_kernel_dispatch_loop_claims_attempts_and_reaps_futures(monkeypatch) -> 
     service = KernelDispatchService(runner, worker_count=1)
     future: concurrent.futures.Future[Any] = concurrent.futures.Future()
     future.set_result(None)
-    service._executor = SimpleNamespace(
+    service.executor = SimpleNamespace(
         submit=lambda fn, attempt_id: (fn(attempt_id), future)[1],
         shutdown=lambda **_kwargs: None,
     )
 
     def fake_wait(_timeout: float) -> bool:
-        service._stop.set()
+        service.stop_event.set()
         return False
 
-    monkeypatch.setattr(service._wake, "wait", fake_wait)
+    monkeypatch.setattr(service.wake_event, "wait", fake_wait)
     service._loop()
 
     assert claimed_attempts == ["attempt-1"]
-    assert service._futures == {}
+    assert service.futures == {}
 
 
 def test_kernel_dispatch_reap_futures_handles_worker_exception() -> None:
@@ -341,11 +341,11 @@ def test_kernel_dispatch_reap_futures_handles_worker_exception() -> None:
     service = KernelDispatchService(runner, worker_count=1)
     future: concurrent.futures.Future[Any] = concurrent.futures.Future()
     future.set_exception(RuntimeError("boom"))
-    service._futures[future] = "attempt-err"
+    service.futures[future] = "attempt-err"
 
     service._reap_futures()
 
-    assert service._futures == {}
+    assert service.futures == {}
 
 
 def test_force_fail_attempt_marks_step_and_task_failed(tmp_path: Path) -> None:
@@ -369,11 +369,11 @@ def test_force_fail_attempt_marks_step_and_task_failed(tmp_path: Path) -> None:
     runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
     service = KernelDispatchService(runner, worker_count=1)
 
-    service._force_fail_attempt(attempt.step_attempt_id)
+    service.force_fail_attempt(attempt.step_attempt_id)
 
     updated_attempt = store.get_step_attempt(attempt.step_attempt_id)
     assert updated_attempt.status == "failed"
-    assert updated_attempt.waiting_reason == "worker_exception"
+    assert updated_attempt.status_reason == "worker_exception"
 
     updated_step = store.get_step(step.step_id)
     assert updated_step.status == "failed"
@@ -401,7 +401,7 @@ def test_force_fail_attempt_skips_already_terminal(tmp_path: Path) -> None:
     runner = SimpleNamespace(task_controller=SimpleNamespace(store=store))
     service = KernelDispatchService(runner, worker_count=1)
 
-    service._force_fail_attempt(attempt.step_attempt_id)
+    service.force_fail_attempt(attempt.step_attempt_id)
 
     # Should remain succeeded, not overwritten
     updated_attempt = store.get_step_attempt(attempt.step_attempt_id)
@@ -423,19 +423,19 @@ def test_kernel_dispatch_service_start_stop_and_wake(monkeypatch) -> None:
         def join(self, timeout: float | None = None) -> None:
             stopped.append(f"join:{timeout}")
 
-    monkeypatch.setattr(service, "_recover_interrupted_attempts", lambda: started.append("recover"))
+    monkeypatch.setattr(service, "recover_interrupted_attempts", lambda: started.append("recover"))
     monkeypatch.setattr(
         "hermit.kernel.execution.coordination.dispatch.threading.Thread",
         lambda **_kwargs: FakeThread(),
     )
-    service._executor = SimpleNamespace(shutdown=lambda **_kwargs: stopped.append("shutdown"))
+    service.executor = SimpleNamespace(shutdown=lambda **_kwargs: stopped.append("shutdown"))
 
     service.start()
     service.wake()
     service.stop()
 
     assert started == ["recover", "thread_start"]
-    assert service._wake.is_set() is True
+    assert service.wake_event.is_set() is True
     assert stopped == ["join:5", "shutdown"]
 
 

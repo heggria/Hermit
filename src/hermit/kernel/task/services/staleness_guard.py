@@ -74,6 +74,18 @@ class StalenessGuard:
                             "stale_seconds": int(time.time() - task.updated_at),
                         },
                     )
+                    # C11: Resolve any active observation tickets for the stale
+                    # task so they do not remain orphaned after timeout.
+                    try:
+                        self.store.resolve_observations_for_task(
+                            task.task_id, status="cancelled"
+                        )
+                    except Exception:
+                        log.warning(
+                            "staleness_guard.observation_cleanup_failed",
+                            task_id=task.task_id,
+                            exc_info=True,
+                        )
                     log.info(
                         "staleness_guard.task_timed_out",
                         task_id=task.task_id,

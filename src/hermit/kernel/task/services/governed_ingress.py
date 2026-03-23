@@ -238,7 +238,7 @@ class GovernedIngressService:
                     "step_id": attempt_proj.step_id,
                     "attempt_number": attempt_proj.attempt_number,
                     "status": attempt_proj.status,
-                    "waiting_reason": attempt_proj.waiting_reason,
+                    "status_reason": attempt_proj.status_reason,
                     "has_approval": attempt_proj.has_approval,
                     "has_capability_grant": attempt_proj.has_capability_grant,
                     "started_at": attempt_proj.started_at,

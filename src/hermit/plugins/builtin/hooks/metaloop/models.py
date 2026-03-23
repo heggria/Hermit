@@ -59,6 +59,9 @@ ALLOWED_TRANSITIONS: dict[PipelinePhase, frozenset[PipelinePhase]] = {
             PipelinePhase.FAILED,
         }
     ),
+    PipelinePhase.ACCEPTED: frozenset({PipelinePhase.FAILED}),
+    PipelinePhase.REJECTED: frozenset({PipelinePhase.FAILED}),
+    PipelinePhase.FAILED: frozenset(),  # no transitions from FAILED
 }
 
 # 3 cycles = initial implementation + 2 revision attempts.

@@ -14,7 +14,7 @@ class PatrolCheckResult:
     status: str  # "clean" | "issues_found" | "error"
     summary: str
     issue_count: int = 0
-    issues: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    issues: list[dict[str, Any]] = field(default_factory=list)
     disposition: str = "report_only"  # "auto_fix" | "propose" | "report_only"
 
 
@@ -22,7 +22,7 @@ class PatrolCheckResult:
 class PatrolReport:
     """Aggregated report from a patrol run."""
 
-    checks: list[PatrolCheckResult] = field(default_factory=list[PatrolCheckResult])
+    checks: list[PatrolCheckResult] = field(default_factory=list)
     total_issues: int = 0
     started_at: float = 0.0
     finished_at: float = 0.0

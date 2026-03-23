@@ -11,6 +11,7 @@ import structlog
 
 from hermit.plugins.builtin.hooks.metaloop.models import (
     ALLOWED_TRANSITIONS,
+    MAX_ATTEMPTS,
     TERMINAL_PHASES,
     IterationState,
     PipelinePhase,
@@ -101,6 +102,25 @@ class SpecBacklog:
                 if entry is None:
                     return None
                 data = entry if isinstance(entry, dict) else entry.__dict__
+
+                # H9: Enforce retry backoff — skip if next_retry_at has not elapsed
+                meta = _parse_metadata(data.get("metadata"))
+                next_retry_at = meta.get("next_retry_at")
+                if next_retry_at is not None and time.time() < float(next_retry_at):
+                    # Revert claim: put back to pending
+                    if hasattr(self._store, "update_spec_status"):
+                        self._store.update_spec_status(
+                            spec_id=data["spec_id"],
+                            status=PipelinePhase.PENDING.value,
+                            expected_status=PipelinePhase.PLANNING.value,
+                        )
+                    log.debug(
+                        "spec_backlog_claim_backoff",
+                        spec_id=data["spec_id"],
+                        next_retry_at=next_retry_at,
+                    )
+                    return None
+
                 return IterationState(
                     spec_id=data["spec_id"],
                     phase=PipelinePhase.PLANNING,
@@ -227,7 +247,7 @@ class SpecBacklog:
         spec_id: str,
         error: str,
         *,
-        max_retries: int = 2,
+        max_retries: int = MAX_ATTEMPTS,
     ) -> IterationState | None:
         """Increment retry count or mark as permanently failed.
 
@@ -279,7 +299,13 @@ class SpecBacklog:
                         )
                         return self.get_state(spec_id)
                 if hasattr(self._store, "increment_spec_attempt"):
-                    self._store.increment_spec_attempt(spec_id=spec_id)
+                    inc_ok = self._store.increment_spec_attempt(spec_id=spec_id)
+                    if not inc_ok:
+                        log.warning(
+                            "spec_backlog_attempt_increment_failed",
+                            spec_id=spec_id,
+                            attempt=current_attempt + 1,
+                        )
                 log.info(
                     "spec_backlog_retry",
                     spec_id=spec_id,
@@ -291,7 +317,7 @@ class SpecBacklog:
                     spec_id=spec_id,
                     phase=PipelinePhase.PENDING,
                     attempt=current_attempt + 1,
-                    revision_cycle=_read_revision_cycle(data),
+                    revision_cycle=0,
                     error=error,
                 )
             else:

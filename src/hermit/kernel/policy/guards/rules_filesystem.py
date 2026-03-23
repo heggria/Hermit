@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import structlog
+
 from hermit.kernel.policy.guards.rules import RuleOutcome
 from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations, PolicyReason
+
+_log = structlog.get_logger()
 
 
 def evaluate_filesystem_rules(request: ActionRequest) -> list[RuleOutcome] | None:
@@ -21,6 +25,12 @@ def evaluate_filesystem_rules(request: ActionRequest) -> list[RuleOutcome] | Non
 
     # -- Protected paths: sensitive + outside workspace → hard deny -----------
     if sensitive_paths and outside_workspace:
+        _log.warning(
+            "guard.filesystem.deny",
+            rule="protected_path",
+            tool=request.tool_name,
+            paths=sensitive_paths,
+        )
         outcomes.append(
             RuleOutcome(
                 verdict="deny",
@@ -41,6 +51,12 @@ def evaluate_filesystem_rules(request: ActionRequest) -> list[RuleOutcome] | Non
 
     # -- Sensitive paths: require approval ------------------------------------
     if sensitive_paths:
+        _log.info(
+            "guard.filesystem.approval_required",
+            rule="sensitive_path",
+            tool=request.tool_name,
+            paths=sensitive_paths,
+        )
         outcomes.append(
             RuleOutcome(
                 verdict="approval_required",
@@ -70,6 +86,12 @@ def evaluate_filesystem_rules(request: ActionRequest) -> list[RuleOutcome] | Non
     if kernel_paths:
         from pathlib import Path as _Path
 
+        _log.warning(
+            "guard.filesystem.approval_required",
+            rule="kernel_self_modification",
+            tool=request.tool_name,
+            paths=kernel_paths,
+        )
         outcomes.append(
             RuleOutcome(
                 verdict="approval_required",

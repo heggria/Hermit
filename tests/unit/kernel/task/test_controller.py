@@ -644,7 +644,7 @@ def test_enqueue_resume_input_dirty_approval(shared_store: KernelStore, conv_id:
     context = dict(attempt.context or {})
     context["input_dirty"] = True
     shared_store.update_step_attempt(
-        ctx.step_attempt_id, context=context, waiting_reason="awaiting_approval"
+        ctx.step_attempt_id, context=context, status_reason="awaiting_approval"
     )
     resumed = ctrl.enqueue_resume(ctx.step_attempt_id)
     assert resumed.step_attempt_id != ctx.step_attempt_id

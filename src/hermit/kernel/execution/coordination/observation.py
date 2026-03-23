@@ -354,7 +354,12 @@ class ObservationService:
         self._enforce_timeouts(controller)
         attempts = controller.store.list_step_attempts(status="observing", limit=200)
         now = time.time()
+        stale_resolved = self._resolve_stale_observations(
+            controller.store, attempts, now
+        )
         for attempt in attempts:
+            if attempt.step_attempt_id in stale_resolved:
+                continue
             with self._lock:
                 if attempt.step_attempt_id in self._resuming:
                     continue
@@ -392,10 +397,88 @@ class ObservationService:
                     store.update_step_attempt(
                         step_attempt_id,
                         status="failed",
-                        waiting_reason="observation_timeout",
+                        status_reason="observation_timeout",
                     )
                 except Exception:
                     _log.warning("observation.enforce_timeout_failed", exc_info=True)
+
+    def _resolve_stale_observations(
+        self,
+        store: Any,
+        attempts: list[Any],
+        now: float,
+    ) -> set[str]:
+        """Auto-resolve observations that exceed the observation_window budget.
+
+        Returns the set of step_attempt_ids that were resolved as stale.
+        This prevents observations tied to subtasks with different task_ids
+        (e.g. memory promotion) from blocking DAG step progression
+        indefinitely.
+        """
+        window = self._budget.observation_window
+        if window <= 0:
+            return set()
+        resolved: set[str] = set()
+        for attempt in attempts:
+            age_ref = getattr(attempt, "claimed_at", None) or getattr(
+                attempt, "started_at", None
+            )
+            if age_ref is None:
+                continue
+            if (now - age_ref) <= window:
+                continue
+            step_attempt_id = attempt.step_attempt_id
+            _log.warning(
+                "observation.stale_auto_resolved",
+                step_attempt_id=step_attempt_id,
+                task_id=attempt.task_id,
+                step_id=attempt.step_id,
+                age_seconds=int(now - age_ref),
+                observation_window=window,
+            )
+            try:
+                store.update_step_attempt(
+                    step_attempt_id,
+                    status="failed",
+                    status_reason="observation_stale_timeout",
+                    finished_at=now,
+                )
+                store.update_step(
+                    attempt.step_id,
+                    status="failed",
+                    finished_at=now,
+                )
+                store.append_event(
+                    event_type="observation.stale_auto_resolved",
+                    entity_type="step_attempt",
+                    entity_id=step_attempt_id,
+                    task_id=attempt.task_id,
+                    step_id=attempt.step_id,
+                    actor="kernel",
+                    payload={
+                        "age_seconds": int(now - age_ref),
+                        "observation_window": window,
+                        "reason": "observation_stale_timeout",
+                    },
+                )
+                store.propagate_step_failure(attempt.task_id, attempt.step_id)
+                if not store.has_non_terminal_steps(attempt.task_id):
+                    store.update_task_status(
+                        attempt.task_id,
+                        "failed",
+                        payload={
+                            "result_preview": "observation_stale_timeout",
+                            "result_text": "observation_stale_timeout",
+                        },
+                    )
+                resolved.add(step_attempt_id)
+            except Exception:
+                _log.warning(
+                    "observation.stale_resolve_failed",
+                    step_attempt_id=step_attempt_id,
+                    exc_info=True,
+                )
+        return resolved
 
     def persist_ticket(
         self,

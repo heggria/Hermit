@@ -72,9 +72,13 @@ class HooksEngine:
     def fire_first(self, event: str, **kwargs: Any) -> Any | None:
         handlers: _HandlerBucket = self._handlers.get(_event_key(event), [])
         for _priority, handler in handlers:
-            result = self._safe_call(handler, kwargs)
-            if result is not None:
-                return result
+            try:
+                result = self._safe_call(handler, kwargs)
+                if result is not None:
+                    return result
+            except Exception:
+                log.exception("hook_fire_first_handler_error", event=event)
+                continue
         return None
 
     def has_handlers(self, event: str) -> bool:

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from enum import Enum, StrEnum
 
-from hermit.runtime.capability.contracts.hooks import HooksEngine, _event_key, _safe_call
+from hermit.runtime.capability.contracts.hooks import HooksEngine, _event_key
 
 # ---------------------------------------------------------------------------
 # _event_key
@@ -40,23 +40,27 @@ class TestEventKey:
 
 
 # ---------------------------------------------------------------------------
-# module-level _safe_call
+# HooksEngine._safe_call (instance method)
 # ---------------------------------------------------------------------------
 
 
 class TestModuleSafeCall:
     def test_accepts_matching_kwargs(self) -> None:
+        engine = HooksEngine()
+
         def handler(a: int, b: str) -> str:
             return f"{a}-{b}"
 
-        result = _safe_call(handler, {"a": 1, "b": "x", "extra": True})
+        result = engine._safe_call(handler, {"a": 1, "b": "x", "extra": True})
         assert result == "1-x"
 
     def test_var_keyword_receives_all(self) -> None:
+        engine = HooksEngine()
+
         def handler(**kwargs):
             return kwargs
 
-        result = _safe_call(handler, {"a": 1, "b": 2})
+        result = engine._safe_call(handler, {"a": 1, "b": 2})
         assert result == {"a": 1, "b": 2}
 
     def test_signature_error_falls_through(self, monkeypatch) -> None:
@@ -78,7 +82,8 @@ class TestModuleSafeCall:
             "hermit.runtime.capability.contracts.hooks.inspect.signature",
             bad_signature,
         )
-        result = _safe_call(lambda **kw: kw["x"], {"x": 42})
+        engine = HooksEngine()
+        result = engine._safe_call(lambda **kw: kw["x"], {"x": 42})
         assert result == 42
 
 

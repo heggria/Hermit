@@ -105,7 +105,7 @@ class RecoveryHandler:
         self.store.update_step_attempt(
             attempt_ctx.step_attempt_id,
             status="reconciling",
-            waiting_reason=str(exc),
+            status_reason=str(exc),
             decision_id=decision_id,
             capability_grant_id=capability_grant_id,
             workspace_lease_id=workspace_lease_id,
@@ -217,7 +217,7 @@ class RecoveryHandler:
         self.store.update_step_attempt(
             attempt_ctx.step_attempt_id,
             status="failed",
-            waiting_reason=str(error),
+            status_reason=str(error),
             decision_id=decision_id,
             capability_grant_id=capability_grant_id,
             workspace_lease_id=workspace_lease_id,

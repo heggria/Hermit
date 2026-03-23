@@ -38,6 +38,7 @@ class TestTaskState:
             "cancelled",
             "budget_exceeded",
             "needs_attention",
+            "reconciling",
         }
         assert {s.value for s in TaskState} == expected
 
@@ -240,9 +241,13 @@ class TestValidateTaskTransition:
         assert validate_task_transition("running", "bogus") is False
 
     def test_self_transition_is_invalid(self) -> None:
-        """A state transitioning to itself is not in the valid set."""
+        """A state transitioning to itself is not in the valid set, except reconciling."""
         for state in TaskState:
-            assert validate_task_transition(state.value, state.value) is False
+            if state == TaskState.RECONCILING:
+                # reconciling -> reconciling is valid (partial reconciliation)
+                assert validate_task_transition(state.value, state.value) is True
+            else:
+                assert validate_task_transition(state.value, state.value) is False
 
 
 # ── validate_attempt_transition ───────────────────────────────────────

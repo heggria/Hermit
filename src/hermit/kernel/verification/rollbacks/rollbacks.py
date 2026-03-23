@@ -164,7 +164,7 @@ class RollbackService:
             )
             self.store.update_step(step.step_id, status="failed")
             self.store.update_step_attempt(
-                attempt.step_attempt_id, status="failed", waiting_reason=summary
+                attempt.step_attempt_id, status="failed", status_reason=summary
             )
             return {"rollback_id": rollback.rollback_id, "status": "failed", "error": summary}
 

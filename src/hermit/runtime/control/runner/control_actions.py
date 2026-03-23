@@ -389,7 +389,7 @@ class ControlActionDispatcher:
             self._task_controller.store.update_step_attempt(
                 plan_ctx.step_attempt_id,
                 status="succeeded",
-                waiting_reason=None,
+                status_reason=None,
             )
         execution_ctx = self._task_controller.start_followup_step(
             task_id=resolved_target,

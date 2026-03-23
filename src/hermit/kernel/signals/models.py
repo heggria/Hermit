@@ -27,7 +27,7 @@ class EvidenceSignal:
     task_id: str | None = None
     summary: str = ""
     confidence: float = 0.5
-    evidence_refs: list[str] = field(default_factory=list[str])
+    evidence_refs: list[str] = field(default_factory=list)
     suggested_goal: str = ""
     suggested_policy_profile: str = "default"
     risk_level: str = "low"
@@ -35,7 +35,7 @@ class EvidenceSignal:
     cooldown_key: str = ""
     cooldown_seconds: int = 86400
     produced_task_id: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     expires_at: float | None = None
     acted_at: float | None = None
@@ -58,11 +58,11 @@ class SteeringDirective:
     steering_type: str = ""
     directive: str = ""
     directive_id: str = field(default_factory=_steer_id)
-    evidence_refs: list[str] = field(default_factory=list[str])
+    evidence_refs: list[str] = field(default_factory=list)
     issued_by: str = "operator"
     disposition: str = "pending"
     supersedes_id: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     applied_at: float | None = None
 

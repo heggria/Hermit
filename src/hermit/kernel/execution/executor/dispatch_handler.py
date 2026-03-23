@@ -73,7 +73,7 @@ class DispatchDeniedHandler:
         self.store.update_step_attempt(
             attempt_ctx.step_attempt_id,
             status="failed",
-            waiting_reason=str(error),
+            status_reason=str(error),
             decision_id=decision_id,
             capability_grant_id=capability_grant_id,
             workspace_lease_id=workspace_lease_id,

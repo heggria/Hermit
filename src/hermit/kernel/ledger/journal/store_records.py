@@ -114,7 +114,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             status=str(row["status"]),
             context=json_loads(row["context_json"]),
             queue_priority=int(row["queue_priority"] or 0),
-            waiting_reason=row["waiting_reason"],
+            status_reason=row["waiting_reason"],
             approval_id=row["approval_id"],
             decision_id=row["decision_id"],
             capability_grant_id=row["capability_grant_id"],

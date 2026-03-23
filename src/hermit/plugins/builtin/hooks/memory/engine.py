@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections import defaultdict
-from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
 import structlog
 
-from hermit.infra.storage import FileGuard, atomic_write
-from hermit.infra.system.i18n import tr
+from hermit.infra.storage import atomic_write
 from hermit.kernel.context.memory.text import (
     is_duplicate,
     looks_like_override,
@@ -34,7 +31,6 @@ ENTRY_RE = re.compile(
     r"^- \[(\d{4}-\d{2}-\d{2})\] \[s:(\d+)(🔒?)\] (.+?)(?:\s+<!--memory:(.+?)-->)?$"
 )
 HEADING_RE = re.compile(r"^## (.+)$")
-MergeFn = Callable[[str, list[MemoryEntry]], list[MemoryEntry]]
 
 
 class MemoryEngine:
@@ -93,121 +89,11 @@ class MemoryEngine:
 
         atomic_write(self.path, "\n".join(lines).rstrip() + "\n")
 
-    def append_entries(self, new_entries: list[MemoryEntry]) -> dict[str, list[MemoryEntry]]:
-        """Append only genuinely new entries without applying score updates."""
-        with FileGuard.acquire(self.path, cross_process=True):
-            categories = self.load()
-            for entry in new_entries:
-                categories.setdefault(entry.category, [])
-                self._resolve_supersedes(categories[entry.category], entry)
-                if not self._is_duplicate(categories[entry.category], entry.content):
-                    categories[entry.category].append(entry)
-            categories = {
-                category: [entry for entry in entries if entry.score > 0]
-                for category, entries in categories.items()
-            }
-            self.save(categories)
-            return categories
-
-    def record_session(
-        self,
-        new_entries: list[MemoryEntry],
-        used_keywords: set[str] | None = None,
-        session_index: int = 1,
-        merge_fn: MergeFn | None = None,
-        merge_threshold: int = 8,
-    ) -> dict[str, list[MemoryEntry]]:
-        """Update memory scores, add new entries, and persist atomically.
-
-        The entire load → modify → save sequence runs under FileGuard so that
-        concurrent sessions cannot interleave their writes and lose data.
-        cross_process=True also acquires an flock for multi-process safety.
-        """
-        with FileGuard.acquire(self.path, cross_process=True):
-            categories = self.load()
-            used_keywords = used_keywords or set()
-            lowered_keywords = {keyword.lower() for keyword in used_keywords}
-
-            for category, entries in categories.items():
-                slow_decay = category == "project_convention" and session_index % 2 == 0
-                for entry in entries:
-                    if entry.locked:
-                        continue
-                    if self._entry_referenced(entry, lowered_keywords):
-                        entry.score = min(10, entry.score + 1)
-                    elif not slow_decay:
-                        entry.score = max(0, entry.score - 1)
-                    if entry.score >= 7:
-                        entry.locked = True
-
-            filtered: dict[str, list[MemoryEntry]] = {
-                category: [entry for entry in entries if entry.score > 0]
-                for category, entries in categories.items()
-            }
-
-            for entry in new_entries:
-                filtered.setdefault(entry.category, [])
-                self._resolve_supersedes(filtered[entry.category], entry)
-                if not self._is_duplicate(filtered[entry.category], entry.content):
-                    filtered[entry.category].append(entry)
-
-            if merge_fn:
-                for category, entries in list(filtered.items()):
-                    unlocked = [entry for entry in entries if not entry.locked]
-                    locked = [entry for entry in entries if entry.locked]
-                    if len(unlocked) > merge_threshold:
-                        filtered[category] = locked + merge_fn(category, unlocked)
-
-            self.save(filtered)
-            return filtered
-
     @staticmethod
     def summary_prompt(
         categories: dict[str, list[MemoryEntry]], limit_per_category: int = 10
     ) -> str:
         return render_summary_prompt(categories, limit_per_category=limit_per_category)
-
-    def retrieval_prompt(
-        self,
-        query: str,
-        *,
-        categories: dict[str, list[MemoryEntry]] | None = None,
-        limit: int = 6,
-        char_budget: int = 1200,
-    ) -> str:
-        ranked = self.retrieve(query, categories=categories, limit=limit)
-        if not ranked:
-            log.info(
-                "memory_retrieval_injected", query_chars=len(query), injected=0, budget=char_budget
-            )
-            return ""
-
-        lines = [tr("kernel.memory.retrieval_intro")]
-        total = len(lines[0])
-        current_category: str | None = None
-        injected = 0
-        for entry, _score in ranked:
-            if entry.category != current_category:
-                heading = f"\n## {entry.category}"
-                if total + len(heading) > char_budget:
-                    break
-                lines.append(heading)
-                total += len(heading)
-                current_category = entry.category
-            rendered = entry.render()
-            if total + len(rendered) > char_budget:
-                break
-            lines.append(rendered)
-            total += len(rendered)
-            injected += 1
-        log.info(
-            "memory_retrieval_injected",
-            query_chars=len(query),
-            injected=injected,
-            candidates=len(ranked),
-            budget=char_budget,
-        )
-        return "\n".join(lines).strip()
 
     def retrieve(
         self,
@@ -336,10 +222,3 @@ class MemoryEngine:
     @classmethod
     def _shares_topic(cls, left: str, right: str) -> bool:
         return shares_topic(left, right)
-
-
-def group_entries(entries: list[MemoryEntry]) -> dict[str, list[MemoryEntry]]:
-    grouped: dict[str, list[MemoryEntry]] = defaultdict(list)
-    for entry in entries:
-        grouped[entry.category].append(entry)
-    return dict(grouped)

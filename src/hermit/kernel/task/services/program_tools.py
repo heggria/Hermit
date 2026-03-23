@@ -342,7 +342,7 @@ class ProgramToolService:
                 "step_id": projection.step_id,
                 "attempt_number": projection.attempt_number,
                 "status": projection.status,
-                "waiting_reason": projection.waiting_reason,
+                "status_reason": projection.status_reason,
                 "has_approval": projection.has_approval,
                 "has_capability_grant": projection.has_capability_grant,
                 "started_at": projection.started_at,

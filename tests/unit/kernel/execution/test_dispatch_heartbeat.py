@@ -118,7 +118,7 @@ class TestCheckHeartbeatTimeouts:
         store.update_step_attempt.assert_called_once()
         call_kwargs = store.update_step_attempt.call_args[1]
         assert call_kwargs["status"] == "failed"
-        assert call_kwargs["waiting_reason"] == "heartbeat_timeout"
+        assert call_kwargs["status_reason"] == "heartbeat_timeout"
 
     def test_heartbeat_timeout_retries_if_allowed(self) -> None:
         attempt = _make_attempt(

@@ -414,6 +414,7 @@ def test_worker_role_values() -> None:
         WorkerRole.reconciler,
         WorkerRole.tester,
         WorkerRole.spec,
+        WorkerRole.reviewer,
     }
 
 

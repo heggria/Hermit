@@ -29,7 +29,7 @@ class _FakeStepAttempt:
     context: dict[str, Any] = field(default_factory=dict)
     attempt: int = 1
     approval_id: str | None = None
-    waiting_reason: str | None = None
+    status_reason: str | None = None
 
 
 @dataclass

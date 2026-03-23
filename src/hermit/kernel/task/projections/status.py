@@ -90,7 +90,7 @@ class AttemptStatusProjection:
     step_id: str
     attempt_number: int
     status: str
-    waiting_reason: str = ""
+    status_reason: str = ""
     has_approval: bool = False
     has_capability_grant: bool = False
     started_at: float = 0.0
@@ -371,7 +371,7 @@ class StatusProjectionService:
             step_id=attempt.step_id,
             attempt_number=attempt.attempt,
             status=attempt.status,
-            waiting_reason=attempt.waiting_reason or "",
+            status_reason=attempt.status_reason or "",
             has_approval=attempt.approval_id is not None,
             has_capability_grant=attempt.capability_grant_id is not None,
             started_at=attempt.started_at or 0.0,
@@ -538,8 +538,8 @@ class StatusProjectionService:
             f"Task: {projection.task_id}",
             f"Step: {projection.step_id}",
         ]
-        if projection.waiting_reason:
-            lines.append(f"Waiting reason: {projection.waiting_reason}")
+        if projection.status_reason:
+            lines.append(f"Status reason: {projection.status_reason}")
         if projection.has_approval:
             lines.append("Has approval: yes")
         if projection.has_capability_grant:

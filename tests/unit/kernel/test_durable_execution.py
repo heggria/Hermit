@@ -126,7 +126,7 @@ class TestHeartbeat:
         store.update_step_attempt(
             attempt.step_attempt_id,
             status="failed",
-            waiting_reason="heartbeat_timeout",
+            status_reason="heartbeat_timeout",
             finished_at=now,
         )
         store.update_step(step.step_id, status="failed", finished_at=now)
@@ -134,7 +134,7 @@ class TestHeartbeat:
         failed_attempt = store.get_step_attempt(attempt.step_attempt_id)
         assert failed_attempt is not None
         assert failed_attempt.status == "failed"
-        assert failed_attempt.waiting_reason == "heartbeat_timeout"
+        assert failed_attempt.status_reason == "heartbeat_timeout"
 
     def test_dispatch_heartbeat_methods_exist(self) -> None:
         """KernelDispatchService should have report_heartbeat and check_heartbeat_timeouts."""

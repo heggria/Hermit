@@ -80,7 +80,7 @@ class TestDispatchRecoveryInflightStatuses:
         )
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         attempt = store.get_step_attempt(attempt_id)
         step = store.get_step(step_id)
@@ -92,7 +92,7 @@ class TestDispatchRecoveryInflightStatuses:
         assert attempt.context["original_status_at_interrupt"] == inflight_status
         assert attempt.context["reentry_boundary"] == "policy_reentry"
         assert attempt.context["reentry_reason"] == "worker_interrupted"
-        assert attempt.waiting_reason == "worker_interrupted_requeued"
+        assert attempt.status_reason == "worker_interrupted_requeued"
 
         assert step is not None
         assert step.status == "ready"
@@ -119,7 +119,7 @@ class TestDispatchRecoveryInflightStatuses:
         )
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         attempt = store.get_step_attempt(attempt_id)
         step = store.get_step(step_id)
@@ -131,7 +131,7 @@ class TestDispatchRecoveryInflightStatuses:
         assert attempt.context["original_status_at_interrupt"] == inflight_status
         assert attempt.context["recovery_required"] is True
         assert attempt.context["reentry_boundary"] == "observation_resolution"
-        assert attempt.waiting_reason == "worker_interrupted_recovery_required"
+        assert attempt.status_reason == "worker_interrupted_recovery_required"
 
         assert step is not None
         assert step.status == "blocked"
@@ -152,7 +152,7 @@ class TestDispatchRecoveryInflightStatuses:
         )
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         attempt = store.get_step_attempt(attempt_id)
         step = store.get_step(step_id)
@@ -163,7 +163,7 @@ class TestDispatchRecoveryInflightStatuses:
         assert attempt.context["recovered_after_interrupt"] is True
         assert attempt.context["original_status_at_interrupt"] == "running"
         assert attempt.context["recovery_action"] == "failed_orphaned_sync"
-        assert attempt.waiting_reason == "worker_interrupted_sync_orphaned"
+        assert attempt.status_reason == "worker_interrupted_sync_orphaned"
 
         assert step is not None
         assert step.status == "failed"
@@ -193,7 +193,7 @@ class TestDispatchRecoveryInflightStatuses:
         store.update_step_attempt(attempt_id, context=context)
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         attempt = store.get_step_attempt(attempt_id)
         assert attempt is not None
@@ -214,7 +214,7 @@ class TestDispatchRecoveryInflightStatuses:
             )
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         for terminal in ("succeeded", "completed", "skipped", "failed"):
             attempts = store.list_step_attempts(status=terminal, limit=100)
@@ -244,7 +244,7 @@ class TestDispatchRecoveryReadyRepair:
         store.update_task_status(ctx.task_id, "blocked")
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         task = store.get_task(ctx.task_id)
         assert task is not None
@@ -272,7 +272,7 @@ class TestDispatchRecoveryReadyRepair:
         _ = task_before.updated_at if task_before else 0
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         task = store.get_task(ctx.task_id)
         assert task is not None
@@ -297,7 +297,7 @@ class TestDispatchRecoveryReadyRepair:
         store.update_task_status(ctx.task_id, "blocked")
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         task = store.get_task(ctx.task_id)
         assert task is not None
@@ -332,7 +332,7 @@ class TestDispatchRecoveryMultipleAttempts:
             attempt_ids.append((attempt_id, scenario))
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         for attempt_id, scenario in attempt_ids:
             attempt = store.get_step_attempt(attempt_id)

@@ -134,7 +134,7 @@ class ObservationHandler:
         self.store.update_step_attempt(
             attempt_ctx.step_attempt_id,
             status="observing",
-            waiting_reason=observation.topic_summary,
+            status_reason=observation.topic_summary,
             decision_id=decision_id,
             capability_grant_id=capability_grant_id,
             workspace_lease_id=workspace_lease_id,
@@ -346,6 +346,14 @@ class ObservationHandler:
                     ),
                 )
         self._executor._clear_pending_execution(attempt_ctx.step_attempt_id)
+        # C10: Resolve any active observation tickets for this attempt so they
+        # do not remain orphaned in the "active" state after finalization.
+        try:
+            self.store.resolve_observations_for_attempt(
+                attempt_ctx.step_attempt_id, status=result_code
+            )
+        except Exception:
+            pass
         return {
             "raw_result": raw_result,
             "model_content": model_content if not is_error else f"Error: {summary}",

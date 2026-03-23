@@ -354,7 +354,7 @@ class TestDelegatedMethods:
         svc = PoolAwareDispatchService(runner, pool_config=_make_pool_config())
         handler = MagicMock()
         svc.register_kind_handler("custom", handler)
-        assert svc._inner._kind_handlers["custom"] is handler
+        assert svc._inner.kind_handlers["custom"] is handler
         svc.stop()
 
     def test_report_heartbeat_delegates(self) -> None:
@@ -578,8 +578,8 @@ class TestTryClaimAndDispatch:
         svc = PoolAwareDispatchService(runner, pool_config=cfg)
 
         # Force the executor to raise on submit (e.g. shutdown).
-        svc._inner._executor.shutdown(wait=False)
-        svc._inner._executor.submit = MagicMock(side_effect=RuntimeError("executor shutdown"))
+        svc._inner.executor.shutdown(wait=False)
+        svc._inner.executor.submit = MagicMock(side_effect=RuntimeError("executor shutdown"))
 
         with pytest.raises(RuntimeError, match="executor shutdown"):
             svc._try_claim_and_dispatch()
@@ -607,8 +607,8 @@ class TestReapFutures:
         future: concurrent.futures.Future[None] = concurrent.futures.Future()
         future.set_result(None)
 
-        with svc._inner._lock:
-            svc._inner._futures[future] = "attempt-1"
+        with svc._inner.lock:
+            svc._inner.futures[future] = "attempt-1"
         with svc._slot_lock:
             svc._slot_map[future] = slot.slot_id
 
@@ -630,8 +630,8 @@ class TestReapFutures:
         future: concurrent.futures.Future[None] = concurrent.futures.Future()
         future.set_exception(RuntimeError("boom"))
 
-        with svc._inner._lock:
-            svc._inner._futures[future] = "attempt-2"
+        with svc._inner.lock:
+            svc._inner.futures[future] = "attempt-2"
         with svc._slot_lock:
             svc._slot_map[future] = slot.slot_id
 
@@ -654,12 +654,12 @@ class TestLifecycle:
         svc = PoolAwareDispatchService(runner, pool_config=cfg)
 
         svc.start()
-        assert svc._inner._thread is not None
-        assert svc._inner._thread.is_alive()
+        assert svc._inner.thread is not None
+        assert svc._inner.thread.is_alive()
 
         svc.stop()
-        svc._inner._thread.join(timeout=2)
-        assert not svc._inner._thread.is_alive()
+        svc._inner.thread.join(timeout=2)
+        assert not svc._inner.thread.is_alive()
 
     def test_wake_does_not_raise(self) -> None:
         runner = _make_fake_runner()

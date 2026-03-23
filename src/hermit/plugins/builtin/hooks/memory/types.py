@@ -40,7 +40,7 @@ class MemoryEntry:
     created_at: date = field(default_factory=date.today)
     updated_at: date | None = None
     confidence: float = 0.5
-    supersedes: list[str] = field(default_factory=list[str])
+    supersedes: list[str] = field(default_factory=list)
     scope_kind: str = ""
     scope_ref: str = ""
     retention_class: str = ""

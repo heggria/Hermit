@@ -128,7 +128,7 @@ class KernelDispatchService:
                 store.update_step_attempt(
                     attempt.step_attempt_id,
                     status="failed",
-                    waiting_reason="heartbeat_timeout",
+                    status_reason="heartbeat_timeout",
                     finished_at=now,
                 )
                 store.update_step(attempt.step_id, status="failed", finished_at=now)
@@ -235,7 +235,7 @@ class KernelDispatchService:
                 store.update_step_attempt(
                     step_attempt_id,
                     status="failed",
-                    waiting_reason="worker_exception",
+                    status_reason="worker_exception",
                     finished_at=now,
                 )
                 store.update_step(attempt.step_id, status="failed", finished_at=now)
@@ -320,8 +320,10 @@ class KernelDispatchService:
         and ``settings`` so that all registered consumers (metaloop,
         benchmark, etc.) receive the parameters they expect.
         """
-        if task_id in self.emitted_complete:
-            return
+        with self.lock:
+            if task_id in self.emitted_complete:
+                return
+            self.emitted_complete.add(task_id)
         try:
             pm = getattr(self.runner, "pm", None)
             if pm is None:
@@ -338,7 +340,6 @@ class KernelDispatchService:
                 status=status,
                 settings=settings,
             )
-            self.emitted_complete.add(task_id)
             log.debug(
                 "subtask_complete_emitted",
                 task_id=task_id,
@@ -391,7 +392,7 @@ class KernelDispatchService:
             step_attempt_id,
             status="deliberation_pending",
             context=updated_ctx,
-            waiting_reason="deliberation_required",
+            status_reason="deliberation_required",
         )
         store.update_step(attempt.step_id, status="deliberation_pending")
 
@@ -447,7 +448,7 @@ class KernelDispatchService:
                         attempt.step_attempt_id,
                         status="superseded",
                         context=context,
-                        waiting_reason="duplicate_recovered_superseded",
+                        status_reason="duplicate_recovered_superseded",
                         finished_at=now,
                     )
                     continue
@@ -467,7 +468,7 @@ class KernelDispatchService:
                     store.update_step_attempt(
                         dup.step_attempt_id,
                         status="superseded",
-                        waiting_reason="duplicate_ready_superseded",
+                        status_reason="duplicate_ready_superseded",
                         finished_at=now,
                     )
 
@@ -503,7 +504,7 @@ class KernelDispatchService:
             attempt.step_attempt_id,
             status="failed",
             context=context,
-            waiting_reason="worker_interrupted_sync_orphaned",
+            status_reason="worker_interrupted_sync_orphaned",
             finished_at=now,
         )
         store.update_step(
@@ -542,7 +543,7 @@ class KernelDispatchService:
                 attempt.step_attempt_id,
                 status="blocked",
                 context=context,
-                waiting_reason="worker_interrupted_recovery_required",
+                status_reason="worker_interrupted_recovery_required",
                 finished_at=None,
             )
             store.update_step(
@@ -569,7 +570,7 @@ class KernelDispatchService:
             attempt.step_attempt_id,
             status="ready",
             context=context,
-            waiting_reason="worker_interrupted_requeued",
+            status_reason="worker_interrupted_requeued",
             finished_at=None,
         )
         store.update_step(

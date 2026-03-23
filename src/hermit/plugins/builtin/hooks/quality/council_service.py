@@ -88,10 +88,20 @@ def _parse_reviewer_response(raw_text: str, reviewer_role: str) -> list[Reviewer
         start = text.find("[")
         end = text.rfind("]")
         if start == -1 or end == -1 or end <= start:
+            log.warning(
+                "council.parse_response_failed",
+                reviewer_role=reviewer_role,
+                raw_preview=raw_text[:200],
+            )
             return []
         try:
             parsed = json.loads(text[start : end + 1])
         except json.JSONDecodeError:
+            log.warning(
+                "council.parse_response_failed",
+                reviewer_role=reviewer_role,
+                raw_preview=raw_text[:200],
+            )
             return []
 
     if not isinstance(parsed, list):
@@ -160,6 +170,28 @@ class ReviewCouncilService:
         """Run all reviewers in parallel and synthesize a verdict."""
         start = time.monotonic()
         council_id = f"council-{uuid.uuid4().hex[:12]}"
+
+        # ----- Early exit: nothing to review -----
+        if not changed_files:
+            log.warning(
+                "council.no_files_to_review",
+                council_id=council_id,
+                spec_id=spec_id,
+            )
+            return CouncilVerdict(
+                verdict="revise",
+                council_id=council_id,
+                reviewer_count=0,
+                finding_count=0,
+                critical_count=0,
+                high_count=0,
+                findings=(),
+                lint_passed=True,
+                consensus_score=0.0,
+                revision_directive="No changed files provided for review.",
+                duration_seconds=round(time.monotonic() - start, 3),
+                decided_at=time.time(),
+            )
 
         log.info(
             "council.convene",
@@ -340,9 +372,14 @@ class ReviewCouncilService:
         findings: list[ReviewerFinding] = []
         completed_roles: set[str] = set()
 
+        phase_timeout = max(
+            (p.timeout_seconds for p in perspectives),
+            default=_FUTURES_TIMEOUT_SECONDS,
+        )
+
         done, not_done = concurrent.futures.wait(
             futures.keys(),
-            timeout=_FUTURES_TIMEOUT_SECONDS,
+            timeout=phase_timeout,
         )
 
         for future in done:
@@ -372,6 +409,29 @@ class ReviewCouncilService:
                 "council.reviewer_timeout",
                 council_id=council_id,
                 role=role,
+            )
+
+        # If no reviewer completed successfully and some timed out, inject an
+        # error finding so the verdict cannot silently auto-accept.
+        if not completed_roles and not_done:
+            timed_out_roles = [futures[f] for f in not_done]
+            log.warning(
+                "council.all_reviewers_failed",
+                council_id=council_id,
+                timed_out_roles=timed_out_roles,
+            )
+            findings.append(
+                ReviewerFinding(
+                    reviewer_role="council",
+                    category="council_error",
+                    severity="critical",
+                    file_path="",
+                    message=(
+                        "All reviewers timed out or failed — "
+                        "council could not complete review. "
+                        f"Timed-out roles: {', '.join(timed_out_roles)}"
+                    ),
+                )
             )
 
         return findings, completed_roles

@@ -20,7 +20,7 @@ class TaskExecutionContext:
     actor_principal_id: str = "principal_user"
     policy_profile: str = "default"
     workspace_root: str = ""
-    ingress_metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    ingress_metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,12 +58,12 @@ class TaskExecutionContext:
 @dataclass
 class WorkingStateSnapshot:
     goal_summary: str = ""
-    open_loops: list[str] = field(default_factory=list[str])
-    active_constraints: list[str] = field(default_factory=list[str])
-    pending_approvals: list[str] = field(default_factory=list[str])
-    recent_results: list[str] = field(default_factory=list[str])
+    open_loops: list[str] = field(default_factory=list)
+    active_constraints: list[str] = field(default_factory=list)
+    pending_approvals: list[str] = field(default_factory=list)
+    recent_results: list[str] = field(default_factory=list)
     planning_mode: bool = False
-    candidate_plan_refs: list[str] = field(default_factory=list[str])
+    candidate_plan_refs: list[str] = field(default_factory=list)
     selected_plan_ref: str = ""
     plan_status: str = "none"
 
@@ -80,9 +80,9 @@ class WorkingStateSnapshot:
 
 @dataclass
 class CompiledProviderInput:
-    messages: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    messages: list[dict[str, Any]] = field(default_factory=list)
     context_pack_ref: str | None = None
-    ingress_artifact_refs: list[str] = field(default_factory=list[str])
+    ingress_artifact_refs: list[str] = field(default_factory=list)
     session_projection_ref: str | None = None
     source_mode: str = "compiled"
 

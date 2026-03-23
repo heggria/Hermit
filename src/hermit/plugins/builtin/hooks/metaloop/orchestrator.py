@@ -500,6 +500,10 @@ class MetaLoopOrchestrator:
             # No spec data saved — fall through and re-run full pipeline
             self._update_metadata(state.spec_id, "spec_approval_decision", {})
 
+        # Record planning start time for timeout detection
+        if not metadata.get("planning_started_at"):
+            self._update_metadata(state.spec_id, "planning_started_at", time.time())
+
         # --- Step 1: Research ---
         research_data = self._run_research(state.spec_id, goal, data, metadata)
 
@@ -1088,17 +1092,24 @@ class MetaLoopOrchestrator:
             )
         data = _coerce_dict(entry)
         metadata = _parse_metadata(data.get("metadata"))
+
+        # Record reviewing start time for timeout detection
+        if not metadata.get("reviewing_started_at"):
+            self._update_metadata(state.spec_id, "reviewing_started_at", time.time())
+            # Re-read metadata after update
+            entry = self._store.get_spec_entry(spec_id=state.spec_id)
+            data = _coerce_dict(entry)
+            metadata = _parse_metadata(data.get("metadata"))
+
         decomposition = _coerce_dict(metadata.get("decomposition_plan", {}))
         steps = cast(list[SpecDict], decomposition.get("steps", []))
         spec_data = cast(SpecDict, metadata.get("generated_spec", {}))
 
-        # Extract changed file paths from decomposition steps
-        changed_files: list[str] = []
-        for step in steps:
-            step_meta = _coerce_dict(step.get("metadata", {}))
-            path = str(step_meta.get("path", ""))
-            if path:
-                changed_files.append(path)
+        # Extract changed file paths from spec's file_plan (authoritative source)
+        file_plan = spec_data.get("file_plan", [])
+        changed_files: list[str] = [
+            fp["path"] for fp in file_plan if isinstance(fp, dict) and fp.get("path")
+        ]
 
         # Read revision_cycle from metadata (default 0)
         revision_cycle = int(metadata.get("revision_cycle", 0))
@@ -1199,15 +1210,12 @@ class MetaLoopOrchestrator:
         impl_info = _coerce_dict(metadata.get("implementation", {}))
         worktree_path = impl_info.get("worktree_path")
 
-        # Extract changed file paths from decomposition for tiered benchmarking
-        decomposition = _coerce_dict(metadata.get("decomposition_plan", {}))
-        steps = cast(list[SpecDict], decomposition.get("steps", []))
-        changed_files: list[str] = []
-        for step in steps:
-            step_meta = _coerce_dict(step.get("metadata", {}))
-            path = str(step_meta.get("path", ""))
-            if path:
-                changed_files.append(path)
+        # Extract changed file paths from spec's file_plan (authoritative source)
+        spec_data = metadata.get("generated_spec") or {}
+        file_plan = spec_data.get("file_plan", [])
+        changed_files: list[str] = [
+            fp["path"] for fp in file_plan if isinstance(fp, dict) and fp.get("path")
+        ]
 
         # --- Benchmark ---
         benchmark_passed = True
@@ -2047,27 +2055,67 @@ class SpecBacklogPoller:
         #    IMPLEMENTING: scan ALL unstarted specs so multiple parallel DAGs can be
         #    kicked off without waiting for round-robin turns (limit=1 starves them).
         if hasattr(self._backlog._store, "list_spec_backlog"):
-            for status in (
-                PipelinePhase.PLANNING.value,
-                PipelinePhase.REVIEWING.value,
-            ):
-                try:
+            try:
+                for status in (
+                    PipelinePhase.PLANNING.value,
+                    PipelinePhase.REVIEWING.value,
+                ):
                     active = self._backlog._store.list_spec_backlog(status=status, limit=1)
                     if active:
                         entry = _coerce_dict(active[0])
                         spec_id = entry["spec_id"]
-                        log.info(
-                            "metaloop_poller_advancing",
-                            spec_id=spec_id,
-                            phase=status,
-                        )
-                        self._orchestrator.advance(spec_id)
-                        did_work = True
-                except Exception:
-                    log.exception(
-                        "metaloop_poller_advance_error",
-                        phase=status,
-                    )
+
+                        # Check phase timeout before advancing
+                        metadata = _parse_metadata(entry.get("metadata"))
+                        timed_out = False
+                        if status == PipelinePhase.PLANNING.value:
+                            started_at = metadata.get("planning_started_at")
+                            if started_at is not None:
+                                elapsed = time.time() - float(started_at)
+                                if elapsed > PHASE_TIMEOUT_PLANNING:
+                                    log.warning(
+                                        "metaloop_planning_timeout",
+                                        spec_id=spec_id,
+                                        elapsed_seconds=int(elapsed),
+                                    )
+                                    self._backlog.mark_failed(
+                                        spec_id,
+                                        error=f"PLANNING timed out after {int(elapsed)}s",
+                                        max_retries=self._orchestrator._max_retries,
+                                    )
+                                    timed_out = True
+                                    did_work = True
+                        elif status == PipelinePhase.REVIEWING.value:
+                            started_at = metadata.get("reviewing_started_at")
+                            if started_at is not None:
+                                elapsed = time.time() - float(started_at)
+                                if elapsed > PHASE_TIMEOUT_REVIEWING:
+                                    log.warning(
+                                        "metaloop_reviewing_timeout",
+                                        spec_id=spec_id,
+                                        elapsed_seconds=int(elapsed),
+                                    )
+                                    self._backlog.mark_failed(
+                                        spec_id,
+                                        error=f"REVIEWING timed out after {int(elapsed)}s",
+                                        max_retries=self._orchestrator._max_retries,
+                                    )
+                                    timed_out = True
+                                    did_work = True
+
+                        if not timed_out:
+                            log.info(
+                                "metaloop_poller_advancing",
+                                spec_id=spec_id,
+                                phase=status,
+                            )
+                            self._orchestrator.advance(spec_id)
+                            did_work = True
+            except Exception:
+                log.exception(
+                    "metaloop_poller_advance_error",
+                    phase="planning_or_reviewing",
+                )
 
             # IMPLEMENTING: advance all unstarted specs (no implementing_started_at).
             # Specs that already have a DAG running are handled by

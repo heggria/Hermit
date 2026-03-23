@@ -238,9 +238,9 @@ class TestIterationState:
         )
         assert not state.can_revise
 
-    def test_allowed_transitions_cover_non_terminal_phases(self) -> None:
-        non_terminal = {p for p in PipelinePhase if p not in TERMINAL_PHASES}
-        assert set(ALLOWED_TRANSITIONS.keys()) == non_terminal
+    def test_allowed_transitions_cover_all_phases(self) -> None:
+        all_phases = set(PipelinePhase)
+        assert set(ALLOWED_TRANSITIONS.keys()) == all_phases
 
     def test_reviewing_can_transition_to_implementing(self) -> None:
         """REVIEWING -> IMPLEMENTING is the revision loop transition."""
@@ -1541,11 +1541,11 @@ class TestReviewingHandler:
         goal = orch._build_repair_goal(result)
         assert goal == ""
 
-    def test_reviewing_benchmark_exception_still_accepts(
+    def test_reviewing_benchmark_exception_blocks_acceptance(
         self,
         fake_store: FakeStore,
     ) -> None:
-        """When BenchmarkRunner raises, advance to ACCEPTED with benchmark_skipped metadata."""
+        """When BenchmarkRunner raises, benchmark_passed=False blocks acceptance."""
         from unittest.mock import AsyncMock, patch
 
         orch = MetaLoopOrchestrator(fake_store, max_retries=2, benchmark_blocking=True)
@@ -1574,8 +1574,9 @@ class TestReviewingHandler:
             result = orch._handle_reviewing(state)
 
         assert result is not None
-        # Should still advance to ACCEPTED (don't block on infra failure)
-        assert result.phase == PipelinePhase.ACCEPTED
+        # Benchmark exception should block acceptance (retry via mark_failed)
+        assert result.phase == PipelinePhase.PENDING
+        assert result.attempt == 2
 
         # Verify benchmark_skipped metadata
         entry = fake_store.get_spec_entry("s1")

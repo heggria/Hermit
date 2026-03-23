@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import structlog
+
 from hermit.kernel.policy.guards.rules import RuleOutcome
 from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations, PolicyReason
+
+_log = structlog.get_logger()
 
 _NETWORK_MUTATION_CLASSES = frozenset(
     {
@@ -23,6 +27,13 @@ def evaluate_network_rules(request: ActionRequest) -> list[RuleOutcome] | None:
     if request.action_class not in _NETWORK_MUTATION_CLASSES:
         return None
 
+    _log.info(
+        "guard.network.approval_required",
+        rule="external_mutation",
+        tool=request.tool_name,
+        action_class=request.action_class,
+        risk_level=request.risk_hint or "high",
+    )
     return [
         RuleOutcome(
             verdict="approval_required",

@@ -100,17 +100,19 @@ def _ungoverned_spec() -> SubagentSpec:
 
 
 def _executor_with_runtime(runtime: object = None) -> SubagentExecutor:
-    """Create a SubagentExecutor with optional runtime for testing."""
-    return SubagentExecutor(
+    """Create a SubagentExecutor with optional runtime for testing.
+
+    Sets _runtime directly rather than calling configure_runtime(),
+    since these tests use lightweight SimpleNamespace mocks that
+    lack model/max_tokens/tool_output_limit attributes.
+    """
+    se = SubagentExecutor(
         hooks=HooksEngine(),
-        runtime=runtime,
         settings=None,
-        registry=None,
-        model="",
-        max_tokens=2048,
-        tool_output_limit=4000,
-        on_tool_call=None,
     )
+    if runtime is not None:
+        se._runtime = runtime
+    return se
 
 
 def test_register_principal_returns_none_for_ungoverned() -> None:
@@ -209,13 +211,11 @@ def test_run_subagent_governed_emits_spawned_and_completed() -> None:
 
     se = SubagentExecutor(
         hooks=HooksEngine(),
-        runtime=mock_runtime,
         settings=None,
+    )
+    se.configure_runtime(
+        runtime=mock_runtime,
         registry=ToolRegistry(),
-        model="test-model",
-        max_tokens=2048,
-        tool_output_limit=4000,
-        on_tool_call=None,
     )
 
     spec = _governed_spec()
@@ -237,13 +237,11 @@ def test_run_subagent_governed_emits_spawned_and_failed_on_error() -> None:
 
     se = SubagentExecutor(
         hooks=HooksEngine(),
-        runtime=mock_runtime,
         settings=None,
+    )
+    se.configure_runtime(
+        runtime=mock_runtime,
         registry=ToolRegistry(),
-        model="test-model",
-        max_tokens=2048,
-        tool_output_limit=4000,
-        on_tool_call=None,
     )
 
     spec = _governed_spec()
@@ -265,13 +263,11 @@ def test_run_subagent_ungoverned_no_events() -> None:
 
     se = SubagentExecutor(
         hooks=HooksEngine(),
-        runtime=mock_runtime,
         settings=None,
+    )
+    se.configure_runtime(
+        runtime=mock_runtime,
         registry=ToolRegistry(),
-        model="test-model",
-        max_tokens=2048,
-        tool_output_limit=4000,
-        on_tool_call=None,
     )
 
     spec = _ungoverned_spec()

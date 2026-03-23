@@ -421,7 +421,7 @@ def test_observation_service_timeout_enforcement(tmp_path: Path) -> None:
     updated_attempt = store.get_step_attempt(attempt.step_attempt_id)
     assert updated_attempt is not None
     assert updated_attempt.status == "failed"
-    assert updated_attempt.waiting_reason == "observation_timeout"
+    assert updated_attempt.status_reason == "observation_timeout"
 
 
 def test_observation_service_no_timeout_for_future_deadline(
@@ -563,3 +563,165 @@ def test_observation_ticket_record_dataclass() -> None:
     assert rec.ticket_data == {}
     assert rec.last_polled_at is None
     assert rec.resolved_at is None
+
+
+# -- Stale observation auto-resolution ------------------------------------
+
+
+def test_resolve_stale_observations_auto_fails(tmp_path: Path) -> None:
+    """Stale observations exceeding observation_window are auto-resolved as failed."""
+    from hermit.runtime.control.lifecycle.budgets import ExecutionBudget
+
+    store = _setup(tmp_path)
+    task = _mk_task(store)
+    step = store.create_step(task_id=task.task_id, kind="execute")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    store.update_step_attempt(attempt.step_attempt_id, status="observing")
+    store.update_step(step.step_id, status="blocked")
+    store.update_task_status(task.task_id, "blocked")
+
+    # Use a tiny observation_window so the attempt is immediately stale.
+    budget = ExecutionBudget(observation_window=10.0)
+    runner = SimpleNamespace(
+        task_controller=SimpleNamespace(store=store),
+        agent=None,
+    )
+    svc = ObservationService(runner, budget=budget, store=store)
+
+    # Simulate the attempt being old enough to be stale.
+    now = time.time()
+    # Set claimed_at artificially in the past.
+    store._get_conn().execute(
+        "UPDATE step_attempts SET claimed_at = ? WHERE step_attempt_id = ?",
+        (now - 20.0, attempt.step_attempt_id),
+    )
+
+    attempts = store.list_step_attempts(status="observing", limit=200)
+    resolved = svc._resolve_stale_observations(store, attempts, now)
+
+    assert attempt.step_attempt_id in resolved
+
+    updated_attempt = store.get_step_attempt(attempt.step_attempt_id)
+    assert updated_attempt is not None
+    assert updated_attempt.status == "failed"
+    assert updated_attempt.status_reason == "observation_stale_timeout"
+
+    updated_step = store.get_step(step.step_id)
+    assert updated_step is not None
+    assert updated_step.status == "failed"
+
+    # Event should be recorded.
+    events = store.list_events(task_id=task.task_id)
+    stale_events = [e for e in events if e["event_type"] == "observation.stale_auto_resolved"]
+    assert len(stale_events) >= 1
+    assert stale_events[-1]["payload"]["reason"] == "observation_stale_timeout"
+
+
+def test_resolve_stale_observations_not_stale(tmp_path: Path) -> None:
+    """Observations within observation_window should not be resolved."""
+    from hermit.runtime.control.lifecycle.budgets import ExecutionBudget
+
+    store = _setup(tmp_path)
+    task = _mk_task(store)
+    step = store.create_step(task_id=task.task_id, kind="execute")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    store.update_step_attempt(attempt.step_attempt_id, status="observing")
+
+    budget = ExecutionBudget(observation_window=600.0)
+    runner = SimpleNamespace(
+        task_controller=SimpleNamespace(store=store),
+        agent=None,
+    )
+    svc = ObservationService(runner, budget=budget, store=store)
+
+    now = time.time()
+    # Set claimed_at to just now (within the window).
+    store._get_conn().execute(
+        "UPDATE step_attempts SET claimed_at = ? WHERE step_attempt_id = ?",
+        (now - 10.0, attempt.step_attempt_id),
+    )
+
+    attempts = store.list_step_attempts(status="observing", limit=200)
+    resolved = svc._resolve_stale_observations(store, attempts, now)
+
+    assert len(resolved) == 0
+    updated_attempt = store.get_step_attempt(attempt.step_attempt_id)
+    assert updated_attempt is not None
+    assert updated_attempt.status == "observing"
+
+
+def test_resolve_stale_observations_propagates_dag_failure(tmp_path: Path) -> None:
+    """Stale observation resolution propagates failure to downstream DAG steps."""
+    from hermit.runtime.control.lifecycle.budgets import ExecutionBudget
+
+    store = _setup(tmp_path)
+    task = _mk_task(store)
+    step_a = store.create_step(task_id=task.task_id, kind="execute")
+    step_b = store.create_step(
+        task_id=task.task_id,
+        kind="execute",
+        depends_on=[step_a.step_id],
+    )
+    attempt_a = store.create_step_attempt(task_id=task.task_id, step_id=step_a.step_id)
+    store.update_step_attempt(attempt_a.step_attempt_id, status="observing")
+    store.update_step(step_a.step_id, status="blocked")
+    store.update_step(step_b.step_id, status="waiting")
+    store.update_task_status(task.task_id, "blocked")
+
+    budget = ExecutionBudget(observation_window=5.0)
+    runner = SimpleNamespace(
+        task_controller=SimpleNamespace(store=store),
+        agent=None,
+    )
+    svc = ObservationService(runner, budget=budget, store=store)
+
+    now = time.time()
+    store._get_conn().execute(
+        "UPDATE step_attempts SET claimed_at = ? WHERE step_attempt_id = ?",
+        (now - 10.0, attempt_a.step_attempt_id),
+    )
+
+    attempts = store.list_step_attempts(status="observing", limit=200)
+    resolved = svc._resolve_stale_observations(store, attempts, now)
+
+    assert attempt_a.step_attempt_id in resolved
+
+    # Downstream step_b should be cascaded to failed.
+    updated_step_b = store.get_step(step_b.step_id)
+    assert updated_step_b is not None
+    assert updated_step_b.status == "failed"
+
+    # Task should be failed since all steps are terminal.
+    updated_task = store.get_task(task.task_id)
+    assert updated_task is not None
+    assert updated_task.status == "failed"
+
+
+def test_resolve_stale_observations_zero_window(tmp_path: Path) -> None:
+    """With observation_window=0, no observations should be resolved."""
+    from hermit.runtime.control.lifecycle.budgets import ExecutionBudget
+
+    store = _setup(tmp_path)
+    task = _mk_task(store)
+    step = store.create_step(task_id=task.task_id, kind="execute")
+    attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+    store.update_step_attempt(attempt.step_attempt_id, status="observing")
+
+    budget = ExecutionBudget(observation_window=0.0)
+    runner = SimpleNamespace(
+        task_controller=SimpleNamespace(store=store),
+        agent=None,
+    )
+    svc = ObservationService(runner, budget=budget, store=store)
+
+    now = time.time()
+    store._get_conn().execute(
+        "UPDATE step_attempts SET claimed_at = ? WHERE step_attempt_id = ?",
+        (now - 99999.0, attempt.step_attempt_id),
+    )
+
+    attempts = store.list_step_attempts(status="observing", limit=200)
+    resolved = svc._resolve_stale_observations(store, attempts, now)
+
+    assert len(resolved) == 0
+

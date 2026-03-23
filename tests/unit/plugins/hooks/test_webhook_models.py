@@ -42,7 +42,7 @@ def test_webhook_route_with_all_fields() -> None:
 
 def test_webhook_config_defaults() -> None:
     config = WebhookConfig()
-    assert config.host == "0.0.0.0"
+    assert config.host == "127.0.0.1"
     assert config.port == 8321
     assert config.routes == []
     assert config.control_secret is None

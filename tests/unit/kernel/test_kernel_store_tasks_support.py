@@ -113,7 +113,7 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
         attempt.step_attempt_id,
         status="blocked",
         context={"phase": "review"},
-        waiting_reason="approval",
+        status_reason="approval",
         approval_id="approval-1",
         decision_id="decision-1",
         capability_grant_id="grant-1",
@@ -135,7 +135,7 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
     assert updated_attempt is not None
     assert updated_attempt.status == "blocked"
     assert updated_attempt.context == {"phase": "review"}
-    assert updated_attempt.waiting_reason == "approval"
+    assert updated_attempt.status_reason == "approval"
     assert updated_attempt.capability_grant_id == "grant-1"
     assert updated_attempt.context_pack_ref == "artifact_context_pack_v2"
     assert updated_attempt.working_state_ref == "artifact_working_state_v2"
@@ -153,7 +153,7 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
         attempt.step_attempt_id,
         status="running",
         context=updated_attempt.context,
-        waiting_reason=updated_attempt.waiting_reason,
+        status_reason=updated_attempt.status_reason,
         approval_id=updated_attempt.approval_id,
         decision_id=updated_attempt.decision_id,
         capability_grant_id=updated_attempt.capability_grant_id,
@@ -163,7 +163,7 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
     unchanged_attempt = store.get_step_attempt(attempt.step_attempt_id)
     assert unchanged_attempt is not None
     assert unchanged_attempt.context == {"phase": "review"}
-    assert unchanged_attempt.waiting_reason == "approval"
+    assert unchanged_attempt.status_reason == "approval"
     store.update_step_attempt("missing-attempt", status="ignored")
 
     custom_event_id = store.append_event(

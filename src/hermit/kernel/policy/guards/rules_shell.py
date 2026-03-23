@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import structlog
+
 from hermit.kernel.policy.guards.rules import RuleOutcome
 from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations, PolicyReason
+
+_log = structlog.get_logger()
 
 
 def evaluate_shell_rules(request: ActionRequest) -> list[RuleOutcome] | None:
@@ -20,6 +24,13 @@ def evaluate_shell_rules(request: ActionRequest) -> list[RuleOutcome] | None:
 
     # Dangerous patterns are always denied
     if flags.get("sudo") or flags.get("curl_pipe_sh"):
+        detected = [p for p in ("sudo", "curl_pipe_sh") if flags.get(p)]
+        _log.warning(
+            "guard.shell.deny",
+            rule="dangerous_shell",
+            tool=request.tool_name,
+            patterns=detected,
+        )
         outcomes.append(
             RuleOutcome(
                 verdict="deny",
@@ -33,6 +44,12 @@ def evaluate_shell_rules(request: ActionRequest) -> list[RuleOutcome] | None:
 
     # Shell writes to sensitive paths outside workspace: hard deny
     if sensitive_paths and outside_workspace and flags.get("writes_disk"):
+        _log.warning(
+            "guard.shell.deny",
+            rule="protected_path_shell",
+            tool=request.tool_name,
+            paths=sensitive_paths,
+        )
         outcomes.append(
             RuleOutcome(
                 verdict="deny",

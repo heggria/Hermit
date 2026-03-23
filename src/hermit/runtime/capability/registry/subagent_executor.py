@@ -39,21 +39,34 @@ class SubagentExecutor:
         self,
         *,
         hooks: HooksEngine,
-        runtime: Any,
         settings: Any,
-        registry: ToolRegistry | None,
-        model: str,
-        max_tokens: int,
-        tool_output_limit: int,
-        on_tool_call: Any,
     ) -> None:
         self.hooks = hooks
-        self._runtime = runtime
         self.settings = settings
+        self._runtime: Any = None
+        self._registry: ToolRegistry | None = None
+        self._model: str = ""
+        self._max_tokens: int = 2048
+        self._tool_output_limit: int = 4000
+        self._on_tool_call: Any = None
+
+    def configure_runtime(
+        self,
+        *,
+        runtime: Any,
+        registry: ToolRegistry | None,
+        on_tool_call: Any = None,
+    ) -> None:
+        """Configure the executor with runtime dependencies.
+
+        Called once the AgentRuntime and ToolRegistry are available,
+        after plugin discovery and tool setup are complete.
+        """
+        self._runtime = runtime
         self._registry = registry
-        self._model = model
-        self._max_tokens = max_tokens
-        self._tool_output_limit = tool_output_limit
+        self._model = runtime.model
+        self._max_tokens = runtime.max_tokens
+        self._tool_output_limit = runtime.tool_output_limit
         self._on_tool_call = on_tool_call
 
     def build_delegation_tool(self, spec: SubagentSpec) -> ToolSpec:

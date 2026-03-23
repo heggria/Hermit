@@ -109,7 +109,7 @@ class SubtaskSpawner:
         self.store.update_step_attempt(
             attempt_ctx.step_attempt_id,
             status="awaiting_subtasks",
-            waiting_reason=f"Spawned {len(child_step_ids)} child step(s)",
+            status_reason=f"Spawned {len(child_step_ids)} child step(s)",
         )
         self.store.update_step(attempt_ctx.step_id, status="blocked")
         self.store.update_task_status(attempt_ctx.task_id, "blocked")

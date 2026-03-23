@@ -142,7 +142,7 @@ class DriftHandler:
                     "failure_reason": f"drift_reentry_limit_exceeded:{drift_reason}",
                     "drift_reentry_count": consecutive,
                 },
-                waiting_reason=f"drift_reentry_limit_exceeded_{drift_reason}",
+                status_reason=f"drift_reentry_limit_exceeded_{drift_reason}",
             )
             self.store.update_step(attempt_ctx.step_id, status="failed", finished_at=now)
             self.store.update_task_status(

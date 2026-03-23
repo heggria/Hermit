@@ -36,21 +36,21 @@ class ContextPack:
     excluded_reasons: dict[str, str]
     pack_hash: str
     kind: str = "context.pack/v3"
-    task_summary: dict[str, Any] = field(default_factory=dict[str, Any])
-    step_summary: dict[str, Any] = field(default_factory=dict[str, Any])
-    policy_summary: dict[str, Any] = field(default_factory=dict[str, Any])
-    planning_state: dict[str, Any] = field(default_factory=dict[str, Any])
-    episodic_context: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    procedural_context: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    task_summary: dict[str, Any] = field(default_factory=dict)
+    step_summary: dict[str, Any] = field(default_factory=dict)
+    policy_summary: dict[str, Any] = field(default_factory=dict)
+    planning_state: dict[str, Any] = field(default_factory=dict)
+    episodic_context: list[dict[str, Any]] = field(default_factory=list)
+    procedural_context: list[dict[str, Any]] = field(default_factory=list)
     carry_forward: dict[str, Any] | None = None
     continuation_guidance: dict[str, Any] | None = None
-    recent_notes: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    relevant_artifact_refs: list[str] = field(default_factory=list[str])
-    ingress_artifact_refs: list[str] = field(default_factory=list[str])
+    recent_notes: list[dict[str, Any]] = field(default_factory=list)
+    relevant_artifact_refs: list[str] = field(default_factory=list)
+    ingress_artifact_refs: list[str] = field(default_factory=list)
     focus_summary: dict[str, Any] | None = None
-    bound_ingress_deltas: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    bound_ingress_deltas: list[dict[str, Any]] = field(default_factory=list)
     session_projection_ref: str | None = None
-    blackboard_entries: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    blackboard_entries: list[dict[str, Any]] = field(default_factory=list)
     artifact_uri: str | None = None
     artifact_hash: str | None = None
 

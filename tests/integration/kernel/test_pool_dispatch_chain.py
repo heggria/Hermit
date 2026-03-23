@@ -266,7 +266,7 @@ class TestTotalWorkerCount:
         total = sum(per-role max_active)."""
         runner = _make_fake_runner()
         svc = PoolAwareDispatchService(runner)
-        assert svc._inner._worker_count == 17
+        assert svc._inner.worker_count == 17
         svc.stop()
 
 
@@ -382,28 +382,28 @@ class TestPoolLifecycle:
         svc = PoolAwareDispatchService(runner)
         svc.start()
 
-        assert svc._inner._thread is not None
-        assert svc._inner._thread.is_alive()
-        assert svc._inner._thread.daemon is True
-        assert svc._inner._thread.name == "kernel-pool-dispatch-loop"
+        assert svc._inner.thread is not None
+        assert svc._inner.thread.is_alive()
+        assert svc._inner.thread.daemon is True
+        assert svc._inner.thread.name == "kernel-pool-dispatch-loop"
 
-        assert svc._inner._reaper_thread is not None
-        assert svc._inner._reaper_thread.is_alive()
-        assert svc._inner._reaper_thread.daemon is True
-        assert svc._inner._reaper_thread.name == "lease-reaper"
+        assert svc._inner.reaper_thread is not None
+        assert svc._inner.reaper_thread.is_alive()
+        assert svc._inner.reaper_thread.daemon is True
+        assert svc._inner.reaper_thread.name == "lease-reaper"
 
         svc.stop()
-        svc._inner._thread.join(timeout=3)
-        assert not svc._inner._thread.is_alive()
+        svc._inner.thread.join(timeout=3)
+        assert not svc._inner.thread.is_alive()
 
     def test_stop_signals_and_shuts_down(self) -> None:
         runner = _make_fake_runner()
         svc = PoolAwareDispatchService(runner)
         svc.start()
         svc.stop()
-        svc._inner._thread.join(timeout=3)
-        assert svc._inner._stop.is_set()
-        assert not svc._inner._thread.is_alive()
+        svc._inner.thread.join(timeout=3)
+        assert svc._inner.stop_event.is_set()
+        assert not svc._inner.thread.is_alive()
 
     def test_wake_does_not_raise_when_not_running(self) -> None:
         runner = _make_fake_runner()
@@ -605,8 +605,8 @@ class TestDispatchChainEndToEnd:
         runner = _make_fake_runner(store)
         svc = PoolAwareDispatchService(runner)
 
-        svc._inner._executor.shutdown(wait=False)
-        svc._inner._executor.submit = MagicMock(side_effect=RuntimeError("executor shutdown"))
+        svc._inner.executor.shutdown(wait=False)
+        svc._inner.executor.submit = MagicMock(side_effect=RuntimeError("executor shutdown"))
 
         with pytest.raises(RuntimeError, match="executor shutdown"):
             svc._try_claim_and_dispatch()

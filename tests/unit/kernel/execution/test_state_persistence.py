@@ -449,7 +449,7 @@ class TestClearSuspendedState:
         assert _RUNTIME_SNAPSHOT_KEY not in context
         assert _PENDING_EXECUTION_KEY not in context
         assert context["other_key"] == "preserved"
-        assert call_kwargs["waiting_reason"] is None
+        assert call_kwargs["status_reason"] is None
         assert call_kwargs["resume_from_ref"] is None
 
     def test_noop_for_unknown_attempt(

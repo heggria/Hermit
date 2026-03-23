@@ -131,7 +131,7 @@ class StatePersistence:
         self.store.update_step_attempt(
             step_attempt_id,
             context=context,
-            waiting_reason=None,
+            status_reason=None,
             resume_from_ref=None,
         )
 

@@ -101,7 +101,7 @@ class TestRecoveryDedupSameStep:
         store.update_task_status(task_id, "running")
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         # Exactly one attempt should be recovered (ready or blocked), rest superseded
         all_attempts = store.list_step_attempts(step_id=step_id, limit=100)
@@ -136,7 +136,7 @@ class TestRecoveryDedupSameStep:
         )
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         all_attempts = store.list_step_attempts(step_id=step_id, limit=100)
         recovered = [a for a in all_attempts if a.status in ("ready", "blocked")]
@@ -169,7 +169,7 @@ class TestRecoveryReadyDedup:
         store.update_task_status(task_id, "queued")
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         all_attempts = store.list_step_attempts(step_id=step_id, limit=100)
         ready = [a for a in all_attempts if a.status == "ready"]
@@ -189,7 +189,7 @@ class TestRecoveryReadyDedup:
         store.update_task_status(task_id, "queued")
 
         service = _make_dispatch_service(store, controller)
-        service._recover_interrupted_attempts()
+        service.recover_interrupted_attempts()
 
         attempt = store.get_step_attempt(attempt_id)
         assert attempt is not None

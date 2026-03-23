@@ -23,7 +23,7 @@ class ImageRecord:
     mime_type: str = ""
     sha256: str = ""
     summary: str = ""
-    tags: list[str] = field(default_factory=list[str])
+    tags: list[str] = field(default_factory=list)
     ocr_text: str = ""
     analysis_status: str = "pending"
     feishu_image_key: str = ""

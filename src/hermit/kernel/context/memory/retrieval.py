@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import heapq
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -8,7 +10,9 @@ import structlog
 
 from hermit.kernel.context.memory.confidence import ConfidenceDecayService
 from hermit.kernel.context.memory.embeddings import EmbeddingService
-from hermit.kernel.context.memory.text import shares_topic, topic_tokens
+from hermit.kernel.context.memory.reranker import CrossEncoderReranker
+from hermit.kernel.context.memory.text import normalize_topic, shares_topic, topic_tokens
+from hermit.kernel.context.memory.token_index import TokenIndex
 
 if TYPE_CHECKING:
     from hermit.kernel.context.memory.lineage import MemoryLineageService
@@ -66,11 +70,25 @@ class HybridRetrievalService:
         confidence_service: ConfidenceDecayService | None = None,
         lineage_service: MemoryLineageService | None = None,
         quality_service: MemoryQualityService | None = None,
+        reranker: CrossEncoderReranker | None = None,
     ) -> None:
         self._embeddings = embedding_service or EmbeddingService()
         self._confidence = confidence_service or ConfidenceDecayService()
         self._lineage = lineage_service
         self._quality = quality_service
+        self._reranker = reranker
+        self._token_index: TokenIndex | None = None
+
+    def _ensure_token_index(self, memories: list[MemoryRecord]) -> TokenIndex:
+        """Build or return a cached inverted token index for memories."""
+        if self._token_index is not None and len(self._token_index) == len(memories):
+            return self._token_index
+        index = TokenIndex()
+        for m in memories:
+            tokens = frozenset(t for t in topic_tokens(m.claim_text) if len(t) >= 2)
+            index.add(m.memory_id, tokens)
+        self._token_index = index
+        return index
 
     def retrieve(
         self,
@@ -117,11 +135,24 @@ class HybridRetrievalService:
         # RRF fusion
         fused = self._reciprocal_rank_fusion(ranked_lists)
 
+        # Build memory lookup once for reranking + result assembly
+        memory_map = {m.memory_id: m for m in memories}
+
         # Quality score integration: multiply RRF scores by quality scores
-        fused = self._apply_quality_scores(fused, memory_map={m.memory_id: m for m in memories})
+        fused = self._apply_quality_scores(fused, memory_map=memory_map)
+
+        # Apply cross-encoder reranking if available (deep path only)
+        reranked = False
+        if use_deep and self._reranker is not None and self._reranker.is_available():
+            candidates = [
+                (mid, memory_map[mid].claim_text if mid in memory_map else "", score)
+                for mid, score in fused[:limit]
+            ]
+            fused_reranked = self._reranker.rerank(query, candidates, limit=limit)
+            fused = [(mid, score) for mid, _, score in fused_reranked]
+            reranked = True
 
         # Build result
-        memory_map = {m.memory_id: m for m in memories}
         results: list[RetrievalResult] = []
         for mid, score in fused[:limit]:
             if mid not in memory_map:
@@ -154,12 +185,37 @@ class HybridRetrievalService:
         )
         return report
 
-    def _token_overlap_rank(self, query: str, memories: list[MemoryRecord]) -> list[str]:
+    def _token_overlap_rank(
+        self, query: str, memories: list[MemoryRecord], limit: int = _DEFAULT_LIMIT
+    ) -> list[str]:
         """Rank by token overlap between query and memory claim text."""
         query_tokens = {t for t in topic_tokens(query) if len(t) >= 2}
         if not query_tokens:
             return [m.memory_id for m in memories]
 
+        # Layer 3: Build/use inverted index for candidate filtering
+        index = self._ensure_token_index(memories)
+        candidate_ids = index.candidates(query_tokens)
+
+        # Layer 6: Early termination -- if too many candidates, pre-filter
+        max_candidates = limit * 3
+        if len(candidate_ids) > max_candidates:
+            # Keep top candidates by raw overlap count (O(n log k) via heapq)
+            overlap_counts: list[tuple[str, int]] = []
+            for mid in candidate_ids:
+                mem_tokens = index.get_tokens(mid)
+                overlap_counts.append((mid, len(query_tokens & mem_tokens)))
+            top = heapq.nlargest(max_candidates, overlap_counts, key=lambda x: x[1])
+            candidate_ids = {mid for mid, _ in top}
+
+        # Layer 4: Precompute query-side values for shares_topic
+        query_norm = normalize_topic(query)
+        query_paths = frozenset(re.findall(r"/[\w./-]+", query))
+        query_bigrams = frozenset(
+            query_norm[i : i + 2] for i in range(max(0, len(query_norm) - 1))
+        )
+
+        # Score only candidates (not all memories)
         scored: list[tuple[str, float]] = []
         for m in memories:
             mem_tokens = {t for t in topic_tokens(m.claim_text) if len(t) >= 2}

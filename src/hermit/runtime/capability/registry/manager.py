@@ -52,16 +52,12 @@ class PluginManager:
         self._mcp_manager: Any = None
         self._registry: ToolRegistry | None = None
 
-        # Extracted delegates
+        # Extracted delegates -- created with only the fields needed for tool
+        # building.  Runtime dependencies are injected later via
+        # configure_subagent_runtime() once the AgentRuntime is available.
         self._subagent_executor = SubagentExecutor(
             hooks=self.hooks,
-            runtime=None,
             settings=settings,
-            registry=None,
-            model="",
-            max_tokens=2048,
-            tool_output_limit=4000,
-            on_tool_call=None,
         )
 
     def discover_and_load(self, *search_dirs: Path) -> None:
@@ -139,12 +135,11 @@ class PluginManager:
     def configure_subagent_runtime(
         self, runtime: AgentRuntime, on_tool_call: ToolCallback | None = None
     ) -> None:
-        self._subagent_executor._runtime = runtime
-        self._subagent_executor._registry = self._registry
-        self._subagent_executor._model = runtime.model
-        self._subagent_executor._max_tokens = runtime.max_tokens
-        self._subagent_executor._tool_output_limit = runtime.tool_output_limit
-        self._subagent_executor._on_tool_call = on_tool_call
+        self._subagent_executor.configure_runtime(
+            runtime=runtime,
+            registry=self._registry,
+            on_tool_call=on_tool_call,
+        )
 
     @property
     def _prompt_builder(self) -> SystemPromptBuilder:

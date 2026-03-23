@@ -282,7 +282,7 @@ def promote_memories_via_kernel(
             store.update_step_attempt(
                 ctx.step_attempt_id,
                 status="failed",
-                waiting_reason=str(exc),
+                status_reason=str(exc),
                 decision_id=decision_id,
                 capability_grant_id=capability_grant_id,
                 workspace_lease_id=workspace_lease.lease_id,

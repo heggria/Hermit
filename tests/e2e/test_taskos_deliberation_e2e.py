@@ -77,13 +77,15 @@ def _create_attempt(
 
 
 class TestHighRiskTriggersDeliberationPending:
-    """Test 9: High-risk step kind='plan' triggers deliberation gating."""
+    """Test 9: High-risk action_class='write_local' triggers deliberation gating."""
 
     def test_static_check_returns_true(self) -> None:
         """DeliberationService.check_deliberation_needed() should return True
-        for risk_band='high' regardless of step kind."""
+        for risk_level='high' with a mutation action_class."""
         assert (
-            DeliberationService.check_deliberation_needed(risk_band="high", step_kind="plan")
+            DeliberationService.check_deliberation_needed(
+                risk_level="high", action_class="write_local"
+            )
             is True
         )
 
@@ -93,7 +95,7 @@ class TestHighRiskTriggersDeliberationPending:
         dispatch = KernelDispatchService(runner, worker_count=2)
 
         _task_id, step_id, step_attempt_id = _create_attempt(
-            store, step_kind="plan", risk_band="high"
+            store, step_kind="write_local", risk_band="high"
         )
 
         result = dispatch._check_deliberation_needed(step_attempt_id)
@@ -108,7 +110,7 @@ class TestHighRiskTriggersDeliberationPending:
         # Verify: context enriched with deliberation metadata
         ctx = updated_attempt.context or {}
         assert ctx.get("deliberation_risk_band") == "high"
-        assert ctx.get("deliberation_step_kind") == "plan"
+        assert ctx.get("deliberation_step_kind") == "write_local"
         assert "deliberation_pending_at" in ctx
 
         # Verify: step also moved to deliberation_pending
@@ -131,13 +133,15 @@ class TestHighRiskTriggersDeliberationPending:
 
 
 class TestCriticalRiskTriggersDeliberation:
-    """Test 10: Critical-risk step kind='execute' triggers deliberation gating."""
+    """Test 10: Critical-risk action_class='execute_command' triggers deliberation gating."""
 
     def test_static_check_returns_true(self) -> None:
         """DeliberationService.check_deliberation_needed() should return True
-        for risk_band='critical' regardless of step kind."""
+        for risk_level='critical' with a mutation action_class."""
         assert (
-            DeliberationService.check_deliberation_needed(risk_band="critical", step_kind="execute")
+            DeliberationService.check_deliberation_needed(
+                risk_level="critical", action_class="execute_command"
+            )
             is True
         )
 
@@ -147,7 +151,7 @@ class TestCriticalRiskTriggersDeliberation:
         dispatch = KernelDispatchService(runner, worker_count=2)
 
         _task_id, step_id, step_attempt_id = _create_attempt(
-            store, step_kind="execute", risk_band="critical"
+            store, step_kind="execute_command", risk_band="critical"
         )
 
         result = dispatch._check_deliberation_needed(step_attempt_id)
@@ -162,7 +166,7 @@ class TestCriticalRiskTriggersDeliberation:
         # Verify: context enriched with deliberation metadata
         ctx = updated_attempt.context or {}
         assert ctx.get("deliberation_risk_band") == "critical"
-        assert ctx.get("deliberation_step_kind") == "execute"
+        assert ctx.get("deliberation_step_kind") == "execute_command"
 
         # Verify: step also moved to deliberation_pending
         updated_step = store.get_step(step_id)
@@ -184,13 +188,15 @@ class TestCriticalRiskTriggersDeliberation:
 
 
 class TestLowRiskBypassesDeliberationDirectDispatch:
-    """Test 11: Low-risk step kind='execute' bypasses deliberation entirely."""
+    """Test 11: Low-risk action_class='read_local' bypasses deliberation entirely."""
 
     def test_static_check_returns_false(self) -> None:
         """DeliberationService.check_deliberation_needed() should return False
-        for risk_band='low' with any step kind."""
+        for risk_level='low' with any action_class."""
         assert (
-            DeliberationService.check_deliberation_needed(risk_band="low", step_kind="execute")
+            DeliberationService.check_deliberation_needed(
+                risk_level="low", action_class="execute_command"
+            )
             is False
         )
 
@@ -231,58 +237,63 @@ class TestLowRiskBypassesDeliberationDirectDispatch:
 
 
 class TestMediumRiskKindDependentDeliberation:
-    """Test 12: Medium-risk deliberation is determined by step kind.
+    """Test 12: Medium-risk deliberation is determined by action_class.
 
-    The deliberation matrix for medium risk:
-      - plan     -> deliberation triggered  (plan is in _DELIBERATION_STEP_KINDS as 'planning')
-      - respond  -> deliberation bypassed
-      - patch    -> deliberation triggered
-      - execute  -> deliberation bypassed
-
-    Note: The deliberation service uses 'planning' (not 'plan') as the step kind
-    constant. For 'plan' specifically, the static check uses exact string matching
-    against _DELIBERATION_STEP_KINDS = {'planning', 'patch', 'deploy', 'rollback'}.
+    The deliberation matrix for medium risk uses action_class values
+    from _MEDIUM_RISK_DELIBERATION_ACTIONS:
+      - write_local     -> deliberation triggered
+      - read_local      -> deliberation bypassed (readonly)
+      - patch_file      -> deliberation triggered
+      - network_read    -> deliberation bypassed (readonly)
     """
 
     # -- Static checks via DeliberationService.check_deliberation_needed() ---
 
-    def test_medium_planning_triggers_deliberation(self) -> None:
-        """medium + planning -> True."""
+    def test_medium_write_local_triggers_deliberation(self) -> None:
+        """medium + write_local -> True."""
         assert (
-            DeliberationService.check_deliberation_needed(risk_band="medium", step_kind="planning")
+            DeliberationService.check_deliberation_needed(
+                risk_level="medium", action_class="write_local"
+            )
             is True
         )
 
-    def test_medium_respond_bypasses_deliberation(self) -> None:
-        """medium + respond -> False."""
+    def test_medium_read_local_bypasses_deliberation(self) -> None:
+        """medium + read_local -> False (readonly action)."""
         assert (
-            DeliberationService.check_deliberation_needed(risk_band="medium", step_kind="respond")
+            DeliberationService.check_deliberation_needed(
+                risk_level="medium", action_class="read_local"
+            )
             is False
         )
 
-    def test_medium_patch_triggers_deliberation(self) -> None:
-        """medium + patch -> True."""
+    def test_medium_patch_file_triggers_deliberation(self) -> None:
+        """medium + patch_file -> True."""
         assert (
-            DeliberationService.check_deliberation_needed(risk_band="medium", step_kind="patch")
+            DeliberationService.check_deliberation_needed(
+                risk_level="medium", action_class="patch_file"
+            )
             is True
         )
 
-    def test_medium_execute_bypasses_deliberation(self) -> None:
-        """medium + execute -> False."""
+    def test_medium_network_read_bypasses_deliberation(self) -> None:
+        """medium + network_read -> False (readonly action)."""
         assert (
-            DeliberationService.check_deliberation_needed(risk_band="medium", step_kind="execute")
+            DeliberationService.check_deliberation_needed(
+                risk_level="medium", action_class="network_read"
+            )
             is False
         )
 
     # -- Full dispatch path verification -------------------------------------
 
-    def test_dispatch_medium_planning_triggers(self, store: KernelStore) -> None:
-        """Dispatch path: medium + planning -> deliberation_pending."""
+    def test_dispatch_medium_write_local_triggers(self, store: KernelStore) -> None:
+        """Dispatch path: medium + write_local -> deliberation_pending."""
         runner = _make_runner(store)
         dispatch = KernelDispatchService(runner, worker_count=2)
 
         _task_id, _step_id, step_attempt_id = _create_attempt(
-            store, step_kind="planning", risk_band="medium"
+            store, step_kind="write_local", risk_band="medium"
         )
 
         result = dispatch._check_deliberation_needed(step_attempt_id)
@@ -299,13 +310,13 @@ class TestMediumRiskKindDependentDeliberation:
         )
         assert event_count == 1
 
-    def test_dispatch_medium_respond_bypasses(self, store: KernelStore) -> None:
-        """Dispatch path: medium + respond -> no deliberation, stays running."""
+    def test_dispatch_medium_read_local_bypasses(self, store: KernelStore) -> None:
+        """Dispatch path: medium + read_local -> no deliberation, stays running."""
         runner = _make_runner(store)
         dispatch = KernelDispatchService(runner, worker_count=2)
 
         _task_id, _step_id, step_attempt_id = _create_attempt(
-            store, step_kind="respond", risk_band="medium"
+            store, step_kind="read_local", risk_band="medium"
         )
 
         result = dispatch._check_deliberation_needed(step_attempt_id)
@@ -322,13 +333,13 @@ class TestMediumRiskKindDependentDeliberation:
         )
         assert event_count == 0
 
-    def test_dispatch_medium_patch_triggers(self, store: KernelStore) -> None:
-        """Dispatch path: medium + patch -> deliberation_pending."""
+    def test_dispatch_medium_patch_file_triggers(self, store: KernelStore) -> None:
+        """Dispatch path: medium + patch_file -> deliberation_pending."""
         runner = _make_runner(store)
         dispatch = KernelDispatchService(runner, worker_count=2)
 
         _task_id, _step_id, step_attempt_id = _create_attempt(
-            store, step_kind="patch", risk_band="medium"
+            store, step_kind="patch_file", risk_band="medium"
         )
 
         result = dispatch._check_deliberation_needed(step_attempt_id)
@@ -339,7 +350,7 @@ class TestMediumRiskKindDependentDeliberation:
         assert updated_attempt.status == "deliberation_pending"
         ctx = updated_attempt.context or {}
         assert ctx.get("deliberation_risk_band") == "medium"
-        assert ctx.get("deliberation_step_kind") == "patch"
+        assert ctx.get("deliberation_step_kind") == "patch_file"
 
         event_count = store.count_events_by_type(
             entity_type="step_attempt",
@@ -348,13 +359,13 @@ class TestMediumRiskKindDependentDeliberation:
         )
         assert event_count == 1
 
-    def test_dispatch_medium_execute_bypasses(self, store: KernelStore) -> None:
-        """Dispatch path: medium + execute -> no deliberation, stays running."""
+    def test_dispatch_medium_network_read_bypasses(self, store: KernelStore) -> None:
+        """Dispatch path: medium + network_read -> no deliberation, stays running."""
         runner = _make_runner(store)
         dispatch = KernelDispatchService(runner, worker_count=2)
 
         _task_id, _step_id, step_attempt_id = _create_attempt(
-            store, step_kind="execute", risk_band="medium"
+            store, step_kind="network_read", risk_band="medium"
         )
 
         result = dispatch._check_deliberation_needed(step_attempt_id)

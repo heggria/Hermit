@@ -619,7 +619,7 @@ class TestDriftReentryLimit:
         deps["store"].update_step_attempt.assert_called_once()
         fail_call = deps["store"].update_step_attempt.call_args
         assert fail_call.kwargs["status"] == "failed"
-        assert "drift_reentry_limit_exceeded" in fail_call.kwargs["waiting_reason"]
+        assert "drift_reentry_limit_exceeded" in fail_call.kwargs["status_reason"]
         # Should fail the step and task
         deps["store"].update_step.assert_called_once()
         assert deps["store"].update_step.call_args.kwargs["status"] == "failed"

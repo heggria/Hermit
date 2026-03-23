@@ -9,6 +9,7 @@ from hermit.runtime.capability.contracts.base import PluginManifest, PluginVaria
 from hermit.runtime.capability.loader.config import (
     _resolve_plugin_variables,
     _resolve_templates,
+    has_missing_required_variables,
     resolve_plugin_context,
 )
 
@@ -174,19 +175,35 @@ class TestResolvePluginVariables:
             result = _resolve_plugin_variables(manifest, settings)
         assert result["mode"] == "fast"
 
-    def test_required_missing_logs_warning(self) -> None:
+    def test_required_missing_logs_error(self) -> None:
         manifest = _manifest(
             variables={
-                "critical": {"required": True},
+                "critical": {"required": True, "env": ["CRITICAL_VAR"]},
             }
         )
         settings = SimpleNamespace(base_dir="/tmp/hermit")
-        with patch(
-            "hermit.runtime.capability.loader.config.load_plugin_variables",
-            return_value={},
-        ):
-            result = _resolve_plugin_variables(manifest, settings)
+        errors: list[dict[str, object]] = []
+        import hermit.runtime.capability.loader.config as plugin_config
+
+        original_error = plugin_config.log.error
+
+        def capture_error(*args: object, **kwargs: object) -> None:
+            errors.append(kwargs)
+
+        plugin_config.log.error = capture_error  # type: ignore[assignment]
+        try:
+            with patch(
+                "hermit.runtime.capability.loader.config.load_plugin_variables",
+                return_value={},
+            ):
+                result = _resolve_plugin_variables(manifest, settings)
+        finally:
+            plugin_config.log.error = original_error  # type: ignore[assignment]
         assert result["critical"] is None
+        assert len(errors) == 1
+        assert errors[0]["plugin"] == "test-plugin"
+        assert errors[0]["variable"] == "critical"
+        assert errors[0]["env_vars"] == ["CRITICAL_VAR"]
 
     def test_no_base_dir_skips_configured(self) -> None:
         manifest = _manifest(
@@ -232,3 +249,46 @@ class TestResolvePluginContext:
             plugin_vars, config = resolve_plugin_context(manifest, settings)
         assert plugin_vars["host"] == "localhost"
         assert config["url"] == "https://localhost/api"
+
+
+# ---------------------------------------------------------------------------
+# has_missing_required_variables
+# ---------------------------------------------------------------------------
+
+
+class TestHasMissingRequiredVariables:
+    def test_returns_empty_when_all_present(self) -> None:
+        manifest = _manifest(
+            variables={
+                "host": {"default": "localhost", "required": True},
+                "port": {"default": "8080", "required": True},
+            }
+        )
+        resolved = {"host": "localhost", "port": "8080"}
+        assert has_missing_required_variables(manifest, resolved) == []
+
+    def test_returns_missing_required_names(self) -> None:
+        manifest = _manifest(
+            variables={
+                "token": {"required": True},
+                "host": {"default": "localhost", "required": True},
+                "optional": {"required": False},
+            }
+        )
+        resolved = {"token": None, "host": "localhost", "optional": None}
+        missing = has_missing_required_variables(manifest, resolved)
+        assert missing == ["token"]
+
+    def test_empty_string_counts_as_missing(self) -> None:
+        manifest = _manifest(
+            variables={
+                "token": {"required": True},
+            }
+        )
+        resolved = {"token": ""}
+        missing = has_missing_required_variables(manifest, resolved)
+        assert missing == ["token"]
+
+    def test_no_variables_returns_empty(self) -> None:
+        manifest = _manifest(variables={})
+        assert has_missing_required_variables(manifest, {}) == []

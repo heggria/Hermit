@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -34,7 +35,7 @@ log = structlog.get_logger()
 
 _PYTEST_SUMMARY_RE = re.compile(r"(\d+)\s+passed(?:.*?(\d+)\s+failed)?", re.IGNORECASE)
 _COVERAGE_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+(?:\.\d+)?)%")
-_RUFF_VIOLATION_RE = re.compile(r"Found\s+(\d+)\s+error", re.IGNORECASE)
+_RUFF_VIOLATION_RE = re.compile(r"Found\s+(\d+)\s+errors?", re.IGNORECASE)
 
 # Patterns for structured error detail extraction
 _PYTEST_FAILED_RE = re.compile(r"^FAILED\s+(\S+)", re.MULTILINE)
@@ -115,6 +116,11 @@ class BenchmarkRunner:
             stdout, returncode = await self._exec("make check", cwd)
         duration = time.monotonic() - start
 
+        # If a subprocess timed out, treat as unconditional failure regardless
+        # of delta comparison (the sentinel output would otherwise parse as 0
+        # errors and incorrectly pass).
+        _timed_out = "(benchmark timeout)" in stdout
+
         test_total, test_passed = _parse_pytest(stdout)
         coverage = _parse_coverage(stdout)
         lint_violations = _parse_ruff(stdout)
@@ -122,7 +128,9 @@ class BenchmarkRunner:
 
         # --- Delta comparison vs absolute pass/fail ---
         delta_info: dict[str, Any] = {}
-        if baseline_metrics:
+        if _timed_out:
+            check_passed = False
+        elif baseline_metrics:
             baseline_tc = int(baseline_metrics.get("typecheck_errors", 0))
             baseline_lint = int(baseline_metrics.get("lint_violations", 0))
 
@@ -227,13 +235,16 @@ class BenchmarkRunner:
         Tier 3 — Full (3-10min): ``make test`` (skips typecheck).
         """
         all_output_parts: list[str] = []
-        py_files = [f for f in changed_files if f.endswith(".py")]
+        py_files = [
+            f for f in changed_files
+            if f.endswith(".py") and os.path.exists(os.path.join(cwd, f))
+        ]
         test_files = [f for f in py_files if "test" in f]
         src_files = [f for f in py_files if "test" not in f]
 
         # --- Tier 1: lint + test changed files only ---
         if src_files:
-            lint_cmd = f"uv run ruff check {' '.join(src_files)}"
+            lint_cmd = f"uv run ruff check {' '.join(shlex.quote(f) for f in src_files)}"
             lint_out, lint_rc = await self._exec(lint_cmd, cwd)
             all_output_parts.append(lint_out)
             if lint_rc != 0:
@@ -245,7 +256,7 @@ class BenchmarkRunner:
                 return "\n".join(all_output_parts), lint_rc, "tier1_lint"
 
         if test_files:
-            test_cmd = f"uv run pytest {' '.join(test_files)} -x -q --no-header"
+            test_cmd = f"uv run pytest {' '.join(shlex.quote(f) for f in test_files)} -x -q --no-header"
             test_out, test_rc = await self._exec(test_cmd, cwd)
             all_output_parts.append(test_out)
             if test_rc != 0:
@@ -284,26 +295,32 @@ class BenchmarkRunner:
     ) -> tuple[str, int, str]:
         """Run only Tier 1 (changed files).  Returns (stdout, returncode, tier)."""
         all_output_parts: list[str] = []
-        py_files = [f for f in changed_files if f.endswith(".py")]
+        py_files = [
+            f for f in changed_files
+            if f.endswith(".py") and os.path.exists(os.path.join(cwd, f))
+        ]
         test_files = [f for f in py_files if "test" in f]
         src_files = [f for f in py_files if "test" not in f]
+        lint_rc = 0
+        test_rc = 0
 
         if src_files:
-            lint_cmd = f"uv run ruff check {' '.join(src_files)}"
+            lint_cmd = f"uv run ruff check {' '.join(shlex.quote(f) for f in src_files)}"
             lint_out, lint_rc = await self._exec(lint_cmd, cwd)
             all_output_parts.append(lint_out)
             if lint_rc != 0:
                 return "\n".join(all_output_parts), lint_rc, "tier1_lint"
 
         if test_files:
-            test_cmd = f"uv run pytest {' '.join(test_files)} -x -q --no-header"
+            test_cmd = f"uv run pytest {' '.join(shlex.quote(f) for f in test_files)} -x -q --no-header"
             test_out, test_rc = await self._exec(test_cmd, cwd)
             all_output_parts.append(test_out)
             if test_rc != 0:
                 return "\n".join(all_output_parts), test_rc, "tier1_test"
 
         combined = "\n".join(all_output_parts)
-        return combined, 0, "tier1_quick"
+        final_rc = max(lint_rc, test_rc)
+        return combined, final_rc, "tier1_quick"
 
     # ------------------------------------------------------------------
     # Subprocess execution
@@ -325,7 +342,7 @@ class BenchmarkRunner:
             return raw.decode(errors="replace"), proc.returncode or 0
         except TimeoutError:
             log.warning("benchmark_timeout", cmd=cmd, timeout=self._timeout)
-            return "", 1
+            return "(benchmark timeout)", 1
         except OSError as exc:
             log.warning("benchmark_exec_error", error=str(exc))
             return "", 1

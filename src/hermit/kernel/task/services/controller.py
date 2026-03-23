@@ -126,7 +126,7 @@ class TaskController:
             attempt = next(iter(self.store.list_step_attempts(task_id=task.task_id, limit=1)), None)
             if (
                 attempt is not None
-                and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation"
+                and str(attempt.status_reason or "") == "awaiting_plan_confirmation"
             ):
                 return None
         if task.status in {"queued", "running", "blocked"}:
@@ -455,7 +455,7 @@ class TaskController:
             )
         context = dict(attempt.context or {})
         if bool(context.get("input_dirty")) and (
-            str(attempt.waiting_reason or "") == "awaiting_approval"
+            str(attempt.status_reason or "") == "awaiting_approval"
             or str(attempt.status or "") == "awaiting_approval"
             or str(context.get("phase", "") or "") == "awaiting_approval"
         ):
@@ -485,7 +485,7 @@ class TaskController:
                 step_attempt_id,
                 status="superseded",
                 context=superseded_context,
-                waiting_reason="input_changed_reenter_policy",
+                status_reason="input_changed_reenter_policy",
                 superseded_by_step_attempt_id=successor.step_attempt_id,
                 finished_at=time.time(),
             )
@@ -523,7 +523,7 @@ class TaskController:
             step_attempt_id,
             status="ready",
             context=context,
-            waiting_reason=None,
+            status_reason=None,
             finished_at=None,
         )
         self.store.update_task_status(task.task_id, "queued")
@@ -781,7 +781,7 @@ class TaskController:
             )
             if (
                 attempt is not None
-                and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation"
+                and str(attempt.status_reason or "") == "awaiting_plan_confirmation"
             ):
                 self.store.update_ingress(
                     ingress.ingress_id,
@@ -1084,7 +1084,7 @@ class TaskController:
         self.store.update_step_attempt(
             ctx.step_attempt_id,
             status="awaiting_plan_confirmation",
-            waiting_reason="awaiting_plan_confirmation",
+            status_reason="awaiting_plan_confirmation",
             finished_at=now,
         )
         payload: dict[str, Any] = {
@@ -1214,6 +1214,19 @@ class TaskController:
                 )
 
         # ── Cancel the task itself ──
+        # C11: Resolve any active observation tickets for this task before
+        # marking it as cancelled so they do not remain orphaned.
+        try:
+            self.store.resolve_observations_for_task(task_id, status="cancelled")
+        except Exception:
+            import structlog
+
+            structlog.get_logger().warning(
+                "cancel_task_observation_cleanup_failed",
+                task_id=task_id,
+                exc_info=True,
+            )
+
         # Note: update_task_status will call _cascade_cancel_children internally,
         # but all children are already terminal so that will be a no-op.
         self.store.update_task_status(task_id, "cancelled")
@@ -1287,7 +1300,7 @@ class TaskController:
             )
         context = dict(attempt.context or {})
         if bool(context.get("input_dirty")) and (
-            str(attempt.waiting_reason or "") == "awaiting_approval"
+            str(attempt.status_reason or "") == "awaiting_approval"
             or str(attempt.status or "") == "awaiting_approval"
             or str(context.get("phase", "") or "") == "awaiting_approval"
         ):
@@ -1306,7 +1319,7 @@ class TaskController:
             self.store.update_step_attempt(
                 step_attempt_id,
                 context=context,
-                waiting_reason="reentry_resumed",
+                status_reason="reentry_resumed",
             )
             self.store.append_event(
                 event_type="step_attempt.reentry_resumed",

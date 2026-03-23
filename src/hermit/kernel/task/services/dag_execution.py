@@ -231,7 +231,7 @@ class DAGExecutionService:
                         self._store.update_step_attempt(
                             attempt.step_attempt_id,
                             status="verification_blocked",
-                            waiting_reason="upstream_reconciliation_required",
+                            status_reason="upstream_reconciliation_required",
                         )
                     self._store.append_event(
                         event_type="verification.gate_blocked",

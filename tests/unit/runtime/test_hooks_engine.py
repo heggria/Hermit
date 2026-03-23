@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hermit.runtime.capability.contracts.hooks import HooksEngine, _safe_call
+from hermit.runtime.capability.contracts.hooks import HooksEngine
 
 
 def test_hooks_engine_safe_call_and_fire_first(monkeypatch) -> None:
@@ -33,4 +33,5 @@ def test_hooks_engine_safe_call_and_fire_first(monkeypatch) -> None:
         "hermit.runtime.capability.contracts.hooks.inspect.signature",
         lambda handler: (_ for _ in ()).throw(ValueError()),
     )
-    assert _safe_call(lambda **kwargs: kwargs["value"], {"value": 3}) == 3
+    fallback_engine = HooksEngine()
+    assert fallback_engine._safe_call(lambda **kwargs: kwargs["value"], {"value": 3}) == 3

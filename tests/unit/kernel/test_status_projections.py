@@ -103,7 +103,7 @@ def _make_step_attempt(
     step_id: str = "step_1",
     attempt: int = 1,
     status: str = "running",
-    waiting_reason: str | None = None,
+    status_reason: str | None = None,
     approval_id: str | None = None,
     capability_grant_id: str | None = None,
     started_at: float | None = None,
@@ -115,7 +115,7 @@ def _make_step_attempt(
         step_id=step_id,
         attempt=attempt,
         status=status,
-        waiting_reason=waiting_reason,
+        status_reason=status_reason,
         approval_id=approval_id,
         capability_grant_id=capability_grant_id,
         started_at=started_at,
@@ -240,7 +240,7 @@ class TestAttemptStatusProjection:
             attempt_number=1,
             status="running",
         )
-        assert proj.waiting_reason == ""
+        assert proj.status_reason == ""
         assert proj.has_approval is False
         assert proj.has_capability_grant is False
         assert proj.started_at == 0.0
@@ -655,14 +655,14 @@ class TestGetAttemptStatus:
             step_id="s_1",
             attempt=1,
             status="waiting",
-            waiting_reason="awaiting_approval",
+            status_reason="awaiting_approval",
         )
         mock_store.get_step_attempt.return_value = attempt
 
         svc = StatusProjectionService(mock_store)
         proj = svc.get_attempt_status("sa_3")
 
-        assert proj.waiting_reason == "awaiting_approval"
+        assert proj.status_reason == "awaiting_approval"
         assert proj.has_approval is False
 
 
@@ -1083,8 +1083,8 @@ class TestFormatAttemptSummary:
             step_id="s_1",
             attempt_number=1,
             status="waiting",
-            waiting_reason="awaiting_approval",
+            status_reason="awaiting_approval",
         )
 
         text = StatusProjectionService.format_attempt_summary(proj)
-        assert "Waiting reason: awaiting_approval" in text
+        assert "Status reason: awaiting_approval" in text

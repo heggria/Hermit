@@ -147,7 +147,7 @@ class _RecordProxy:
 
 def _to_record_proxy(record: dict[str, Any]) -> MemoryRecord:
     """Wrap a dict as a record proxy compatible with decay/confidence services."""
-    return cast(MemoryRecord, _RecordProxy(record))
+    return cast("MemoryRecord", _RecordProxy(record))
 
 
 __all__ = ["MemoryQualityService"]

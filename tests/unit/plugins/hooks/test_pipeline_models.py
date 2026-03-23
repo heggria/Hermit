@@ -41,10 +41,11 @@ class TestPhaseTransitions:
         assert PipelinePhase.REJECTED in allowed
         assert PipelinePhase.FAILED in allowed
 
-    def test_terminal_phases_have_no_outbound_transitions(self) -> None:
-        """ACCEPTED, REJECTED, FAILED should not appear as keys in ALLOWED_TRANSITIONS."""
-        for phase in TERMINAL_PHASES:
-            assert phase not in ALLOWED_TRANSITIONS
+    def test_terminal_phases_transitions(self) -> None:
+        """ACCEPTED/REJECTED can transition to FAILED; FAILED has no outbound."""
+        assert PipelinePhase.FAILED in ALLOWED_TRANSITIONS.get(PipelinePhase.ACCEPTED, frozenset())
+        assert PipelinePhase.FAILED in ALLOWED_TRANSITIONS.get(PipelinePhase.REJECTED, frozenset())
+        assert ALLOWED_TRANSITIONS.get(PipelinePhase.FAILED, frozenset()) == frozenset()
 
     def test_all_non_terminal_phases_have_transitions(self) -> None:
         """Every non-terminal phase must have an entry in ALLOWED_TRANSITIONS."""

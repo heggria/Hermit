@@ -7,7 +7,10 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024
 _JPEG_QUALITIES = (85, 75, 65, 55, 45)
@@ -31,12 +34,12 @@ def prepare_messages_for_provider(
                 **message,
                 "content": [
                     prepare_image_block(
-                        cast(dict[str, Any], block),
+                        cast("dict[str, Any]", block),
                         max_inline_image_bytes=max_inline_image_bytes,
                     )
                     if isinstance(block, dict)
                     else block
-                    for block in cast(list[Any], content)
+                    for block in cast("list[Any]", content)
                 ],
             }
         )
@@ -53,7 +56,7 @@ def prepare_image_block(
     source = block.get("source", {})
     if not isinstance(source, dict):
         raise ValueError("Invalid image block: missing source")
-    typed_source = cast(dict[str, Any], source)
+    typed_source = cast("dict[str, Any]", source)
     if str(typed_source.get("type", "")) != "base64":
         return dict(block)
 
@@ -150,6 +153,9 @@ def _compress_with_pillow(
                 best_bytes = candidate_bytes
             if len(candidate_bytes) <= max_bytes:
                 return candidate_media_type, candidate_bytes
+        # Incompressible at this resolution: skip further downscaling
+        if len(best_bytes) > max_bytes * 2:
+            break
         if current.width == 1 and current.height == 1:
             break
         current = _downscale_image(current, len(best_bytes), max_bytes, resampling=resampling)
@@ -157,16 +163,17 @@ def _compress_with_pillow(
     return best_media_type, best_bytes
 
 
-def _encode_candidates_with_pillow(image: Any, media_type: str) -> list[tuple[str, bytes]]:
-    candidates: list[tuple[str, bytes]] = []
+def _encode_candidates_with_pillow(
+    image: Any, media_type: str
+) -> Iterator[tuple[str, bytes]]:
+    """Yield compression candidates lazily so callers can exit early."""
     if media_type == "image/png":
-        candidates.append(("image/png", _save_png(image)))
+        yield "image/png", _save_png(image)
     if media_type == "image/webp":
         for quality in _WEBP_QUALITIES:
-            candidates.append(("image/webp", _save_webp(image, quality)))
+            yield "image/webp", _save_webp(image, quality)
     for quality in _JPEG_QUALITIES:
-        candidates.append(("image/jpeg", _save_jpeg(image, quality)))
-    return candidates
+        yield "image/jpeg", _save_jpeg(image, quality)
 
 
 def _save_png(image: Any) -> bytes:
@@ -266,6 +273,9 @@ def _compress_with_sips(
                     best_bytes = candidate
                 if len(candidate) <= max_bytes:
                     return "image/jpeg", candidate
+            # Incompressible at this resolution: skip further downscaling
+            if len(best_bytes) > max_bytes * 2:
+                break
 
         return best_media_type, best_bytes
 

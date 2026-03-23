@@ -70,10 +70,17 @@ def _default_locale() -> None:
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def kernel_store():
-    """Provide a fresh in-memory KernelStore that is auto-closed after the test."""
+    """Provide a fresh in-memory KernelStore that is auto-closed after the test.
+
+    This is the single canonical definition — sub-package conftest files should
+    NOT redefine it.  Cleanup is handled both explicitly here (yield + close)
+    and by the ``_auto_close_kernel_stores`` autouse fixture as a safety net.
+    """
     from hermit.kernel.ledger.journal.store import KernelStore
 
-    return KernelStore(Path(":memory:"))
+    store = KernelStore(Path(":memory:"))
+    yield store
+    store.close()
 
 
 # ---------------------------------------------------------------------------

@@ -700,7 +700,7 @@ class TestDispatchDeliberationGating:
         updated_attempt = store.get_step_attempt(step_attempt_id)
         assert updated_attempt is not None
         assert updated_attempt.status == "deliberation_pending"
-        assert updated_attempt.waiting_reason == "deliberation_required"
+        assert updated_attempt.status_reason == "deliberation_required"
         ctx = updated_attempt.context or {}
         assert ctx.get("deliberation_risk_band") == "high"
         assert ctx.get("deliberation_step_kind") == "planning"
