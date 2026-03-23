@@ -9,10 +9,6 @@ from typing import Any, cast
 
 import structlog
 
-from hermit.kernel.execution.competition.deliberation_integration import (
-    DeliberationIntegration,
-)
-
 from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
@@ -20,6 +16,9 @@ from hermit.kernel.authority.grants import CapabilityGrantError, CapabilityGrant
 from hermit.kernel.authority.workspaces import WorkspaceLeaseService, capture_execution_environment
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.errors import ContractError
+from hermit.kernel.execution.competition.deliberation_integration import (
+    DeliberationIntegration,
+)
 from hermit.kernel.execution.controller.contracts import contract_for
 from hermit.kernel.execution.controller.execution_contracts import ExecutionContractService
 from hermit.kernel.execution.controller.pattern_learner import TaskPatternLearner
@@ -53,6 +52,7 @@ from hermit.kernel.task.projections.progress_summary import (
     ProgressSummaryFormatter,
     normalize_progress_summary,
 )
+from hermit.kernel.verification.assurance.recorder import TraceRecorder
 from hermit.kernel.verification.receipts.receipts import ReceiptService
 from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec, serialize_tool_result
 
@@ -241,7 +241,7 @@ class ToolExecutor:
         progress_summary_keepalive_seconds: float = 15.0,
         tool_output_limit: int = 4000,
         deliberation: DeliberationIntegration | None = None,
-        trace_recorder: Any | None = None,
+        trace_recorder: TraceRecorder | None = None,
     ) -> None:
         self.registry = registry
         self.store = store
@@ -276,6 +276,39 @@ class ToolExecutor:
         self.tool_output_limit = tool_output_limit
         self._deliberation = deliberation
         self.trace_recorder = trace_recorder
+
+    def _trace(
+        self,
+        event_type: str,
+        attempt_ctx: TaskExecutionContext,
+        *,
+        phase: str | None = None,
+        approval_ref: str | None = None,
+        decision_ref: str | None = None,
+        grant_ref: str | None = None,
+        lease_ref: str | None = None,
+        receipt_ref: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a trace event if recorder is available. Never raises."""
+        if not self.trace_recorder:
+            return
+        try:
+            self.trace_recorder.record(
+                event_type=event_type,
+                task_id=attempt_ctx.task_id,
+                step_id=attempt_ctx.step_id,
+                step_attempt_id=attempt_ctx.step_attempt_id,
+                phase=phase,
+                approval_ref=approval_ref,
+                decision_ref=decision_ref,
+                grant_ref=grant_ref,
+                lease_ref=lease_ref,
+                receipt_ref=receipt_ref,
+                payload=payload,
+            )
+        except Exception:
+            pass
 
     def _set_attempt_phase(
         self,
@@ -658,6 +691,13 @@ class ToolExecutor:
         action_type = tool.action_class or self.policy_engine.infer_action_class(tool)
         governed = _is_governed_action(tool, policy)
 
+        self._trace(
+            "policy.evaluated",
+            attempt_ctx,
+            phase="policy_pending",
+            payload={"verdict": policy.verdict, "action_class": str(action_type)},
+        )
+
         attempt_record = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
         approval_record = None
         if attempt_record is not None and attempt_record.approval_id:
@@ -853,9 +893,7 @@ class ToolExecutor:
                         verdict="deny",
                         reason=f"Deliberation {reason}: confidence={confidence:.2f}",
                         evidence_refs=[
-                            ref
-                            for ref in [action_ref, policy_ref, deliberation_ref]
-                            if ref
+                            ref for ref in [action_ref, policy_ref, deliberation_ref] if ref
                         ],
                         policy_ref=policy_ref,
                         action_type=action_type,
@@ -900,9 +938,7 @@ class ToolExecutor:
                             f"Selected: {deliberation_decision.selected_candidate_id}."
                         ),
                         evidence_refs=[
-                            ref
-                            for ref in [action_ref, policy_ref, deliberation_ref]
-                            if ref
+                            ref for ref in [action_ref, policy_ref, deliberation_ref] if ref
                         ],
                         policy_ref=policy_ref,
                         action_type=action_type,
@@ -912,15 +948,26 @@ class ToolExecutor:
                         f"Selected: {deliberation_decision.selected_candidate_id}\n"
                         f"Notes: {deliberation_decision.merge_notes[:200]}"
                     )
+                    deliberation_requested_action: dict[str, Any] = {
+                        "tool_name": tool_name,
+                        "tool_input": tool_input,
+                        "action_class": action_type,
+                        "reason": approval_msg,
+                        "deliberation_ref": deliberation_ref,
+                        "confidence": confidence,
+                        "selected_candidate_id": (deliberation_decision.selected_candidate_id),
+                    }
                     approval_id = self.approval_service.request(
                         task_id=attempt_ctx.task_id,
                         step_id=attempt_ctx.step_id,
                         step_attempt_id=attempt_ctx.step_attempt_id,
-                        tool_name=tool_name,
-                        tool_input=tool_input,
-                        action_request=action_request,
-                        policy_decision=policy,
-                        reason=approval_msg,
+                        approval_type="deliberation_review",
+                        requested_action=deliberation_requested_action,
+                        request_packet_ref=deliberation_ref,
+                        requested_action_ref=action_ref,
+                        policy_result_ref=policy_ref,
+                        decision_ref=dlb_decision_id,
+                        state_witness_ref=witness_ref,
                     )
                     self.store.update_step_attempt(
                         attempt_ctx.step_attempt_id,
@@ -962,9 +1009,7 @@ class ToolExecutor:
                             f"Selected: {deliberation_decision.selected_candidate_id}."
                         ),
                         evidence_refs=[
-                            ref
-                            for ref in [action_ref, policy_ref, deliberation_ref]
-                            if ref
+                            ref for ref in [action_ref, policy_ref, deliberation_ref] if ref
                         ],
                         policy_ref=policy_ref,
                         action_type=action_type,
@@ -1028,6 +1073,13 @@ class ToolExecutor:
                     "decision_ref": decision_id,
                     "policy": policy.to_dict(),
                 },
+            )
+            self._trace(
+                "policy.denied",
+                attempt_ctx,
+                phase="settling",
+                decision_ref=decision_id,
+                payload={"action_class": str(action_type)},
             )
             return ToolExecutionResult(
                 model_content=message,
@@ -1101,6 +1153,13 @@ class ToolExecutor:
                 fallback_contract_refs=getattr(contract, "fallback_contract_refs", []),
                 decision_ref=decision_id,
                 state_witness_ref=witness_ref,
+            )
+            self._trace(
+                "approval.requested",
+                attempt_ctx,
+                phase="awaiting_approval",
+                approval_ref=approval_id,
+                decision_ref=decision_id,
             )
             self.store.update_step_attempt(
                 attempt_ctx.step_attempt_id,
@@ -1209,9 +1268,7 @@ class ToolExecutor:
                 if lease is not None:
                     environment_ref = lease.environment_ref
             pre_grant_attempt = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
-            if pre_grant_attempt is not None and self._policy_version_drifted(
-                pre_grant_attempt
-            ):
+            if pre_grant_attempt is not None and self._policy_version_drifted(pre_grant_attempt):
                 return self._supersede_attempt_for_drift(
                     attempt_ctx=attempt_ctx,
                     tool_name=tool_name,
@@ -1235,6 +1292,14 @@ class ToolExecutor:
                     action_request,
                     workspace_lease_id=workspace_lease_id,
                 ),
+            )
+            self._trace(
+                "execution.authorized",
+                attempt_ctx,
+                phase="authorized_pre_exec",
+                decision_ref=decision_id,
+                grant_ref=capability_grant_id,
+                lease_ref=workspace_lease_id,
             )
             self.store.update_step_attempt(
                 attempt_ctx.step_attempt_id,
@@ -1303,6 +1368,13 @@ class ToolExecutor:
             self._set_attempt_phase(attempt_ctx, "executing", reason="tool_handler_invoked")
             if contract is not None:
                 self.store.update_execution_contract(contract.contract_id, status="executing")
+            self._trace(
+                "tool_call.start",
+                attempt_ctx,
+                phase="executing",
+                grant_ref=capability_grant_id if governed else None,
+                payload={"tool_name": tool_name},
+            )
             raw_result = tool.handler(tool_input)
         except Exception as exc:
             if governed and capability_grant_id is not None:
@@ -1412,6 +1484,14 @@ class ToolExecutor:
                 authorization_plan_ref=getattr(authorization_plan, "authorization_plan_id", None),
                 observed_effect_summary=authorized_effect_summary,
                 reconciliation_required=governed,
+            )
+            self._trace(
+                "receipt.issued",
+                attempt_ctx,
+                phase="settling",
+                receipt_ref=receipt_id,
+                grant_ref=capability_grant_id,
+                decision_ref=decision_id,
             )
         execution_status = "succeeded"
         if governed and receipt_id is not None:
@@ -3084,6 +3164,13 @@ class ToolExecutor:
                 "result_code": result_code,
                 "error": str(exc),
             },
+        )
+        self._trace(
+            "outcome.uncertain",
+            attempt_ctx,
+            phase="reconciling",
+            grant_ref=capability_grant_id,
+            payload={"error": str(exc)[:200]},
         )
         self.store.update_step_attempt(
             attempt_ctx.step_attempt_id,

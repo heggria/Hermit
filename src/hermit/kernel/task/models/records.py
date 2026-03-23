@@ -96,6 +96,7 @@ class StepAttemptRecord:
     selected_contract_template_ref: str | None = None
     resume_from_ref: str | None = None
     superseded_by_step_attempt_id: str | None = None
+    waiting_reason: str | None = None
     started_at: float | None = None
     claimed_at: float | None = None
     last_heartbeat_at: float | None = None

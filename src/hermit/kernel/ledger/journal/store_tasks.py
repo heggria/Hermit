@@ -1024,6 +1024,33 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         )
         return bool(row and int(row["cnt"]) > 0)
 
+    _TERMINAL_ATTEMPT_STATUSES = frozenset({"succeeded", "failed", "cancelled", "superseded"})
+
+    def try_finalize_step_attempt(
+        self,
+        step_attempt_id: str,
+        *,
+        status: str,
+        finished_at: float | None = None,
+    ) -> bool:
+        """Atomically finalize a step attempt if it is not already terminal.
+
+        Returns True if the update was applied, False if the attempt was already
+        in a terminal state (another worker finalized it first).
+        """
+        with self._lock:
+            attempt = self.get_step_attempt(step_attempt_id)
+            if attempt is None:
+                return False
+            if attempt.status in self._TERMINAL_ATTEMPT_STATUSES:
+                return False
+            self.update_step_attempt(
+                step_attempt_id,
+                status=status,
+                finished_at=finished_at,
+            )
+            return True
+
     def update_step_attempt(
         self,
         step_attempt_id: str,

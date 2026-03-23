@@ -1529,6 +1529,98 @@ class HermitMcpServer:
             except Exception as exc:
                 return {"error": str(exc)}
 
+        # --------------------------------------------------------------
+        # Assurance tools
+        # --------------------------------------------------------------
+
+        @self._mcp.tool()
+        def hermit_assurance_replay_task(  # pyright: ignore[reportUnusedFunction]
+            task_id: str,
+            attribution_mode: str = "post_run",
+        ) -> dict[str, Any]:
+            """Replay a task's governance trace through the assurance system.
+
+            Runs invariant checks, contract checks, and failure attribution
+            against the recorded trace. Returns an assurance report with first
+            violation, root cause, and evidence refs.
+
+            Args:
+                task_id: The task ID to replay.
+                attribution_mode: Whether to run failure attribution. Default: post_run.
+            """
+            from hermit.kernel.verification.assurance.lab import AssuranceLab
+            from hermit.kernel.verification.assurance.mcp_tools import handle_assurance_tool
+            from hermit.kernel.verification.assurance.recorder import TraceRecorder
+
+            try:
+                store = self._get_store()
+                recorder = TraceRecorder(store=store)
+                lab = AssuranceLab()
+                lab.recorder = recorder
+                return handle_assurance_tool(
+                    "hermit_assurance_replay_task",
+                    {"task_id": task_id, "attribution_mode": attribution_mode},
+                    lab=lab,
+                )
+            except Exception as exc:
+                return {"error": str(exc)}
+
+        @self._mcp.tool()
+        def hermit_assurance_check_trace(  # pyright: ignore[reportUnusedFunction]
+            task_id: str,
+        ) -> dict[str, Any]:
+            """Run assurance checks (invariants + contracts) against a task's recorded trace.
+
+            Lighter weight than replay -- just validates the trace without full replay.
+
+            Args:
+                task_id: The task ID whose trace to check.
+            """
+            from hermit.kernel.verification.assurance.lab import AssuranceLab
+            from hermit.kernel.verification.assurance.mcp_tools import handle_assurance_tool
+            from hermit.kernel.verification.assurance.recorder import TraceRecorder
+
+            try:
+                store = self._get_store()
+                recorder = TraceRecorder(store=store)
+                lab = AssuranceLab()
+                lab.recorder = recorder
+                return handle_assurance_tool(
+                    "hermit_assurance_check_trace",
+                    {"task_id": task_id},
+                    lab=lab,
+                )
+            except Exception as exc:
+                return {"error": str(exc)}
+
+        @self._mcp.tool()
+        def hermit_assurance_report(  # pyright: ignore[reportUnusedFunction]
+            task_id: str,
+            format: str = "json",
+        ) -> dict[str, Any]:
+            """Get the latest assurance report for a task, or generate one if none exists.
+
+            Args:
+                task_id: The task ID to get the assurance report for.
+                format: Output format — "json" (default) or "markdown".
+            """
+            from hermit.kernel.verification.assurance.lab import AssuranceLab
+            from hermit.kernel.verification.assurance.mcp_tools import handle_assurance_tool
+            from hermit.kernel.verification.assurance.recorder import TraceRecorder
+
+            try:
+                store = self._get_store()
+                recorder = TraceRecorder(store=store)
+                lab = AssuranceLab()
+                lab.recorder = recorder
+                return handle_assurance_tool(
+                    "hermit_assurance_report",
+                    {"task_id": task_id, "format": format},
+                    lab=lab,
+                )
+            except Exception as exc:
+                return {"error": str(exc)}
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

@@ -1306,6 +1306,8 @@ class MetaLoopOrchestrator:
                 spec_id=state.spec_id,
                 exc_info=True,
             )
+            if self._benchmark_blocking:
+                benchmark_passed = False
             self._update_metadata(
                 state.spec_id,
                 "benchmark",

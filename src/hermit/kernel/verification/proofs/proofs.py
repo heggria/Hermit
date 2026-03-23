@@ -7,6 +7,8 @@ import os
 import time
 from typing import Any, cast
 
+import structlog
+
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.authority.grants.models import CapabilityGrantRecord
 from hermit.kernel.authority.workspaces.models import WorkspaceLeaseRecord
@@ -17,7 +19,13 @@ from hermit.kernel.ledger.journal.store_support import (
 )
 from hermit.kernel.ledger.journal.store_support import sha256_hex as _sha256_hex
 from hermit.kernel.task.models.records import ApprovalRecord, DecisionRecord, ReceiptRecord
+from hermit.kernel.verification.assurance.contracts import AssuranceContractEngine
+from hermit.kernel.verification.assurance.invariants import InvariantEngine
+from hermit.kernel.verification.assurance.models import TraceEnvelope
+from hermit.kernel.verification.assurance.reporting import AssuranceReporter
 from hermit.kernel.verification.proofs.merkle import build_merkle_inclusion_proofs
+
+log = structlog.get_logger()
 
 _PROOF_MODE_HASH_ONLY = "hash_only"
 _PROOF_MODE_HASH_CHAINED = "hash_chained"
@@ -250,7 +258,7 @@ class ProofService:
         )
         return receipt_bundle_ref
 
-    def export_task_proof(self, task_id: str) -> dict[str, Any]:
+    def export_task_proof(self, task_id: str, detail: str = "full") -> dict[str, Any]:
         task = self.store.get_task(task_id)
         if task is None:
             raise KeyError(f"Task not found: {task_id}")
@@ -354,6 +362,46 @@ class ProofService:
                     verifiability="strong_signed_with_inclusion_proof",
                     signer_ref=self.signing_key_id if self.signing_secret else receipt.signer_ref,
                 )
+        # Assurance report (standard and full detail only)
+        if detail in ("standard", "full"):
+            try:
+                if hasattr(self.store, "get_trace_envelopes"):
+                    raw_envelopes = self.store.get_trace_envelopes(task_id, limit=10000)
+                    if raw_envelopes:
+                        envelopes: list[TraceEnvelope] = []
+                        for row in raw_envelopes:
+                            ej = row.get("envelope_json", "{}")
+                            d = json.loads(ej) if isinstance(ej, str) else ej
+                            envelopes.append(
+                                TraceEnvelope(
+                                    **{
+                                        k: d[k]
+                                        for k in TraceEnvelope.__dataclass_fields__
+                                        if k in d
+                                    }
+                                )
+                            )
+
+                        inv_engine = InvariantEngine()
+                        contract_engine = AssuranceContractEngine()
+                        reporter = AssuranceReporter()
+
+                        inv_violations = inv_engine.check(envelopes, task_id=task_id)
+                        contract_violations = contract_engine.evaluate_post_run(
+                            envelopes, task_id=task_id
+                        )
+
+                        report = reporter.build_report(
+                            run_id=task_id,
+                            scenario_id="live",
+                            invariant_violations=inv_violations,
+                            contract_violations=contract_violations,
+                            envelopes=envelopes,
+                        )
+                        proof_payload["assurance_report"] = reporter.emit_json(report)
+            except Exception:
+                pass  # Assurance report is optional — never break proof export
+
         signature_meta = self._signature_metadata(proof_payload, artifact_kind="proof.bundle")
         if signature_meta is not None:
             proof_payload["signature"] = signature_meta

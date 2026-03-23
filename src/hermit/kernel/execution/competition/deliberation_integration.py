@@ -133,7 +133,9 @@ class DeliberationIntegration:
         When deliberation is required a new debate is opened, and an event is
         appended to the ledger so the decision is auditable.
         """
-        required = self.deliberation.should_deliberate(risk_band, step_kind)
+        required = self.deliberation.should_deliberate(
+            risk_level=risk_band, action_class=step_kind
+        )
 
         if not required:
             logger.debug(
