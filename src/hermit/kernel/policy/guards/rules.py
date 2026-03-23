@@ -59,20 +59,61 @@ class RuleOutcome:
 def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
     outcomes: list[RuleOutcome] = []
     profile = str(request.context.get("policy_profile", "default"))
+
+    # ------------------------------------------------------------------
+    # Delegation scope enforcement: if a delegation_scope is attached to
+    # this request's context (injected by TaskDelegationService), deny
+    # any action whose action_class is not in allowed_action_classes.
+    # An empty allowed_action_classes list means "no restriction".
+    # ------------------------------------------------------------------
+    delegation_scope = request.context.get("delegation_scope")
+    if delegation_scope is not None:
+        allowed = delegation_scope.get("allowed_action_classes", [])
+        if allowed and request.action_class not in allowed:
+            _log.warning(
+                "guard.deny",
+                rule="delegation_scope_violation",
+                tool=request.tool_name,
+                action_class=request.action_class,
+                allowed_classes=allowed,
+            )
+            return [
+                RuleOutcome(
+                    verdict="deny",
+                    reasons=[
+                        PolicyReason(
+                            "delegation_scope_violation",
+                            f"Action class '{request.action_class}' is not permitted by "
+                            f"delegation scope. Allowed: {allowed}.",
+                            "error",
+                        )
+                    ],
+                    obligations=PolicyObligations(require_receipt=False),
+                    risk_level=request.risk_hint,
+                )
+            ]
+
     if profile == "readonly" and request.action_class != "read_local":
-        outcomes.append(
+        _log.warning(
+            "guard.deny",
+            rule="readonly_profile",
+            tool=request.tool_name,
+            action_class=request.action_class,
+        )
+        return [
             RuleOutcome(
                 verdict="deny",
                 reasons=[
                     PolicyReason(
-                        "readonly_profile", "Readonly policy profile forbids side effects.", "error"
+                        "readonly_profile",
+                        "Readonly policy profile forbids side effects.",
+                        "error",
                     )
                 ],
                 obligations=PolicyObligations(require_receipt=False),
                 risk_level=request.risk_hint,
             )
-        )
-        return outcomes
+        ]
 
     if profile == "autonomous":
         return _evaluate_autonomous(request)

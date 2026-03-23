@@ -7,7 +7,10 @@ import time
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from hermit.kernel.task.models.records import BlackboardRecord
 
 from hermit.kernel.authority.identity.models import PrincipalRecord
 from hermit.kernel.execution.competition.store import CompetitionStoreMixin
@@ -21,12 +24,19 @@ from hermit.kernel.ledger.journal.store_support import (
 )
 from hermit.kernel.ledger.journal.store_support import sha256_hex as _sha256_hex
 from hermit.kernel.ledger.journal.store_tasks import KernelTaskStoreMixin
+from hermit.kernel.ledger.journal.store_programs import ProgramStoreMixin
+from hermit.kernel.ledger.journal.store_self_iterate import SelfIterateStoreMixin
 from hermit.kernel.ledger.journal.store_v2 import KernelV2StoreMixin
+from hermit.kernel.ledger.journal.store_teams import KernelTeamStoreMixin
 from hermit.kernel.ledger.projections.store_projection import KernelProjectionStoreMixin
 from hermit.kernel.signals.store import SignalStoreMixin
+from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 
-_SCHEMA_VERSION = "10"
-_MIGRATABLE_SCHEMA_VERSIONS = {"5", "6", "7", "8", "9", _SCHEMA_VERSION}
+_SCHEMA_VERSION = "18"
+_MIGRATABLE_SCHEMA_VERSIONS = {
+    "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
+    "15", "16", "17", _SCHEMA_VERSION,
+}
 _KNOWN_KERNEL_TABLES = {
     "conversations",
     "conversation_projection_cache",
@@ -60,6 +70,19 @@ _KNOWN_KERNEL_TABLES = {
     "memory_graph_edges",
     "memory_entity_triples",
     "procedural_memories",
+    "delegations",
+    "hash_chain_checkpoints",
+    "blackboard_entries",
+    "observation_tickets",
+    "programs",
+    "spec_backlog",
+    "iteration_lessons",
+    "teams",
+    "milestones",
+    "assurance_trace_envelopes",
+    "assurance_scenarios",
+    "assurance_reports",
+    "assurance_replay_entries",
 }
 
 
@@ -77,6 +100,10 @@ class KernelStore(
     SignalStoreMixin,
     CompetitionStoreMixin,
     AssuranceStoreMixin,
+    DelegationStoreMixin,
+    SelfIterateStoreMixin,
+    ProgramStoreMixin,
+    KernelTeamStoreMixin,
 ):
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -92,6 +119,10 @@ class KernelStore(
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._validate_existing_schema()
         self._init_schema()
+
+
+    def _get_conn(self) -> sqlite3.Connection:
+        return self._conn
 
     def close(self) -> None:
         with self._lock:
@@ -819,9 +850,19 @@ class KernelStore(
             )
             self._init_signal_schema()
             self._init_competition_schema()
+            self._init_assurance_schema()
             self._migrate_memory_schema_v4()
+            self._migrate_dag_schema_v11()
             self._migrate_kernel_convergence_v6()
             self._migrate_category_english_v8()
+            self._migrate_memory_kind_index_v12()
+            self._migrate_hash_chain_checkpoints_v13()
+            self._migrate_verification_v14()
+            self._migrate_blackboard_v15()
+            self._migrate_observation_tickets_v16()
+            self._migrate_budget_v17()
+            self._migrate_self_iterate_v18()
+            self._migrate_contract_verification_fields()
             self._migrate_event_hashes_table()
             self._backfill_event_hash_chain()
             self._conn.execute(
@@ -1010,6 +1051,703 @@ class KernelStore(
             WHERE retention_class IS NULL OR retention_class = ''
             """
         )
+
+
+    def _ensure_columns_batch(self, table: str, columns: list[tuple[str, str]]) -> None:
+        """Add multiple columns to a table with a single PRAGMA table_info query."""
+        existing = {
+            str(row["name"])
+            for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        for column, definition in columns:
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _migrate_dag_schema_v11(self) -> None:
+        self._ensure_columns_batch(
+            "steps",
+            [
+                ("join_strategy", "TEXT NOT NULL DEFAULT 'all_required'"),
+                ("input_bindings_json", "TEXT NOT NULL DEFAULT '{}'"),
+                ("node_key", "TEXT"),
+            ],
+        )
+        self._ensure_columns_batch(
+            "events",
+            [("causation_ids_json", "TEXT NOT NULL DEFAULT '[]'")],
+        )
+
+    def _migrate_memory_kind_index_v12(self) -> None:
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_records_kind "
+            "ON memory_records(memory_kind, status, updated_at DESC)"
+        )
+
+    def _migrate_hash_chain_checkpoints_v13(self) -> None:
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hash_chain_checkpoints (
+                task_key TEXT NOT NULL,
+                checkpoint_event_seq INTEGER NOT NULL,
+                checkpoint_event_hash TEXT NOT NULL,
+                checkpointed_at REAL NOT NULL,
+                PRIMARY KEY (task_key)
+            )
+            """
+        )
+
+    def _migrate_verification_v14(self) -> None:
+        self._ensure_columns_batch(
+            "steps",
+            [
+                ("verification_required", "INTEGER NOT NULL DEFAULT 0"),
+                ("verifies_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("supersedes_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ],
+        )
+
+    def _migrate_blackboard_v15(self) -> None:
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS blackboard_entries (
+                entry_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                step_attempt_id TEXT,
+                entry_type TEXT NOT NULL,
+                content_json TEXT NOT NULL DEFAULT '{}',
+                confidence REAL NOT NULL DEFAULT 0.5,
+                supersedes_entry_id TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                resolution TEXT,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_blackboard_task "
+            "ON blackboard_entries(task_id, entry_type, status)"
+        )
+
+    def _migrate_observation_tickets_v16(self) -> None:
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS observation_tickets (
+                ticket_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                step_attempt_id TEXT NOT NULL,
+                observer_kind TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                poll_after_seconds REAL NOT NULL DEFAULT 5.0,
+                hard_deadline_at REAL,
+                ready_patterns_json TEXT NOT NULL DEFAULT '[]',
+                failure_patterns_json TEXT NOT NULL DEFAULT '[]',
+                ticket_data_json TEXT NOT NULL DEFAULT '{}',
+                created_at REAL NOT NULL,
+                last_polled_at REAL,
+                resolved_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_observation_tickets_status
+                ON observation_tickets(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_observation_tickets_attempt
+                ON observation_tickets(step_attempt_id, status);
+            """
+        )
+
+    def _migrate_budget_v17(self) -> None:
+        self._ensure_columns_batch(
+            "tasks",
+            [
+                ("budget_tokens_used", "INTEGER NOT NULL DEFAULT 0"),
+                ("budget_tokens_limit", "INTEGER"),
+            ],
+        )
+
+    def _migrate_self_iterate_v18(self) -> None:
+        self._init_self_iterate_schema()
+
+    def _migrate_contract_verification_fields(self) -> None:
+        self._ensure_columns_batch(
+            "execution_contracts",
+            [
+                ("task_family", "TEXT"),
+                ("verification_requirements_json", "TEXT"),
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # Blackboard CRUD
+    # ------------------------------------------------------------------
+
+    def insert_blackboard_entry(self, record: BlackboardRecord) -> None:
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                """INSERT INTO blackboard_entries (
+                    entry_id, task_id, step_id, step_attempt_id, entry_type,
+                    content_json, confidence, supersedes_entry_id, status,
+                    resolution, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record.entry_id,
+                    record.task_id,
+                    record.step_id,
+                    record.step_attempt_id,
+                    record.entry_type,
+                    _canonical_json(record.content),
+                    record.confidence,
+                    record.supersedes_entry_id,
+                    record.status,
+                    record.resolution,
+                    record.created_at or time.time(),
+                ),
+            )
+
+    def get_blackboard_entry(self, entry_id: str) -> BlackboardRecord | None:
+        row = self._row(
+            "SELECT * FROM blackboard_entries WHERE entry_id = ?", (entry_id,)
+        )
+        if row is None:
+            return None
+        return self._blackboard_entry_from_row(row)
+
+    def query_blackboard_entries(
+        self,
+        *,
+        task_id: str,
+        entry_type: str | None = None,
+        status: str | None = None,
+    ) -> list[BlackboardRecord]:
+        clauses = ["task_id = ?"]
+        params: list[Any] = [task_id]
+        if entry_type is not None:
+            clauses.append("entry_type = ?")
+            params.append(entry_type)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " AND ".join(clauses)
+        rows = self._rows(
+            f"SELECT * FROM blackboard_entries WHERE {where} ORDER BY created_at ASC",
+            params,
+        )
+        return [self._blackboard_entry_from_row(r) for r in rows]
+
+    def update_blackboard_entry_status(
+        self, entry_id: str, status: str, *, resolution: str | None = None
+    ) -> None:
+        conn = self._get_conn()
+        with conn:
+            if resolution is not None:
+                conn.execute(
+                    "UPDATE blackboard_entries SET status = ?, resolution = ?"
+                    " WHERE entry_id = ?",
+                    (status, resolution, entry_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE blackboard_entries SET status = ? WHERE entry_id = ?",
+                    (status, entry_id),
+                )
+
+    def _blackboard_entry_from_row(self, row: sqlite3.Row) -> BlackboardRecord:
+        from hermit.kernel.ledger.journal.store_support import json_loads
+        from hermit.kernel.task.models.records import BlackboardRecord as _BB
+
+        return _BB(
+            entry_id=str(row["entry_id"]),
+            task_id=str(row["task_id"]),
+            step_id=str(row["step_id"]),
+            step_attempt_id=row["step_attempt_id"],
+            entry_type=str(row["entry_type"]),
+            content=json_loads(row["content_json"]),
+            confidence=float(row["confidence"]),
+            supersedes_entry_id=row["supersedes_entry_id"],
+            status=str(row["status"]),
+            resolution=row["resolution"],
+            created_at=float(row["created_at"]),
+        )
+
+    # ------------------------------------------------------------------
+    # Observation ticket CRUD
+    # ------------------------------------------------------------------
+
+    def _migrate_observation_tickets_v16(self) -> None:
+        """Create observation_tickets table for durable observation tracking."""
+        self._get_conn().executescript(
+            """
+            CREATE TABLE IF NOT EXISTS observation_tickets (
+                ticket_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                step_attempt_id TEXT NOT NULL,
+                observer_kind TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                poll_after_seconds REAL NOT NULL DEFAULT 5.0,
+                hard_deadline_at REAL,
+                ready_patterns_json TEXT NOT NULL DEFAULT '[]',
+                failure_patterns_json TEXT NOT NULL DEFAULT '[]',
+                ticket_data_json TEXT NOT NULL DEFAULT '{}',
+                created_at REAL NOT NULL,
+                last_polled_at REAL,
+                resolved_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_observation_tickets_status
+                ON observation_tickets(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_observation_tickets_attempt
+                ON observation_tickets(step_attempt_id, status);
+            """
+        )
+
+    def create_observation_ticket(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        step_attempt_id: str,
+        observer_kind: str,
+        poll_after_seconds: float = 5.0,
+        hard_deadline_at: float | None = None,
+        ready_patterns: list[Any] | None = None,
+        failure_patterns: list[Any] | None = None,
+        ticket_data: dict[str, Any] | None = None,
+    ) -> str:
+        ticket_id = self._id("obs")
+        now = time.time()
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO observation_tickets (
+                    ticket_id, task_id, step_id, step_attempt_id, observer_kind,
+                    status, poll_after_seconds, hard_deadline_at,
+                    ready_patterns_json, failure_patterns_json, ticket_data_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ticket_id, task_id, step_id, step_attempt_id, observer_kind,
+                    poll_after_seconds, hard_deadline_at,
+                    _canonical_json(ready_patterns or []),
+                    _canonical_json(failure_patterns or []),
+                    _canonical_json(ticket_data or {}),
+                    now,
+                ),
+            )
+        return ticket_id
+
+    def resolve_observation(
+        self, ticket_id: str, *, status: str = "completed", now: float | None = None
+    ) -> None:
+        ts = now or time.time()
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
+                "UPDATE observation_tickets SET status = ?, resolved_at = ?"
+                " WHERE ticket_id = ?",
+                (status, ts, ticket_id),
+            )
+
+    def resolve_observations_for_attempt(
+        self, step_attempt_id: str, *, status: str = "resolved", now: float | None = None
+    ) -> list[str]:
+        """Resolve all active observation tickets for a step attempt."""
+        ts = now or time.time()
+        conn = self._get_conn()
+        rows = self._rows(
+            "SELECT ticket_id FROM observation_tickets"
+            " WHERE step_attempt_id = ? AND status = 'active'",
+            (step_attempt_id,),
+        )
+        resolved_ids: list[str] = []
+        for row in rows:
+            tid = str(row["ticket_id"])
+            with conn:
+                conn.execute(
+                    "UPDATE observation_tickets SET status = ?, resolved_at = ?"
+                    " WHERE ticket_id = ?",
+                    (status, ts, tid),
+                )
+            resolved_ids.append(tid)
+        return resolved_ids
+
+    def resolve_observations_for_task(
+        self, task_id: str, *, status: str = "cancelled", now: float | None = None
+    ) -> list[str]:
+        """Resolve all active observation tickets for a task."""
+        ts = now or time.time()
+        conn = self._get_conn()
+        rows = self._rows(
+            "SELECT ticket_id FROM observation_tickets"
+            " WHERE task_id = ? AND status = 'active'",
+            (task_id,),
+        )
+        resolved_ids: list[str] = []
+        for row in rows:
+            tid = str(row["ticket_id"])
+            with conn:
+                conn.execute(
+                    "UPDATE observation_tickets SET status = ?, resolved_at = ?"
+                    " WHERE ticket_id = ?",
+                    (status, ts, tid),
+                )
+            resolved_ids.append(tid)
+        return resolved_ids
+
+
+    # ------------------------------------------------------------------
+    # Blackboard CRUD
+    # ------------------------------------------------------------------
+
+    def insert_blackboard_entry(self, record: BlackboardRecord) -> None:
+        with self._conn:
+            self._conn.execute(
+                """INSERT INTO blackboard_entries (
+                    entry_id, task_id, step_id, step_attempt_id, entry_type,
+                    content_json, confidence, supersedes_entry_id, status,
+                    resolution, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record.entry_id,
+                    record.task_id,
+                    record.step_id,
+                    record.step_attempt_id,
+                    record.entry_type,
+                    _canonical_json(record.content),
+                    record.confidence,
+                    record.supersedes_entry_id,
+                    record.status,
+                    record.resolution,
+                    record.created_at or time.time(),
+                ),
+            )
+
+    def get_blackboard_entry(self, entry_id: str) -> BlackboardRecord | None:
+        row = self._row("SELECT * FROM blackboard_entries WHERE entry_id = ?", (entry_id,))
+        if row is None:
+            return None
+        return self._blackboard_entry_from_row(row)
+
+    def query_blackboard_entries(
+        self,
+        *,
+        task_id: str,
+        entry_type: str | None = None,
+        status: str | None = None,
+    ) -> list[BlackboardRecord]:
+        clauses = ["task_id = ?"]
+        params: list[Any] = [task_id]
+        if entry_type is not None:
+            clauses.append("entry_type = ?")
+            params.append(entry_type)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " AND ".join(clauses)
+        rows = self._rows(
+            f"SELECT * FROM blackboard_entries WHERE {where} ORDER BY created_at ASC",
+            params,
+        )
+        return [self._blackboard_entry_from_row(r) for r in rows]
+
+    def update_blackboard_entry_status(
+        self, entry_id: str, status: str, *, resolution: str | None = None
+    ) -> None:
+        with self._conn:
+            if resolution is not None:
+                self._conn.execute(
+                    "UPDATE blackboard_entries SET status = ?, resolution = ? WHERE entry_id = ?",
+                    (status, resolution, entry_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE blackboard_entries SET status = ? WHERE entry_id = ?",
+                    (status, entry_id),
+                )
+
+    def _blackboard_entry_from_row(self, row: sqlite3.Row) -> BlackboardRecord:
+        from hermit.kernel.ledger.journal.store_support import json_loads
+        from hermit.kernel.task.models.records import BlackboardRecord
+
+        return BlackboardRecord(
+            entry_id=str(row["entry_id"]),
+            task_id=str(row["task_id"]),
+            step_id=str(row["step_id"]),
+            step_attempt_id=row["step_attempt_id"],
+            entry_type=str(row["entry_type"]),
+            content=json_loads(row["content_json"]),
+            confidence=float(row["confidence"]),
+            supersedes_entry_id=row["supersedes_entry_id"],
+            status=str(row["status"]),
+            resolution=row["resolution"],
+            created_at=float(row["created_at"]),
+        )
+
+    # ------------------------------------------------------------------
+    # Observation ticket CRUD
+    # ------------------------------------------------------------------
+
+    def create_observation_ticket(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        step_attempt_id: str,
+        observer_kind: str,
+        poll_after_seconds: float = 5.0,
+        hard_deadline_at: float | None = None,
+        ready_patterns: list[Any] | None = None,
+        failure_patterns: list[Any] | None = None,
+        ticket_data: dict[str, Any] | None = None,
+    ) -> str:
+        ticket_id = self._id("obs")
+        now = time.time()
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO observation_tickets (
+                    ticket_id, task_id, step_id, step_attempt_id, observer_kind,
+                    status, poll_after_seconds, hard_deadline_at,
+                    ready_patterns_json, failure_patterns_json, ticket_data_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ticket_id, task_id, step_id, step_attempt_id, observer_kind,
+                    poll_after_seconds, hard_deadline_at,
+                    _canonical_json(ready_patterns or []),
+                    _canonical_json(failure_patterns or []),
+                    _canonical_json(ticket_data or {}),
+                    now,
+                ),
+            )
+            self._append_event_tx(
+                event_id=self.generate_id("event"),
+                event_type="observation.created",
+                entity_type="observation_ticket",
+                entity_id=ticket_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={
+                    "ticket_id": ticket_id,
+                    "observer_kind": observer_kind,
+                    "step_attempt_id": step_attempt_id,
+                    "poll_after_seconds": poll_after_seconds,
+                    "hard_deadline_at": hard_deadline_at,
+                },
+            )
+        return ticket_id
+
+    def update_observation_progress(self, ticket_id: str, *, now: float | None = None) -> None:
+        ts = now or time.time()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE observation_tickets SET last_polled_at = ? WHERE ticket_id = ?",
+                (ts, ticket_id),
+            )
+            row = self._row(
+                "SELECT task_id, step_id FROM observation_tickets WHERE ticket_id = ?",
+                (ticket_id,),
+            )
+            task_id = str(row["task_id"]) if row else None
+            step_id = str(row["step_id"]) if row else None
+            self._append_event_tx(
+                event_id=self.generate_id("event"),
+                event_type="observation.polled",
+                entity_type="observation_ticket",
+                entity_id=ticket_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={"ticket_id": ticket_id, "polled_at": ts},
+            )
+
+    def resolve_observation(
+        self, ticket_id: str, *, status: str = "completed", now: float | None = None
+    ) -> None:
+        ts = now or time.time()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE observation_tickets SET status = ?, resolved_at = ? WHERE ticket_id = ?",
+                (status, ts, ticket_id),
+            )
+            row = self._row(
+                "SELECT task_id, step_id FROM observation_tickets WHERE ticket_id = ?",
+                (ticket_id,),
+            )
+            task_id = str(row["task_id"]) if row else None
+            step_id = str(row["step_id"]) if row else None
+            self._append_event_tx(
+                event_id=self.generate_id("event"),
+                event_type="observation.resolved",
+                entity_type="observation_ticket",
+                entity_id=ticket_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={"ticket_id": ticket_id, "status": status, "resolved_at": ts},
+            )
+
+    def timeout_observation(self, ticket_id: str, *, now: float | None = None) -> None:
+        ts = now or time.time()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE observation_tickets SET status = 'timed_out', resolved_at = ?"
+                " WHERE ticket_id = ?",
+                (ts, ticket_id),
+            )
+            row = self._row(
+                "SELECT task_id, step_id FROM observation_tickets WHERE ticket_id = ?",
+                (ticket_id,),
+            )
+            task_id = str(row["task_id"]) if row else None
+            step_id = str(row["step_id"]) if row else None
+            self._append_event_tx(
+                event_id=self.generate_id("event"),
+                event_type="observation.timed_out",
+                entity_type="observation_ticket",
+                entity_id=ticket_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={"ticket_id": ticket_id, "timed_out_at": ts},
+            )
+
+    def list_active_observation_tickets(self) -> list[dict[str, Any]]:
+        from hermit.kernel.ledger.journal.store_support import json_loads as _jl
+
+        rows = self._rows(
+            "SELECT * FROM observation_tickets WHERE status = 'active' ORDER BY created_at"
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            result.append({
+                "ticket_id": str(row["ticket_id"]),
+                "task_id": str(row["task_id"]),
+                "step_id": str(row["step_id"]),
+                "step_attempt_id": str(row["step_attempt_id"]),
+                "observer_kind": str(row["observer_kind"]),
+                "status": str(row["status"]),
+                "poll_after_seconds": float(row["poll_after_seconds"]),
+                "hard_deadline_at": (
+                    float(row["hard_deadline_at"]) if row["hard_deadline_at"] else None
+                ),
+                "ready_patterns": _jl(row["ready_patterns_json"]),
+                "failure_patterns": _jl(row["failure_patterns_json"]),
+                "ticket_data": _jl(row["ticket_data_json"]),
+                "created_at": float(row["created_at"]),
+                "last_polled_at": (
+                    float(row["last_polled_at"]) if row["last_polled_at"] else None
+                ),
+                "resolved_at": None,
+            })
+        return result
+
+    def get_observation_ticket(self, ticket_id: str) -> dict[str, Any] | None:
+        from hermit.kernel.ledger.journal.store_support import json_loads as _jl
+
+        row = self._row(
+            "SELECT * FROM observation_tickets WHERE ticket_id = ?", (ticket_id,)
+        )
+        if row is None:
+            return None
+        return {
+            "ticket_id": str(row["ticket_id"]),
+            "task_id": str(row["task_id"]),
+            "step_id": str(row["step_id"]),
+            "step_attempt_id": str(row["step_attempt_id"]),
+            "observer_kind": str(row["observer_kind"]),
+            "status": str(row["status"]),
+            "poll_after_seconds": float(row["poll_after_seconds"]),
+            "hard_deadline_at": (
+                float(row["hard_deadline_at"]) if row["hard_deadline_at"] else None
+            ),
+            "ready_patterns": _jl(row["ready_patterns_json"]),
+            "failure_patterns": _jl(row["failure_patterns_json"]),
+            "ticket_data": _jl(row["ticket_data_json"]),
+            "created_at": float(row["created_at"]),
+            "last_polled_at": float(row["last_polled_at"]) if row["last_polled_at"] else None,
+            "resolved_at": float(row["resolved_at"]) if row["resolved_at"] else None,
+        }
+
+    def resolve_observations_for_attempt(
+        self, step_attempt_id: str, *, status: str = "resolved", now: float | None = None
+    ) -> list[str]:
+        """Resolve all active observation tickets for a step attempt."""
+        ts = now or time.time()
+        rows = self._rows(
+            "SELECT ticket_id, task_id, step_id FROM observation_tickets"
+            " WHERE step_attempt_id = ? AND status = 'active'",
+            (step_attempt_id,),
+        )
+        resolved_ids: list[str] = []
+        for row in rows:
+            ticket_id = str(row["ticket_id"])
+            task_id = str(row["task_id"])
+            step_id = str(row["step_id"])
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE observation_tickets SET status = ?, resolved_at = ?"
+                    " WHERE ticket_id = ?",
+                    (status, ts, ticket_id),
+                )
+                self._append_event_tx(
+                    event_id=self.generate_id("event"),
+                    event_type="observation.resolved",
+                    entity_type="observation_ticket",
+                    entity_id=ticket_id,
+                    task_id=task_id,
+                    step_id=step_id,
+                    actor="kernel",
+                    payload={
+                        "ticket_id": ticket_id,
+                        "status": status,
+                        "resolved_at": ts,
+                        "resolved_via": "attempt_cleanup",
+                    },
+                )
+            resolved_ids.append(ticket_id)
+        return resolved_ids
+
+    def resolve_observations_for_task(
+        self, task_id: str, *, status: str = "cancelled", now: float | None = None
+    ) -> list[str]:
+        """Resolve all active observation tickets for a task."""
+        ts = now or time.time()
+        rows = self._rows(
+            "SELECT ticket_id, step_id FROM observation_tickets"
+            " WHERE task_id = ? AND status = 'active'",
+            (task_id,),
+        )
+        resolved_ids: list[str] = []
+        for row in rows:
+            ticket_id = str(row["ticket_id"])
+            step_id = str(row["step_id"])
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE observation_tickets SET status = ?, resolved_at = ?"
+                    " WHERE ticket_id = ?",
+                    (status, ts, ticket_id),
+                )
+                self._append_event_tx(
+                    event_id=self.generate_id("event"),
+                    event_type="observation.resolved",
+                    entity_type="observation_ticket",
+                    entity_id=ticket_id,
+                    task_id=task_id,
+                    step_id=step_id,
+                    actor="kernel",
+                    payload={
+                        "ticket_id": ticket_id,
+                        "status": status,
+                        "resolved_at": ts,
+                        "resolved_via": "task_cleanup",
+                    },
+                )
+            resolved_ids.append(ticket_id)
+        return resolved_ids
 
     def generate_id(self, prefix: str) -> str:
         return f"{prefix}_{uuid.uuid4().hex[:12]}"

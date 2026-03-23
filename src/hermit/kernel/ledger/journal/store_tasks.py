@@ -617,19 +617,44 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return [self._step_attempt_from_row(row) for row in rows]
 
     def claim_next_ready_step_attempt(self) -> StepAttemptRecord | None:
+        now = time.time()
         with self._lock, self._conn:
             row = self._row(
                 """
-                SELECT sa.*
-                FROM step_attempts sa
-                JOIN steps s ON s.step_id = sa.step_id
-                JOIN tasks t ON t.task_id = sa.task_id
-                WHERE sa.status = 'ready'
-                  AND s.status = 'ready'
-                  AND t.status IN ('queued', 'running')
-                ORDER BY sa.queue_priority DESC, sa.started_at ASC
-                LIMIT 1
-                """
+                UPDATE step_attempts
+                SET status = 'running', claimed_at = ?
+                WHERE step_attempt_id = (
+                    SELECT sa.step_attempt_id
+                    FROM step_attempts sa
+                    JOIN steps s ON s.step_id = sa.step_id
+                    JOIN tasks t ON t.task_id = sa.task_id
+                    WHERE sa.status = 'ready'
+                      AND s.status = 'ready'
+                      AND t.status IN ('queued', 'running', 'reconciling', 'blocked', 'planning_ready')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM steps dep
+                          WHERE dep.task_id = s.task_id
+                            AND dep.step_id IN (
+                                SELECT value FROM json_each(s.depends_on_json)
+                            )
+                            AND dep.status NOT IN (
+                                'succeeded', 'completed', 'skipped', 'needs_attention'
+                            )
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM step_attempts sa2
+                          WHERE sa2.step_id = sa.step_id
+                            AND sa2.status IN (
+                                'running', 'dispatching', 'reconciling',
+                                'observing', 'contracting', 'preflighting'
+                            )
+                      )
+                    ORDER BY sa.queue_priority DESC, sa.started_at ASC
+                    LIMIT 1
+                )
+                RETURNING *
+                """,
+                (now,),
             )
             if row is None:
                 return None
@@ -657,6 +682,347 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 payload={"status": "running", "attempt": attempt.attempt},
             )
         return self.get_step_attempt(attempt.step_attempt_id)
+
+    _TERMINAL_STEP_STATUSES = frozenset({"succeeded", "completed", "skipped", "failed"})
+
+    def activate_waiting_dependents(self, task_id: str, completed_step_id: str) -> list[str]:
+        """Activate waiting steps whose dependencies are all satisfied.
+
+        Returns the list of step_ids that were activated (waiting -> ready).
+        """
+        activated: list[str] = []
+        candidates = self._rows(
+            """
+            SELECT s.step_id, s.depends_on_json, s.join_strategy
+            FROM steps s, json_each(s.depends_on_json) dep
+            WHERE s.task_id = ? AND s.status = 'waiting'
+              AND dep.value = ?
+            GROUP BY s.step_id
+            """,
+            (task_id, completed_step_id),
+        )
+        for row in candidates:
+            step_id = str(row["step_id"])
+            deps = list(json.loads(str(row["depends_on_json"] or "[]")))
+            strategy = str(row["join_strategy"] or "all_required")
+            if self._join_barrier_satisfied(task_id, deps, strategy):
+                now = time.time()
+                with self._get_conn():
+                    self._get_conn().execute(
+                        "UPDATE steps SET status = 'ready', updated_at = ? WHERE step_id = ?",
+                        (now, step_id),
+                    )
+                    self._get_conn().execute(
+                        """
+                        UPDATE step_attempts SET status = 'ready'
+                        WHERE step_id = ? AND status = 'waiting'
+                        """,
+                        (step_id,),
+                    )
+                    self._append_event_tx(
+                        event_id=self._id("event"),
+                        event_type="step.dependency_satisfied",
+                        entity_type="step",
+                        entity_id=step_id,
+                        task_id=task_id,
+                        step_id=step_id,
+                        actor="kernel",
+                        payload={
+                            "activated_by": completed_step_id,
+                            "strategy": strategy,
+                        },
+                    )
+                activated.append(step_id)
+        return activated
+
+    def _join_barrier_satisfied(self, task_id: str, deps: list[str], strategy: str) -> bool:
+        """Check if the join barrier for a step is satisfied based on strategy."""
+        if not deps:
+            return True
+        rows = self._rows(
+            "SELECT step_id, status FROM steps WHERE task_id = ? AND step_id IN ({})".format(
+                ",".join("?" for _ in deps)
+            ),
+            (task_id, *deps),
+        )
+        statuses = {str(r["step_id"]): str(r["status"]) for r in rows}
+        succeeded = sum(
+            1 for s in statuses.values() if s in ("succeeded", "completed", "skipped")
+        )
+        failed = sum(1 for s in statuses.values() if s in ("failed", "needs_attention"))
+        total = len(deps)
+        terminal = succeeded + failed
+
+        if strategy == "all_required":
+            return succeeded == total
+        elif strategy == "any_sufficient":
+            return succeeded >= 1
+        elif strategy == "majority":
+            return succeeded > total / 2
+        elif strategy == "best_effort":
+            return terminal == total
+        return succeeded == total
+
+    def propagate_step_failure(self, task_id: str, failed_step_id: str) -> list[str]:
+        """Cascade failure to downstream waiting steps (all_required strategy)."""
+        cascaded: list[str] = []
+        waiting = self._rows(
+            """
+            SELECT s.step_id, s.depends_on_json, s.join_strategy
+            FROM steps s, json_each(s.depends_on_json) dep
+            WHERE s.task_id = ? AND s.status = 'waiting'
+              AND dep.value = ?
+            GROUP BY s.step_id
+            """,
+            (task_id, failed_step_id),
+        )
+        for row in waiting:
+            step_id = str(row["step_id"])
+            deps = list(json.loads(str(row["depends_on_json"] or "[]")))
+            strategy = str(row["join_strategy"] or "all_required")
+            should_cascade = False
+            if strategy == "all_required":
+                should_cascade = True
+            elif strategy == "any_sufficient":
+                all_deps_rows = self._rows(
+                    "SELECT step_id, status FROM steps"
+                    " WHERE task_id = ? AND step_id IN ({})".format(
+                        ",".join("?" for _ in deps)
+                    ),
+                    (task_id, *deps),
+                )
+                all_failed = all(str(r["status"]) == "failed" for r in all_deps_rows)
+                should_cascade = all_failed
+            elif strategy == "majority":
+                all_deps_rows = self._rows(
+                    "SELECT step_id, status FROM steps"
+                    " WHERE task_id = ? AND step_id IN ({})".format(
+                        ",".join("?" for _ in deps)
+                    ),
+                    (task_id, *deps),
+                )
+                failed_count = sum(1 for r in all_deps_rows if str(r["status"]) == "failed")
+                should_cascade = failed_count > len(deps) / 2
+
+            if should_cascade:
+                now = time.time()
+                with self._get_conn():
+                    self._get_conn().execute(
+                        "UPDATE steps SET status = 'failed', finished_at = ?,"
+                        " updated_at = ? WHERE step_id = ?",
+                        (now, now, step_id),
+                    )
+                    self._get_conn().execute(
+                        """
+                        UPDATE step_attempts SET status = 'failed',
+                            waiting_reason = 'dependency_failed', finished_at = ?
+                        WHERE step_id = ? AND status = 'waiting'
+                        """,
+                        (now, step_id),
+                    )
+                    self._append_event_tx(
+                        event_id=self._id("event"),
+                        event_type="step.dependency_failed",
+                        entity_type="step",
+                        entity_id=step_id,
+                        task_id=task_id,
+                        step_id=step_id,
+                        actor="kernel",
+                        payload={
+                            "failed_dependency": failed_step_id,
+                            "strategy": strategy,
+                        },
+                    )
+                cascaded.append(step_id)
+                cascaded.extend(self.propagate_step_failure(task_id, step_id))
+
+        self.activate_waiting_dependents(task_id, failed_step_id)
+        return cascaded
+
+    def retry_step(
+        self,
+        task_id: str,
+        step_id: str,
+        *,
+        queue_priority: int = 0,
+    ) -> StepAttemptRecord:
+        """Atomically increment the step attempt counter and create a new ready attempt."""
+        step = self.get_step(step_id)
+        if step is None:
+            raise ValueError(f"Step {step_id!r} not found")
+        next_attempt_num = step.attempt + 1
+        now = time.time()
+        with self._get_conn():
+            self._get_conn().execute(
+                """
+                UPDATE steps
+                SET attempt = ?, status = 'ready', finished_at = NULL, updated_at = ?
+                WHERE step_id = ?
+                """,
+                (next_attempt_num, now, step_id),
+            )
+            self._get_conn().execute(
+                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+                (now, task_id),
+            )
+            self._append_event_tx(
+                event_id=self._id("event"),
+                event_type="step.retry_scheduled",
+                entity_type="step",
+                entity_id=step_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={
+                    "attempt": next_attempt_num,
+                    "max_attempts": step.max_attempts,
+                    "previous_attempt": step.attempt,
+                },
+            )
+        return self.create_step_attempt(
+            task_id=task_id,
+            step_id=step_id,
+            attempt=next_attempt_num,
+            status="ready",
+            queue_priority=queue_priority,
+        )
+
+    def skip_step(
+        self,
+        task_id: str,
+        step_id: str,
+        *,
+        reason: str = "",
+    ) -> None:
+        """Mark a step as skipped (terminal) and activate downstream dependents."""
+        now = time.time()
+        with self._get_conn():
+            self._get_conn().execute(
+                """
+                UPDATE steps
+                SET status = 'skipped', finished_at = ?, updated_at = ?
+                WHERE step_id = ?
+                """,
+                (now, now, step_id),
+            )
+            self._get_conn().execute(
+                """
+                UPDATE step_attempts
+                SET status = 'skipped', finished_at = ?
+                WHERE step_id = ? AND status IN ('waiting', 'ready')
+                """,
+                (now, step_id),
+            )
+            self._get_conn().execute(
+                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+                (now, task_id),
+            )
+            self._append_event_tx(
+                event_id=self._id("event"),
+                event_type="dag.topology_changed",
+                entity_type="step",
+                entity_id=step_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={
+                    "mutation": "skip_step",
+                    "step_id": step_id,
+                    "reason": reason,
+                },
+            )
+        self.activate_waiting_dependents(task_id, step_id)
+
+    def update_step_depends_on(
+        self,
+        step_id: str,
+        *,
+        task_id: str,
+        new_depends_on: list[str],
+    ) -> None:
+        """Update the dependencies of a step and recalculate its status."""
+        step = self.get_step(step_id)
+        if step is None:
+            return
+        old_depends_on = list(step.depends_on)
+        now = time.time()
+
+        if not new_depends_on:
+            new_status = "ready"
+        else:
+            rows = self._rows(
+                "SELECT step_id, status FROM steps WHERE task_id = ? AND step_id IN ({})".format(
+                    ",".join("?" for _ in new_depends_on)
+                ),
+                (task_id, *new_depends_on),
+            )
+            dep_statuses = {str(r["step_id"]): str(r["status"]) for r in rows}
+            all_success = all(
+                dep_statuses.get(d) in ("succeeded", "completed", "skipped")
+                for d in new_depends_on
+            )
+            new_status = "ready" if all_success else "waiting"
+
+        with self._get_conn():
+            self._get_conn().execute(
+                """
+                UPDATE steps
+                SET depends_on_json = ?, status = ?, updated_at = ?
+                WHERE step_id = ?
+                """,
+                (json.dumps(new_depends_on, ensure_ascii=False), new_status, now, step_id),
+            )
+            if new_status == "ready" and step.status == "waiting":
+                self._get_conn().execute(
+                    """
+                    UPDATE step_attempts
+                    SET status = 'ready'
+                    WHERE step_id = ? AND status = 'waiting'
+                    """,
+                    (step_id,),
+                )
+            elif new_status == "waiting" and step.status == "ready":
+                self._get_conn().execute(
+                    """
+                    UPDATE step_attempts
+                    SET status = 'waiting'
+                    WHERE step_id = ? AND status = 'ready'
+                    """,
+                    (step_id,),
+                )
+            self._get_conn().execute(
+                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+                (now, task_id),
+            )
+            self._append_event_tx(
+                event_id=self._id("event"),
+                event_type="dag.topology_changed",
+                entity_type="step",
+                entity_id=step_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor="kernel",
+                payload={
+                    "mutation": "rewire_dependency",
+                    "step_id": step_id,
+                    "old_depends_on": old_depends_on,
+                    "new_depends_on": new_depends_on,
+                    "new_status": new_status,
+                },
+            )
+
+    def has_non_terminal_steps(self, task_id: str) -> bool:
+        """Check if there are any non-terminal steps for a task."""
+        row = self._row(
+            """
+            SELECT COUNT(*) as cnt FROM steps
+            WHERE task_id = ? AND status NOT IN (
+                'succeeded', 'completed', 'skipped', 'failed', 'needs_attention'
+            )
+            """,
+            (task_id,),
+        )
+        return bool(row and int(row["cnt"]) > 0)
 
     def update_step_attempt(
         self,

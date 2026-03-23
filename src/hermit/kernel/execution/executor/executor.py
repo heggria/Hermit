@@ -241,6 +241,7 @@ class ToolExecutor:
         progress_summary_keepalive_seconds: float = 15.0,
         tool_output_limit: int = 4000,
         deliberation: DeliberationIntegration | None = None,
+        trace_recorder: Any | None = None,
     ) -> None:
         self.registry = registry
         self.store = store
@@ -274,6 +275,7 @@ class ToolExecutor:
         )
         self.tool_output_limit = tool_output_limit
         self._deliberation = deliberation
+        self.trace_recorder = trace_recorder
 
     def _set_attempt_phase(
         self,
