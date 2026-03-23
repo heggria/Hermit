@@ -863,6 +863,11 @@ class KernelStore(
             self._migrate_budget_v17()
             self._migrate_self_iterate_v18()
             self._migrate_contract_verification_fields()
+            self._ensure_column("memory_records", "importance", "INTEGER NOT NULL DEFAULT 5")
+            self._ensure_column("step_attempts", "claimed_at", "REAL")
+            self._ensure_column("step_attempts", "waiting_reason", "TEXT")
+            self._ensure_column("step_attempts", "last_heartbeat_at", "REAL")
+            self._ensure_column("step_attempts", "status_reason", "TEXT")
             self._migrate_event_hashes_table()
             self._backfill_event_hash_chain()
             self._conn.execute(

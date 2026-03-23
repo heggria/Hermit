@@ -1058,6 +1058,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         resume_from_ref: str | None | object = UNSET,
         superseded_by_step_attempt_id: str | None | object = UNSET,
         finished_at: float | None | object = UNSET,
+        status_reason: str | None | object = UNSET,
     ) -> None:
         attempt = self.get_step_attempt(step_attempt_id)
         if attempt is None:
