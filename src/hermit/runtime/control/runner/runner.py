@@ -197,7 +197,7 @@ class AgentRunner:
                 task_controller=tc,
                 workspace_manager=ws_mgr,
             )
-            self.pm.hooks.add(
+            self.pm.hooks.register(
                 HookEvent.DISPATCH_RESULT,
                 competition_service.on_dispatch_result,
                 priority=15,

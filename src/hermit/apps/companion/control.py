@@ -358,7 +358,7 @@ def command_prefix() -> list[str]:
             "3.13",
             "python",
             "-m",
-            "hermit.surfaces.cli.main",
+            "hermit.surfaces.cli",
         ]
     hermit_bin = Path(sys.executable).parent / "hermit"
     if hermit_bin.exists():
@@ -366,7 +366,7 @@ def command_prefix() -> list[str]:
     installed = shutil.which("hermit")
     if installed:
         return [installed]
-    return [sys.executable, "-m", "hermit.surfaces.cli.main"]
+    return [sys.executable, "-m", "hermit.surfaces.cli"]
 
 
 def readme_path() -> Path:

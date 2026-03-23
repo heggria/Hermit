@@ -241,7 +241,7 @@ def install_app_bundle(
         exec_line = (
             f'source "{helper_path}"\n'
             'UV_BIN="$(resolve_uv_bin)"\n'
-            f'exec "${{UV_BIN}}" run --project "{project_root}" --python 3.13 '
+            f'exec "${{UV_BIN}}" run --project "{project_root}" --python 3.13 --no-sync '
             f'python -m hermit.apps.companion.menubar --adapter "{adapter}"'
         )
     else:

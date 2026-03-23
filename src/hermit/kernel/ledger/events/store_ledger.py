@@ -1031,6 +1031,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         scope_kind: str | None = None,
         scope_ref: str | None = None,
         task_id: str | None = None,
+        memory_kind: str | None = None,
         limit: int = 200,
     ) -> list[MemoryRecord]:
         clauses: list[str] = []
@@ -1038,6 +1039,9 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         if task_id:
             clauses.append("task_id = ?")
             params.append(task_id)
+        if memory_kind:
+            clauses.append("memory_kind = ?")
+            params.append(memory_kind)
         if status:
             if status == "active":
                 clauses.append("status = 'active' AND (expires_at IS NULL OR expires_at > ?)")
@@ -1435,27 +1439,49 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         status: str,
         resolved_by: str,
         resolution: dict[str, Any],
-    ) -> None:
+        expected_status: str | None = None,
+    ) -> bool:
         now = time.time()
         approval = self.get_approval(approval_id)
         if approval is None:
-            return
+            return False
         resolved_by_principal_id = self._ensure_principal_id(resolved_by)
         with self._lock, self._conn:
-            self._conn.execute(
-                """
-                UPDATE approvals
-                SET status = ?, resolved_at = ?, resolved_by_principal_id = ?, resolution_json = ?
-                WHERE approval_id = ?
-                """,
-                (
-                    status,
-                    now,
-                    resolved_by_principal_id,
-                    json.dumps(resolution, ensure_ascii=False),
-                    approval_id,
-                ),
-            )
+            if expected_status is not None:
+                cursor = self._conn.execute(
+                    """
+                    UPDATE approvals
+                    SET status = ?, resolved_at = ?, resolved_by_principal_id = ?,
+                        resolution_json = ?
+                    WHERE approval_id = ? AND status = ?
+                    """,
+                    (
+                        status,
+                        now,
+                        resolved_by_principal_id,
+                        json.dumps(resolution, ensure_ascii=False),
+                        approval_id,
+                        expected_status,
+                    ),
+                )
+            else:
+                cursor = self._conn.execute(
+                    """
+                    UPDATE approvals
+                    SET status = ?, resolved_at = ?, resolved_by_principal_id = ?,
+                        resolution_json = ?
+                    WHERE approval_id = ?
+                    """,
+                    (
+                        status,
+                        now,
+                        resolved_by_principal_id,
+                        json.dumps(resolution, ensure_ascii=False),
+                        approval_id,
+                    ),
+                )
+            if cursor.rowcount == 0:
+                return False
             self._append_event_tx(
                 event_id=self._id("event"),
                 event_type=f"approval.{status}",
@@ -1471,6 +1497,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
                     "resolution": resolution,
                 },
             )
+            return True
 
     def update_approval_resolution(self, approval_id: str, resolution: dict[str, Any]) -> None:
         approval = self.get_approval(approval_id)

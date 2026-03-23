@@ -42,11 +42,22 @@ reports/
 
 # Claude Code
 .claude/scheduled_tasks.lock
+.claude/worktrees/
+
+# Hermit runtime state
+.hermit/
+.hermit-proof/
+
+# Spec artifacts
+.spec/
+
+# Benchmarks
+.benchmarks/
 
 # Cache
 .cache/
+.uv-cache/
 
 # Test artifacts
 *.cover
 MagicMock
-.claude/worktrees/

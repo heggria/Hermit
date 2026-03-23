@@ -56,6 +56,11 @@ case "${ENV_NAME}" in
     ;;
 esac
 
+# Sync the venv once to ensure all dependencies are installed, then run with
+# --no-sync so that the exec'd process does not rebuild or modify the venv
+# (which would race with other uv processes sharing the same .venv).
+"${UV_BIN}" sync --project "${ROOT_DIR}" --python 3.13 --group dev --extra macos >/dev/null 2>&1 || true
+
 export PYTHONUNBUFFERED=1
 
-exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 python -m hermit.surfaces.cli.main "$@"
+exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 --no-sync python -m hermit.surfaces.cli "$@"

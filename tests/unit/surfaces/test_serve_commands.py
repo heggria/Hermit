@@ -513,6 +513,7 @@ class TestSessionsCommand:
             patch("hermit.runtime.assembly.config.get_settings", return_value=settings),
             patch("hermit.surfaces.cli._serve.ensure_workspace"),
             patch("hermit.surfaces.cli._serve.SessionManager", return_value=mock_manager),
+            patch("hermit.surfaces.cli._helpers.get_kernel_store", return_value=MagicMock(spec=[])),
         ):
             result = runner.invoke(app, ["sessions"])
         assert result.exit_code == 0

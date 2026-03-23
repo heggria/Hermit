@@ -88,7 +88,7 @@ _fallback_service_pids() {
 
 service_pids() {
   local pids
-  pids="$(matching_pids "-m hermit.surfaces.cli.main serve --adapter ${ADAPTER}")"
+  pids="$(matching_pids "-m hermit.surfaces.cli serve --adapter ${ADAPTER}")"
   if [[ -n "${pids}" ]]; then
     printf '%s\n' "${pids}"
     return
@@ -140,7 +140,7 @@ clear_runtime_pid_files() {
 }
 
 ensure_macos_deps() {
-  "${UV_BIN}" sync --group dev --extra macos >/dev/null
+  "${UV_BIN}" sync --project "${ROOT_DIR}" --python 3.13 --group dev --extra macos >/dev/null
 }
 
 ensure_menu_app() {
@@ -172,7 +172,8 @@ start_menubar() {
   if [[ -n "$(menubar_pids)" ]]; then
     return
   fi
-  ensure_macos_deps
+  # ensure_macos_deps is called once before start_service; skip here to avoid
+  # concurrent uv sync races with the background service process.
   ensure_menu_app
   open -na "${APP_PATH}"
 }
@@ -226,6 +227,10 @@ case "${ACTION}" in
       print_status
       exit 0
     fi
+    # Sync deps (including macos extras) BEFORE starting the service so that
+    # ``uv run`` inside hermit-env.sh does not recreate / corrupt the venv
+    # while ensure_macos_deps is running concurrently.
+    ensure_macos_deps
     start_service
     sleep 3
     start_menubar
@@ -237,6 +242,7 @@ case "${ACTION}" in
     kill_pids "$(service_pids)"
     kill_pids "$(menubar_pids)"
     clear_runtime_pid_files
+    ensure_macos_deps
     start_service
     sleep 3
     start_menubar

@@ -24,10 +24,5 @@ def configure_logging(level: str = "INFO", *, stream: IO[str] | TextIOBase | Non
         ],
         "wrapper_class": structlog.make_filtering_bound_logger(resolved),
     }
-    # Only set an explicit logger factory when a custom stream was provided.
-    # The default (sys.stderr) should use structlog's built-in factory which
-    # resolves stderr lazily, avoiding "I/O operation on closed file" under
-    # pytest-xdist where worker stderr can be closed early.
-    if stream is not None:
-        kwargs["logger_factory"] = structlog.PrintLoggerFactory(file=cast(TextIO, stream))
+    kwargs["logger_factory"] = structlog.PrintLoggerFactory(file=cast(TextIO, log_stream))
     structlog.configure(**kwargs)  # type: ignore[arg-type]
