@@ -4,13 +4,12 @@ Covers: _build_memory_re, _get_explicit_memory_re, _get_decision_signal_re,
 _message_text, _collect_role_text, _local_format_transcript,
 _local_should_checkpoint, _pending_messages, _mark_messages_processed,
 _clear_session_progress, _consolidate_category_entries, _should_merge_entries,
-_infer_confidence, _parse_json, _bump_session_index, _maybe_consolidate.
+_infer_confidence, _parse_json, _bump_session_index, _run_consolidation_if_available.
 """
 
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -25,10 +24,10 @@ from hermit.plugins.builtin.hooks.memory.hooks import (
     _local_format_transcript,
     _local_should_checkpoint,
     _mark_messages_processed,
-    _maybe_consolidate,
     _message_text,
     _parse_json,
     _pending_messages,
+    _run_consolidation_if_available,
     _should_merge_entries,
 )
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
@@ -345,49 +344,28 @@ class TestBumpSessionIndex:
 
 
 # ---------------------------------------------------------------------------
-# _maybe_consolidate
+# _run_consolidation_if_available
 # ---------------------------------------------------------------------------
 
 
-class TestMaybeConsolidate:
+class TestRunConsolidationIfAvailable:
     def test_no_kernel_db_returns_early(self) -> None:
-        settings = SimpleNamespace(kernel_db_path=None, memory_file=None)
-        _maybe_consolidate(settings)  # Should not raise
+        settings = SimpleNamespace(kernel_db_path=None)
+        _run_consolidation_if_available(settings)  # Should not raise
 
-    def test_no_memory_file_returns_early(self) -> None:
-        settings = SimpleNamespace(kernel_db_path="/some/path", memory_file=None)
-        _maybe_consolidate(settings)  # Should not raise
-
-    def test_throttle_file_prevents_run(self, tmp_path: Path) -> None:
-        memory_dir = tmp_path / "memory"
-        memory_dir.mkdir()
-        throttle = memory_dir / ".last_consolidation"
-        throttle.write_text(str(time.time()))
-
-        settings = SimpleNamespace(
-            kernel_db_path=tmp_path / "state.db",
-            memory_file=memory_dir / "memories.md",
-        )
-        # Should skip due to throttle
-        _maybe_consolidate(settings)
-
-    def test_corrupt_throttle_file_proceeds(self, tmp_path: Path) -> None:
-        memory_dir = tmp_path / "memory"
-        memory_dir.mkdir()
-        throttle = memory_dir / ".last_consolidation"
-        throttle.write_text("not-a-number")
-
-        settings = SimpleNamespace(
-            kernel_db_path=tmp_path / "state.db",
-            memory_file=memory_dir / "memories.md",
-        )
+    def test_runs_consolidation_with_valid_db(self, tmp_path: Path) -> None:
+        settings = SimpleNamespace(kernel_db_path=tmp_path / "state.db")
         with (
-            patch("hermit.kernel.ledger.journal.store.KernelStore") as ks_cls,
-            patch("hermit.plugins.builtin.hooks.memory.services.get_services") as gs,
+            patch(
+                "hermit.kernel.context.memory.consolidation.ConsolidationService",
+            ) as mock_svc_cls,
+            patch(
+                "hermit.kernel.ledger.journal.store.KernelStore",
+            ) as mock_store_cls,
         ):
             mock_store = MagicMock()
-            ks_cls.return_value = mock_store
-            mock_services = MagicMock()
-            gs.return_value = mock_services
-            _maybe_consolidate(settings)
-            mock_services.consolidation.run_consolidation.assert_called_once()
+            mock_store_cls.return_value = mock_store
+            mock_svc = MagicMock()
+            mock_svc_cls.return_value = mock_svc
+            _run_consolidation_if_available(settings)
+            mock_svc.run_consolidation.assert_called_once_with(mock_store)

@@ -530,15 +530,15 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
     assert async_update["context"]["reentry_boundary"] == "policy_reentry"
     assert async_update["context"]["original_status_at_interrupt"] == "running"
 
-    # sync attempt → failed as orphaned
+    # sync attempt → cancelled as orphaned
     sync_update = updates_by_id["attempt-sync"]
-    assert sync_update["status"] == "failed"
+    assert sync_update["status"] == "cancelled"
     assert sync_update["status_reason"] == "worker_interrupted_sync_orphaned"
-    assert sync_update["context"]["recovery_action"] == "failed_orphaned_sync"
+    assert sync_update["context"]["recovery_action"] == "cancelled_orphaned_sync"
 
     step_updates_by_id = {sid: kwargs for sid, kwargs in failed_step_updates}
     assert step_updates_by_id["step-running"] == {"status": "ready", "finished_at": None}
-    assert step_updates_by_id["step-sync"]["status"] == "failed"
+    assert step_updates_by_id["step-sync"]["status"] == "cancelled"
 
     task_updates_by_id = {tid: (s, p) for tid, s, p in task_status_updates}
     assert task_updates_by_id["task-running"] == (
@@ -549,7 +549,7 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
         },
     )
     assert task_updates_by_id["task-sync"] == (
-        "failed",
+        "cancelled",
         {
             "result_preview": "worker_interrupted_sync_orphaned",
             "result_text": "worker_interrupted_sync_orphaned",

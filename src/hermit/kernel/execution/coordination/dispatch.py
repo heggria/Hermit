@@ -490,32 +490,38 @@ class KernelDispatchService:
                 )
 
     def _fail_orphaned_sync_attempt(self, store: Any, attempt: Any, now: float) -> None:
-        """Mark a non-async in-flight attempt as failed.
+        """Mark a non-async in-flight attempt as cancelled.
 
         Sync-path attempts are not managed by the dispatch service, so they
         cannot be re-queued.  Leaving them in an intermediate status forever
-        would block their parent task, so we fail them with a clear reason.
+        would block their parent task, so we cancel them with a clear reason.
+
+        Uses ``cancelled`` rather than ``failed`` because the attempt was
+        abandoned due to a process interrupt, not because the work itself
+        failed.  This prevents confusing ``task.failed`` events from
+        appearing in ``hermit task list`` after a CLI session was
+        interrupted (e.g. Ctrl-C during ``hermit run``).
         """
         context = dict(attempt.context or {})
         context["recovered_after_interrupt"] = True
         context["interrupt_recovered_at"] = now
         context["original_status_at_interrupt"] = attempt.status
-        context["recovery_action"] = "failed_orphaned_sync"
+        context["recovery_action"] = "cancelled_orphaned_sync"
         store.update_step_attempt(
             attempt.step_attempt_id,
-            status="failed",
+            status="cancelled",
             context=context,
             waiting_reason="worker_interrupted_sync_orphaned",
             finished_at=now,
         )
         store.update_step(
             attempt.step_id,
-            status="failed",
+            status="cancelled",
             finished_at=now,
         )
         store.update_task_status(
             attempt.task_id,
-            "failed",
+            "cancelled",
             payload={
                 "result_preview": "worker_interrupted_sync_orphaned",
                 "result_text": "worker_interrupted_sync_orphaned",

@@ -785,12 +785,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             strategy = str(row["join_strategy"] or "all_required")
             if self._join_barrier_satisfied(task_id, deps, strategy):
                 now = time.time()
-                with self._get_conn():
-                    self._get_conn().execute(
+                with self._lock, self._conn:
+                    self._conn.execute(
                         "UPDATE steps SET status = 'ready', updated_at = ? WHERE step_id = ?",
                         (now, step_id),
                     )
-                    self._get_conn().execute(
+                    self._conn.execute(
                         """
                         UPDATE step_attempts SET status = 'ready'
                         WHERE step_id = ? AND status = 'waiting'
@@ -824,9 +824,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             (task_id, *deps),
         )
         statuses = {str(r["step_id"]): str(r["status"]) for r in rows}
-        succeeded = sum(
-            1 for s in statuses.values() if s in ("succeeded", "completed", "skipped")
-        )
+        succeeded = sum(1 for s in statuses.values() if s in ("succeeded", "completed", "skipped"))
         failed = sum(1 for s in statuses.values() if s in ("failed", "needs_attention"))
         total = len(deps)
         terminal = succeeded + failed
@@ -864,9 +862,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             elif strategy == "any_sufficient":
                 all_deps_rows = self._rows(
                     "SELECT step_id, status FROM steps"
-                    " WHERE task_id = ? AND step_id IN ({})".format(
-                        ",".join("?" for _ in deps)
-                    ),
+                    " WHERE task_id = ? AND step_id IN ({})".format(",".join("?" for _ in deps)),
                     (task_id, *deps),
                 )
                 all_failed = all(str(r["status"]) == "failed" for r in all_deps_rows)
@@ -874,9 +870,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             elif strategy == "majority":
                 all_deps_rows = self._rows(
                     "SELECT step_id, status FROM steps"
-                    " WHERE task_id = ? AND step_id IN ({})".format(
-                        ",".join("?" for _ in deps)
-                    ),
+                    " WHERE task_id = ? AND step_id IN ({})".format(",".join("?" for _ in deps)),
                     (task_id, *deps),
                 )
                 failed_count = sum(1 for r in all_deps_rows if str(r["status"]) == "failed")
@@ -884,13 +878,13 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
 
             if should_cascade:
                 now = time.time()
-                with self._get_conn():
-                    self._get_conn().execute(
+                with self._lock, self._conn:
+                    self._conn.execute(
                         "UPDATE steps SET status = 'failed', finished_at = ?,"
                         " updated_at = ? WHERE step_id = ?",
                         (now, now, step_id),
                     )
-                    self._get_conn().execute(
+                    self._conn.execute(
                         """
                         UPDATE step_attempts SET status = 'failed',
                             waiting_reason = 'dependency_failed', finished_at = ?
@@ -930,8 +924,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             raise ValueError(f"Step {step_id!r} not found")
         next_attempt_num = step.attempt + 1
         now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE steps
                 SET attempt = ?, status = 'ready', finished_at = NULL, updated_at = ?
@@ -939,7 +933,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 """,
                 (next_attempt_num, now, step_id),
             )
-            self._get_conn().execute(
+            self._conn.execute(
                 "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
                 (now, task_id),
             )
@@ -974,8 +968,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
     ) -> None:
         """Mark a step as skipped (terminal) and activate downstream dependents."""
         now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE steps
                 SET status = 'skipped', finished_at = ?, updated_at = ?
@@ -983,7 +977,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 """,
                 (now, now, step_id),
             )
-            self._get_conn().execute(
+            self._conn.execute(
                 """
                 UPDATE step_attempts
                 SET status = 'skipped', finished_at = ?
@@ -991,7 +985,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 """,
                 (now, step_id),
             )
-            self._get_conn().execute(
+            self._conn.execute(
                 "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
                 (now, task_id),
             )
@@ -1036,13 +1030,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
             dep_statuses = {str(r["step_id"]): str(r["status"]) for r in rows}
             all_success = all(
-                dep_statuses.get(d) in ("succeeded", "completed", "skipped")
-                for d in new_depends_on
+                dep_statuses.get(d) in ("succeeded", "completed", "skipped") for d in new_depends_on
             )
             new_status = "ready" if all_success else "waiting"
 
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE steps
                 SET depends_on_json = ?, status = ?, updated_at = ?
@@ -1051,7 +1044,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 (json.dumps(new_depends_on, ensure_ascii=False), new_status, now, step_id),
             )
             if new_status == "ready" and step.status == "waiting":
-                self._get_conn().execute(
+                self._conn.execute(
                     """
                     UPDATE step_attempts
                     SET status = 'ready'
@@ -1060,7 +1053,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     (step_id,),
                 )
             elif new_status == "waiting" and step.status == "ready":
-                self._get_conn().execute(
+                self._conn.execute(
                     """
                     UPDATE step_attempts
                     SET status = 'waiting'
@@ -1068,7 +1061,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     """,
                     (step_id,),
                 )
-            self._get_conn().execute(
+            self._conn.execute(
                 "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
                 (now, task_id),
             )
@@ -1089,9 +1082,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 },
             )
 
-    def list_stale_tasks(
-        self, threshold_seconds: float, limit: int = 50
-    ) -> list[TaskRecord]:
+    def list_stale_tasks(self, threshold_seconds: float, limit: int = 50) -> list[TaskRecord]:
         """Return tasks that have been idle longer than *threshold_seconds*.
 
         Only considers tasks in active (non-terminal) statuses.
@@ -1113,9 +1104,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
     def count_tasks_by_status(self) -> dict[str, int]:
         """Return a mapping of task status to count across all tasks."""
         with self._lock:
-            rows = self._rows(
-                "SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status"
-            )
+            rows = self._rows("SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status")
         return {str(row["status"]): int(row["cnt"]) for row in rows}
 
     def count_completed_in_window(self, window_seconds: float) -> int:
@@ -1131,9 +1120,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
         return int(row["cnt"]) if row is not None else 0
 
-    def list_recent_failures(
-        self, window_seconds: float, limit: int = 200
-    ) -> list[TaskRecord]:
+    def list_recent_failures(self, window_seconds: float, limit: int = 200) -> list[TaskRecord]:
         """Return tasks that failed within the given look-back window."""
         cutoff = time.time() - window_seconds
         with self._lock:
@@ -1162,9 +1149,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
         return [self._task_from_row(row) for row in rows]
 
-    def list_terminal_tasks_since(
-        self, *, since: float, limit: int = 200
-    ) -> list[TaskRecord]:
+    def list_terminal_tasks_since(self, *, since: float, limit: int = 200) -> list[TaskRecord]:
         """Return tasks that reached a terminal state since the given timestamp."""
         with self._lock:
             rows = self._rows(
@@ -1179,9 +1164,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
         return [self._task_from_row(row) for row in rows]
 
-    def has_active_task_with_goal(
-        self, goal: str, *, policy_profile: str | None = None
-    ) -> bool:
+    def has_active_task_with_goal(self, goal: str, *, policy_profile: str | None = None) -> bool:
         """Check if any active task contains the given goal substring.
 
         Used by memory promotion hooks to prevent duplicate task creation.
@@ -1204,9 +1187,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
         return bool(row and int(row["cnt"]) > 0)
 
-    def batch_get_step_attempts(
-        self, step_attempt_ids: list[str]
-    ) -> dict[str, StepAttemptRecord]:
+    def batch_get_step_attempts(self, step_attempt_ids: list[str]) -> dict[str, StepAttemptRecord]:
         """Return a mapping of step_attempt_id -> StepAttemptRecord for the given ids."""
         if not step_attempt_ids:
             return {}
@@ -1216,9 +1197,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 f"SELECT * FROM step_attempts WHERE step_attempt_id IN ({placeholders})",
                 tuple(step_attempt_ids),
             )
-        return {
-            str(row["step_attempt_id"]): self._step_attempt_from_row(row) for row in rows
-        }
+        return {str(row["step_attempt_id"]): self._step_attempt_from_row(row) for row in rows}
 
     def list_events_for_tasks(
         self,
@@ -1257,9 +1236,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
         return {str(row["status"]): int(row["cnt"]) for row in rows}
 
-    def list_steps(
-        self, *, task_id: str | None = None, limit: int = 200
-    ) -> list[StepRecord]:
+    def list_steps(self, *, task_id: str | None = None, limit: int = 200) -> list[StepRecord]:
         """Return steps, optionally filtered by task_id."""
         if task_id:
             with self._lock:
@@ -1274,15 +1251,6 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     (limit,),
                 )
         return [self._step_from_row(row) for row in rows]
-
-    def get_step_by_node_key(self, task_id: str, node_key: str) -> StepRecord | None:
-        """Return the step with the given node_key within a task, or None."""
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM steps WHERE task_id = ? AND node_key = ? LIMIT 1",
-                (task_id, node_key),
-            )
-        return self._step_from_row(row) if row is not None else None
 
     def get_key_to_step_id(self, task_id: str) -> dict[str, str]:
         """Return a mapping of node_key -> step_id for all steps in a task.
@@ -1302,16 +1270,23 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             """
             SELECT COUNT(*) as cnt FROM steps
             WHERE task_id = ? AND status NOT IN (
-                'succeeded', 'completed', 'skipped', 'failed', 'needs_attention'
+                'succeeded', 'completed', 'skipped', 'failed', 'cancelled', 'needs_attention'
             )
             """,
             (task_id,),
         )
         return bool(row and int(row["cnt"]) > 0)
 
-    _TERMINAL_ATTEMPT_STATUSES = frozenset({
-        "succeeded", "completed", "skipped", "failed", "cancelled", "superseded",
-    })
+    _TERMINAL_ATTEMPT_STATUSES = frozenset(
+        {
+            "succeeded",
+            "completed",
+            "skipped",
+            "failed",
+            "cancelled",
+            "superseded",
+        }
+    )
 
     def try_finalize_step_attempt(
         self,

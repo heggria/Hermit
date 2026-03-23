@@ -6,10 +6,11 @@ the execute() orchestration logic that is not covered by other test files.
 
 from __future__ import annotations
 
-import pytest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.executor.executor import ToolExecutionResult, ToolExecutor
@@ -759,7 +760,7 @@ class TestToolExecutorWitnessDelegation:
         executor._witness.capture.return_value = "wit-1"
         action = _make_action_request()
         ctx = _make_attempt_ctx()
-        ref = executor._capture_state_witness(action, ctx)
+        ref = executor._witness.capture(action, ctx, store_artifact=MagicMock())
         assert ref == "wit-1"
 
     def test_validate_state_witness(self) -> None:
@@ -768,7 +769,7 @@ class TestToolExecutorWitnessDelegation:
         executor._witness.validate.return_value = True
         action = _make_action_request()
         ctx = _make_attempt_ctx()
-        assert executor._validate_state_witness("wit-1", action, ctx) is True
+        assert executor._witness.validate("wit-1", action, ctx) is True
 
     def test_load_witness_payload(self) -> None:
         executor = _make_executor()

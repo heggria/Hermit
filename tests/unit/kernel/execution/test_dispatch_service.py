@@ -355,9 +355,9 @@ class TestFailOrphanedSyncAttempt:
         call_kwargs = store.update_step_attempt.call_args
         ctx = call_kwargs[1].get("context") or call_kwargs[0][2]
         assert ctx["recovered_after_interrupt"] is True
-        assert ctx["recovery_action"] == "failed_orphaned_sync"
+        assert ctx["recovery_action"] == "cancelled_orphaned_sync"
 
-    def test_updates_step_and_task_to_failed(self) -> None:
+    def test_updates_step_and_task_to_cancelled(self) -> None:
         store = MagicMock()
         attempt = _make_attempt(status="dispatching")
         now = 2000.0
@@ -368,12 +368,12 @@ class TestFailOrphanedSyncAttempt:
 
         store.update_step.assert_called_once_with(
             attempt.step_id,
-            status="failed",
+            status="cancelled",
             finished_at=now,
         )
         store.update_task_status.assert_called_once()
         task_call = store.update_task_status.call_args
-        assert task_call[0][1] == "failed"
+        assert task_call[0][1] == "cancelled"
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +382,7 @@ class TestFailOrphanedSyncAttempt:
 
 
 class TestRecoverSingleAttempt:
-    def test_non_async_delegates_to_fail_orphaned(self) -> None:
+    def test_non_async_delegates_to_cancel_orphaned(self) -> None:
         store = MagicMock()
         # Non-async attempt (dispatch_mode absent)
         attempt = _make_attempt(
@@ -395,10 +395,10 @@ class TestRecoverSingleAttempt:
 
         svc._recover_single_attempt(store, attempt, now)
 
-        # Should have called update to fail the attempt
+        # Should have called update to cancel the attempt
         store.update_step_attempt.assert_called_once()
         call_kwargs = store.update_step_attempt.call_args
-        assert call_kwargs[1]["status"] == "failed"
+        assert call_kwargs[1]["status"] == "cancelled"
 
     def test_async_with_grant_sets_blocked(self) -> None:
         store = MagicMock()
@@ -529,7 +529,7 @@ class TestRecoverInterruptedAttempts:
         first_call = update_calls[0]
         assert first_call[1]["status"] == "blocked"
 
-    def test_phase1_fails_sync_orphaned_attempt(self) -> None:
+    def test_phase1_cancels_sync_orphaned_attempt(self) -> None:
         store = MagicMock()
         attempt = _make_attempt(
             step_attempt_id="sa-1",
@@ -556,7 +556,7 @@ class TestRecoverInterruptedAttempts:
         update_calls = store.update_step_attempt.call_args_list
         assert len(update_calls) >= 1
         first_call = update_calls[0]
-        assert first_call[1]["status"] == "failed"
+        assert first_call[1]["status"] == "cancelled"
 
     def test_phase1_supersedes_duplicate_for_same_step(self) -> None:
         store = MagicMock()

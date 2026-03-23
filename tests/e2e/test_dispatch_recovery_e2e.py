@@ -139,7 +139,7 @@ class TestDispatchRecoveryInflightStatuses:
         assert task is not None
         assert task.status == "blocked"
 
-    def test_sync_attempts_are_failed_as_orphaned(self, tmp_path: Path) -> None:
+    def test_sync_attempts_are_cancelled_as_orphaned(self, tmp_path: Path) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         controller = TaskController(store)
 
@@ -159,19 +159,19 @@ class TestDispatchRecoveryInflightStatuses:
         task = store.get_task(task_id)
 
         assert attempt is not None
-        assert attempt.status == "failed"
+        assert attempt.status == "cancelled"
         assert attempt.context["recovered_after_interrupt"] is True
         assert attempt.context["original_status_at_interrupt"] == "running"
-        assert attempt.context["recovery_action"] == "failed_orphaned_sync"
+        assert attempt.context["recovery_action"] == "cancelled_orphaned_sync"
         assert attempt.status_reason == "worker_interrupted_sync_orphaned"
 
         assert step is not None
-        assert step.status == "failed"
+        assert step.status == "cancelled"
 
         assert task is not None
-        assert task.status == "failed"
+        assert task.status == "cancelled"
 
-    def test_no_dispatch_mode_attempts_are_failed_as_orphaned(self, tmp_path: Path) -> None:
+    def test_no_dispatch_mode_attempts_are_cancelled_as_orphaned(self, tmp_path: Path) -> None:
         """Attempts without any dispatch_mode (e.g. feishu adapter sync path)."""
         store = KernelStore(tmp_path / "kernel" / "state.db")
         controller = TaskController(store)
@@ -197,9 +197,9 @@ class TestDispatchRecoveryInflightStatuses:
 
         attempt = store.get_step_attempt(attempt_id)
         assert attempt is not None
-        assert attempt.status == "failed"
+        assert attempt.status == "cancelled"
         assert attempt.context["original_status_at_interrupt"] == "reconciling"
-        assert attempt.context["recovery_action"] == "failed_orphaned_sync"
+        assert attempt.context["recovery_action"] == "cancelled_orphaned_sync"
 
     def test_terminal_statuses_are_not_recovered(self, tmp_path: Path) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")

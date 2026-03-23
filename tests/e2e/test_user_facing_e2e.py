@@ -313,18 +313,74 @@ def test_user_one_shot_run_writes_file_and_responds(user_env: dict[str, Any]) ->
     tasks = store.list_tasks(limit=10)
     assert len(tasks) >= 1
 
-    # 5. Receipt was issued for governed write
+    # 5. Task is marked completed (not failed or running)
+    task_id = tasks[0].task_id
+    task = store.get_task(task_id)
+    assert task is not None
+    assert task.status == "completed", f"Expected task status 'completed', got '{task.status}'"
+
+    # 6. Receipt was issued for governed write
     task_id = tasks[0].task_id
     receipts = store.list_receipts(task_id=task_id, limit=10)
     assert len(receipts) == 1
     assert receipts[0].action_type == "write_local"
     assert receipts[0].result_code == "succeeded"
 
-    # 6. Proof chain is valid
+    # 7. Proof chain is valid
     chain = ProofService(store, user_env["artifacts"]).verify_task_chain(task_id)
     assert chain["valid"] is True
 
     runner.stop_background_services()
+
+
+# ---------------------------------------------------------------------------
+# 1b. Interrupted oneshot → orphaned task recovered as cancelled, not failed
+# ---------------------------------------------------------------------------
+
+
+def test_interrupted_oneshot_task_cancelled_not_failed(user_env: dict[str, Any]) -> None:
+    """If a CLI oneshot session is interrupted, the orphaned task should be
+    recovered as ``cancelled`` (not ``failed``) on next startup so that
+    ``hermit task list`` does not show misleading ``failed`` entries.
+    """
+    from hermit.kernel.execution.coordination.dispatch import KernelDispatchService
+
+    store: KernelStore = user_env["store"]
+    controller: TaskController = user_env["controller"]
+
+    # Simulate an interrupted oneshot: start a task but never finalize it.
+    ctx = controller.start_task(
+        conversation_id="cli-oneshot",
+        goal="read the version",
+        source_channel="cli",
+        kind="respond",
+        workspace_root=str(user_env["workspace"]),
+    )
+
+    # Task should be running.
+    task = store.get_task(ctx.task_id)
+    assert task is not None
+    assert task.status == "running"
+
+    # Directly invoke the recovery logic that runs at dispatch service startup.
+    # This simulates what happens when a new `hermit run` starts after an
+    # interrupted session left orphaned running attempts in the store.
+    svc = KernelDispatchService.__new__(KernelDispatchService)
+    svc.runner = SimpleNamespace(task_controller=controller)
+    svc.stop_event = __import__("threading").Event()
+    svc.wake_event = __import__("threading").Event()
+    svc.futures = {}
+    svc.lock = __import__("threading").Lock()
+    svc.kind_handlers = {}
+    svc.emitted_complete = set()
+    svc.recover_interrupted_attempts()
+
+    # After recovery the orphaned task should be cancelled, not failed.
+    recovered = store.get_task(ctx.task_id)
+    assert recovered is not None
+    assert recovered.status == "cancelled", (
+        f"Expected orphaned task to be 'cancelled', got '{recovered.status}'"
+    )
 
 
 # ---------------------------------------------------------------------------

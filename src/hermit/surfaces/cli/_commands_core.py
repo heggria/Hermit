@@ -278,6 +278,42 @@ def build_runner(
     return runner, pm
 
 
+def _finalize_oneshot_session(
+    runner: AgentRunner,
+    result: object | None,
+) -> None:
+    """Clean up CLI oneshot session: close session and cancel orphaned tasks.
+
+    In oneshot mode the session has no interactive approval handler, so any
+    task that is still non-terminal (running, blocked, queued) when the
+    session ends must be cancelled — otherwise it stays in that state
+    forever in the ledger and confuses subsequent ``hermit task list``
+    output.
+
+    The ``result`` parameter is the :class:`AgentResult` returned by
+    ``runner.handle()``, or ``None`` when the call was interrupted.
+    """
+    session_id = "cli-oneshot"
+    # Always close the session so hooks fire.
+    try:
+        runner.close_session(session_id)
+    except Exception:
+        pass
+
+    # Cancel any non-terminal tasks left by this session.
+    store = runner._get_store()
+    if store is None:
+        return
+    _TERMINAL = {"completed", "failed", "cancelled", "skipped"}
+    try:
+        tasks = store.list_tasks(conversation_id=session_id, limit=50)
+        for task in tasks:
+            if task.status not in _TERMINAL:
+                runner.task_controller.cancel_task(task.task_id)
+    except Exception:
+        pass
+
+
 @app.command()
 def run(
     prompt: str,
@@ -297,13 +333,14 @@ def run(
     if policy != "default":
         run_opts["policy_profile"] = policy
     with caffeinate(settings):
+        result = None
         try:
             result = runner.handle(
                 "cli-oneshot", prompt, on_tool_call=on_tool_call, run_opts=run_opts
             )
-            runner.close_session("cli-oneshot")
             print_result(result)
         finally:
+            _finalize_oneshot_session(runner, result)
             stop_runner_background_services(runner)
             pm.stop_mcp_servers()
 

@@ -220,6 +220,47 @@ class ObservationPollResult:
     should_resume: bool = False
 
 
+@dataclass
+class SubtaskJoinObservation:
+    child_step_ids: list[str]
+    join_strategy: str = "all_required"
+    parent_step_id: str = ""
+    parent_attempt_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "subtask_join",
+            "child_step_ids": self.child_step_ids,
+            "join_strategy": self.join_strategy,
+            "parent_step_id": self.parent_step_id,
+            "parent_attempt_id": self.parent_attempt_id,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> SubtaskJoinObservation:
+        raw_ids = d.get("child_step_ids", [])
+        return cls(
+            child_step_ids=raw_ids if isinstance(raw_ids, list) else [],
+            join_strategy=str(d.get("join_strategy", "all_required")),
+            parent_step_id=str(d.get("parent_step_id", "")),
+            parent_attempt_id=str(d.get("parent_attempt_id", "")),
+        )
+
+
+def normalize_subtask_join_observation(value: Any) -> SubtaskJoinObservation | None:
+    if isinstance(value, SubtaskJoinObservation):
+        return value
+    if not isinstance(value, dict):
+        return None
+    d: dict[str, Any] = cast(dict[str, Any], value)
+    if d.get("kind") != "subtask_join":
+        return None
+    raw_ids = d.get("child_step_ids", [])
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return None
+    return SubtaskJoinObservation.from_dict(d)
+
+
 class ObservationService:
     def __init__(self, runner: Any, *, budget: ExecutionBudget | None = None) -> None:
         self._runner = runner
