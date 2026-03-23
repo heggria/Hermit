@@ -377,7 +377,7 @@ class KernelDispatchService:
         step_kind = step.kind if step else "execute"
 
         if not DeliberationService.check_deliberation_needed(
-            risk_band=risk_band, step_kind=step_kind
+            risk_level=risk_band, action_class=step_kind
         ):
             return False
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime  # noqa: F401 — used by test monkeypatching (runner_module.datetime)
 import os
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from hermit.kernel.execution.coordination.observation import ObservationService
@@ -159,6 +160,9 @@ class AgentRunner:
             self._register_kind_handlers(self._dispatch_service)
             self._dispatch_service.start()
 
+        # Register competition candidate completion listener.
+        self._setup_competition_hook()
+
     def stop_background_services(self) -> None:
         if self._dispatch_service is not None:
             stopper = getattr(self._dispatch_service, "stop", None)
@@ -168,6 +172,42 @@ class AgentRunner:
         if self._observation_service is not None:
             self._observation_service.stop()
             self._observation_service = None
+
+    def _setup_competition_hook(self) -> None:
+        """Register DISPATCH_RESULT hook for competition candidate completion."""
+        try:
+            from hermit.kernel.execution.competition.service import CompetitionService
+            from hermit.kernel.execution.competition.workspace import (
+                CompetitionWorkspaceManager,
+            )
+            from hermit.runtime.capability.contracts.base import HookEvent
+
+            store = getattr(self.agent, "kernel_store", None)
+            tc = self.task_controller
+            workspace_root = getattr(self.agent, "workspace_root", None)
+
+            if store is None or tc is None:
+                return
+
+            ws_mgr = (
+                CompetitionWorkspaceManager(Path(workspace_root))
+                if workspace_root
+                else None
+            )
+            competition_service = CompetitionService(
+                store=store,
+                task_controller=tc,
+                workspace_manager=ws_mgr,
+            )
+            self.pm.hooks.add(
+                HookEvent.DISPATCH_RESULT,
+                competition_service.on_dispatch_result,
+                priority=15,
+            )
+        except Exception:
+            import structlog as _slog
+
+            _slog.get_logger().debug("competition_hook_unavailable", exc_info=True)
 
     def _register_kind_handlers(self, dispatch_service: object) -> None:
         """Register custom step kind handlers on the dispatch service."""

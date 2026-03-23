@@ -11,7 +11,7 @@ from hermit.kernel.execution.executor.phase_tracker import (
     _WITNESS_REQUIRED_ACTIONS,
     PhaseTracker,
     _execution_status_from_result_code,
-    _needs_witness,
+    needs_witness,
 )
 
 # ---------------------------------------------------------------------------
@@ -32,23 +32,23 @@ def _make_attempt_ctx(**overrides: Any) -> TaskExecutionContext:
 
 
 # ---------------------------------------------------------------------------
-# _needs_witness
+# needs_witness
 # ---------------------------------------------------------------------------
 
 
 class TestNeedsWitness:
     def test_all_required_actions(self) -> None:
         for action in _WITNESS_REQUIRED_ACTIONS:
-            assert _needs_witness(action) is True
+            assert needs_witness(action) is True
 
     def test_non_required_actions(self) -> None:
-        assert _needs_witness("read_local") is False
-        assert _needs_witness("network_read") is False
-        assert _needs_witness("ephemeral_ui_mutation") is False
-        assert _needs_witness("unknown_action") is False
+        assert needs_witness("read_local") is False
+        assert needs_witness("network_read") is False
+        assert needs_witness("ephemeral_ui_mutation") is False
+        assert needs_witness("unknown_action") is False
 
     def test_empty_string(self) -> None:
-        assert _needs_witness("") is False
+        assert needs_witness("") is False
 
 
 # ---------------------------------------------------------------------------

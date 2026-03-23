@@ -11,7 +11,7 @@
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
 [![CI](https://github.com/heggria/Hermit/actions/workflows/ci.yml/badge.svg)](https://github.com/heggria/Hermit/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-black)](./LICENSE)
 [![Docs](https://img.shields.io/badge/docs-github%20pages-0F172A)](https://heggria.github.io/Hermit/)
 [![PyPI](https://img.shields.io/pypi/v/hermit-agent)](https://pypi.org/project/hermit-agent/)
@@ -158,7 +158,7 @@ Hermit 还很早，但已经不是“只有想法”的阶段。
 
 ### 运行要求
 
-- Python `3.13+`
+- Python `3.11+`
 - 推荐使用 [`uv`](https://docs.astral.sh/uv/)
 - 如果要用 macOS 菜单栏伴侣，需要 `rumps`
 

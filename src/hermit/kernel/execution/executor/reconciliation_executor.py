@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
@@ -72,7 +72,7 @@ class ReconciliationExecutor:
         root_task_id = str(getattr(task, "parent_task_id", None) or "") or task_id
 
         # Count existing follow-ups (children whose goal starts with retry prefix).
-        existing_children: list[Any] = self.store.list_child_tasks(root_task_id)
+        existing_children: list[Any] = self.store.list_child_tasks(parent_task_id=root_task_id)
         followup_count = sum(
             1
             for child in existing_children
@@ -89,13 +89,14 @@ class ReconciliationExecutor:
             else original_goal
         )
         new_task = self.store.create_task(
+            conversation_id=str(getattr(task, "conversation_id", "") or ""),
+            title=str(getattr(task, "title", original_goal) or original_goal),
             goal=f"retry/mitigate: {base_goal}",
             parent_task_id=root_task_id,
             status="queued",
             priority=str(getattr(task, "priority", "normal") or "normal"),
             policy_profile=str(getattr(task, "policy_profile", "default") or "default"),
             source_channel=str(getattr(task, "source_channel", "chat") or "chat"),
-            conversation_id=str(getattr(task, "conversation_id", "") or ""),
             owner=str(getattr(task, "owner_principal_id", "hermit") or "hermit"),
         )
         return str(getattr(new_task, "task_id", "") or "")
@@ -296,24 +297,36 @@ class ReconciliationExecutor:
             BenchmarkRoutingService,
         )
 
-        verification_reqs = getattr(contract, "verification_requirements", None)
-        if not verification_reqs:
+        verification_requirements = cast(
+            dict[str, Any] | None,
+            getattr(contract, "verification_requirements", None),
+        )
+        if not verification_requirements:
             return None
+
+        risk_budget = cast(
+            dict[str, Any] | None,
+            getattr(contract, "risk_budget", None),
+        )
+        if not isinstance(risk_budget, dict):
+            risk_budget = {}
+        risk_level = str(risk_budget.get("risk_level", "high") or "high")
+        task_family = cast(str | None, getattr(contract, "task_family", None))
+
+        expected_effects = [
+            str(path)
+            for path in cast(list[Any] | None, getattr(contract, "expected_effects", None))
+            or []
+            if path is not None
+        ]
 
         routing = BenchmarkRoutingService()
 
-        risk_budget = getattr(contract, "risk_budget", None) or {}
-        risk_level = (
-            risk_budget.get("risk_level", "high") if isinstance(risk_budget, dict) else "high"
-        )
-        task_family = getattr(contract, "task_family", None)
-        expected_effects = getattr(contract, "expected_effects", None) or []
-
-        profile = routing.route_from_contract(
+        profile = routing.route_from_contract(  # pyright: ignore[reportUnknownMemberType]
             task_family=task_family,
-            verification_requirements=verification_reqs,
+            verification_requirements=verification_requirements,
             risk_level=risk_level,
-            action_classes=[],
+            action_classes=None,
             affected_paths=expected_effects,
         )
         if profile is None:
@@ -329,11 +342,7 @@ class ReconciliationExecutor:
         # Build passing metrics from profile thresholds.
         raw_metrics: dict[str, float] = {}
         for metric_name, threshold_value in profile.thresholds.items():
-            from hermit.kernel.verification.benchmark.routing import (
-                BenchmarkRoutingService as _Svc,
-            )
-
-            if _Svc._is_lower_better(metric_name):
+            if self._is_lower_better(metric_name):
                 raw_metrics[metric_name] = 0.0
             else:
                 raw_metrics[metric_name] = threshold_value
@@ -364,3 +373,17 @@ class ReconciliationExecutor:
         if command_preview:
             return f"Expected command execution: {command_preview}"
         return f"Expected {action_request.action_class} side effects."
+
+    @staticmethod
+    def _is_lower_better(metric_name: str) -> bool:
+        lowered = metric_name.lower()
+        keywords = (
+            "latency",
+            "error",
+            "regression_count",
+            "unauthorized_effect_rate",
+            "stale_authorization_execution_rate",
+            "mean_recovery_depth",
+            "operator_burden",
+        )
+        return any(keyword in lowered for keyword in keywords)

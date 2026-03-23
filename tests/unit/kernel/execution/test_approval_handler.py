@@ -9,7 +9,7 @@ import pytest
 from hermit.kernel.execution.executor.approval_handler import ApprovalHandler
 from hermit.kernel.execution.executor.phase_tracker import (
     _WITNESS_REQUIRED_ACTIONS,
-    _needs_witness,
+    needs_witness,
 )
 from hermit.kernel.policy.guards.fingerprint import build_action_fingerprint
 from hermit.kernel.policy.models.models import ActionRequest, PolicyDecision
@@ -117,21 +117,21 @@ def _build_handler(
 
 
 # ---------------------------------------------------------------------------
-# _needs_witness
+# needs_witness
 # ---------------------------------------------------------------------------
 
 
 class TestNeedsWitness:
     @pytest.mark.parametrize("action_class", sorted(_WITNESS_REQUIRED_ACTIONS))
     def test_returns_true_for_required_actions(self, action_class: str) -> None:
-        assert _needs_witness(action_class) is True
+        assert needs_witness(action_class) is True
 
     @pytest.mark.parametrize(
         "action_class",
         ["read_local", "pure_compute", "unknown", ""],
     )
     def test_returns_false_for_non_required_actions(self, action_class: str) -> None:
-        assert _needs_witness(action_class) is False
+        assert needs_witness(action_class) is False
 
 
 # ---------------------------------------------------------------------------

@@ -170,7 +170,7 @@ class ReconcileService:
         # inferred-success so the caller can combine it with the execution
         # hint instead of falling through to ``still_unknown``.
         has_target_paths = bool(observables.get("target_paths"))
-        has_git_witness = isinstance(witness, dict) and bool(witness.get("git"))
+        has_git_witness = bool(witness.get("git"))
         has_vcs_op = bool(str(observables.get("vcs_operation", "")).strip())
         if not has_target_paths and not has_git_witness and not has_vcs_op:
             return ReconcileOutcome(

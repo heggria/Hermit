@@ -16,6 +16,7 @@ from hermit.kernel import (
     TaskController,
     ToolExecutor,
 )
+from hermit.kernel.verification.assurance.recorder import TraceRecorder
 from hermit.runtime.assembly.config import Settings
 from hermit.runtime.assembly.context import build_base_context
 from hermit.runtime.capability.registry.manager import PluginManager
@@ -257,6 +258,33 @@ def build_runtime(
         provider=provider,
         model=runtime_model,
     )
+
+    # -- Competition / deliberation services --
+    from hermit.kernel.execution.competition.deliberation_integration import (
+        DeliberationIntegration,
+    )
+    from hermit.kernel.execution.competition.llm_arbitrator import ArbitrationEngine
+    from hermit.kernel.execution.competition.llm_critic import CritiqueGenerator
+    from hermit.kernel.execution.competition.llm_proposer import ProposalGenerator
+
+    deliberation_model = getattr(settings, "deliberation_model", None) or "claude-sonnet-4-6"
+
+    def _deliberation_provider_factory():
+        return build_provider(settings, model=deliberation_model, system_prompt=None)
+
+    proposer = ProposalGenerator(_deliberation_provider_factory, default_model=deliberation_model)
+    critic = CritiqueGenerator(_deliberation_provider_factory, default_model=deliberation_model)
+    arbitrator = ArbitrationEngine(_deliberation_provider_factory, default_model=deliberation_model)
+    deliberation = DeliberationIntegration(
+        store=kernel_store,
+        artifact_store=artifact_store,
+        proposer=proposer,
+        critic=critic,
+        arbitrator=arbitrator,
+    )
+
+    trace_recorder = TraceRecorder(store=kernel_store)
+
     tool_executor = ToolExecutor(
         registry=registry,
         store=kernel_store,
@@ -270,6 +298,8 @@ def build_runtime(
             getattr(settings, "progress_summary_keepalive_seconds", 15.0) or 15.0
         ),
         tool_output_limit=settings.tool_output_limit,
+        deliberation=deliberation,
+        trace_recorder=trace_recorder,
     )
     runtime = AgentRuntime(
         provider=provider,
@@ -287,6 +317,7 @@ def build_runtime(
     runtime.kernel_store = kernel_store
     runtime.artifact_store = artifact_store
     runtime.task_controller = TaskController(kernel_store)
+    runtime.deliberation = deliberation
     pm.configure_subagent_runtime(runtime)
     return runtime, pm
 

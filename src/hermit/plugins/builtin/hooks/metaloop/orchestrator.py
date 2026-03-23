@@ -15,7 +15,9 @@ import json
 import threading
 import time
 import uuid
-from typing import Any
+from collections.abc import Awaitable
+from pathlib import Path
+from typing import Any, cast
 
 import structlog
 
@@ -39,9 +41,14 @@ POLL_INTERVAL_IDLE = 60.0  # seconds
 _IDLE_TICKS_THRESHOLD = 6  # consecutive idle ticks before switching to idle interval
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 _SONNET_MODEL = "claude-sonnet-4-6-20250514"
+SpecDict = dict[str, Any]
 
 
-def _run_async(coro: Any) -> Any:
+async def _as_coroutine(awaitable: Awaitable[Any]) -> Any:
+    return await awaitable
+
+
+def _run_async(awaitable: Awaitable[Any]) -> Any:
     """Run an async coroutine from a sync (daemon thread) context."""
     try:
         loop = asyncio.get_running_loop()
@@ -52,11 +59,11 @@ def _run_async(coro: Any) -> Any:
         import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
-    return asyncio.run(coro)
+            return pool.submit(asyncio.run, _as_coroutine(awaitable)).result()
+    return asyncio.run(_as_coroutine(awaitable))
 
 
-def _parse_metadata(raw: str | dict | None) -> dict:
+def _parse_metadata(raw: str | SpecDict | None) -> SpecDict:
     """Parse metadata from DB row (may be JSON string or dict)."""
     if raw is None:
         return {}
@@ -64,19 +71,40 @@ def _parse_metadata(raw: str | dict | None) -> dict:
         return raw
     try:
         result = json.loads(raw)
-        return result if isinstance(result, dict) else {}
+        return cast(SpecDict, result) if isinstance(result, dict) else {}
     except (json.JSONDecodeError, TypeError):
         return {}
 
 
-def _serialize_metadata(meta: dict) -> str:
+def _serialize_metadata(meta: SpecDict) -> str:
     return json.dumps(meta, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
+
+
+def _coerce_dict(value: Any) -> SpecDict:
+    if isinstance(value, dict):
+        return cast(SpecDict, value)
+    return cast(SpecDict, getattr(value, "__dict__", {}))
+
+
+def _coerce_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return cast(list[Any], value)
+    if isinstance(value, tuple):
+        return list(cast(tuple[Any, ...], value))
+    return []
 
 
 class MetaLoopOrchestrator:
     """Advances self-improvement iterations through the 3-phase pipeline:
     PLANNING -> IMPLEMENTING -> REVIEWING -> ACCEPTED/REJECTED.
     """
+
+    _backlog: Any
+    _store: Any
+    _max_retries: int
+    _runner: Any | None
+    _workspace_root: str
+    _benchmark_blocking: bool
 
     def __init__(
         self,
@@ -93,6 +121,34 @@ class MetaLoopOrchestrator:
         self._runner = runner
         self._workspace_root = workspace_root
         self._benchmark_blocking = benchmark_blocking
+
+    @property
+    def store(self) -> Any:
+        return self._store
+
+    @property
+    def runner(self) -> Any | None:
+        return self._runner
+
+    @property
+    def max_retries(self) -> int:
+        return self._max_retries
+
+    @property
+    def workspace_root(self) -> str:
+        return self._workspace_root
+
+    @property
+    def task_controller(self) -> Any | None:
+        if self._runner is None:
+            return None
+        return getattr(self._runner, "task_controller", None)
+
+    def workspace_root_path(self) -> Path:
+        workspace = self._workspace_root or ""
+        if workspace:
+            return Path(workspace)
+        return Path.cwd()
 
     def set_runner(self, runner: Any) -> None:
         """Update the runner reference (for hot-reload)."""
@@ -155,7 +211,7 @@ class MetaLoopOrchestrator:
         except Exception:
             return None
 
-    def _query_relevant_lessons(self, goal: str, limit: int = 10) -> list[dict]:
+    def _query_relevant_lessons(self, goal: str, limit: int = 10) -> list[SpecDict]:
         """Query stored lessons relevant to the current iteration goal.
 
         Relevance scoring: count keyword overlap between lesson summary
@@ -164,10 +220,16 @@ class MetaLoopOrchestrator:
         if not hasattr(self._store, "list_lessons"):
             return []
         try:
-            all_lessons = self._store.list_lessons(limit=50)
+            all_lessons_raw = self._store.list_lessons(limit=50)
         except Exception:
             log.debug("metaloop_lessons_query_failed")
             return []
+        all_lessons_raw_list: list[Any] = (
+            cast(list[Any], all_lessons_raw) if isinstance(all_lessons_raw, list) else []
+        )
+        if not all_lessons_raw:
+            return []
+        all_lessons = [_coerce_dict(item) for item in all_lessons_raw_list]
         if not all_lessons:
             return []
 
@@ -175,19 +237,13 @@ class MetaLoopOrchestrator:
         if not goal_keywords:
             return all_lessons[:limit]
 
-        scored: list[tuple[float, dict]] = []
+        scored: list[tuple[float, SpecDict]] = []
         for lesson in all_lessons:
-            summary = (
-                lesson.get("summary", "")
-                if isinstance(lesson, dict)
-                else getattr(lesson, "summary", "")
-            )
-            category = (
-                lesson.get("category", "")
-                if isinstance(lesson, dict)
-                else getattr(lesson, "category", "")
-            )
-            summary_keywords = {w for w in summary.lower().split() if len(w) >= 3}
+            summary = str(lesson.get("summary", ""))
+            category = str(lesson.get("category", ""))
+            summary_keywords = {
+                w for w in str(summary).lower().split() if len(w) >= 3
+            }
             overlap = len(goal_keywords & summary_keywords)
             category_boost = 1.5 if category in ("mistake", "rollback_pattern") else 1.0
             score = overlap * category_boost
@@ -197,10 +253,26 @@ class MetaLoopOrchestrator:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [lesson for _, lesson in scored[:limit]]
 
-    def _update_metadata(self, spec_id: str, key: str, value: Any) -> dict:
+    def _check_kernel_approval_granted(self, spec_id: str) -> bool:
+        """Return True if any kernel spec_approval for this spec was approved."""
+        if self._runner is None:
+            return False
+        try:
+            tc = self._runner.task_controller
+            store = tc.store
+            if not hasattr(store, "list_approvals"):
+                return False
+            task_id = f"metaloop-{spec_id}"
+            approvals = store.list_approvals(task_id=task_id, status="approved")
+            return bool(approvals)
+        except Exception:
+            log.debug("metaloop_kernel_approval_check_failed", spec_id=spec_id, exc_info=True)
+            return False
+
+    def _update_metadata(self, spec_id: str, key: str, value: Any) -> SpecDict:
         """Merge *value* under *key* in the spec's metadata and persist."""
         entry = self._store.get_spec_entry(spec_id=spec_id)
-        data = entry if isinstance(entry, dict) else entry.__dict__
+        data = _coerce_dict(entry)
         metadata = _parse_metadata(data.get("metadata"))
         metadata[key] = value
         self._store.update_spec_status(
@@ -288,7 +360,7 @@ class MetaLoopOrchestrator:
         )
         return baseline
 
-    def _measure_verification_baseline(self, plan: list[dict]) -> list[dict]:
+    def _measure_verification_baseline(self, plan: list[SpecDict]) -> list[SpecDict]:
         """Run each verification_plan entry's measurement_command to capture actual baselines.
 
         Runs before implementation so the benchmark runner can later compare
@@ -297,12 +369,13 @@ class MetaLoopOrchestrator:
         import os
         import subprocess
 
-        results: list[dict[str, Any]] = []
+        results: list[SpecDict] = []
         workspace = self._workspace_root or ""
         if not workspace:
             workspace = os.environ.get("HERMIT_WORKSPACE_ROOT", "") or os.getcwd()
-        for entry in plan[:10]:  # cap at 10 measurements
-            cmd = entry.get("measurement_command", "")
+        for entry_raw in plan[:10]:  # cap at 10 measurements
+            entry = _coerce_dict(entry_raw)
+            cmd = str(entry.get("measurement_command", ""))
             if not cmd:
                 continue
             try:
@@ -396,9 +469,36 @@ class MetaLoopOrchestrator:
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
             return state
-        data = entry if isinstance(entry, dict) else entry.__dict__
-        goal = data.get("goal", "")
+        data = _coerce_dict(entry)
+        goal = str(data.get("goal", ""))
         metadata = _parse_metadata(data.get("metadata"))
+
+        # Idempotency guard: if spec approval is already pending in the kernel,
+        # skip the expensive research + spec-gen pipeline and check if granted.
+        # Re-running research on every tick when approval is pending would block
+        # the poller thread (network I/O) and starve IMPLEMENTING processing.
+        approval_decision = cast(SpecDict, metadata.get("spec_approval_decision", {}))
+        if approval_decision.get("method") == "pending_kernel_approval":
+            # Check if any kernel approval for this spec was actually granted.
+            approved = self._check_kernel_approval_granted(state.spec_id)
+            if not approved:
+                log.debug("metaloop_planning_approval_pending_wait", spec_id=state.spec_id)
+                return state
+            # Approval granted — clear pending decision and proceed to decompose.
+            log.info("metaloop_planning_kernel_approval_granted", spec_id=state.spec_id)
+            spec_data = cast(SpecDict, metadata.get("generated_spec", {}))
+            research_data = cast(SpecDict, metadata.get("research", {}))
+            if spec_data:
+                self._run_decomposition(state.spec_id, spec_data, research_data, attempt=state.attempt)
+                baseline = self._capture_baseline_metrics()
+                self._update_metadata(state.spec_id, "pre_implementation_baseline", baseline)
+                verification_plan = cast(list[SpecDict], spec_data.get("verification_plan", []))
+                if verification_plan:
+                    vb = self._measure_verification_baseline(verification_plan)
+                    self._update_metadata(state.spec_id, "verification_baseline", vb)
+                return self._backlog.advance_phase(state.spec_id, PipelinePhase.IMPLEMENTING)
+            # No spec data saved — fall through and re-run full pipeline
+            self._update_metadata(state.spec_id, "spec_approval_decision", {})
 
         # --- Step 1: Research ---
         research_data = self._run_research(state.spec_id, goal, data, metadata)
@@ -445,33 +545,28 @@ class MetaLoopOrchestrator:
         self,
         spec_id: str,
         goal: str,
-        data: dict,
-        metadata: dict,
-    ) -> dict:
+        data: SpecDict,
+        metadata: SpecDict,
+    ) -> SpecDict:
         """Run the research pipeline and store results in metadata."""
         raw_hints = data.get("research_hints")
         hints: list[str] = []
         if raw_hints:
             try:
-                parsed = json.loads(raw_hints) if isinstance(raw_hints, str) else raw_hints
-                if isinstance(parsed, list):
-                    hints = [str(h) for h in parsed]
+                parsed = (
+                    _coerce_list(json.loads(raw_hints))
+                    if isinstance(raw_hints, str)
+                    else _coerce_list(raw_hints)
+                )
+                hints = [str(h) for h in parsed]
             except (json.JSONDecodeError, TypeError):
                 pass
 
         # Query and inject relevance-filtered prior lessons as hints
         prior_lessons = self._query_relevant_lessons(goal)
         for lesson in prior_lessons:
-            summary = (
-                lesson.get("summary", "")
-                if isinstance(lesson, dict)
-                else getattr(lesson, "summary", "")
-            )
-            category = (
-                lesson.get("category", "")
-                if isinstance(lesson, dict)
-                else getattr(lesson, "category", "")
-            )
+            summary = str(lesson.get("summary", ""))
+            category = str(lesson.get("category", ""))
             if summary:
                 prefix = {
                     "mistake": "AVOID (prior mistake)",
@@ -517,7 +612,7 @@ class MetaLoopOrchestrator:
         report = _run_async(pipeline.run(goal, hints))
 
         # Serialize report to metadata
-        findings_dicts = [
+        findings_dicts: list[SpecDict] = [
             {
                 "source": f.source,
                 "title": f.title,
@@ -535,24 +630,18 @@ class MetaLoopOrchestrator:
             "query_count": report.query_count,
             "duration_seconds": report.duration_seconds,
             "count": len(findings_dicts),
-            "sources": sorted({f.source for f in report.findings}),
+            "sources": sorted({str(f.source) for f in report.findings}),
             "prior_lessons": [
-                {
-                    "lesson_id": (
+            {
+                "lesson_id": (
                         ls.get("lesson_id", "")
-                        if isinstance(ls, dict)
-                        else getattr(ls, "lesson_id", "")
-                    ),
-                    "category": (
+                ),
+                "category": (
                         ls.get("category", "")
-                        if isinstance(ls, dict)
-                        else getattr(ls, "category", "")
-                    ),
-                    "summary": (
+                ),
+                "summary": (
                         ls.get("summary", "")
-                        if isinstance(ls, dict)
-                        else getattr(ls, "summary", "")
-                    ),
+                ),
                 }
                 for ls in prior_lessons
             ],
@@ -564,42 +653,43 @@ class MetaLoopOrchestrator:
         self,
         spec_id: str,
         goal: str,
-        research_data: dict,
+        research_data: SpecDict,
         *,
         attempt: int = 1,
-    ) -> dict | None:
+    ) -> SpecDict | None:
         """Generate a spec via LLM, falling back to deterministic generator."""
         from hermit.plugins.builtin.hooks.research.models import (
             ResearchFinding,
             ResearchReport,
         )
 
-        findings_raw = research_data.get("findings", [])
+        findings_raw = _coerce_list(research_data.get("findings", ()))
         findings = tuple(
             ResearchFinding(
-                source=f.get("source", ""),
-                title=f.get("title", ""),
-                content=f.get("content", ""),
-                relevance=f.get("relevance", 0.0),
-                url=f.get("url", ""),
-                file_path=f.get("file_path", ""),
+                source=str(f.get("source", "")),
+                title=str(f.get("title", "")),
+                content=str(f.get("content", "")),
+                relevance=float(f.get("relevance", 0.0)),
+                url=str(f.get("url", "")),
+                file_path=str(f.get("file_path", "")),
             )
-            for f in findings_raw
+            for f in cast(list[SpecDict], findings_raw)
         )
         report = ResearchReport(
-            goal=research_data.get("goal", goal),
+            goal=str(research_data.get("goal", goal)),
             findings=findings,
-            knowledge_gaps=tuple(research_data.get("knowledge_gaps", ())),
-            query_count=research_data.get("query_count", 0),
-            duration_seconds=research_data.get("duration_seconds", 0.0),
+            knowledge_gaps=tuple(str(g) for g in research_data.get("knowledge_gaps", ())),
+            query_count=int(research_data.get("query_count", 0)),
+            duration_seconds=float(research_data.get("duration_seconds", 0.0)),
         )
 
         # Build lesson-derived constraints
         lesson_constraints: list[str] = []
-        prior_lessons = research_data.get("prior_lessons", [])
+        prior_lessons = _coerce_list(research_data.get("prior_lessons", []))
         for ls in prior_lessons:
-            cat = ls.get("category", "")
-            summary = ls.get("summary", "")
+            lesson = _coerce_dict(ls)
+            cat = str(lesson.get("category", ""))
+            summary = str(lesson.get("summary", ""))
             if not summary:
                 continue
             if cat in ("mistake", "rollback_pattern"):
@@ -654,8 +744,8 @@ class MetaLoopOrchestrator:
     def _check_spec_approval(
         self,
         spec_id: str,
-        spec_data: dict,
-        data: dict,
+        spec_data: SpecDict,
+        data: SpecDict,
     ) -> str:
         """Check spec approval inline. Returns 'approved', 'rejected', or 'pending'.
 
@@ -667,22 +757,22 @@ class MetaLoopOrchestrator:
         entry = self._store.get_spec_entry(spec_id=spec_id)
         if entry is None:
             return "approved"
-        data = entry if isinstance(entry, dict) else entry.__dict__
+        data = _coerce_dict(entry)
         metadata = _parse_metadata(data.get("metadata"))
 
         # Determine risk level
-        risk_budget = metadata.get("risk_budget", {})
-        risk_band = risk_budget.get("band", "")
+        risk_budget = cast(SpecDict, metadata.get("risk_budget", {}))
+        risk_band = str(risk_budget.get("band", ""))
         if not risk_band:
-            trust_zone = spec_data.get("trust_zone", "normal")
+            trust_zone = str(spec_data.get("trust_zone", "normal"))
             risk_band = {"strict": "high", "normal": "medium", "relaxed": "low"}.get(
                 trust_zone, "medium"
             )
 
         # Determine policy_profile
-        policy_profile = metadata.get("policy_profile", "")
+        policy_profile = str(metadata.get("policy_profile", ""))
         if not policy_profile:
-            source = data.get("source", "")
+            source = str(data.get("source", ""))
             policy_profile = "autonomous" if source == "self-iterate" else "default"
 
         # Decision logic
@@ -734,8 +824,8 @@ class MetaLoopOrchestrator:
                             "goal": spec_data.get("goal", ""),
                             "risk_band": risk_band,
                             "policy_profile": policy_profile,
-                            "file_count": len(spec_data.get("file_plan", [])),
-                            "constraints": spec_data.get("constraints", []),
+                            "file_count": len(cast(list[Any], spec_data.get("file_plan", []))),
+                            "constraints": cast(list[Any], spec_data.get("constraints", [])),
                         },
                         request_packet_ref=None,
                     )
@@ -790,8 +880,8 @@ class MetaLoopOrchestrator:
     def _run_decomposition(
         self,
         spec_id: str,
-        spec_data: dict,
-        research_data: dict,
+        spec_data: SpecDict,
+        research_data: SpecDict,
         *,
         attempt: int = 1,
     ) -> None:
@@ -800,31 +890,33 @@ class MetaLoopOrchestrator:
 
         # Collect lesson-referenced files for priority boosting
         lesson_files: set[str] = set()
-        prior_lessons = research_data.get("prior_lessons", [])
+        prior_lessons_raw = research_data.get("prior_lessons", [])
+        prior_lessons = _coerce_list(prior_lessons_raw)
         for ls in prior_lessons:
-            lesson_id = ls.get("lesson_id", "")
+            lesson = _coerce_dict(ls)
+            lesson_id = str(lesson.get("lesson_id", ""))
             if lesson_id and hasattr(self._store, "get_lesson"):
                 try:
                     full = self._store.get_lesson(lesson_id)
+                    full_dict = _coerce_dict(full)
                     if full:
-                        raw_files = full.get("applicable_files")
+                        raw_files = full_dict.get("applicable_files")
                         if isinstance(raw_files, str):
                             try:
-                                parsed_files = json.loads(raw_files)
-                                if isinstance(parsed_files, list):
-                                    lesson_files.update(str(f) for f in parsed_files)
+                                parsed_files = _coerce_list(json.loads(raw_files))
+                                lesson_files.update(str(f) for f in parsed_files)
                             except (json.JSONDecodeError, TypeError):
                                 pass
                         elif isinstance(raw_files, list):
-                            lesson_files.update(str(f) for f in raw_files)
+                            lesson_files.update(str(f) for f in _coerce_list(raw_files))
                 except Exception:
                     pass
 
-        file_plan_raw = spec_data.get("file_plan", [])
+        file_plan_raw = _coerce_list(spec_data.get("file_plan", []))
 
         # Boost lesson-referenced files by prepending them if not present
-        existing_paths = {e.get("path", "") for e in file_plan_raw}
-        boosted_entries: list[dict] = []
+        existing_paths = {str(e.get("path", "")) for e in file_plan_raw}
+        boosted_entries: list[SpecDict] = []
         for lf in sorted(lesson_files):
             if lf and lf not in existing_paths:
                 boosted_entries.append(
@@ -890,15 +982,16 @@ class MetaLoopOrchestrator:
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
             return state
-        data = entry if isinstance(entry, dict) else entry.__dict__
+        data = _coerce_dict(entry)
         metadata = _parse_metadata(data.get("metadata"))
 
         # If DAG already started (has timestamp), skip — let timeout checker handle it
         if metadata.get("implementing_started_at"):
             return state
 
-        decomposition = metadata.get("decomposition_plan") or {}
-        steps = decomposition.get("steps", [])
+        decomposition = _coerce_dict(metadata.get("decomposition_plan", {}))
+        steps_raw = decomposition.get("steps", [])
+        steps = cast(list[SpecDict], steps_raw) if isinstance(steps_raw, list) else []
         if not steps:
             return self._backlog.advance_phase(state.spec_id, PipelinePhase.REVIEWING)
 
@@ -909,11 +1002,11 @@ class MetaLoopOrchestrator:
 
         nodes = [
             StepNode(
-                key=step["key"],
-                kind=step.get("kind", "execute"),
-                title=step.get("title", step["key"]),
-                depends_on=step.get("depends_on", []),
-                metadata=step.get("metadata", {}),
+                key=str(step.get("key", "")),
+                kind=str(step.get("kind", "execute")),
+                title=str(step.get("title", step.get("key", ""))),
+                depends_on=cast(list[str], step.get("depends_on", ())),
+                metadata=cast(dict[str, Any], step.get("metadata", {})),
             )
             for step in steps
         ]
@@ -926,7 +1019,7 @@ class MetaLoopOrchestrator:
                 nodes=nodes,
                 policy_profile="autonomous",
                 workspace_root=self._workspace_root,
-            )
+        )
         except Exception as exc:
             log.exception(
                 "metaloop_dag_creation_failed",
@@ -940,9 +1033,28 @@ class MetaLoopOrchestrator:
                 ),
                 max_retries=self._max_retries,
             )
-        # start_dag_task may return a tuple (task, ...) or a single object
-        task = result[0] if isinstance(result, tuple) else result
-        dag_task_id = task.task_id if hasattr(task, "task_id") and task.task_id else None
+        # start_dag_task may return (task, ...) or a single object.
+        if isinstance(result, tuple):
+            result_tuple = cast(tuple[Any, ...], result)
+            task = result_tuple[0] if result_tuple else None
+        elif isinstance(result, list):
+            result_list = cast(list[Any], result)
+            task = result_list[0] if result_list else None
+        else:
+            task = result
+
+        if task is None:
+            return self._backlog.mark_failed(
+                state.spec_id,
+                error="start_dag_task returned empty result",
+                max_retries=self._max_retries,
+            )
+        task_id_attr = getattr(task, "task_id", None)
+        dag_task_id = (
+            str(task_id_attr)
+            if task_id_attr is not None
+            else None
+        )
         # Write dag_task_id and implementing_started_at directly — avoid
         # advance_phase self-transition which races with the poller's
         # _check_implementing_timeout reading the same spec in the same tick.
@@ -974,17 +1086,17 @@ class MetaLoopOrchestrator:
                 error="Spec entry not found during review",
                 max_retries=self._max_retries,
             )
-        data = entry if isinstance(entry, dict) else entry.__dict__
+        data = _coerce_dict(entry)
         metadata = _parse_metadata(data.get("metadata"))
-        decomposition = metadata.get("decomposition_plan") or {}
-        steps = decomposition.get("steps", [])
-        spec_data = metadata.get("generated_spec") or {}
+        decomposition = _coerce_dict(metadata.get("decomposition_plan", {}))
+        steps = cast(list[SpecDict], decomposition.get("steps", []))
+        spec_data = cast(SpecDict, metadata.get("generated_spec", {}))
 
         # Extract changed file paths from decomposition steps
         changed_files: list[str] = []
         for step in steps:
-            step_meta = step.get("metadata", {})
-            path = step_meta.get("path", "")
+            step_meta = _coerce_dict(step.get("metadata", {}))
+            path = str(step_meta.get("path", ""))
             if path:
                 changed_files.append(path)
 
@@ -1047,7 +1159,7 @@ class MetaLoopOrchestrator:
         self,
         spec_id: str,
         changed_files: list[str],
-        spec_data: dict,
+        spec_data: SpecDict,
         revision_cycle: int,
     ) -> Any | None:
         """Invoke ReviewCouncilService and return a CouncilVerdict, or None."""
@@ -1081,19 +1193,19 @@ class MetaLoopOrchestrator:
     def _run_post_accept(
         self,
         state: IterationState,
-        metadata: dict,
+        metadata: SpecDict,
     ) -> IterationState | None:
         """Run benchmark and learning after council accepts."""
-        impl_info = metadata.get("implementation") or {}
+        impl_info = _coerce_dict(metadata.get("implementation", {}))
         worktree_path = impl_info.get("worktree_path")
 
         # Extract changed file paths from decomposition for tiered benchmarking
-        decomposition = metadata.get("decomposition_plan") or {}
-        steps = decomposition.get("steps", [])
+        decomposition = _coerce_dict(metadata.get("decomposition_plan", {}))
+        steps = cast(list[SpecDict], decomposition.get("steps", []))
         changed_files: list[str] = []
         for step in steps:
-            step_meta = step.get("metadata", {})
-            path = step_meta.get("path", "")
+            step_meta = _coerce_dict(step.get("metadata", {}))
+            path = str(step_meta.get("path", ""))
             if path:
                 changed_files.append(path)
 
@@ -1104,8 +1216,8 @@ class MetaLoopOrchestrator:
             from hermit.plugins.builtin.hooks.benchmark.runner import BenchmarkRunner
 
             # Extract verification_plan from spec metadata
-            spec_data = metadata.get("generated_spec") or {}
-            vp_raw = spec_data.get("verification_plan", [])
+            spec_data = _coerce_dict(metadata.get("generated_spec", {}))
+            vp_raw = cast(list[SpecDict], spec_data.get("verification_plan", []))
             verification_plan = tuple(dict(e) for e in vp_raw) if vp_raw else None
 
             # Retrieve pre-implementation baseline for delta comparison
@@ -1283,7 +1395,7 @@ class MetaLoopOrchestrator:
         self,
         spec_id: str,
         repair_goal: str,
-        metadata: dict,
+        metadata: SpecDict,
     ) -> IterationState | None:
         """Create a repair DAG and transition back to IMPLEMENTING.
 
@@ -1300,7 +1412,7 @@ class MetaLoopOrchestrator:
                 error="Spec entry not found during benchmark repair",
                 max_retries=self._max_retries,
             )
-        data = entry if isinstance(entry, dict) else entry.__dict__
+        data = _coerce_dict(entry)
         meta = _parse_metadata(data.get("metadata"))
         meta["benchmark_repair_cycle"] = repair_cycle
         meta["benchmark_repair_goal"] = repair_goal
@@ -1358,9 +1470,9 @@ class MetaLoopOrchestrator:
         entry = self._store.get_spec_entry(spec_id=state.spec_id)
         if entry is None:
             return
-        data = entry if isinstance(entry, dict) else entry.__dict__
+        data = _coerce_dict(entry)
         metadata = _parse_metadata(data.get("metadata"))
-        benchmark_data = metadata.get("benchmark") or {}
+        benchmark_data = cast(SpecDict, metadata.get("benchmark") or {})
         current_depth = int(metadata.get("followup_depth", 0))
 
         if not benchmark_data:
@@ -1370,32 +1482,69 @@ class MetaLoopOrchestrator:
             from hermit.plugins.builtin.hooks.benchmark.learning import (
                 IterationLearner,
             )
-            from hermit.plugins.builtin.hooks.benchmark.models import BenchmarkResult
+            from hermit.plugins.builtin.hooks.benchmark.models import (
+                BenchmarkErrorDetail,
+                BenchmarkResult,
+            )
+
+            error_details: list[BenchmarkErrorDetail] = []
+            for error_detail in _coerce_list(benchmark_data.get("error_details", ())):
+                if isinstance(error_detail, BenchmarkErrorDetail):
+                    error_details.append(error_detail)
+                else:
+                    error_detail_dict = _coerce_dict(error_detail)
+                    error_details.append(
+                        BenchmarkErrorDetail(
+                            category=str(error_detail_dict.get("category", "")),
+                            count=int(error_detail_dict.get("count", 0)),
+                            summary=str(error_detail_dict.get("summary", "")),
+                            file_paths=tuple(
+                                str(path)
+                                for path in _coerce_list(error_detail_dict.get("file_paths", ()))
+                            ),
+                        )
+                    )
 
             br = BenchmarkResult(
                 iteration_id=state.spec_id,
                 spec_id=state.spec_id,
-                **{
-                    k: v
-                    for k, v in benchmark_data.items()
-                    if k
-                    in (
-                        "check_passed",
-                        "test_total",
-                        "test_passed",
-                        "coverage",
-                        "lint_violations",
-                        "duration_seconds",
-                        "regression_detected",
-                        "compared_to_baseline",
-                    )
-                },
+                check_passed=bool(benchmark_data.get("check_passed", False)),
+                test_total=int(benchmark_data.get("test_total", 0)),
+                test_passed=int(benchmark_data.get("test_passed", 0)),
+                coverage=float(benchmark_data.get("coverage", 0.0)),
+                lint_violations=int(benchmark_data.get("lint_violations", 0)),
+                typecheck_errors=int(benchmark_data.get("typecheck_errors", 0)),
+                duration_seconds=float(benchmark_data.get("duration_seconds", 0.0)),
+                regression_detected=bool(benchmark_data.get("regression_detected", False)),
+                compared_to_baseline=cast(
+                    dict[str, Any], benchmark_data.get("compared_to_baseline", {})
+                ),
+                statistical_analysis=cast(
+                    dict[str, Any] | None, benchmark_data.get("statistical_analysis")
+                ),
+                metadata=cast(
+                    dict[str, Any], benchmark_data.get("metadata", {})
+                ),
+                error_details=tuple(error_details),
+                raw_output=str(benchmark_data.get("raw_output", "")),
+                verification_results=tuple(
+                    _coerce_dict(item)
+                    for item in _coerce_list(benchmark_data.get("verification_results", ()))
+                ),
+                delta_info=cast(
+                    dict[str, Any], benchmark_data.get("delta_info", {})
+                ),
+                tier_reached=str(benchmark_data.get("tier_reached", "")),
+                strategy_used=str(benchmark_data.get("strategy_used", "")),
             )
             learner = IterationLearner(self._store)
-            lessons = _run_async(learner.learn(state.spec_id, br))
+            lessons_raw = _run_async(learner.learn(state.spec_id, br))
+            lessons = _coerce_list(lessons_raw)
 
             # Create followup specs for mistake lessons with safety limits
-            mistake_lessons = [ls for ls in lessons if ls.category == "mistake"]
+            mistake_lessons = [
+                _coerce_dict(ls) for ls in lessons if _coerce_dict(ls).get("category") == "mistake"
+            ]
             followups_created = 0
 
             for lesson in mistake_lessons:
@@ -1448,7 +1597,7 @@ class MetaLoopOrchestrator:
                         break
 
                 # Goal hash dedup
-                goal_text = f"Fix: {lesson.summary}"
+                goal_text = f"Fix: {lesson.get('summary', '')}"
                 goal_hash = hashlib.sha256(goal_text.strip().lower().encode()).hexdigest()
                 if hasattr(self._store, "find_spec_by_goal_hash"):
                     existing = self._store.find_spec_by_goal_hash(goal_hash)
@@ -1470,11 +1619,11 @@ class MetaLoopOrchestrator:
                         priority="high",
                         research_hints=[
                             f"Followup from iteration {state.spec_id}",
-                            f"Lesson: {lesson.summary}",
+                            f"Lesson: {getattr(lesson, 'summary', '')}",
                         ],
                         metadata={
                             "followup_from": state.spec_id,
-                            "lesson_id": lesson.lesson_id,
+                            "lesson_id": getattr(lesson, "lesson_id", ""),
                             "followup_depth": current_depth + 1,
                             "goal_hash": goal_hash,
                         },
@@ -1494,7 +1643,7 @@ class MetaLoopOrchestrator:
         spec_id: str,
         revision_cycle: int,
         verdict: Any,
-        metadata: dict,
+        metadata: SpecDict,
     ) -> IterationState | None:
         """Store revision directive and go back to IMPLEMENTING for a revision."""
         new_cycle = revision_cycle + 1
@@ -1517,7 +1666,7 @@ class MetaLoopOrchestrator:
         # Update revision_cycle counter in metadata
         entry = self._store.get_spec_entry(spec_id=spec_id)
         if entry is not None:
-            data = entry if isinstance(entry, dict) else entry.__dict__
+            data = _coerce_dict(entry)
             meta = _parse_metadata(data.get("metadata"))
             meta["revision_cycle"] = new_cycle
             self._store.update_spec_status(
@@ -1544,12 +1693,11 @@ class MetaLoopOrchestrator:
         try:
             entry = self._store.get_spec_entry(spec_id=spec_id)
             if entry is not None:
-                data = entry if isinstance(entry, dict) else entry.__dict__
+                data = _coerce_dict(entry)
                 goal = data.get("goal", "") or ""
                 meta = _parse_metadata(data.get("metadata"))
-                cv = meta.get("council_verdict")
-                if isinstance(cv, dict):
-                    last_directive = cv.get("revision_directive", "") or ""
+                cv = cast(SpecDict, meta.get("council_verdict", {}))
+                last_directive = str(cv.get("revision_directive", ""))
         except Exception:
             pass
 
@@ -1601,7 +1749,7 @@ class MetaLoopOrchestrator:
         if entry is None:
             return None
 
-        data = entry if isinstance(entry, dict) else entry.__dict__
+        data = _coerce_dict(entry)
         spec_id = data["spec_id"]
         phase_str = data.get("status", "pending")
 
@@ -1614,8 +1762,8 @@ class MetaLoopOrchestrator:
             return None
 
         metadata = _parse_metadata(data.get("metadata"))
-        impl_info = metadata.get("implementation") or {}
-        worktree_path = impl_info.get("worktree_path")
+        impl_info = _coerce_dict(metadata.get("implementation", {}))
+        worktree_path = str(impl_info.get("worktree_path", "")) or None
 
         if success:
             if worktree_path and self._workspace_root:
@@ -1648,7 +1796,7 @@ class MetaLoopOrchestrator:
                     SelfModifyWorkspace,
                 )
 
-                ws = SelfModifyWorkspace(self._workspace_root)
+                ws = SelfModifyWorkspace(self.workspace_root_path())
                 ws.remove(spec_id)
             except Exception:
                 log.exception("metaloop_worktree_cleanup_failed", spec_id=spec_id)
@@ -1681,7 +1829,7 @@ class SpecBacklogPoller:
     def __init__(
         self,
         orchestrator: MetaLoopOrchestrator,
-        backlog: SpecBacklog,
+        backlog: Any,
         *,
         poll_interval: float = POLL_INTERVAL_ACTIVE,
     ):
@@ -1732,7 +1880,7 @@ class SpecBacklogPoller:
 
     def _cleanup_worktree(self, spec_id: str) -> None:
         """Best-effort cleanup of the worktree for a spec on timeout/failure."""
-        workspace_root = self._orchestrator._workspace_root
+        workspace_root = self._orchestrator.workspace_root
         if not workspace_root:
             return
         try:
@@ -1740,7 +1888,7 @@ class SpecBacklogPoller:
                 SelfModifyWorkspace,
             )
 
-            ws = SelfModifyWorkspace(workspace_root)
+            ws = SelfModifyWorkspace(self._orchestrator.workspace_root_path())
             ws.remove(spec_id)
             log.info("metaloop_worktree_timeout_cleanup", spec_id=spec_id)
         except Exception:
@@ -1756,10 +1904,10 @@ class SpecBacklogPoller:
         Returns True if terminal and handled, False if still running,
         None if the task could not be checked.
         """
-        if not self._orchestrator._runner:
+        if self._orchestrator.task_controller is None:
             return None
         try:
-            tc = self._orchestrator._runner.task_controller
+            tc = self._orchestrator.task_controller
             task = tc.store.get_task(dag_task_id)
             if task is None:
                 return None
@@ -1789,15 +1937,17 @@ class SpecBacklogPoller:
             log.exception("metaloop_implementing_check_error", spec_id=spec_id)
             return None
 
-    def _check_implementing_timeout(self, entry: dict) -> bool:
+    def _check_implementing_timeout(self, entry: SpecDict) -> bool:
         """Check if an IMPLEMENTING spec has timed out.
 
         Returns True if work was done (spec advanced or failed).
         """
-        spec_id = entry["spec_id"]
-        metadata = _parse_metadata(entry.get("metadata"))
+        entry_dict = _coerce_dict(entry)
+        spec_id = str(entry_dict.get("spec_id", ""))
+        metadata = _parse_metadata(entry_dict.get("metadata"))
         started_at = metadata.get("implementing_started_at")
-        dag_task_id = entry.get("dag_task_id")
+        dag_task_id_raw = entry_dict.get("dag_task_id")
+        dag_task_id = str(dag_task_id_raw) if isinstance(dag_task_id_raw, str) else None
 
         if started_at is None:
             # DAG task not yet created by _handle_implementing — do nothing.
@@ -1830,8 +1980,15 @@ class SpecBacklogPoller:
                     elapsed_seconds=int(elapsed),
                 )
                 try:
-                    tc = self._orchestrator._runner.task_controller
-                    tc.cancel_task(dag_task_id, reason="implementation timeout exceeded")
+                    tc = self._orchestrator.task_controller
+                    if tc is not None:
+                        tc.cancel_task(dag_task_id, reason="implementation timeout exceeded")
+                    else:
+                        log.warning(
+                            "metaloop_implementing_cancel_task_controller_missing",
+                            spec_id=spec_id,
+                            dag_task_id=dag_task_id,
+                        )
                 except Exception:
                     log.warning(
                         "metaloop_implementing_cancel_failed",
@@ -1850,8 +2007,10 @@ class SpecBacklogPoller:
         self._cleanup_worktree(spec_id)
         self._backlog.mark_failed(
             spec_id,
-            error=(f"IMPLEMENTING timed out after {int(elapsed)}s (dag_task_id={dag_task_id})"),
-            max_retries=self._orchestrator._max_retries,
+            error=(
+                f"IMPLEMENTING timed out after {int(elapsed)}s (dag_task_id={dag_task_id})"
+            ),
+            max_retries=self._orchestrator.max_retries,
         )
         return True
 
@@ -1866,7 +2025,7 @@ class SpecBacklogPoller:
                     status="implementing", limit=10
                 )
                 for impl_entry in implementing:
-                    entry = impl_entry if isinstance(impl_entry, dict) else impl_entry.__dict__
+                    entry = _coerce_dict(impl_entry)
                     if self._check_implementing_timeout(entry):
                         did_work = True
             except Exception:
@@ -1884,21 +2043,18 @@ class SpecBacklogPoller:
             did_work = True
 
         # 3. Advance active (non-terminal, non-pending) iterations.
-        #    Only PLANNING and REVIEWING have synchronous handlers that
-        #    complete in one call.  IMPLEMENTING is handled above by
-        #    _check_implementing_timeout (DAG completion + timeout) and
-        #    by the on_subtask_complete callback — including it here
-        #    would cause a no-op advance() every tick (#35).
+        #    PLANNING and REVIEWING: one spec per tick (synchronous, potentially slow).
+        #    IMPLEMENTING: scan ALL unstarted specs so multiple parallel DAGs can be
+        #    kicked off without waiting for round-robin turns (limit=1 starves them).
         if hasattr(self._backlog._store, "list_spec_backlog"):
-            try:
-                for status in (
-                    PipelinePhase.PLANNING.value,
-                    PipelinePhase.IMPLEMENTING.value,
-                    PipelinePhase.REVIEWING.value,
-                ):
+            for status in (
+                PipelinePhase.PLANNING.value,
+                PipelinePhase.REVIEWING.value,
+            ):
+                try:
                     active = self._backlog._store.list_spec_backlog(status=status, limit=1)
                     if active:
-                        entry = active[0] if isinstance(active[0], dict) else active[0].__dict__
+                        entry = _coerce_dict(active[0])
                         spec_id = entry["spec_id"]
                         log.info(
                             "metaloop_poller_advancing",
@@ -1907,8 +2063,36 @@ class SpecBacklogPoller:
                         )
                         self._orchestrator.advance(spec_id)
                         did_work = True
+                except Exception:
+                    log.exception(
+                        "metaloop_poller_advance_error",
+                        phase=status,
+                    )
+
+            # IMPLEMENTING: advance all unstarted specs (no implementing_started_at).
+            # Specs that already have a DAG running are handled by
+            # _check_implementing_timeout above — advance() on them is a cheap no-op.
+            try:
+                all_impl = self._backlog._store.list_spec_backlog(
+                    status=PipelinePhase.IMPLEMENTING.value, limit=10
+                )
+                for impl_entry in all_impl:
+                    entry = _coerce_dict(impl_entry)
+                    impl_meta = _parse_metadata(entry.get("metadata", "{}"))
+                    if not impl_meta.get("implementing_started_at"):
+                        spec_id = entry["spec_id"]
+                        log.info(
+                            "metaloop_poller_advancing",
+                            spec_id=spec_id,
+                            phase=PipelinePhase.IMPLEMENTING.value,
+                        )
+                        self._orchestrator.advance(spec_id)
+                        did_work = True
             except Exception:
-                log.exception("metaloop_poller_advance_active_error")
+                log.exception(
+                    "metaloop_poller_advance_error",
+                    phase=PipelinePhase.IMPLEMENTING.value,
+                )
 
         # Update idle counter for adaptive polling
         if did_work:
@@ -1933,6 +2117,10 @@ class SignalToSpecConsumer:
         *,
         poll_interval: float = 30.0,
     ) -> None:
+        self._store: Any
+        self._poll_interval: float
+        self._stop_event: threading.Event
+        self._thread: threading.Thread | None
         self._store = store
         self._poll_interval = poll_interval
         self._stop_event = threading.Event()
@@ -1993,26 +2181,15 @@ class SignalToSpecConsumer:
 
         created = 0
         for signal in signals:
-            signal_id = (
-                signal.get("signal_id")
-                if isinstance(signal, dict)
-                else getattr(signal, "signal_id", None)
-            )
+            signal_data = _coerce_dict(signal)
+            signal_id = signal_data.get("signal_id")
             if not signal_id:
                 continue
-            source_kind = (
-                signal.get("source_kind")
-                if isinstance(signal, dict)
-                else getattr(signal, "source_kind", None)
-            )
+            source_kind = signal_data.get("source_kind")
             if source_kind not in self._ELIGIBLE_SOURCES:
                 continue
 
-            suggested_goal = (
-                signal.get("suggested_goal")
-                if isinstance(signal, dict)
-                else getattr(signal, "suggested_goal", None)
-            )
+            suggested_goal = signal_data.get("suggested_goal")
             if not suggested_goal:
                 continue
 
@@ -2050,11 +2227,7 @@ class SignalToSpecConsumer:
                 break
 
             try:
-                risk_level = (
-                    signal.get("risk_level", "normal")
-                    if isinstance(signal, dict)
-                    else getattr(signal, "risk_level", "normal")
-                )
+                risk_level = signal_data.get("risk_level", "normal")
                 priority = "high" if risk_level in ("high", "critical") else "normal"
 
                 self._store.create_spec_entry(

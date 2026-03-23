@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
+from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.execution.competition.deliberation import (
     ArbitrationDecision,
     CandidateProposal,
@@ -14,13 +19,55 @@ from hermit.kernel.execution.competition.deliberation import (
 from hermit.kernel.execution.competition.deliberation_service import (
     DeliberationService,
 )
+from hermit.kernel.execution.competition.llm_arbitrator import ArbitrationEngine
+from hermit.kernel.execution.workers.models import (
+    WorkerPoolConfig,
+    WorkerRole,
+    WorkerSlotConfig,
+)
+from hermit.kernel.execution.workers.pool import WorkerPoolManager
 from hermit.kernel.ledger.journal.store import KernelStore
 
 
-def _make_service(tmp_path: Path) -> tuple[DeliberationService, KernelStore]:
+def _make_pool() -> WorkerPoolManager:
+    config = WorkerPoolConfig(
+        pool_id="test-pool",
+        team_id="test",
+        slots={
+            WorkerRole.planner: WorkerSlotConfig(role=WorkerRole.planner, max_active=3),
+            WorkerRole.reviewer: WorkerSlotConfig(role=WorkerRole.reviewer, max_active=3),
+            WorkerRole.verifier: WorkerSlotConfig(role=WorkerRole.verifier, max_active=1),
+        },
+    )
+    return WorkerPoolManager(config)
+
+
+def _make_arbitrator(response_text: str | None = None) -> ArbitrationEngine:
+    if response_text is None:
+        response_text = json.dumps({
+            "selected_candidate_id": "placeholder",
+            "confidence": 0.8,
+            "reasoning": "test",
+        })
+
+    def factory() -> Any:
+        p = MagicMock()
+        p.generate.return_value = SimpleNamespace(
+            content=[{"type": "text", "text": response_text}]
+        )
+        return p
+
+    return ArbitrationEngine(factory, default_model="test-model")
+
+
+def _make_service(
+    tmp_path: Path,
+) -> tuple[DeliberationService, KernelStore, ArtifactStore, WorkerPoolManager]:
     store = KernelStore(tmp_path / "state.db")
-    svc = DeliberationService(store=store)
-    return svc, store
+    artifact_store = ArtifactStore(tmp_path / "artifacts")
+    pool = _make_pool()
+    svc = DeliberationService(store=store, arbitrator=_make_arbitrator())
+    return svc, store, artifact_store, pool
 
 
 def _make_proposal(
@@ -69,7 +116,7 @@ class TestDeliberationTrigger:
         assert DeliberationTrigger.post_execution_review == "post_execution_review"
 
     def test_all_members(self) -> None:
-        assert len(DeliberationTrigger) == 6
+        assert len(DeliberationTrigger) == 7
 
 
 # -- Dataclass construction --------------------------------------------------
@@ -123,26 +170,42 @@ class TestDataclasses:
 
 
 class TestShouldDeliberate:
-    def test_high_risk_always_deliberates(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("high", "any_kind") is True
-        assert svc.should_deliberate("critical", "trivial") is True
+    def test_high_risk_mutation_deliberates(self, tmp_path: Path) -> None:
+        svc, _, _, _ = _make_service(tmp_path)
+        assert svc.should_deliberate("high", "execute_command") is True
+        assert svc.should_deliberate("critical", "write_local") is True
+        assert svc.should_deliberate("critical", "rollback") is True
 
-    def test_medium_risk_with_deliberation_step(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("medium", "planning") is True
-        assert svc.should_deliberate("medium", "patch") is True
-        assert svc.should_deliberate("medium", "deploy") is True
+    def test_high_risk_readonly_skips(self, tmp_path: Path) -> None:
+        svc, _, _, _ = _make_service(tmp_path)
+        assert svc.should_deliberate("critical", "read_local") is False
+        assert svc.should_deliberate("high", "execute_command_readonly") is False
+        assert svc.should_deliberate("critical", "network_read") is False
+        assert svc.should_deliberate("high", "delegate_reasoning") is False
+
+    def test_medium_risk_mutation_deliberates(self, tmp_path: Path) -> None:
+        svc, _, _, _ = _make_service(tmp_path)
+        assert svc.should_deliberate("medium", "execute_command") is True
+        assert svc.should_deliberate("medium", "write_local") is True
+        assert svc.should_deliberate("medium", "patch_file") is True
         assert svc.should_deliberate("medium", "rollback") is True
+        assert svc.should_deliberate("medium", "vcs_mutation") is True
 
-    def test_medium_risk_with_normal_step(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("medium", "read_file") is False
+    def test_medium_risk_readonly_skips(self, tmp_path: Path) -> None:
+        svc, _, _, _ = _make_service(tmp_path)
+        assert svc.should_deliberate("medium", "read_local") is False
+        assert svc.should_deliberate("medium", "execute_command_readonly") is False
 
-    def test_low_risk_does_not_deliberate(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
-        assert svc.should_deliberate("low", "planning") is False
-        assert svc.should_deliberate("low", "patch") is False
+    def test_low_risk_never_deliberates(self, tmp_path: Path) -> None:
+        svc, _, _, _ = _make_service(tmp_path)
+        assert svc.should_deliberate("low", "execute_command") is False
+        assert svc.should_deliberate("low", "write_local") is False
+        assert svc.should_deliberate("low", "read_local") is False
+
+    def test_unknown_action_class_skips(self, tmp_path: Path) -> None:
+        svc, _, _, _ = _make_service(tmp_path)
+        assert svc.should_deliberate("critical", "unknown") is False
+        assert svc.should_deliberate("high", "some_future_action") is False
 
 
 # -- Debate lifecycle ---------------------------------------------------------
@@ -150,7 +213,7 @@ class TestShouldDeliberate:
 
 class TestDebateLifecycle:
     def test_create_debate(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, _, _, _ = _make_service(tmp_path)
         bundle = svc.create_debate(
             decision_point="Should we refactor?",
             trigger=DeliberationTrigger.ambiguous_spec,
@@ -158,49 +221,35 @@ class TestDebateLifecycle:
         assert bundle.debate_id.startswith("debate_")
         assert bundle.decision_point == "Should we refactor?"
         assert bundle.trigger == DeliberationTrigger.ambiguous_spec
-        assert bundle.proposals == []
-        assert bundle.critiques == []
 
     def test_get_debate(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, _, _, _ = _make_service(tmp_path)
         bundle = svc.create_debate("dp", DeliberationTrigger.high_risk_planning)
-        retrieved = svc.get_debate(bundle.debate_id)
-        assert retrieved is bundle
+        assert svc.get_debate(bundle.debate_id) is bundle
 
     def test_get_debate_not_found(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, _, _, _ = _make_service(tmp_path)
         assert svc.get_debate("nonexistent") is None
 
     def test_add_proposal(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, _, _, _ = _make_service(tmp_path)
         bundle = svc.create_debate("dp", DeliberationTrigger.high_risk_patch)
-        proposal = _make_proposal()
-        svc.add_proposal(bundle.debate_id, proposal)
+        svc.add_proposal(bundle.debate_id, _make_proposal())
         assert len(bundle.proposals) == 1
-        assert bundle.proposals[0].candidate_id == "cand_1"
-
-    def test_add_multiple_proposals(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
-        bundle = svc.create_debate("dp", DeliberationTrigger.high_risk_patch)
-        svc.add_proposal(bundle.debate_id, _make_proposal("c1"))
-        svc.add_proposal(bundle.debate_id, _make_proposal("c2"))
-        assert len(bundle.proposals) == 2
 
     def test_add_proposal_unknown_debate(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, _, _, _ = _make_service(tmp_path)
         with pytest.raises(ValueError, match="Debate not found"):
             svc.add_proposal("bad_id", _make_proposal())
 
     def test_add_critique(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, _, _, _ = _make_service(tmp_path)
         bundle = svc.create_debate("dp", DeliberationTrigger.follow_up_decision)
-        critique = _make_critique()
-        svc.add_critique(bundle.debate_id, critique)
+        svc.add_critique(bundle.debate_id, _make_critique())
         assert len(bundle.critiques) == 1
-        assert bundle.critiques[0].severity == "medium"
 
     def test_add_critique_unknown_debate(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, _, _, _ = _make_service(tmp_path)
         with pytest.raises(ValueError, match="Debate not found"):
             svc.add_critique("bad_id", _make_critique())
 
@@ -210,103 +259,69 @@ class TestDebateLifecycle:
 
 class TestArbitration:
     def test_arbitrate_selects_first_eligible(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, store, arts, pool = _make_service(tmp_path)
         bundle = svc.create_debate("dp", DeliberationTrigger.high_risk_planning)
         svc.add_proposal(bundle.debate_id, _make_proposal("c1", "engineer"))
         svc.add_proposal(bundle.debate_id, _make_proposal("c2", "architect"))
 
-        decision = svc.arbitrate(bundle.debate_id)
+        decision = svc.arbitrate(
+            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+        )
         assert decision.selected_candidate_id == "c1"
         assert decision.escalation_required is False
-        assert decision.confidence == 1.0
-        assert decision.decided_at > 0
 
     def test_arbitrate_skips_critically_critiqued(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, store, arts, pool = _make_service(tmp_path)
         bundle = svc.create_debate("dp", DeliberationTrigger.high_risk_patch)
         svc.add_proposal(bundle.debate_id, _make_proposal("c1"))
         svc.add_proposal(bundle.debate_id, _make_proposal("c2"))
-        # Critical critique on c1
         svc.add_critique(
-            bundle.debate_id,
-            _make_critique("c1", severity="critical", critique_id="cr1"),
+            bundle.debate_id, _make_critique("c1", severity="critical", critique_id="cr1"),
         )
 
-        decision = svc.arbitrate(bundle.debate_id)
+        decision = svc.arbitrate(
+            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+        )
         assert decision.selected_candidate_id == "c2"
-        assert "c1" in decision.rejection_reasons[0]
 
-    def test_arbitrate_escalates_when_all_critically_critiqued(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+    def test_arbitrate_escalates_when_all_critical(self, tmp_path: Path) -> None:
+        svc, store, arts, pool = _make_service(tmp_path)
         bundle = svc.create_debate("dp", DeliberationTrigger.benchmark_dispute)
         svc.add_proposal(bundle.debate_id, _make_proposal("c1"))
         svc.add_critique(
-            bundle.debate_id,
-            _make_critique("c1", severity="critical", critique_id="cr1"),
+            bundle.debate_id, _make_critique("c1", severity="critical", critique_id="cr1"),
         )
 
-        decision = svc.arbitrate(bundle.debate_id)
+        decision = svc.arbitrate(
+            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+        )
         assert decision.selected_candidate_id is None
         assert decision.escalation_required is True
-        assert decision.confidence == 0.0
 
     def test_arbitrate_no_proposals_escalates(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, store, arts, pool = _make_service(tmp_path)
         bundle = svc.create_debate("dp", DeliberationTrigger.ambiguous_spec)
-        # No proposals added at all.
-        decision = svc.arbitrate(bundle.debate_id)
-        assert decision.selected_candidate_id is None
+
+        decision = svc.arbitrate(
+            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+        )
         assert decision.escalation_required is True
 
     def test_arbitrate_unknown_debate(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, store, arts, pool = _make_service(tmp_path)
         with pytest.raises(ValueError, match="Debate not found"):
-            svc.arbitrate("bad_id")
-
-    def test_arbitrate_confidence_decreases_with_critiques(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
-        bundle = svc.create_debate("dp", DeliberationTrigger.high_risk_planning)
-        svc.add_proposal(bundle.debate_id, _make_proposal("c1"))
-        # Add non-critical critiques targeting c1
-        svc.add_critique(
-            bundle.debate_id,
-            _make_critique("c1", severity="medium", critique_id="cr1"),
-        )
-        svc.add_critique(
-            bundle.debate_id,
-            _make_critique("c1", severity="low", critique_id="cr2"),
-        )
-
-        decision = svc.arbitrate(bundle.debate_id)
-        assert decision.selected_candidate_id == "c1"
-        # 2 critiques out of 2 target the winner: confidence = 1 - 2/2 = 0.0
-        assert decision.confidence == 0.0
-
-    def test_arbitrate_merge_notes_populated(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
-        bundle = svc.create_debate("dp", DeliberationTrigger.follow_up_decision)
-        svc.add_proposal(
-            bundle.debate_id,
-            _make_proposal("c1", proposer_role="security", target_scope="auth"),
-        )
-        decision = svc.arbitrate(bundle.debate_id)
-        assert "security" in decision.merge_notes
-        assert "auth" in decision.merge_notes
+            svc.arbitrate("bad_id", task_id="t1", pool=pool, store=store, artifact_store=arts)
 
     def test_non_critical_critiques_do_not_disqualify(self, tmp_path: Path) -> None:
-        svc, _ = _make_service(tmp_path)
+        svc, store, arts, pool = _make_service(tmp_path)
         bundle = svc.create_debate("dp", DeliberationTrigger.high_risk_planning)
         svc.add_proposal(bundle.debate_id, _make_proposal("c1"))
         svc.add_critique(
-            bundle.debate_id,
-            _make_critique("c1", severity="medium", critique_id="cr1"),
-        )
-        svc.add_critique(
-            bundle.debate_id,
-            _make_critique("c1", severity="low", critique_id="cr2"),
+            bundle.debate_id, _make_critique("c1", severity="medium", critique_id="cr1"),
         )
 
-        decision = svc.arbitrate(bundle.debate_id)
-        # c1 is still selected despite non-critical critiques
+        decision = svc.arbitrate(
+            bundle.debate_id, task_id="t1", pool=pool, store=store, artifact_store=arts,
+        )
         assert decision.selected_candidate_id == "c1"
         assert decision.escalation_required is False

@@ -2,11 +2,13 @@
 
 Verifies that:
 1. No-op when no matching template or pattern exists
-2. Template match writes policy_suggestion to context
-3. Uses risk_hint (not risk_level) for suggestion computation
-4. Task pattern is written to context when task_goal present
-5. Pattern enrichment skipped when no task_goal
-6. Critical risk_hint produces skip_approval_eligible=False
+2. Template match writes policy_suggestion to context for safe action classes
+3. Template suggestion is filtered for unsafe action classes (write_local, patch_file)
+4. Uses risk_hint (not risk_level) for suggestion computation
+5. Task pattern is written to context when task_goal present
+6. Pattern enrichment skipped when no task_goal
+7. Critical risk_hint produces skip_approval_eligible=False
+8. Trust score enrichment is added when sufficient receipt data exists
 """
 
 from __future__ import annotations
@@ -167,10 +169,11 @@ class TestPolicyEvidenceEnricher:
         assert "task_pattern" not in result.context
 
     def test_template_match_injects_policy_suggestion(self, tmp_path: Path) -> None:
+        """Template suggestion is injected for safe action classes."""
         store = _make_store(tmp_path)
-        _seed_template(store)
+        _seed_template(store, action_class="execute_command", tool_name="bash")
         enricher = PolicyEvidenceEnricher(store)
-        req = _make_action_request()
+        req = _make_action_request(action_class="execute_command", tool_name="bash")
 
         result = enricher.enrich(req)
 
@@ -180,14 +183,29 @@ class TestPolicyEvidenceEnricher:
         assert suggestion["template_ref"] != ""
         assert "matched_template_ref" in result.context
 
+    def test_template_suggestion_filtered_for_unsafe_action_class(self, tmp_path: Path) -> None:
+        """Template suggestion is NOT injected for dangerous action classes like write_local."""
+        store = _make_store(tmp_path)
+        _seed_template(store)  # default: write_local
+        enricher = PolicyEvidenceEnricher(store)
+        req = _make_action_request()  # default: write_local
+
+        result = enricher.enrich(req)
+
+        # Template is matched, but suggestion is filtered out
+        assert "matched_template_ref" in result.context
+        assert "policy_suggestion" not in result.context
+
     def test_uses_risk_hint_not_risk_level(self, tmp_path: Path) -> None:
         """The enricher uses action_request.risk_hint for suggestion computation."""
         store = _make_store(tmp_path)
-        _seed_template(store, risk_level="high")
+        _seed_template(store, action_class="execute_command", tool_name="bash", risk_level="high")
         enricher = PolicyEvidenceEnricher(store)
 
         # With risk_hint="medium", suggestion should allow skip
-        req = _make_action_request(risk_hint="medium")
+        req = _make_action_request(
+            action_class="execute_command", tool_name="bash", risk_hint="medium"
+        )
         result = enricher.enrich(req)
         assert result.context["policy_suggestion"]["skip_approval_eligible"] is True
 
@@ -217,14 +235,75 @@ class TestPolicyEvidenceEnricher:
 
     def test_critical_risk_hint_no_skip_approval(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
-        _seed_template(store)
+        _seed_template(store, action_class="execute_command", tool_name="bash")
         enricher = PolicyEvidenceEnricher(store)
-        req = _make_action_request(risk_hint="critical")
+        req = _make_action_request(
+            action_class="execute_command", tool_name="bash", risk_hint="critical"
+        )
 
         result = enricher.enrich(req)
 
         assert "policy_suggestion" in result.context
         assert result.context["policy_suggestion"]["skip_approval_eligible"] is False
+
+    def test_trust_enrichment_with_sufficient_data(self, tmp_path: Path) -> None:
+        """Trust score adjustment is added to context when enough receipts exist."""
+        store = _make_store(tmp_path)
+        # Create a task/step/attempt for proper receipt seeding
+        conv = store.ensure_conversation("conv-trust-test", source_channel="test")
+        task = store.create_task(
+            conversation_id=conv.conversation_id,
+            title="t",
+            goal="g",
+            status="active",
+            priority="normal",
+            owner="operator",
+            policy_profile="default",
+            source_channel="test",
+        )
+        step = store.create_step(task_id=task.task_id, kind="tool_call", status="active")
+        attempt = store.create_step_attempt(
+            task_id=task.task_id, step_id=step.step_id, attempt=1, status="active"
+        )
+        # Create enough receipts to exceed _MIN_EXECUTIONS threshold (5)
+        for _i in range(6):
+            store.create_receipt(
+                task_id=task.task_id,
+                step_id=step.step_id,
+                step_attempt_id=attempt.step_attempt_id,
+                action_type="execute_command",
+                input_refs=[],
+                environment_ref=None,
+                policy_result={},
+                approval_ref=None,
+                output_refs=[],
+                result_summary="ok",
+                result_code="succeeded",
+            )
+        enricher = PolicyEvidenceEnricher(store)
+        req = _make_action_request(
+            action_class="execute_command", tool_name="bash", risk_hint="high"
+        )
+
+        result = enricher.enrich(req)
+
+        # With 6/6 succeeded, composite score should be high (>= 0.85)
+        # suggesting a downgrade from "high" to "low"
+        assert "trust_risk_adjustment" in result.context
+        adj = result.context["trust_risk_adjustment"]
+        assert adj["current_risk_band"] == "high"
+        assert adj["suggested_risk_band"] in ("low", "medium")
+        assert adj["trust_score_ref"] > 0
+
+    def test_trust_enrichment_skipped_insufficient_data(self, tmp_path: Path) -> None:
+        """Trust enrichment is skipped when not enough receipts exist."""
+        store = _make_store(tmp_path)
+        enricher = PolicyEvidenceEnricher(store)
+        req = _make_action_request()
+
+        result = enricher.enrich(req)
+
+        assert "trust_risk_adjustment" not in result.context
 
 
 # ---------------------------------------------------------------------------

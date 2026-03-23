@@ -1,0 +1,168 @@
+  /Users/beta/work/Hermit/src/hermit/kernel/context/memory/memory_quality.py:66:53 - error: Argument of type "_RecordProxy" cannot be assigned to parameter "memory" of type "MemoryRecord" in function "evaluate_freshness"
+  /Users/beta/work/Hermit/src/hermit/kernel/context/memory/memory_quality.py:70:64 - error: Argument of type "_RecordProxy" cannot be assigned to parameter "memory" of type "MemoryRecord" in function "compute_confidence"
+  /Users/beta/work/Hermit/src/hermit/kernel/context/memory/memory_quality.py:140:20 - error: Return type is unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:111:17 - error: Type of "ctx" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:112:17 - error: Type of "interval" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:112:28 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:115:34 - error: Argument type is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:373:9 - error: Type of "ctx" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:374:9 - error: Type of "risk_band" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:374:21 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:380:23 - error: Argument type is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:386:9 - error: Type of "updated_ctx" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/dispatch.py:386:28 - error: Argument type is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/pool_dispatch.py:325:13 - error: Type of "ctx" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/pool_dispatch.py:326:13 - error: Type of "supervisor_id" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/pool_dispatch.py:326:29 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/pool_dispatch.py:327:13 - error: Type of "workspace" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/pool_dispatch.py:327:25 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/pool_dispatch.py:328:20 - error: Return type, "tuple[WorkerRole, Unknown | Any | None, Unknown | Any | None]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/coordination/pool_dispatch.py:379:24 - error: "_check_deliberation_needed" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/execution_helpers.py:32:5 - error: Function "_is_governed_action" is not accessed (reportUnusedFunction)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/executor.py:32:5 - error: "_is_governed_action" is private and used outside of the module in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/executor.py:962:34 - error: "_runtime_snapshot_envelope" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/executor.py:971:34 - error: "_store_runtime_snapshot_artifact" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/executor.py:980:27 - error: "_store_pending_execution" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/executor.py:983:34 - error: "_load_pending_execution" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/executor.py:986:27 - error: "_clear_pending_execution" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/executor.py:1335:17 - error: Type of "revalidation_rules" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/executor.py:1336:20 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/phase_tracker.py:5:5 - error: "_is_governed_action" is private and used outside of the module in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:75:9 - error: Type of "existing_children" is unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:75:68 - error: Expected 0 positional arguments (reportCallIssue)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:78:17 - error: Type of "child" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:79:28 - error: Argument type is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:91:9 - error: Type of "new_task" is unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:91:20 - error: Argument missing for parameter "title" (reportCallIssue)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:101:28 - error: Argument type is unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:305:9 - error: Type of "risk_budget" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:306:9 - error: Type of "risk_level" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:307:13 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:310:9 - error: Type of "expected_effects" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:312:19 - error: Type of "route_from_contract" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:315:24 - error: Argument type is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:317:28 - error: Argument type is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/executor/reconciliation_executor.py:336:21 - error: "_is_lower_better" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/recovery/reconcile.py:173:27 - error: Unnecessary isinstance call; "dict[str, Any]" is always an instance of "dict[Unknown, Unknown]" (reportUnnecessaryIsInstance)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/_metadata_utils.py:9:5 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownParameterType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/_metadata_utils.py:9:33 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/_metadata_utils.py:16:16 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/_metadata_utils.py:20:16 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/_metadata_utils.py:21:12 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:123:5 - error: Type of "metadata" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:123:15 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:125:9 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownParameterType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:125:26 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:126:16 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:131:25 - error: Type of "metadata" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:185:9 - error: Return type, "dict[str, list[dict[Unknown, Unknown]]]", is partially unknown (reportUnknownParameterType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:185:66 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:188:16 - error: Return type, "dict[str, list[dict[Unknown, Unknown]]]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:188:30 - error: Type of "to_dict" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:208:9 - error: Return type, "dict[str, dict[Unknown, Unknown]]", is partially unknown (reportUnknownParameterType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:208:55 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:210:9 - error: Type of "result" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:210:27 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:219:16 - error: Return type, "dict[str, dict[Unknown, Unknown]]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:256:5 - error: Type of "benchmark_results" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:256:24 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:260:5 - error: Type of "lane_artifacts" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:260:21 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:262:9 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownParameterType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:262:26 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:264:9 - error: Type of "d" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:264:12 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:268:34 - error: Type of "benchmark_results" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:271:31 - error: Type of "lane_artifacts" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:275:16 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:349:24 - error: Type of "admit_iteration" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:457:9 - error: Type of parameter "metadata" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:457:19 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:467:12 - error: Unnecessary isinstance call; "Lane | str" is always an instance of "str" (reportUnnecessaryIsInstance)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:497:9 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownParameterType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:501:9 - error: Type of parameter "benchmark_results" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:501:28 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:505:10 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:520:9 - error: Type of "benchmark" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:525:9 - error: Type of "_inject_metadata" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:569:9 - error: Type of "lane_artifacts" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:569:26 - error: Type of "get_all_lanes" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:572:22 - error: Type of "_build_and_export_proof" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:589:9 - error: Type of "verdict_dict" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:589:24 - error: Type of "to_dict" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:601:16 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:607:9 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownParameterType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:613:9 - error: Type of parameter "benchmark_results" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:613:28 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:615:10 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:641:20 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:649:20 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:674:9 - error: Type of "pr_info" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:674:18 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:688:41 - error: Argument of type "object" cannot be assigned to parameter "workspace" of type "SelfModifyWorkspace" in function "__init__"
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:711:29 - error: Type of "create_pr" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:720:25 - error: Type of "create_pr" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:727:17 - error: Type of "pr_info" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:727:27 - error: Type of "to_dict" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:746:9 - error: Type of "_inject_pr_metadata" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:752:20 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:755:16 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:757:9 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownParameterType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:762:10 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:779:20 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:782:20 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:790:9 - error: Type of "entry" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:790:17 - error: Type of "_find_entry" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:790:30 - error: "_find_entry" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:792:13 - error: Type of "raw_meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:792:24 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:793:13 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:793:19 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:796:21 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:798:21 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:799:13 - error: Type of "benchmark" is unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:799:25 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:801:24 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:810:41 - error: Argument of type "object" cannot be assigned to parameter "workspace" of type "SelfModifyWorkspace" in function "__init__"
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:835:24 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:852:16 - error: Return type, "dict[Unknown, Unknown]", is partially unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:929:9 - error: Type of parameter "lane_artifacts" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:929:25 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:940:32 - error: Argument type is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:955:9 - error: Type of "entry" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:955:17 - error: Type of "_find_entry" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:955:30 - error: "_find_entry" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:959:9 - error: Type of "spec_id" is unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:960:9 - error: Type of "raw_meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:960:20 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:961:9 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:961:15 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:964:17 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:966:17 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:972:13 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:980:9 - error: Type of parameter "benchmark_results" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:980:28 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:986:9 - error: Type of "entry" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:986:17 - error: Type of "_find_entry" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:986:30 - error: "_find_entry" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:990:9 - error: Type of "spec_id" is unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:991:9 - error: Type of "raw_meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:991:20 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:992:9 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:992:15 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:995:17 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:997:17 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1007:13 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1011:54 - error: Type of parameter "pr_info" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1011:63 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1013:9 - error: Type of "entry" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1013:17 - error: Type of "_find_entry" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1013:30 - error: "_find_entry" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1017:9 - error: Type of "spec_id" is unknown (reportUnknownVariableType)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1018:9 - error: Type of "raw_meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1018:20 - error: Type of "get" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1019:9 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1019:15 - error: Expected type arguments for generic class "dict" (reportMissingTypeArgument)
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1022:17 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1024:17 - error: Type of "meta" is partially unknown
+  /Users/beta/work/Hermit/src/hermit/kernel/execution/self_modify/iteration_bridge.py:1030:13 - error: Type of "get" is partially unknown

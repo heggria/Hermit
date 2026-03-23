@@ -22,7 +22,6 @@ from hermit.kernel.task.models.records import (
     StepRecord,
     TaskRecord,
 )
-from hermit.kernel.task.state.transitions import validate_task_transition
 
 
 class KernelTaskStoreMixin(KernelStoreTypingBase):
@@ -34,13 +33,13 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         source_ref: str | None = None,
     ) -> ConversationRecord:
         now = time.time()
-        with self._get_conn():
+        with self._lock, self._conn:
             row = self._row(
                 "SELECT * FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
             )
             if row is None:
-                self._get_conn().execute(
+                self._conn.execute(
                     """
                     INSERT INTO conversations (
                         conversation_id, source_channel, source_ref, last_task_id, focus_task_id,
@@ -56,7 +55,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     (conversation_id,),
                 )
             else:
-                self._get_conn().execute(
+                self._conn.execute(
                     "UPDATE conversations SET updated_at = ? WHERE conversation_id = ?",
                     (now, conversation_id),
                 )
@@ -68,17 +67,21 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return self._conversation_from_row(row)
 
     def get_conversation(self, conversation_id: str) -> ConversationRecord | None:
-        row = self._row("SELECT * FROM conversations WHERE conversation_id = ?", (conversation_id,))
+        with self._lock:
+            row = self._row(
+                "SELECT * FROM conversations WHERE conversation_id = ?", (conversation_id,)
+            )
         return self._conversation_from_row(row) if row is not None else None
 
     def list_conversations(self) -> list[str]:
-        rows = self._rows("SELECT conversation_id FROM conversations ORDER BY updated_at DESC")
+        with self._lock:
+            rows = self._rows("SELECT conversation_id FROM conversations ORDER BY updated_at DESC")
         return [str(row["conversation_id"]) for row in rows]
 
     def update_conversation_metadata(self, conversation_id: str, metadata: dict[str, Any]) -> None:
         now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 "UPDATE conversations SET metadata_json = ?, updated_at = ? WHERE conversation_id = ?",
                 (json.dumps(metadata, ensure_ascii=False), now, conversation_id),
             )
@@ -87,8 +90,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         self, conversation_id: str, *, task_id: str | None, reason: str = ""
     ) -> None:
         now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE conversations
                 SET focus_task_id = ?, focus_reason = ?, focus_updated_at = ?, updated_at = ?
@@ -131,8 +134,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         last_task_id: str | None,
     ) -> None:
         now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE conversations
                 SET total_input_tokens = ?,
@@ -180,8 +183,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             if requested_by is not None
             else None
         )
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 INSERT INTO tasks (
                     task_id, conversation_id, title, goal, status, priority, owner_principal_id,
@@ -206,7 +209,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     now,
                 ),
             )
-            self._get_conn().execute(
+            self._conn.execute(
                 "UPDATE conversations SET last_task_id = ?, updated_at = ? WHERE conversation_id = ?",
                 (task_id, now, conversation_id),
             )
@@ -239,7 +242,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return task
 
     def get_task(self, task_id: str) -> TaskRecord | None:
-        row = self._row("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
+        with self._lock:
+            row = self._row("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
         return self._task_from_row(row) if row is not None else None
 
     def list_tasks(
@@ -256,72 +260,33 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM tasks {where} ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        rows = self._rows(query, params)
+        with self._lock:
+            rows = self._rows(query, params)
         return [self._task_from_row(row) for row in rows]
 
     def list_open_tasks_for_conversation(
         self, *, conversation_id: str, limit: int = 20
     ) -> list[TaskRecord]:
-        rows = self._rows(
-            """
-            SELECT *
-            FROM tasks
-            WHERE conversation_id = ?
-              AND status IN ('queued', 'running', 'blocked', 'planning_ready')
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (conversation_id, limit),
-        )
+        with self._lock:
+            rows = self._rows(
+                """
+                SELECT *
+                FROM tasks
+                WHERE conversation_id = ?
+                  AND status IN ('queued', 'running', 'blocked', 'planning_ready')
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (conversation_id, limit),
+            )
         return [self._task_from_row(row) for row in rows]
-
-    def list_child_tasks(self, *, parent_task_id: str, limit: int = 200) -> list[TaskRecord]:
-        """Return all tasks that have the given parent_task_id.
-
-        Used by the join-barrier check to enumerate sibling children and
-        determine whether all (or a sufficient subset) have reached a
-        terminal status.
-        """
-        rows = self._rows(
-            """
-            SELECT * FROM tasks
-            WHERE parent_task_id = ?
-            ORDER BY created_at ASC
-            LIMIT ?
-            """,
-            (parent_task_id, limit),
-        )
-        return [self._task_from_row(row) for row in rows]
-
-    _CASCADE_CANCEL_STATUSES = frozenset({"failed", "cancelled"})
-    _TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
     def update_task_status(
         self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
     ) -> None:
         now = time.time()
-        # Block transitions from terminal states; warn on other invalid transitions.
-        task = self.get_task(task_id)
-        if task is not None and not validate_task_transition(task.status, status):
-            import structlog
-
-            if task.status in self._TERMINAL_TASK_STATUSES:
-                structlog.get_logger().warning(
-                    "invalid_task_transition_blocked",
-                    task_id=task_id,
-                    current=task.status,
-                    target=status,
-                )
-                return
-            structlog.get_logger().warning(
-                "invalid_task_transition",
-                task_id=task_id,
-                current=task.status,
-                target=status,
-            )
-            return
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
                 (status, now, task_id),
             )
@@ -335,35 +300,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 payload={"status": status, **(payload or {})},
             )
 
-        # Cascade-cancel non-terminal children when parent fails or is cancelled
-        if status in self._CASCADE_CANCEL_STATUSES:
-            self._cascade_cancel_children(task_id, reason=f"parent_{status}")
-
-    def update_task_budget(self, task_id: str, *, budget_tokens_used: int) -> None:
-        """Update the budget_tokens_used counter for a task."""
-        now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
-                "UPDATE tasks SET budget_tokens_used = ?, updated_at = ? WHERE task_id = ?",
-                (budget_tokens_used, now, task_id),
-            )
-
-    def _cascade_cancel_children(self, parent_task_id: str, *, reason: str) -> None:
-        """Cancel all non-terminal child tasks when a parent reaches a terminal failure state."""
-        children = self.list_child_tasks(parent_task_id=parent_task_id)
-        for child in children:
-            if child.status not in self._TERMINAL_TASK_STATUSES:
-                self.update_task_status(
-                    child.task_id,
-                    "cancelled",
-                    payload={"reason": reason, "cascaded_from": parent_task_id},
-                )
-
     def get_last_task_for_conversation(self, conversation_id: str) -> TaskRecord | None:
-        row = self._row(
-            "SELECT * FROM tasks WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1",
-            (conversation_id,),
-        )
+        with self._lock:
+            row = self._row(
+                "SELECT * FROM tasks WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1",
+                (conversation_id,),
+            )
         return self._task_from_row(row) if row is not None else None
 
     def create_step(
@@ -375,48 +317,28 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         title: str | None = None,
         contract_ref: str | None = None,
         depends_on: list[str] | None = None,
-        join_strategy: str = "all_required",
-        input_bindings: dict[str, str] | None = None,
         max_attempts: int = 1,
-        node_key: str | None = None,
-        verification_required: bool = False,
-        verifies: list[str] | None = None,
-        supersedes: list[str] | None = None,
     ) -> StepRecord:
         now = time.time()
         step_id = self._id("step")
-        dep_list = list(depends_on or [])
-        verifies_list = list(verifies or [])
-        supersedes_list = list(supersedes or [])
-        effective_status = "waiting" if dep_list else status
-        if dep_list:
-            self._check_dag_cycles(task_id, step_id, dep_list)
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 INSERT INTO steps (
-                    step_id, task_id, kind, status, attempt, node_key, title, contract_ref,
-                    depends_on_json, join_strategy, input_bindings_json,
-                    max_attempts, verification_required, verifies_json, supersedes_json,
-                    started_at, created_at, updated_at
+                    step_id, task_id, kind, status, attempt, title, contract_ref,
+                    depends_on_json, max_attempts, started_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
                     task_id,
                     kind,
-                    effective_status,
-                    node_key,
+                    status,
                     title or kind,
                     contract_ref,
-                    json.dumps(dep_list, ensure_ascii=False),
-                    join_strategy,
-                    json.dumps(dict(input_bindings or {}), ensure_ascii=False),
+                    json.dumps(list(depends_on or []), ensure_ascii=False),
                     max(int(max_attempts or 1), 1),
-                    int(verification_required),
-                    json.dumps(verifies_list, ensure_ascii=False),
-                    json.dumps(supersedes_list, ensure_ascii=False),
                     now,
                     now,
                     now,
@@ -433,18 +355,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 payload={
                     "task_id": task_id,
                     "kind": kind,
-                    "status": effective_status,
+                    "status": status,
                     "attempt": 1,
-                    "node_key": node_key,
                     "title": title or kind,
                     "contract_ref": contract_ref,
-                    "depends_on": dep_list,
-                    "join_strategy": join_strategy,
-                    "input_bindings": dict(input_bindings or {}),
+                    "depends_on": list(depends_on or []),
                     "max_attempts": max(int(max_attempts or 1), 1),
-                    "verification_required": verification_required,
-                    "verifies": verifies_list,
-                    "supersedes": supersedes_list,
                     "input_ref": None,
                     "output_ref": None,
                     "started_at": now,
@@ -457,69 +373,9 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         assert step is not None
         return step
 
-    def get_step_by_node_key(self, task_id: str, node_key: str) -> StepRecord | None:
-        """Look up a step by its DAG node key within a task."""
-        row = self._row(
-            "SELECT * FROM steps WHERE task_id = ? AND node_key = ? LIMIT 1",
-            (task_id, node_key),
-        )
-        return self._step_from_row(row) if row is not None else None
-
-    def get_key_to_step_id(self, task_id: str) -> dict[str, str]:
-        """Return a mapping of node_key → step_id for all steps in a task.
-
-        Fix 3: persists the key_to_step_id mapping via the node_key column so
-        callers can reconstruct symbolic bindings without keeping the in-memory
-        dict returned by materialize().
-        Only includes steps that have a non-null node_key.
-        """
-        rows = self._rows(
-            "SELECT step_id, node_key FROM steps WHERE task_id = ? AND node_key IS NOT NULL",
-            (task_id,),
-        )
-        return {str(row["node_key"]): str(row["step_id"]) for row in rows}
-
-    def _check_dag_cycles(self, task_id: str, new_step_id: str, depends_on: list[str]) -> None:
-        """Detect cycles in the step DAG before inserting a new step."""
-        rows = self._rows(
-            "SELECT step_id, depends_on_json FROM steps WHERE task_id = ?",
-            (task_id,),
-        )
-        adj: dict[str, list[str]] = {}
-        for row in rows:
-            sid = str(row["step_id"])
-            deps = list(json.loads(str(row["depends_on_json"] or "[]")))
-            adj[sid] = deps
-        adj[new_step_id] = list(depends_on)
-        visited: set[str] = set()
-        in_stack: set[str] = set()
-
-        def dfs(node: str) -> bool:
-            if node in in_stack:
-                return True
-            if node in visited:
-                return False
-            visited.add(node)
-            in_stack.add(node)
-            for dep in adj.get(node, []):
-                if dfs(dep):
-                    return True
-            in_stack.discard(node)
-            return False
-
-        for node in adj:
-            if dfs(node):
-                raise ValueError(f"Cycle detected in step DAG for task {task_id}")
-
-    def list_steps(self, *, task_id: str, limit: int = 1000) -> list[StepRecord]:
-        rows = self._rows(
-            "SELECT * FROM steps WHERE task_id = ? ORDER BY created_at ASC LIMIT ?",
-            (task_id, limit),
-        )
-        return [self._step_from_row(row) for row in rows]
-
     def get_step(self, step_id: str) -> StepRecord | None:
-        row = self._row("SELECT * FROM steps WHERE step_id = ?", (step_id,))
+        with self._lock:
+            row = self._row("SELECT * FROM steps WHERE step_id = ?", (step_id,))
         return self._step_from_row(row) if row is not None else None
 
     def update_step(
@@ -547,8 +403,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             "finished_at": finished_at if finished_at is not None else step.finished_at,
             "updated_at": now,
         }
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE steps
                 SET status = ?, output_ref = ?, contract_ref = ?, finished_at = ?, updated_at = ?
@@ -563,7 +419,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     step_id,
                 ),
             )
-            self._get_conn().execute(
+            self._conn.execute(
                 "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
                 (now, step.task_id),
             )
@@ -619,8 +475,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         now = time.time()
         step_attempt_id = self._id("attempt")
         normalized_context = sqlite_dict(context)
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 INSERT INTO step_attempts (
                     step_attempt_id, task_id, step_id, attempt, status, context_json,
@@ -712,18 +568,11 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return self.get_step_attempt(step_attempt_id)  # type: ignore[return-value]
 
     def get_step_attempt(self, step_attempt_id: str) -> StepAttemptRecord | None:
-        row = self._row("SELECT * FROM step_attempts WHERE step_attempt_id = ?", (step_attempt_id,))
+        with self._lock:
+            row = self._row(
+                "SELECT * FROM step_attempts WHERE step_attempt_id = ?", (step_attempt_id,)
+            )
         return self._step_attempt_from_row(row) if row is not None else None
-
-    def batch_get_step_attempts(self, step_attempt_ids: list[str]) -> dict[str, StepAttemptRecord]:
-        if not step_attempt_ids:
-            return {}
-        placeholders = ",".join("?" * len(step_attempt_ids))
-        rows = self._rows(
-            f"SELECT * FROM step_attempts WHERE step_attempt_id IN ({placeholders})",
-            tuple(step_attempt_ids),
-        )
-        return {str(row["step_attempt_id"]): self._step_attempt_from_row(row) for row in rows}
 
     def list_step_attempts(
         self,
@@ -747,7 +596,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM step_attempts {where} ORDER BY started_at DESC LIMIT ?"
         params.append(limit)
-        rows = self._rows(query, tuple(params))
+        with self._lock:
+            rows = self._rows(query, tuple(params))
         return [self._step_attempt_from_row(row) for row in rows]
 
     def list_ready_step_attempts(self, *, limit: int = 100) -> list[StepAttemptRecord]:
@@ -762,65 +612,39 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             ORDER BY sa.queue_priority DESC, sa.started_at ASC
             LIMIT ?
         """
-        rows = self._rows(query, (limit,))
+        with self._lock:
+            rows = self._rows(query, (limit,))
         return [self._step_attempt_from_row(row) for row in rows]
 
     def claim_next_ready_step_attempt(self) -> StepAttemptRecord | None:
-        now = time.time()
-        conn = self._get_conn()
-        with conn:
-            # Atomic claim via UPDATE...RETURNING: combines SELECT + CAS into one
-            # statement.  The subquery finds the best candidate; the UPDATE only
-            # touches rows still in 'ready' status, so concurrent threads cannot
-            # double-claim.
+        with self._lock, self._conn:
             row = self._row(
                 """
-                UPDATE step_attempts
-                SET status = 'running', claimed_at = ?
-                WHERE step_attempt_id = (
-                    SELECT sa.step_attempt_id
-                    FROM step_attempts sa
-                    JOIN steps s ON s.step_id = sa.step_id
-                    JOIN tasks t ON t.task_id = sa.task_id
-                    WHERE sa.status = 'ready'
-                      AND s.status = 'ready'
-                      AND t.status IN ('queued', 'running')
-                      AND NOT EXISTS (
-                          SELECT 1 FROM steps dep
-                          WHERE dep.task_id = s.task_id
-                            AND dep.step_id IN (
-                                SELECT value FROM json_each(s.depends_on_json)
-                            )
-                            AND dep.status NOT IN (
-                                'succeeded', 'completed', 'skipped'
-                            )
-                      )
-                      AND NOT EXISTS (
-                          SELECT 1 FROM step_attempts sa2
-                          WHERE sa2.step_id = sa.step_id
-                            AND sa2.status IN (
-                                'running', 'dispatching', 'reconciling',
-                                'observing', 'contracting', 'preflighting'
-                            )
-                      )
-                    ORDER BY sa.queue_priority DESC, sa.started_at ASC
-                    LIMIT 1
-                )
-                RETURNING *
-                """,
-                (now,),
+                SELECT sa.*
+                FROM step_attempts sa
+                JOIN steps s ON s.step_id = sa.step_id
+                JOIN tasks t ON t.task_id = sa.task_id
+                WHERE sa.status = 'ready'
+                  AND s.status = 'ready'
+                  AND t.status IN ('queued', 'running')
+                ORDER BY sa.queue_priority DESC, sa.started_at ASC
+                LIMIT 1
+                """
             )
             if row is None:
                 return None
             attempt = self._step_attempt_from_row(row)
-            # Cascade status updates for step and task.
-            conn.execute(
-                "UPDATE steps SET status = 'running', finished_at = NULL WHERE step_id = ?",
-                (attempt.step_id,),
+            self._conn.execute(
+                "UPDATE step_attempts SET status = ? WHERE step_attempt_id = ?",
+                ("running", attempt.step_attempt_id),
             )
-            conn.execute(
-                "UPDATE tasks SET status = 'running', updated_at = ? WHERE task_id = ?",
-                (now, attempt.task_id),
+            self._conn.execute(
+                "UPDATE steps SET status = ?, finished_at = NULL WHERE step_id = ?",
+                ("running", attempt.step_id),
+            )
+            self._conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
+                ("running", time.time(), attempt.task_id),
             )
             self._append_event_tx(
                 event_id=self._id("event"),
@@ -833,368 +657,6 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 payload={"status": "running", "attempt": attempt.attempt},
             )
         return self.get_step_attempt(attempt.step_attempt_id)
-
-    _TERMINAL_STEP_STATUSES = frozenset({"succeeded", "completed", "skipped", "failed"})
-
-    def activate_waiting_dependents(self, task_id: str, completed_step_id: str) -> list[str]:
-        """Activate waiting steps whose dependencies are all satisfied.
-
-        Returns the list of step_ids that were activated (waiting → ready).
-        """
-        activated: list[str] = []
-        candidates = self._rows(
-            """
-            SELECT s.step_id, s.depends_on_json, s.join_strategy
-            FROM steps s, json_each(s.depends_on_json) dep
-            WHERE s.task_id = ? AND s.status = 'waiting'
-              AND dep.value = ?
-            GROUP BY s.step_id
-            """,
-            (task_id, completed_step_id),
-        )
-        for row in candidates:
-            step_id = str(row["step_id"])
-            deps = list(json.loads(str(row["depends_on_json"] or "[]")))
-            strategy = str(row["join_strategy"] or "all_required")
-            if self._join_barrier_satisfied(task_id, deps, strategy):
-                now = time.time()
-                with self._get_conn():
-                    self._get_conn().execute(
-                        "UPDATE steps SET status = 'ready', updated_at = ? WHERE step_id = ?",
-                        (now, step_id),
-                    )
-                    self._get_conn().execute(
-                        """
-                        UPDATE step_attempts SET status = 'ready'
-                        WHERE step_id = ? AND status = 'waiting'
-                        """,
-                        (step_id,),
-                    )
-                    self._append_event_tx(
-                        event_id=self._id("event"),
-                        event_type="step.dependency_satisfied",
-                        entity_type="step",
-                        entity_id=step_id,
-                        task_id=task_id,
-                        step_id=step_id,
-                        actor="kernel",
-                        payload={
-                            "activated_by": completed_step_id,
-                            "strategy": strategy,
-                        },
-                    )
-                activated.append(step_id)
-        return activated
-
-    def _join_barrier_satisfied(self, task_id: str, deps: list[str], strategy: str) -> bool:
-        """Check if the join barrier for a step is satisfied based on strategy."""
-        if not deps:
-            return True
-        rows = self._rows(
-            "SELECT step_id, status FROM steps WHERE task_id = ? AND step_id IN ({})".format(
-                ",".join("?" for _ in deps)
-            ),
-            (task_id, *deps),
-        )
-        statuses = {str(r["step_id"]): str(r["status"]) for r in rows}
-        succeeded = sum(1 for s in statuses.values() if s in ("succeeded", "completed", "skipped"))
-        failed = sum(1 for s in statuses.values() if s == "failed")
-        total = len(deps)
-        terminal = succeeded + failed
-
-        if strategy == "all_required":
-            return succeeded == total
-        elif strategy == "any_sufficient":
-            return succeeded >= 1
-        elif strategy == "majority":
-            return succeeded > total / 2
-        elif strategy == "best_effort":
-            return terminal == total
-        return succeeded == total
-
-    def propagate_step_failure(self, task_id: str, failed_step_id: str) -> list[str]:
-        """Cascade failure to downstream waiting steps (all_required strategy)."""
-        cascaded: list[str] = []
-        waiting = self._rows(
-            """
-            SELECT s.step_id, s.depends_on_json, s.join_strategy
-            FROM steps s, json_each(s.depends_on_json) dep
-            WHERE s.task_id = ? AND s.status = 'waiting'
-              AND dep.value = ?
-            GROUP BY s.step_id
-            """,
-            (task_id, failed_step_id),
-        )
-        for row in waiting:
-            step_id = str(row["step_id"])
-            deps = list(json.loads(str(row["depends_on_json"] or "[]")))
-            strategy = str(row["join_strategy"] or "all_required")
-            should_cascade = False
-            if strategy == "all_required":
-                should_cascade = True
-            elif strategy == "any_sufficient":
-                all_deps_rows = self._rows(
-                    "SELECT step_id, status FROM steps WHERE task_id = ? AND step_id IN ({})".format(
-                        ",".join("?" for _ in deps)
-                    ),
-                    (task_id, *deps),
-                )
-                all_failed = all(str(r["status"]) == "failed" for r in all_deps_rows)
-                should_cascade = all_failed
-            elif strategy == "majority":
-                all_deps_rows = self._rows(
-                    "SELECT step_id, status FROM steps WHERE task_id = ? AND step_id IN ({})".format(
-                        ",".join("?" for _ in deps)
-                    ),
-                    (task_id, *deps),
-                )
-                failed_count = sum(1 for r in all_deps_rows if str(r["status"]) == "failed")
-                should_cascade = failed_count > len(deps) / 2
-
-            if should_cascade:
-                now = time.time()
-                with self._get_conn():
-                    self._get_conn().execute(
-                        "UPDATE steps SET status = 'failed', finished_at = ?, updated_at = ? WHERE step_id = ?",
-                        (now, now, step_id),
-                    )
-                    self._get_conn().execute(
-                        """
-                        UPDATE step_attempts SET status = 'failed',
-                            waiting_reason = 'dependency_failed', finished_at = ?
-                        WHERE step_id = ? AND status = 'waiting'
-                        """,
-                        (now, step_id),
-                    )
-                    self._append_event_tx(
-                        event_id=self._id("event"),
-                        event_type="step.dependency_failed",
-                        entity_type="step",
-                        entity_id=step_id,
-                        task_id=task_id,
-                        step_id=step_id,
-                        actor="kernel",
-                        payload={
-                            "failed_dependency": failed_step_id,
-                            "strategy": strategy,
-                        },
-                    )
-                cascaded.append(step_id)
-                cascaded.extend(self.propagate_step_failure(task_id, step_id))
-
-        # Fix 5: after cascading failures, activate any best_effort steps whose
-        # barriers are now fully satisfied (all deps terminal, some may have failed).
-        self.activate_waiting_dependents(task_id, failed_step_id)
-        return cascaded
-
-    def retry_step(
-        self,
-        task_id: str,
-        step_id: str,
-        *,
-        queue_priority: int = 0,
-    ) -> StepAttemptRecord:
-        """Atomically increment the step attempt counter and create a new ready attempt.
-
-        Fix 1: encapsulates the retry logic so callers never need raw _get_conn() access.
-        Called when a step fails but has remaining attempts (step.attempt < step.max_attempts).
-        Updates ``steps.attempt``, resets ``steps.status`` to ``ready``, clears
-        ``steps.finished_at``, and inserts a new ``step_attempts`` row with the
-        incremented attempt number.
-
-        Returns the newly created StepAttemptRecord.
-        """
-        step = self.get_step(step_id)
-        if step is None:
-            raise ValueError(f"Step {step_id!r} not found")
-        next_attempt_num = step.attempt + 1
-        now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
-                """
-                UPDATE steps
-                SET attempt = ?, status = 'ready', finished_at = NULL, updated_at = ?
-                WHERE step_id = ?
-                """,
-                (next_attempt_num, now, step_id),
-            )
-            self._get_conn().execute(
-                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
-                (now, task_id),
-            )
-            self._append_event_tx(
-                event_id=self._id("event"),
-                event_type="step.retry_scheduled",
-                entity_type="step",
-                entity_id=step_id,
-                task_id=task_id,
-                step_id=step_id,
-                actor="kernel",
-                payload={
-                    "attempt": next_attempt_num,
-                    "max_attempts": step.max_attempts,
-                    "previous_attempt": step.attempt,
-                },
-            )
-        return self.create_step_attempt(
-            task_id=task_id,
-            step_id=step_id,
-            attempt=next_attempt_num,
-            status="ready",
-            queue_priority=queue_priority,
-        )
-
-    def skip_step(
-        self,
-        task_id: str,
-        step_id: str,
-        *,
-        reason: str = "",
-    ) -> None:
-        """Mark a step as skipped (terminal) and activate downstream dependents.
-
-        Sets step status to ``skipped``, closes any waiting step_attempts,
-        emits a ``dag.topology_changed`` event, and then activates downstream
-        dependents so the DAG can continue.
-        """
-        now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
-                """
-                UPDATE steps
-                SET status = 'skipped', finished_at = ?, updated_at = ?
-                WHERE step_id = ?
-                """,
-                (now, now, step_id),
-            )
-            self._get_conn().execute(
-                """
-                UPDATE step_attempts
-                SET status = 'skipped', finished_at = ?
-                WHERE step_id = ? AND status IN ('waiting', 'ready')
-                """,
-                (now, step_id),
-            )
-            self._get_conn().execute(
-                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
-                (now, task_id),
-            )
-            self._append_event_tx(
-                event_id=self._id("event"),
-                event_type="dag.topology_changed",
-                entity_type="step",
-                entity_id=step_id,
-                task_id=task_id,
-                step_id=step_id,
-                actor="kernel",
-                payload={
-                    "mutation": "skip_step",
-                    "step_id": step_id,
-                    "reason": reason,
-                },
-            )
-        # Activate downstream dependents (skipped counts as success).
-        self.activate_waiting_dependents(task_id, step_id)
-
-    def update_step_depends_on(
-        self,
-        step_id: str,
-        *,
-        task_id: str,
-        new_depends_on: list[str],
-    ) -> None:
-        """Update the dependencies of a step and recalculate its status.
-
-        If ``new_depends_on`` is empty and the step was waiting, it becomes
-        ``ready``.  If all new dependencies are in a terminal success state,
-        the step also becomes ``ready``.  Otherwise it remains ``waiting``.
-
-        Emits a ``dag.topology_changed`` event with before/after snapshots.
-        """
-        step = self.get_step(step_id)
-        if step is None:
-            return
-        old_depends_on = list(step.depends_on)
-        now = time.time()
-
-        # Determine new status
-        if not new_depends_on:
-            new_status = "ready"
-        else:
-            # Check if all new deps are in terminal success
-            rows = self._rows(
-                "SELECT step_id, status FROM steps WHERE task_id = ? AND step_id IN ({})".format(
-                    ",".join("?" for _ in new_depends_on)
-                ),
-                (task_id, *new_depends_on),
-            )
-            dep_statuses = {str(r["step_id"]): str(r["status"]) for r in rows}
-            all_success = all(
-                dep_statuses.get(d) in ("succeeded", "completed", "skipped") for d in new_depends_on
-            )
-            new_status = "ready" if all_success else "waiting"
-
-        with self._get_conn():
-            self._get_conn().execute(
-                """
-                UPDATE steps
-                SET depends_on_json = ?, status = ?, updated_at = ?
-                WHERE step_id = ?
-                """,
-                (json.dumps(new_depends_on, ensure_ascii=False), new_status, now, step_id),
-            )
-            # Also update step_attempts status if changing to ready
-            if new_status == "ready" and step.status == "waiting":
-                self._get_conn().execute(
-                    """
-                    UPDATE step_attempts
-                    SET status = 'ready'
-                    WHERE step_id = ? AND status = 'waiting'
-                    """,
-                    (step_id,),
-                )
-            elif new_status == "waiting" and step.status == "ready":
-                self._get_conn().execute(
-                    """
-                    UPDATE step_attempts
-                    SET status = 'waiting'
-                    WHERE step_id = ? AND status = 'ready'
-                    """,
-                    (step_id,),
-                )
-            self._get_conn().execute(
-                "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
-                (now, task_id),
-            )
-            self._append_event_tx(
-                event_id=self._id("event"),
-                event_type="dag.topology_changed",
-                entity_type="step",
-                entity_id=step_id,
-                task_id=task_id,
-                step_id=step_id,
-                actor="kernel",
-                payload={
-                    "mutation": "rewire_dependency",
-                    "step_id": step_id,
-                    "old_depends_on": old_depends_on,
-                    "new_depends_on": new_depends_on,
-                    "new_status": new_status,
-                },
-            )
-
-    def has_non_terminal_steps(self, task_id: str) -> bool:
-        """Check if there are any non-terminal steps for a task."""
-        row = self._row(
-            """
-            SELECT COUNT(*) as cnt FROM steps
-            WHERE task_id = ? AND status NOT IN (
-                'succeeded', 'completed', 'skipped', 'failed', 'needs_attention'
-            )
-            """,
-            (task_id,),
-        )
-        return bool(row and int(row["cnt"]) > 0)
 
     def update_step_attempt(
         self,
@@ -1414,8 +876,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         normalized_context = sqlite_dict(
             attempt.context if context is UNSET else context, default=dict(attempt.context or {})
         )
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE step_attempts
                 SET status = ?, context_json = ?, queue_priority = ?, waiting_reason = ?, approval_id = ?, decision_id = ?, capability_grant_id = ?, workspace_lease_id = ?, state_witness_ref = ?, context_pack_ref = ?, working_state_ref = ?, environment_ref = ?, action_request_ref = ?, policy_result_ref = ?, approval_packet_ref = ?, execution_contract_ref = ?, evidence_case_ref = ?, authorization_plan_ref = ?, reconciliation_ref = ?, pending_execution_ref = ?, idempotency_key = ?, executor_mode = ?, policy_version = ?, contract_version = ?, reentry_boundary = ?, reentry_reason = ?, selected_contract_template_ref = ?, resume_from_ref = ?, superseded_by_step_attempt_id = ?, finished_at = ?
@@ -1472,64 +934,6 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 },
             )
 
-    def try_supersede_step_attempt(
-        self,
-        step_attempt_id: str,
-        *,
-        finished_at: float,
-    ) -> bool:
-        """Atomically transition a step attempt to *superseded*.
-
-        This is a compare-and-swap (CAS) guard: the UPDATE is conditioned on
-        the attempt being in an active (non-terminal) status, so at most one
-        concurrent caller can win.  Both ``running`` and ``awaiting_approval``
-        are valid supersedable states — a drift detected while the attempt is
-        blocked waiting for approval must also trigger supersession so that a
-        fresh successor is created with the correct evidence.
-
-        Returns ``True`` if the transition succeeded (rowcount == 1) and
-        ``False`` if the attempt was already in a terminal/superseded state
-        (e.g. another thread beat us to it).
-        """
-        with self._get_conn() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE step_attempts
-                SET status = 'superseded', finished_at = ?
-                WHERE step_attempt_id = ?
-                  AND status IN ('running', 'awaiting_approval')
-                """,
-                (finished_at, step_attempt_id),
-            )
-            return cursor.rowcount == 1
-
-    def try_finalize_step_attempt(
-        self,
-        step_attempt_id: str,
-        *,
-        status: str,
-        finished_at: float,
-    ) -> bool:
-        """Atomically transition a step attempt to a terminal status.
-
-        This is a compare-and-swap (CAS) guard: the UPDATE is conditioned on
-        the attempt NOT already being in a terminal state, so at most one
-        concurrent caller can win.  Returns ``True`` if the transition
-        succeeded (rowcount == 1) and ``False`` if the attempt was already in
-        a terminal/superseded state (e.g. another worker beat us to it).
-        """
-        with self._get_conn() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE step_attempts
-                SET status = ?, finished_at = ?
-                WHERE step_attempt_id = ?
-                  AND status NOT IN ('succeeded', 'completed', 'skipped', 'failed', 'superseded')
-                """,
-                (status, finished_at, step_attempt_id),
-            )
-            return cursor.rowcount == 1
-
     def create_ingress(
         self,
         *,
@@ -1554,8 +958,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             if actor is not None
             else None
         )
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 INSERT INTO ingresses (
                     ingress_id, conversation_id, source_channel, actor_principal_id, raw_text, normalized_text,
@@ -1603,7 +1007,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return ingress
 
     def get_ingress(self, ingress_id: str) -> IngressRecord | None:
-        row = self._row("SELECT * FROM ingresses WHERE ingress_id = ?", (ingress_id,))
+        with self._lock:
+            row = self._row("SELECT * FROM ingresses WHERE ingress_id = ?", (ingress_id,))
         return self._ingress_from_row(row) if row is not None else None
 
     def list_ingresses(
@@ -1628,19 +1033,21 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM ingresses {where} ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        rows = self._rows(query, tuple(params))
+        with self._lock:
+            rows = self._rows(query, tuple(params))
         return [self._ingress_from_row(row) for row in rows]
 
     def count_pending_ingresses(self, *, conversation_id: str) -> int:
-        row = self._row(
-            """
-            SELECT COUNT(*) AS count
-            FROM ingresses
-            WHERE conversation_id = ?
-              AND status IN ('received', 'pending_disambiguation')
-            """,
-            (conversation_id,),
-        )
+        with self._lock:
+            row = self._row(
+                """
+                SELECT COUNT(*) AS count
+                FROM ingresses
+                WHERE conversation_id = ?
+                  AND status IN ('received', 'pending_disambiguation')
+                """,
+                (conversation_id,),
+            )
         return int(row["count"] if row is not None else 0)
 
     def update_ingress(
@@ -1692,8 +1099,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         }
         chosen_task_id_value = cast(str | None, payload["chosen_task_id"])
         now = time.time()
-        with self._get_conn():
-            self._get_conn().execute(
+        with self._lock, self._conn:
+            self._conn.execute(
                 """
                 UPDATE ingresses
                 SET status = ?, resolution = ?, chosen_task_id = ?, parent_task_id = ?,
@@ -1735,33 +1142,74 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 },
             )
 
+    def append_event(
+        self,
+        *,
+        event_type: str,
+        entity_type: str,
+        entity_id: str,
+        task_id: str | None,
+        step_id: str | None = None,
+        actor: str = "kernel",
+        payload: dict[str, Any] | None = None,
+        causation_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> str:
+        event_id = self._id("event")
+        with self._lock, self._conn:
+            self._append_event_tx(
+                event_id=event_id,
+                event_type=event_type,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                task_id=task_id,
+                step_id=step_id,
+                actor=actor,
+                payload=payload,
+                causation_id=causation_id,
+                correlation_id=correlation_id,
+            )
+        return event_id
+
     def list_events(
         self,
         *,
         task_id: str | None = None,
-        event_type: str | None = None,
         after_event_seq: int | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         if task_id:
-            clauses.append("task_id = ?")
+            clauses.append("e.task_id = ?")
             params.append(task_id)
-        if event_type:
-            clauses.append("event_type = ?")
-            params.append(event_type)
         if after_event_seq is not None:
-            clauses.append("event_seq > ?")
+            clauses.append("e.event_seq > ?")
             params.append(after_event_seq)
         if clauses:
             where = f"WHERE {' AND '.join(clauses)}"
-            query = f"SELECT * FROM events {where} ORDER BY event_seq ASC LIMIT ?"
+            query = f"""
+                SELECT e.*, eh.event_hash AS eh_event_hash,
+                       eh.prev_event_hash AS eh_prev_event_hash,
+                       eh.hash_chain_algo AS eh_hash_chain_algo
+                FROM events e
+                LEFT JOIN event_hashes eh ON eh.event_seq = e.event_seq
+                {where}
+                ORDER BY e.event_seq ASC LIMIT ?
+            """
             params.append(limit)
         else:
-            query = "SELECT * FROM events ORDER BY event_seq DESC LIMIT ?"
+            query = """
+                SELECT e.*, eh.event_hash AS eh_event_hash,
+                       eh.prev_event_hash AS eh_prev_event_hash,
+                       eh.hash_chain_algo AS eh_hash_chain_algo
+                FROM events e
+                LEFT JOIN event_hashes eh ON eh.event_seq = e.event_seq
+                ORDER BY e.event_seq DESC LIMIT ?
+            """
             params = [limit]
-        rows = self._rows(query, tuple(params))
+        with self._lock:
+            rows = self._rows(query, tuple(params))
         return [
             {
                 "event_seq": int(row["event_seq"]),
@@ -1775,9 +1223,11 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 "actor": str(row["actor_principal_id"]),
                 "payload": json_loads(row["payload_json"]),
                 "occurred_at": float(row["occurred_at"]),
-                "event_hash": row["event_hash"],
-                "prev_event_hash": row["prev_event_hash"],
-                "hash_chain_algo": row["hash_chain_algo"],
+                "event_hash": row["eh_event_hash"] or row["event_hash"],
+                "prev_event_hash": row["eh_prev_event_hash"]
+                if row["eh_event_hash"]
+                else row["prev_event_hash"],
+                "hash_chain_algo": row["eh_hash_chain_algo"] or row["hash_chain_algo"],
             }
             for row in rows
         ]
@@ -1800,254 +1250,3 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 break
             yield from batch
             cursor = int(batch[-1]["event_seq"])
-
-    def list_events_for_tasks(
-        self,
-        task_ids: list[str],
-        *,
-        limit_per_task: int = 500,
-    ) -> dict[str, list[dict[str, Any]]]:
-        """Bulk-fetch events for multiple tasks in a single query.
-
-        Returns a mapping of ``task_id -> list[event_dict]`` ordered by
-        ``event_seq ASC`` within each task.  Tasks with no events are omitted.
-
-        SQLite does not support ``LIMIT`` per partition directly, so we fetch
-        all events for the supplied task IDs (bounded by
-        ``limit_per_task * len(task_ids)``) and enforce the per-task cap in
-        Python.  This is safe because callers typically pass O(10-200) tasks.
-        """
-        if not task_ids:
-            return {}
-        placeholders = ",".join("?" * len(task_ids))
-        total_limit = limit_per_task * len(task_ids)
-        rows = self._rows(
-            f"SELECT * FROM events WHERE task_id IN ({placeholders})"
-            f" ORDER BY event_seq ASC LIMIT ?",
-            (*task_ids, total_limit),
-        )
-        result: dict[str, list[dict[str, Any]]] = {}
-        per_task_counts: dict[str, int] = {}
-        for row in rows:
-            tid = row["task_id"]
-            if per_task_counts.get(tid, 0) >= limit_per_task:
-                continue
-            per_task_counts[tid] = per_task_counts.get(tid, 0) + 1
-            result.setdefault(tid, []).append(
-                {
-                    "event_seq": int(row["event_seq"]),
-                    "event_id": str(row["event_id"]),
-                    "task_id": row["task_id"],
-                    "step_id": row["step_id"],
-                    "entity_type": str(row["entity_type"]),
-                    "entity_id": str(row["entity_id"]),
-                    "event_type": str(row["event_type"]),
-                    "actor_principal_id": str(row["actor_principal_id"]),
-                    "actor": str(row["actor_principal_id"]),
-                    "payload": json_loads(row["payload_json"]),
-                    "occurred_at": float(row["occurred_at"]),
-                    "event_hash": row["event_hash"],
-                    "prev_event_hash": row["prev_event_hash"],
-                    "hash_chain_algo": row["hash_chain_algo"],
-                }
-            )
-        return result
-
-    def get_last_event_per_task(
-        self,
-        task_ids: list[str],
-    ) -> dict[str, dict[str, Any]]:
-        """Return the highest-``event_seq`` event for each task in a single query.
-
-        Uses a subquery to find the max ``event_seq`` per ``task_id``, then
-        joins back to fetch the full row.  Returns a mapping of
-        ``task_id -> event_dict`` (tasks with no events are omitted).
-        """
-        if not task_ids:
-            return {}
-        placeholders = ",".join("?" * len(task_ids))
-        rows = self._rows(
-            f"""
-            SELECT e.*
-            FROM events e
-            INNER JOIN (
-                SELECT task_id, MAX(event_seq) AS max_seq
-                FROM events
-                WHERE task_id IN ({placeholders})
-                GROUP BY task_id
-            ) latest ON e.task_id = latest.task_id AND e.event_seq = latest.max_seq
-            """,
-            tuple(task_ids),
-        )
-        return {
-            row["task_id"]: {
-                "event_seq": int(row["event_seq"]),
-                "event_id": str(row["event_id"]),
-                "task_id": row["task_id"],
-                "step_id": row["step_id"],
-                "entity_type": str(row["entity_type"]),
-                "entity_id": str(row["entity_id"]),
-                "event_type": str(row["event_type"]),
-                "actor_principal_id": str(row["actor_principal_id"]),
-                "actor": str(row["actor_principal_id"]),
-                "payload": json_loads(row["payload_json"]),
-                "occurred_at": float(row["occurred_at"]),
-                "event_hash": row["event_hash"],
-                "prev_event_hash": row["prev_event_hash"],
-                "hash_chain_algo": row["hash_chain_algo"],
-            }
-            for row in rows
-        }
-
-    # ------------------------------------------------------------------
-    # Health query helpers
-    # ------------------------------------------------------------------
-
-    _ACTIVE_TASK_STATUSES = frozenset({"queued", "running", "blocked", "planning_ready"})
-    _TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
-
-    def list_active_tasks(self, *, limit: int = 500) -> list[TaskRecord]:
-        """Return all tasks that are currently in an active (non-terminal) state.
-
-        Active statuses are: ``queued``, ``running``, ``blocked``,
-        ``planning_ready``.
-
-        Args:
-            limit: Maximum number of records to return.
-        """
-        placeholders = ",".join("?" * len(self._ACTIVE_TASK_STATUSES))
-        rows = self._rows(
-            f"SELECT * FROM tasks WHERE status IN ({placeholders}) ORDER BY created_at DESC LIMIT ?",
-            (*self._ACTIVE_TASK_STATUSES, limit),
-        )
-        return [self._task_from_row(row) for row in rows]
-
-    def has_active_task_with_goal(self, goal: str, *, policy_profile: str | None = None) -> bool:
-        """Return True if an active (non-terminal) task with the given goal exists.
-
-        When ``policy_profile`` is specified, only tasks matching that profile
-        are considered.  This is used for deduplication — e.g. preventing
-        multiple memory-promotion tasks from piling up.
-        """
-        placeholders = ",".join("?" * len(self._ACTIVE_TASK_STATUSES))
-        if policy_profile is not None:
-            row = self._row(
-                f"""
-                SELECT 1 FROM tasks
-                WHERE goal = ?
-                  AND status IN ({placeholders})
-                  AND policy_profile = ?
-                LIMIT 1
-                """,
-                (goal, *self._ACTIVE_TASK_STATUSES, policy_profile),
-            )
-        else:
-            row = self._row(
-                f"""
-                SELECT 1 FROM tasks
-                WHERE goal = ?
-                  AND status IN ({placeholders})
-                LIMIT 1
-                """,
-                (goal, *self._ACTIVE_TASK_STATUSES),
-            )
-        return row is not None
-
-    def list_terminal_tasks_since(self, *, since: float, limit: int = 500) -> list[TaskRecord]:
-        """Return tasks that reached a terminal state after *since* (Unix ts).
-
-        Terminal statuses are: ``completed``, ``failed``, ``cancelled``.
-
-        Args:
-            since: Unix timestamp lower bound (inclusive) on ``updated_at``.
-            limit: Maximum number of records to return.
-        """
-        placeholders = ",".join("?" * len(self._TERMINAL_TASK_STATUSES))
-        rows = self._rows(
-            f"""
-            SELECT * FROM tasks
-            WHERE status IN ({placeholders})
-              AND updated_at >= ?
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
-            (*self._TERMINAL_TASK_STATUSES, since, limit),
-        )
-        return [self._task_from_row(row) for row in rows]
-
-    def count_steps_by_status(self, *, task_id: str) -> dict[str, int]:
-        """Return a mapping of step ``status`` → count for a given task.
-
-        Only counts rows from the ``steps`` table; step attempt records are
-        not included.
-
-        Args:
-            task_id: The task to count steps for.
-        """
-        rows = self._rows(
-            "SELECT status, COUNT(*) AS n FROM steps WHERE task_id = ? GROUP BY status",
-            (task_id,),
-        )
-        return {str(row["status"]): int(row["n"]) for row in rows}
-
-    # ── Health monitor queries ──────────────────────────────────────────
-
-    def list_stale_tasks(
-        self, *, threshold_seconds: float = 600.0, limit: int = 50
-    ) -> list[TaskRecord]:
-        """Return active tasks that have not been updated within *threshold_seconds*.
-
-        Only considers tasks whose status is in ``_ACTIVE_TASK_STATUSES``
-        (running, blocked, queued, planning_ready).
-        """
-        cutoff = time.time() - max(0.0, threshold_seconds)
-        placeholders = ",".join("?" * len(self._ACTIVE_TASK_STATUSES))
-        rows = self._rows(
-            f"""
-            SELECT * FROM tasks
-            WHERE status IN ({placeholders})
-              AND updated_at < ?
-            ORDER BY updated_at ASC
-            LIMIT ?
-            """,
-            (*self._ACTIVE_TASK_STATUSES, cutoff, limit),
-        )
-        return [self._task_from_row(row) for row in rows]
-
-    def count_tasks_by_status(self) -> dict[str, int]:
-        """Return a mapping of task ``status`` → count across all tasks."""
-        rows = self._rows(
-            "SELECT status, COUNT(*) AS n FROM tasks GROUP BY status",
-            (),
-        )
-        return {str(row["status"]): int(row["n"]) for row in rows}
-
-    def list_recent_failures(
-        self, *, window_seconds: float = 86400.0, limit: int = 50
-    ) -> list[TaskRecord]:
-        """Return tasks that failed within the given time window."""
-        cutoff = time.time() - max(0.0, window_seconds)
-        rows = self._rows(
-            """
-            SELECT * FROM tasks
-            WHERE status = 'failed'
-              AND updated_at > ?
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
-            (cutoff, limit),
-        )
-        return [self._task_from_row(row) for row in rows]
-
-    def count_completed_in_window(self, window_seconds: float = 3600.0) -> int:
-        """Count tasks that reached a terminal success state within *window_seconds*."""
-        cutoff = time.time() - max(0.0, window_seconds)
-        row = self._row(
-            """
-            SELECT COUNT(*) AS n FROM tasks
-            WHERE status IN ('completed', 'succeeded')
-              AND updated_at > ?
-            """,
-            (cutoff,),
-        )
-        return int(row["n"]) if row else 0

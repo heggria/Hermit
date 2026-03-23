@@ -7,6 +7,8 @@ from typing import Any, cast
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.compiler.compiler import ContextCompiler
+from hermit.kernel.context.memory.memory_quality import MemoryQualityService
+from hermit.kernel.context.memory.retrieval import HybridRetrievalService
 from hermit.kernel.context.models.context import (
     CompiledProviderInput,
     TaskExecutionContext,
@@ -48,7 +50,13 @@ class ProviderInputCompiler:
     def __init__(self, store: KernelStore, artifact_store: ArtifactStore | None = None) -> None:
         self.store = store
         self.artifact_store = artifact_store
-        self.context_compiler = ContextCompiler(artifact_store=artifact_store)
+        quality_service = MemoryQualityService()
+        retrieval_service = HybridRetrievalService(quality_service=quality_service)
+        self.context_compiler = ContextCompiler(
+            artifact_store=artifact_store,
+            retrieval_service=retrieval_service,
+            store=store,
+        )
         self.task_projections = ProjectionService(store)
         self.conversation_projections = ConversationProjectionService(store, artifact_store)
         self.planning = PlanningService(store, artifact_store)
@@ -158,6 +166,8 @@ class ProviderInputCompiler:
             str(task_projection.get("topic", {}).get("summary", "") or ""), 200
         )
 
+        blackboard_entries = self._query_blackboard_entries(task_context.task_id)
+
         pack = self.context_compiler.compile(
             context=task_context,
             working_state=WorkingStateSnapshot(
@@ -203,6 +213,7 @@ class ProviderInputCompiler:
             focus_summary=self._focus_summary(task_context, projection_payload),
             bound_ingress_deltas=self._bound_ingress_deltas(task_context),
             session_projection_ref=projection_payload.get("artifact_ref"),
+            blackboard_entries=blackboard_entries,
         )
         context_pack_ref = self._store_context_pack(task_context=task_context, pack=pack)
         working_state_ref = self._store_working_state(
@@ -360,6 +371,25 @@ class ProviderInputCompiler:
             if len(refs) >= 10:
                 break
         return refs
+
+    def _query_blackboard_entries(self, task_id: str) -> list[dict[str, Any]]:
+        """Query active blackboard entries for a task, with graceful fallback."""
+        if not hasattr(self.store, "query_blackboard_entries"):
+            return []
+        try:
+            entries = self.store.query_blackboard_entries(task_id=task_id, status="active")
+            return [
+                {
+                    "entry_id": e.entry_id,
+                    "entry_type": e.entry_type,
+                    "content": dict(e.content) if e.content else {},
+                    "confidence": e.confidence,
+                    "step_id": e.step_id,
+                }
+                for e in entries
+            ]
+        except Exception:
+            return []
 
     def _store_ingress_artifact(
         self,
@@ -575,15 +605,13 @@ class ProviderInputCompiler:
         for d in directives:
             if d.disposition == "pending":
                 self.store.update_steering_disposition(d.directive_id, "acknowledged")
-                disposition_value = "acknowledged"
-            else:
-                disposition_value = d.disposition
+                d.disposition = "acknowledged"
             items.append(
                 {
                     "directive_id": d.directive_id,
                     "steering_type": d.steering_type,
                     "directive": d.directive,
-                    "disposition": disposition_value,
+                    "disposition": d.disposition,
                     "issued_by": d.issued_by,
                     "created_at": d.created_at,
                 }

@@ -49,3 +49,4 @@ reports/
 # Test artifacts
 *.cover
 MagicMock
+.claude/worktrees/

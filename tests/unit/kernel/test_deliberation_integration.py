@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,7 +15,28 @@ from hermit.kernel.execution.competition.deliberation import (
 from hermit.kernel.execution.competition.deliberation_integration import (
     DeliberationIntegration,
 )
+from hermit.kernel.execution.competition.llm_arbitrator import ArbitrationEngine
+from hermit.kernel.execution.competition.llm_critic import CritiqueGenerator
+from hermit.kernel.execution.competition.llm_proposer import ProposalGenerator
 from hermit.kernel.ledger.journal.store import KernelStore
+
+
+def _make_arbitrator() -> ArbitrationEngine:
+    """Create an ArbitrationEngine with a mock provider that falls back."""
+    response = json.dumps({
+        "selected_candidate_id": "placeholder",
+        "confidence": 0.8,
+        "reasoning": "test",
+    })
+
+    def factory() -> Any:
+        p = MagicMock()
+        p.generate.return_value = SimpleNamespace(
+            content=[{"type": "text", "text": response}]
+        )
+        return p
+
+    return ArbitrationEngine(factory, default_model="test-model")
 
 
 def _make_integration(
@@ -20,7 +44,21 @@ def _make_integration(
 ) -> tuple[DeliberationIntegration, KernelStore, ArtifactStore]:
     store = KernelStore(tmp_path / "state.db")
     artifact_store = ArtifactStore(tmp_path / "artifacts")
-    svc = DeliberationIntegration(store=store, artifact_store=artifact_store)
+
+    def factory() -> Any:
+        return MagicMock()
+
+    proposer = ProposalGenerator(factory, default_model="test-model")
+    critic = CritiqueGenerator(factory, default_model="test-model")
+    arbitrator = _make_arbitrator()
+
+    svc = DeliberationIntegration(
+        store=store,
+        artifact_store=artifact_store,
+        proposer=proposer,
+        critic=critic,
+        arbitrator=arbitrator,
+    )
     return svc, store, artifact_store
 
 
@@ -34,7 +72,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="low",
-            step_kind="read_file",
+            step_kind="read_local",
         )
         assert result["deliberation_required"] is False
         assert result["debate_id"] is None
@@ -45,7 +83,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="medium",
-            step_kind="read_file",
+            step_kind="read_local",
         )
         assert result["deliberation_required"] is False
 
@@ -55,7 +93,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         assert result["deliberation_required"] is True
         assert result["debate_id"] is not None
@@ -67,7 +105,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="critical",
-            step_kind="trivial",
+            step_kind="delegate_execution",
         )
         assert result["deliberation_required"] is True
         assert result["debate_id"] is not None
@@ -78,7 +116,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="medium",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         assert result["deliberation_required"] is True
 
@@ -88,7 +126,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="medium",
-            step_kind="patch",
+            step_kind="patch_file",
         )
         assert result["deliberation_required"] is True
 
@@ -98,7 +136,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="medium",
-            step_kind="deploy",
+            step_kind="external_mutation",
         )
         assert result["deliberation_required"] is True
 
@@ -118,7 +156,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="patch",
+            step_kind="patch_file",
         )
         events = store.list_events(event_type="deliberation.routed")
         assert len(events) >= 1
@@ -130,7 +168,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="patch",
+            step_kind="patch_file",
         )
         debate_id = result["debate_id"]
         bundle = svc.deliberation.get_debate(debate_id)
@@ -143,7 +181,7 @@ class TestEvaluateAndRoute:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         debate_id = result["debate_id"]
         bundle = svc.deliberation.get_debate(debate_id)
@@ -155,12 +193,12 @@ class TestEvaluateAndRoute:
         tmp_path: Path,
     ) -> None:
         svc, _store, _arts = _make_integration(tmp_path)
-        # "critical" risk with unknown step kind should still trigger
+        # "critical" risk with scheduler_mutation — maps to high_risk_planning
         result = svc.evaluate_and_route(
             task_id="t1",
             step_id="s1",
             risk_band="critical",
-            step_kind="unknown",
+            step_kind="scheduler_mutation",
         )
         debate_id = result["debate_id"]
         bundle = svc.deliberation.get_debate(debate_id)
@@ -177,7 +215,7 @@ class TestSubmitProposal:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -352,7 +390,7 @@ class TestSubmitCritique:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="patch",
+            step_kind="patch_file",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -512,7 +550,7 @@ class TestResolveDebate:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -537,7 +575,7 @@ class TestResolveDebate:
     def test_resolve_returns_decision_dict(self, tmp_path: Path) -> None:
         svc, _store, _arts = _make_integration(tmp_path)
         debate_id, c1, _c2 = self._setup_debate_with_proposals(svc)
-        decision = svc.resolve_debate(debate_id)
+        decision = svc.resolve_debate(debate_id, task_id="t1")
         assert isinstance(decision, dict)
         assert decision["debate_id"] == debate_id
         assert decision["selected_candidate_id"] == c1
@@ -554,7 +592,7 @@ class TestResolveDebate:
             issue_type="vulnerability",
             severity="critical",
         )
-        decision = svc.resolve_debate(debate_id)
+        decision = svc.resolve_debate(debate_id, task_id="t1")
         assert decision["selected_candidate_id"] == c2
 
     def test_resolve_escalates_when_all_critical(self, tmp_path: Path) -> None:
@@ -574,14 +612,14 @@ class TestResolveDebate:
             issue_type="fatal",
             severity="critical",
         )
-        decision = svc.resolve_debate(debate_id)
+        decision = svc.resolve_debate(debate_id, task_id="t1")
         assert decision["selected_candidate_id"] is None
         assert decision["escalation_required"] is True
 
     def test_resolve_stores_bundle_artifact(self, tmp_path: Path) -> None:
         svc, _store, arts = _make_integration(tmp_path)
         debate_id, _c1, _c2 = self._setup_debate_with_proposals(svc)
-        svc.resolve_debate(debate_id)
+        svc.resolve_debate(debate_id, task_id="t1")
 
         artifact_files = list(arts.root_dir.rglob("*.json"))
         bundle_artifacts = [
@@ -598,7 +636,7 @@ class TestResolveDebate:
     def test_resolve_stores_decision_artifact(self, tmp_path: Path) -> None:
         svc, _store, arts = _make_integration(tmp_path)
         debate_id, _c1, _c2 = self._setup_debate_with_proposals(svc)
-        svc.resolve_debate(debate_id)
+        svc.resolve_debate(debate_id, task_id="t1")
 
         artifact_files = list(arts.root_dir.rglob("*.json"))
         decision_artifacts = [
@@ -614,7 +652,7 @@ class TestResolveDebate:
     def test_resolve_appends_event(self, tmp_path: Path) -> None:
         svc, store, _arts = _make_integration(tmp_path)
         debate_id, _c1, _c2 = self._setup_debate_with_proposals(svc)
-        svc.resolve_debate(debate_id)
+        svc.resolve_debate(debate_id, task_id="t1")
 
         events = store.list_events(event_type="deliberation.resolved")
         assert len(events) == 1
@@ -639,7 +677,7 @@ class TestGetDebateSummary:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -661,7 +699,7 @@ class TestGetDebateSummary:
             task_id="t1",
             step_id="s1",
             risk_band="critical",
-            step_kind="deploy",
+            step_kind="external_mutation",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -716,7 +754,7 @@ class TestFullLifecycle:
             task_id="task_001",
             step_id="step_001",
             risk_band="high",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         assert route_result["deliberation_required"] is True
         debate_id = route_result["debate_id"]
@@ -763,7 +801,7 @@ class TestFullLifecycle:
         assert summary["critical_critique_count"] == 1
 
         # 5. Resolve
-        decision = svc.resolve_debate(debate_id)
+        decision = svc.resolve_debate(debate_id, task_id="t1")
         # c2 should be rejected (critical critique), c1 selected
         assert decision["selected_candidate_id"] == c1
         assert decision["escalation_required"] is False
@@ -797,7 +835,7 @@ class TestFullLifecycle:
             task_id="t1",
             step_id="s1",
             risk_band="low",
-            step_kind="read_file",
+            step_kind="read_local",
         )
         assert result["deliberation_required"] is False
         artifact_files = list(arts.root_dir.rglob("*.json"))
@@ -817,7 +855,7 @@ class TestToContractPacket:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -845,7 +883,7 @@ class TestToContractPacket:
             issue_type="risk",
             severity="critical",
         )
-        svc.resolve_debate(debate_id)
+        svc.resolve_debate(debate_id, task_id="t1")
         return debate_id, c1, c2
 
     def test_returns_task_contract_packet(self, tmp_path: Path) -> None:
@@ -891,7 +929,7 @@ class TestToContractPacket:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="planning",
+            step_kind="execute_command",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -911,7 +949,7 @@ class TestToContractPacket:
             issue_type="fatal",
             severity="critical",
         )
-        svc.resolve_debate(debate_id)
+        svc.resolve_debate(debate_id, task_id="t1")
         with pytest.raises(ValueError, match="requires escalation"):
             svc.to_contract_packet(debate_id=debate_id, task_id="task_42")
 
@@ -933,7 +971,7 @@ class TestSubmitExecutorFeasibility:
             task_id="t1",
             step_id="s1",
             risk_band="high",
-            step_kind="patch",
+            step_kind="patch_file",
         )
         debate_id = result["debate_id"]
         assert debate_id is not None
@@ -1240,7 +1278,7 @@ class TestPostExecutionReview:
             finding="Minor gap found",
             severity="medium",
         )
-        svc.resolve_debate(debate_id)
+        svc.resolve_debate(debate_id, task_id="t1")
 
         artifact_files = list(arts.root_dir.rglob("*.json"))
         bundle_artifacts = [
@@ -1295,7 +1333,7 @@ class TestPostExecutionReview:
         )
 
         # 4. Resolve (decision boundary - only winner enters execution)
-        decision = svc.resolve_debate(debate_id)
+        decision = svc.resolve_debate(debate_id, task_id="t1")
         assert decision["selected_candidate_id"] is not None
         assert decision["escalation_required"] is False
 

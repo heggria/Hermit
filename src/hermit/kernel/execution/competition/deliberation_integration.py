@@ -16,10 +16,20 @@ from hermit.kernel.execution.competition.deliberation import (
 from hermit.kernel.execution.competition.deliberation_service import (
     DeliberationService,
 )
+from hermit.kernel.execution.competition.llm_arbitrator import ArbitrationEngine
+from hermit.kernel.execution.competition.llm_critic import CritiqueGenerator
+from hermit.kernel.execution.competition.llm_proposer import ProposalGenerator
 from hermit.kernel.execution.controller.supervisor_protocol import (
     TaskContractPacket,
     create_task_contract,
 )
+from hermit.kernel.execution.workers.models import (
+    WorkerPoolConfig,
+    WorkerRole,
+    WorkerSlotConfig,
+)
+from hermit.kernel.execution.workers.pool import WorkerPoolManager
+from hermit.kernel.task.models.team import RoleSlotSpec
 
 if TYPE_CHECKING:
     from hermit.kernel.artifacts.models.artifacts import ArtifactStore
@@ -29,25 +39,20 @@ __all__ = ["DeliberationIntegration"]
 
 logger = structlog.get_logger()
 
-# Risk bands that always trigger deliberation.
-_HIGH_RISK_BANDS: frozenset[str] = frozenset({"high", "critical"})
-
-# Step kinds that trigger deliberation at medium risk.
-_MEDIUM_RISK_STEP_KINDS: frozenset[str] = frozenset(
-    {
-        "planning",
-        "patch",
-        "deploy",
-        "rollback",
-    }
-)
-
-# Maps risk band + step kind combination to a deliberation trigger.
+# Maps action_class to a deliberation trigger for debate labeling.
 _TRIGGER_MAP: dict[str, DeliberationTrigger] = {
-    "planning": DeliberationTrigger.high_risk_planning,
-    "patch": DeliberationTrigger.high_risk_patch,
-    "deploy": DeliberationTrigger.high_risk_planning,
+    "write_local": DeliberationTrigger.high_risk_patch,
+    "patch_file": DeliberationTrigger.high_risk_patch,
+    "execute_command": DeliberationTrigger.high_risk_planning,
+    "network_write": DeliberationTrigger.high_risk_planning,
+    "external_mutation": DeliberationTrigger.high_risk_planning,
+    "vcs_mutation": DeliberationTrigger.high_risk_planning,
+    "publication": DeliberationTrigger.high_risk_planning,
     "rollback": DeliberationTrigger.high_risk_planning,
+    "delegate_execution": DeliberationTrigger.high_risk_planning,
+    "scheduler_mutation": DeliberationTrigger.high_risk_planning,
+    "credentialed_api_call": DeliberationTrigger.high_risk_planning,
+    "memory_write": DeliberationTrigger.high_risk_planning,
 }
 
 
@@ -64,10 +69,53 @@ class DeliberationIntegration:
     Low-risk tasks bypass deliberation entirely.
     """
 
-    def __init__(self, store: KernelStore, artifact_store: ArtifactStore) -> None:
+    def __init__(
+        self,
+        store: KernelStore,
+        artifact_store: ArtifactStore,
+        *,
+        proposer: ProposalGenerator,
+        critic: CritiqueGenerator,
+        arbitrator: ArbitrationEngine,
+        pool: WorkerPoolManager | None = None,
+    ) -> None:
         self.store = store
         self.artifact_store = artifact_store
-        self.deliberation = DeliberationService(store)
+        self.proposer = proposer
+        self.critic = critic
+        self.arbitrator = arbitrator
+        self._pool = pool or self._build_default_pool()
+        self.deliberation = DeliberationService(store, arbitrator=arbitrator)
+
+    @staticmethod
+    def _build_default_pool() -> WorkerPoolManager:
+        """Build a deliberation-scoped WorkerPoolManager with sensible defaults."""
+        config = WorkerPoolConfig(
+            pool_id="deliberation-pool",
+            team_id="deliberation",
+            slots={
+                WorkerRole.planner: WorkerSlotConfig(
+                    role=WorkerRole.planner,
+                    max_active=3,
+                    accepted_step_kinds=["plan"],
+                    output_artifact_kinds=["deliberation_llm_proposal"],
+                ),
+                WorkerRole.reviewer: WorkerSlotConfig(
+                    role=WorkerRole.reviewer,
+                    max_active=3,
+                    accepted_step_kinds=["review"],
+                    output_artifact_kinds=["deliberation_llm_critique_batch"],
+                ),
+                WorkerRole.verifier: WorkerSlotConfig(
+                    role=WorkerRole.verifier,
+                    max_active=1,
+                    accepted_step_kinds=["verify"],
+                    output_artifact_kinds=["deliberation_llm_arbitration"],
+                ),
+            },
+            conflict_limits={"max_same_workspace": 0, "max_same_module": 0},
+        )
+        return WorkerPoolManager(config)
 
     # -- Routing --------------------------------------------------------------
 
@@ -123,6 +171,172 @@ class DeliberationIntegration:
         )
 
         return {"deliberation_required": True, "debate_id": bundle.debate_id}
+
+    # -- Full deliberation pipeline -------------------------------------------
+
+    def run_full_deliberation(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        risk_band: str,
+        step_kind: str,
+        context: dict[str, Any],
+    ) -> ArbitrationDecision:
+        """Run the complete LLM-driven deliberation pipeline.
+
+        Uses kernel Team + Milestones for lifecycle tracking and
+        WorkerPoolManager for admission-controlled parallel execution.
+
+        Pipeline:
+        1. evaluate_and_route — open debate + ledger event
+        2. Create Team with role_assembly (proposer/critic/arbitrator)
+        3. Milestone: proposal — pool-gated parallel LLM proposal generation
+        4. submit_proposal for each — artifact + ledger event
+        5. Milestone: critique — pool-gated parallel LLM critiques
+        6. submit_critique for each — artifact + ledger event
+        7. Milestone: arbitration — pool-gated LLM reasoning
+        8. resolve_debate — artifact + ledger event
+        9. Complete team
+        """
+        # 1. Route
+        route = self.evaluate_and_route(
+            task_id=task_id,
+            step_id=step_id,
+            risk_band=risk_band,
+            step_kind=step_kind,
+        )
+        if not route["deliberation_required"]:
+            return ArbitrationDecision(
+                decision_id=self.store.generate_id("arb"),
+                debate_id="",
+                selected_candidate_id=None,
+                merge_notes="Deliberation not required",
+                confidence=1.0,
+                escalation_required=False,
+                decided_at=time.time(),
+            )
+
+        debate_id = route["debate_id"]
+        decision_point = f"task={task_id} step={step_id} risk={risk_band} kind={step_kind}"
+
+        # 2. Create Team for this deliberation ensemble.
+        team = self.store.create_team(
+            program_id=task_id,
+            title=f"deliberation:{debate_id}",
+            workspace_id=debate_id,
+            role_assembly={
+                "proposer": RoleSlotSpec(role="planner", count=3),
+                "critic": RoleSlotSpec(role="reviewer", count=3),
+                "arbitrator": RoleSlotSpec(role="verifier", count=1),
+            },
+            metadata={"debate_id": debate_id, "risk_band": risk_band, "step_kind": step_kind},
+        )
+
+        self.store.append_event(
+            event_type="deliberation.team_created",
+            entity_type="deliberation",
+            entity_id=debate_id,
+            task_id=task_id,
+            payload={"team_id": team.team_id},
+        )
+
+        # 3. Milestone: proposal phase
+        ms_propose = self.store.create_milestone(
+            team_id=team.team_id,
+            title="Generate Proposals",
+            description="LLM-driven parallel proposal generation via planner slots",
+            status="active",
+            acceptance_criteria=["At least 1 proposal generated"],
+        )
+
+        raw_proposals = self.proposer.generate_proposals(
+            debate_id=debate_id,
+            decision_point=decision_point,
+            context=context,
+            task_id=task_id,
+            pool=self._pool,
+            store=self.store,
+            artifact_store=self.artifact_store,
+        )
+
+        # 4. Submit each proposal — artifact + ledger event
+        for proposal in raw_proposals:
+            self.submit_proposal(
+                debate_id=debate_id,
+                proposer_role=proposal.proposer_role,
+                plan_summary=proposal.plan_summary,
+                contract_draft=proposal.contract_draft,
+                expected_cost=proposal.expected_cost,
+                expected_risk=proposal.expected_risk,
+                expected_reward=proposal.expected_reward,
+            )
+
+        self.store.update_milestone_status(ms_propose.milestone_id, "completed")
+
+        # 5. Milestone: critique phase
+        ms_critique = self.store.create_milestone(
+            team_id=team.team_id,
+            title="Generate Critiques",
+            description="LLM-driven parallel critique generation via reviewer slots",
+            status="active",
+            dependency_ids=[ms_propose.milestone_id],
+            acceptance_criteria=["All proposals reviewed"],
+        )
+
+        bundle = self.deliberation.get_debate(debate_id)
+        stored_proposals = bundle.proposals if bundle else []
+
+        raw_critiques = self.critic.generate_critiques(
+            proposals=stored_proposals,
+            context=context,
+            task_id=task_id,
+            debate_id=debate_id,
+            pool=self._pool,
+            store=self.store,
+            artifact_store=self.artifact_store,
+        )
+
+        for critique in raw_critiques:
+            self.submit_critique(
+                debate_id=debate_id,
+                target_candidate_id=critique.target_candidate_id,
+                critic_role=critique.critic_role,
+                issue_type=critique.issue_type,
+                severity=critique.severity,
+                evidence_refs=critique.evidence_refs if critique.evidence_refs else None,
+                suggested_fix=critique.suggested_fix,
+            )
+
+        self.store.update_milestone_status(ms_critique.milestone_id, "completed")
+
+        # 6. Milestone: arbitration phase
+        ms_arbitrate = self.store.create_milestone(
+            team_id=team.team_id,
+            title="Arbitration",
+            description="LLM-driven arbitration via verifier slot",
+            status="active",
+            dependency_ids=[ms_critique.milestone_id],
+            acceptance_criteria=["Decision produced"],
+        )
+
+        decision_dict = self.resolve_debate(debate_id, task_id=task_id)
+
+        self.store.update_milestone_status(ms_arbitrate.milestone_id, "completed")
+
+        # 7. Complete team
+        self.store.update_team_status(team.team_id, "completed")
+
+        return ArbitrationDecision(
+            decision_id=str(decision_dict.get("decision_id", "")),
+            debate_id=str(decision_dict.get("debate_id", debate_id)),
+            selected_candidate_id=decision_dict.get("selected_candidate_id"),
+            rejection_reasons=list(decision_dict.get("rejection_reasons", [])),
+            merge_notes=str(decision_dict.get("merge_notes", "")),
+            confidence=float(decision_dict.get("confidence", 0.0)),
+            escalation_required=bool(decision_dict.get("escalation_required", False)),
+            decided_at=float(decision_dict.get("decided_at", 0.0)),
+        )
 
     # -- Proposals ------------------------------------------------------------
 
@@ -256,7 +470,7 @@ class DeliberationIntegration:
 
     # -- Resolution -----------------------------------------------------------
 
-    def resolve_debate(self, debate_id: str) -> dict[str, Any]:
+    def resolve_debate(self, debate_id: str, *, task_id: str = "") -> dict[str, Any]:
         """Arbitrate and produce final decision.
 
         Returns the ``ArbitrationDecision`` as a dict.  The full debate
@@ -264,7 +478,13 @@ class DeliberationIntegration:
         is stored as a single composite artifact so the entire deliberation
         history is immutably captured.
         """
-        decision: ArbitrationDecision = self.deliberation.arbitrate(debate_id)
+        decision: ArbitrationDecision = self.deliberation.arbitrate(
+            debate_id,
+            task_id=task_id,
+            pool=self._pool,
+            store=self.store,
+            artifact_store=self.artifact_store,
+        )
 
         bundle = self.deliberation.get_debate(debate_id)
         if bundle is None:
@@ -338,7 +558,13 @@ class DeliberationIntegration:
             raise ValueError(f"Debate not found: {debate_id}")
 
         # Find the resolved decision by looking at the arbitration output.
-        decision = self.deliberation.arbitrate(debate_id)
+        decision = self.deliberation.arbitrate(
+            debate_id,
+            task_id=task_id,
+            pool=self._pool,
+            store=self.store,
+            artifact_store=self.artifact_store,
+        )
         if decision.escalation_required or decision.selected_candidate_id is None:
             raise ValueError(f"Cannot convert to contract: debate {debate_id} requires escalation")
 

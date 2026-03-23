@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 import structlog
 
@@ -342,7 +343,7 @@ class IterationKernel:
 
         Raises KeyError if the iteration_id is not found.
         """
-        entry = self._find_entry(iteration_id)
+        entry = self.find_entry(iteration_id)
         if entry is None:
             raise KeyError(f"Iteration not found: {iteration_id}")
         return IterationState(entry["status"])
@@ -360,7 +361,7 @@ class IterationKernel:
         Raises InvalidTransitionError if the transition is not allowed.
         Raises KeyError if the iteration is not found.
         """
-        entry = self._find_entry(iteration_id)
+        entry = self.find_entry(iteration_id)
         if entry is None:
             raise KeyError(f"Iteration not found: {iteration_id}")
 
@@ -421,7 +422,7 @@ class IterationKernel:
         Returns True if the iteration passes the gate, False otherwise.
         Raises KeyError if the iteration is not found.
         """
-        entry = self._find_entry(iteration_id)
+        entry = self.find_entry(iteration_id)
         if entry is None:
             raise KeyError(f"Iteration not found: {iteration_id}")
 
@@ -476,7 +477,7 @@ class IterationKernel:
 
         Raises KeyError if the iteration is not found.
         """
-        entry = self._find_entry(iteration_id)
+        entry = self.find_entry(iteration_id)
         if entry is None:
             raise KeyError(f"Iteration not found: {iteration_id}")
 
@@ -615,7 +616,7 @@ class IterationKernel:
             visited.add(current)
 
             # Look up the entry for 'current' to find its parent.
-            entry = self._find_entry(current)
+            entry = self.find_entry(current)
             if entry is None:
                 # Parent not found — chain is broken, no cycle.
                 break
@@ -633,7 +634,7 @@ class IterationKernel:
             current = meta.get("parent_iteration_id")
             depth += 1
 
-    def _find_entry(self, iteration_id: str) -> dict | None:
+    def find_entry(self, iteration_id: str) -> dict[str, Any] | None:
         """Find a spec_backlog entry by iteration_id stored in metadata.
 
         Searches for entries where metadata.iteration_id matches. Falls back
@@ -660,3 +661,10 @@ class IterationKernel:
                 return e
 
         return None
+
+    def _find_entry(self, iteration_id: str) -> dict[str, Any] | None:
+        """Backward-compatible alias for internal callers.
+
+        Kept for compatibility until external call sites are migrated.
+        """
+        return self.find_entry(iteration_id)

@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/heggria/Hermit/actions/workflows/ci.yml"><img src="https://github.com/heggria/Hermit/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white" alt="Python 3.13+"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="https://pypi.org/project/hermit-agent/"><img src="https://img.shields.io/pypi/v/hermit-agent?color=blue" alt="PyPI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="License: MIT"></a>
   <a href="https://pypi.org/project/hermit-agent/"><img src="https://img.shields.io/pypi/dm/hermit-agent" alt="Downloads"></a>
@@ -91,7 +91,7 @@ AI agents are doing real work — writing code, managing infrastructure, running
 
 Install the OS. Run your first governed task.
 
-**Prerequisites:** Python `3.13+`, [uv](https://github.com/astral-sh/uv)
+**Prerequisites:** Python `3.11+`, [uv](https://github.com/astral-sh/uv)
 
 **1. Install**
 
@@ -195,7 +195,7 @@ Surfaces (CLI, TUI)  +  Adapters (Feishu, Slack, Telegram)  +  Hooks (Scheduler,
 src/hermit/
 ├── kernel/       # Governed execution kernel: task, policy, execution, ledger,
 │                 #   verification, signals, analytics, context, authority, artifacts
-├── runtime/      # Runner, provider host, capability registry, assembly
+├── runtime/      # Runner, control, observation, provider host, capability, assembly
 ├── plugins/      # Adapters, hooks, tools, MCP servers, subagents, bundles
 ├── infra/        # Storage, locking, paths, i18n
 ├── surfaces/     # CLI + TUI

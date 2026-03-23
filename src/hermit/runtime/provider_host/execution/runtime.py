@@ -24,6 +24,7 @@ log = structlog.get_logger()
 
 if TYPE_CHECKING:
     from hermit.kernel import ArtifactStore, KernelStore, TaskController
+    from hermit.kernel.execution.competition.deliberation_integration import DeliberationIntegration
 
 StreamCallback = Callable[[str, str], None]
 ToolCallback = Callable[[str, dict[str, Any], Any], None]
@@ -123,6 +124,7 @@ class AgentRuntime:
         self.kernel_store: KernelStore | None = None
         self.artifact_store: ArtifactStore | None = None
         self.task_controller: TaskController | None = None
+        self.deliberation: DeliberationIntegration | None = None
 
     def clone(
         self,

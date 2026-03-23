@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
 from hermit.kernel.context.memory.confidence import ConfidenceDecayService
 from hermit.kernel.context.memory.decay import MemoryDecayService
 from hermit.kernel.context.memory.decay_models import FreshnessState
+
+if TYPE_CHECKING:
+    from hermit.kernel.task.models.records import MemoryRecord
 
 log = structlog.get_logger()
 
@@ -133,7 +136,7 @@ class _RecordProxy:
     __slots__ = ("_data",)
 
     def __init__(self, data: dict[str, Any]) -> None:
-        object.__setattr__(self, "_data", data)
+        self._data: dict[str, Any] = data
 
     def __getattr__(self, name: str) -> Any:
         try:
@@ -142,9 +145,9 @@ class _RecordProxy:
             return None
 
 
-def _to_record_proxy(record: dict[str, Any]) -> _RecordProxy:
+def _to_record_proxy(record: dict[str, Any]) -> MemoryRecord:
     """Wrap a dict as a record proxy compatible with decay/confidence services."""
-    return _RecordProxy(record)
+    return cast(MemoryRecord, _RecordProxy(record))
 
 
 __all__ = ["MemoryQualityService"]

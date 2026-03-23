@@ -20,7 +20,7 @@ class SignalProtocol:
     def emit(self, signal: EvidenceSignal) -> EvidenceSignal | None:
         """Persist a signal. Returns None if cooldown is active."""
         if signal.cooldown_key and self._store.check_cooldown(
-            signal.cooldown_key, signal.cooldown_seconds
+            signal.cooldown_key, signal.cooldown_seconds, task_id=signal.task_id
         ):
             return None
         self._store.create_signal(signal)

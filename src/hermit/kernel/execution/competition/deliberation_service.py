@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 import uuid
 from typing import TYPE_CHECKING
 
@@ -16,24 +15,49 @@ from hermit.kernel.execution.competition.deliberation import (
 )
 
 if TYPE_CHECKING:
+    from hermit.kernel.artifacts.models.artifacts import ArtifactStore
+    from hermit.kernel.execution.competition.llm_arbitrator import ArbitrationEngine
+    from hermit.kernel.execution.workers.pool import WorkerPoolManager
     from hermit.kernel.ledger.journal.store import KernelStore
 
 __all__ = ["DeliberationService"]
 
 logger = structlog.get_logger()
 
-# Risk bands that require deliberation regardless of step kind.
-_HIGH_RISK_BANDS: frozenset[str] = frozenset({"high", "critical"})
+# -- Deliberation trigger policy based on ActionClass -------------------------
+#
+# Read-only actions never need deliberation regardless of risk_level.
+_READONLY_ACTIONS: frozenset[str] = frozenset({
+    "read_local",
+    "network_read",
+    "execute_command_readonly",
+    "delegate_reasoning",
+    "ephemeral_ui_mutation",
+})
 
-# Step kinds that always warrant deliberation when risk is elevated.
-_DELIBERATION_STEP_KINDS: frozenset[str] = frozenset(
-    {
-        "planning",
-        "patch",
-        "deploy",
-        "rollback",
-    }
-)
+# Mutation actions that warrant deliberation at medium risk.
+_MEDIUM_RISK_DELIBERATION_ACTIONS: frozenset[str] = frozenset({
+    "write_local",
+    "patch_file",
+    "execute_command",
+    "network_write",
+    "external_mutation",
+    "vcs_mutation",
+    "publication",
+    "rollback",
+    "scheduler_mutation",
+})
+
+# Mutation actions that warrant deliberation at high/critical risk.
+# (superset of medium — includes orchestration and governance mutations)
+_HIGH_RISK_DELIBERATION_ACTIONS: frozenset[str] = _MEDIUM_RISK_DELIBERATION_ACTIONS | frozenset({
+    "delegate_execution",
+    "approval_resolution",
+    "credentialed_api_call",
+    "memory_write",
+    "attachment_ingest",
+    "patrol_execution",
+})
 
 
 def _gen_id(prefix: str) -> str:
@@ -43,29 +67,46 @@ def _gen_id(prefix: str) -> str:
 class DeliberationService:
     """Manages deliberation rounds: debate creation, proposals, critiques, and arbitration."""
 
-    def __init__(self, store: KernelStore) -> None:
+    def __init__(self, store: KernelStore, *, arbitrator: ArbitrationEngine) -> None:
         self._store = store
+        self._arbitrator = arbitrator
         self._debates: dict[str, DebateBundle] = {}
 
     # -- Query ----------------------------------------------------------------
 
-    def should_deliberate(self, risk_band: str, step_kind: str) -> bool:
-        """Return True when the combination of risk and step kind warrants deliberation."""
-        if risk_band in _HIGH_RISK_BANDS:
-            return True
-        return step_kind in _DELIBERATION_STEP_KINDS and risk_band == "medium"
+    def should_deliberate(self, risk_level: str, action_class: str) -> bool:
+        """Return True when the combination of risk and action class warrants deliberation.
+
+        Policy:
+        - Read-only actions (read_local, network_read, execute_command_readonly,
+          delegate_reasoning, ephemeral_ui_mutation) never trigger deliberation.
+        - high/critical risk + mutation action → deliberate.
+        - medium risk + high-impact mutation (write, patch, execute, deploy, rollback, etc.) → deliberate.
+        - low risk → never deliberate.
+        """
+        if action_class in _READONLY_ACTIONS:
+            return False
+        if risk_level in ("high", "critical"):
+            return action_class in _HIGH_RISK_DELIBERATION_ACTIONS
+        if risk_level == "medium":
+            return action_class in _MEDIUM_RISK_DELIBERATION_ACTIONS
+        return False
 
     @staticmethod
-    def check_deliberation_needed(*, risk_band: str, step_kind: str) -> bool:
+    def check_deliberation_needed(*, risk_level: str, action_class: str) -> bool:
         """Static check for whether deliberation is needed.
 
         Same logic as :meth:`should_deliberate` but callable without an
         instance — used by the dispatch layer to gate step attempts before
         they enter the thread pool.
         """
-        if risk_band in _HIGH_RISK_BANDS:
-            return True
-        return step_kind in _DELIBERATION_STEP_KINDS and risk_band == "medium"
+        if action_class in _READONLY_ACTIONS:
+            return False
+        if risk_level in ("high", "critical"):
+            return action_class in _HIGH_RISK_DELIBERATION_ACTIONS
+        if risk_level == "medium":
+            return action_class in _MEDIUM_RISK_DELIBERATION_ACTIONS
+        return False
 
     # -- Debate lifecycle -----------------------------------------------------
 
@@ -141,77 +182,37 @@ class DeliberationService:
 
     # -- Arbitration ----------------------------------------------------------
 
-    def arbitrate(self, debate_id: str) -> ArbitrationDecision:
-        """Select the best proposal that has no unresolved critical critiques.
+    def arbitrate(
+        self,
+        debate_id: str,
+        *,
+        task_id: str,
+        pool: WorkerPoolManager,
+        store: KernelStore,
+        artifact_store: ArtifactStore,
+    ) -> ArbitrationDecision:
+        """Delegate arbitration to the LLM-driven ArbitrationEngine.
 
-        Strategy:
-        1. Disqualify any candidate with at least one ``critical`` critique.
-        2. Among remaining candidates, pick the first proposal (stable ordering).
-        3. If no candidates survive, return an escalation decision.
+        The engine claims a verifier slot from the pool, creates a step for
+        audit, applies hard constraints, then uses LLM reasoning.
         """
         bundle = self._debates.get(debate_id)
         if bundle is None:
             raise ValueError(f"Debate not found: {debate_id}")
 
-        # Collect candidate ids with critical critiques.
-        critically_critiqued: set[str] = set()
-        for critique in bundle.critiques:
-            if critique.severity == "critical":
-                critically_critiqued.add(critique.target_candidate_id)
-
-        # Filter proposals to those without critical critiques.
-        eligible = [p for p in bundle.proposals if p.candidate_id not in critically_critiqued]
-
-        rejection_reasons: list[str] = []
-        for cid in critically_critiqued:
-            rejection_reasons.append(f"candidate {cid} has critical critique(s)")
-
-        now = time.time()
-
-        if not eligible:
-            decision = ArbitrationDecision(
-                decision_id=_gen_id("arb"),
-                debate_id=debate_id,
-                selected_candidate_id=None,
-                rejection_reasons=rejection_reasons,
-                merge_notes="",
-                confidence=0.0,
-                escalation_required=True,
-                decided_at=now,
-            )
-            logger.warning(
-                "deliberation.arbitration_escalated",
-                debate_id=debate_id,
-                reason="no_eligible_candidates",
-            )
-            return decision
-
-        winner = eligible[0]
-
-        # Confidence based on critique coverage: fewer critiques = higher confidence.
-        total_critiques = len(bundle.critiques)
-        winner_critiques = sum(
-            1 for c in bundle.critiques if c.target_candidate_id == winner.candidate_id
+        decision = self._arbitrator.arbitrate(
+            bundle,
+            task_id=task_id,
+            pool=pool,
+            store=store,
+            artifact_store=artifact_store,
         )
-        if total_critiques == 0:
-            confidence = 1.0
-        else:
-            confidence = max(0.0, 1.0 - winner_critiques / total_critiques)
 
-        decision = ArbitrationDecision(
-            decision_id=_gen_id("arb"),
-            debate_id=debate_id,
-            selected_candidate_id=winner.candidate_id,
-            rejection_reasons=rejection_reasons,
-            merge_notes=f"Selected {winner.proposer_role} proposal for {winner.target_scope}",
-            confidence=confidence,
-            escalation_required=False,
-            decided_at=now,
-        )
         logger.info(
             "deliberation.arbitration_decided",
             debate_id=debate_id,
-            selected=winner.candidate_id,
-            confidence=confidence,
+            selected=decision.selected_candidate_id,
+            confidence=decision.confidence,
+            escalation=decision.escalation_required,
         )
         return decision

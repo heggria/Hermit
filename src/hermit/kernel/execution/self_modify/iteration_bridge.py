@@ -36,10 +36,10 @@ modifying the plugin code itself.
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -55,6 +55,11 @@ from hermit.kernel.execution.self_modify.iteration_proof import (
     export_iteration_proof,
 )
 
+from ._metadata_utils import parse_metadata
+
+if TYPE_CHECKING:
+    from hermit.kernel.execution.self_modify.workspace import SelfModifyWorkspace
+
 __all__ = [
     "LANE_EXPECTED_ARTIFACTS",
     "BridgeVerdict",
@@ -69,6 +74,18 @@ logger = structlog.get_logger()
 
 def _now_ts() -> float:
     return datetime.now(UTC).timestamp()
+
+
+def _default_metadata() -> dict[str, Any]:
+    return {}
+
+
+def _default_benchmark_results() -> dict[str, Any]:
+    return {}
+
+
+def _default_lane_artifacts() -> dict[str, list[dict[str, Any]]]:
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -120,9 +137,9 @@ class LaneArtifact:
     artifact_type: str
     artifact_ref: str  # reference (path, ID, or inline summary)
     produced_at: float = field(default_factory=_now_ts)
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_default_metadata)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "lane": self.lane.value,
             "artifact_type": self.artifact_type,
@@ -182,10 +199,13 @@ class LaneTracker:
             result.extend(artifacts)
         return result
 
-    def get_all_lanes(self, iteration_id: str) -> dict[str, list[dict]]:
+    def get_all_lanes(self, iteration_id: str) -> dict[str, list[dict[str, Any]]]:
         """Return all artifacts grouped by lane as plain dicts."""
         by_lane = self._artifacts.get(iteration_id, {})
-        return {lane.value: [a.to_dict() for a in artifacts] for lane, artifacts in by_lane.items()}
+        return {
+            lane.value: [a.to_dict() for a in artifacts]
+            for lane, artifacts in by_lane.items()
+        }
 
     def missing_artifacts(
         self,
@@ -205,9 +225,9 @@ class LaneTracker:
         """Return True if every lane has all expected artifacts."""
         return all(self.lane_complete(iteration_id, lane) for lane in Lane)
 
-    def summary(self, iteration_id: str) -> dict[str, dict]:
+    def summary(self, iteration_id: str) -> dict[str, dict[str, Any]]:
         """Return a per-lane summary: produced types, missing types, complete flag."""
-        result: dict[str, dict] = {}
+        result: dict[str, dict[str, Any]] = {}
         for lane in Lane:
             produced = {a.artifact_type for a in self.get_lane_artifacts(iteration_id, lane)}
             missing = self.missing_artifacts(iteration_id, lane)
@@ -253,15 +273,17 @@ class BridgeVerdict:
     iteration_id: str
     result: str  # "accepted" | "rejected" | "accepted_with_followups"
     promoted: bool
-    benchmark_results: dict = field(default_factory=dict)
     reconciliation_summary: str = ""
     lesson_pack: IterationLessonPack | None = None
     next_seed_goal: str | None = None
-    lane_artifacts: dict = field(default_factory=dict)
+    benchmark_results: dict[str, Any] = field(default_factory=_default_benchmark_results)
+    lane_artifacts: dict[str, list[dict[str, Any]]] = field(
+        default_factory=_default_lane_artifacts
+    )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for MCP / plugin consumption."""
-        d: dict = {
+        d: dict[str, Any] = {
             "iteration_id": self.iteration_id,
             "result": self.result,
             "promoted": self.promoted,
@@ -309,8 +331,8 @@ class IterationBridge:
     """
 
     def __init__(self, store: object) -> None:
-        self._store = store
-        self._kernel = IterationKernel(store)
+        self._store: Any = store
+        self._kernel: IterationKernel = IterationKernel(store)
         self._lane_tracker = LaneTracker()
 
     @property
@@ -346,7 +368,9 @@ class IterationBridge:
             goal=goal,
             constraints=constraints or [],
         )
-        iteration_id = self._kernel.admit_iteration(spec)
+        iteration_id = self._kernel.admit_iteration(  # pyright: ignore[reportUnknownMemberType]
+            spec
+        )
 
         logger.info(
             "iteration_bridge.started",
@@ -454,7 +478,7 @@ class IterationBridge:
         lane: Lane | str,
         artifact_type: str,
         artifact_ref: str,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> LaneArtifact:
         """Record a lane artifact produced during an iteration phase.
 
@@ -464,8 +488,7 @@ class IterationBridge:
         Raises ValueError if the lane string is unrecognized or the
         artifact_type is not in the lane's expected set.
         """
-        if isinstance(lane, str):
-            lane = Lane(lane)
+        lane = Lane(lane)
 
         expected = LANE_EXPECTED_ARTIFACTS.get(lane, frozenset())
         if artifact_type not in expected:
@@ -498,11 +521,11 @@ class IterationBridge:
         self,
         *,
         iteration_id: str,
-        benchmark_results: dict | None = None,
+        benchmark_results: dict[str, Any] | None = None,
         reconciliation_summary: str = "",
         replay_stable: bool = False,
         unexplained_drift: list[str] | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Called when metaloop reaches COMPLETED or FAILED.
 
         Stores benchmark results, reconciliation summary, replay stability,
@@ -517,8 +540,8 @@ class IterationBridge:
 
         Returns a verdict dict with the outcome including lane artifact summary.
         """
-        benchmark = benchmark_results or {}
-        drift = unexplained_drift if unexplained_drift is not None else []
+        benchmark: dict[str, Any] = benchmark_results or {}
+        drift: list[str] = unexplained_drift or []
 
         # Inject all gate-relevant fields into metadata
         # so check_promotion_gate can inspect them.
@@ -608,11 +631,11 @@ class IterationBridge:
         self,
         *,
         iteration_id: str,
-        workspace: object | None = None,
+        workspace: SelfModifyWorkspace | None = None,
         iteration_summary: str = "",
-        benchmark_results: dict | None = None,
+        benchmark_results: dict[str, Any] | None = None,
         lessons: list[str] | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Create a PR branch for an accepted iteration instead of merging.
 
         Transitions the kernel state from accepted -> pr_created and
@@ -671,7 +694,7 @@ class IterationBridge:
         )
         body = "\n".join(body_parts)
 
-        pr_info: dict = {
+        pr_info: dict[str, Any] = {
             "iteration_id": iteration_id,
             "branch_name": pr_branch,
             "title": title,
@@ -708,23 +731,26 @@ class IterationBridge:
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                         _, merger_pr_info = pool.submit(
                             asyncio.run,
-                            merger.create_pr(
+                            merger.create_pr(  # pyright: ignore[reportUnknownMemberType]
                                 session,
                                 iteration_summary=iteration_summary,
                                 benchmark_results=benchmark_results,
                                 lessons=lessons,
                             ),
-                        ).result()
+                        ).result()  # pyright: ignore[reportUnknownMemberType]
                 else:
                     _, merger_pr_info = asyncio.run(
-                        merger.create_pr(
+                        merger.create_pr(  # pyright: ignore[reportUnknownMemberType]
                             session,
                             iteration_summary=iteration_summary,
                             benchmark_results=benchmark_results,
                             lessons=lessons,
                         )
                     )
-                pr_info = merger_pr_info.to_dict()
+                pr_info = cast(
+                    dict[str, Any],
+                    cast(Any, merger_pr_info).to_dict(),
+                )
             except Exception:
                 logger.warning(
                     "iteration_bridge.pr.git_operations_failed",
@@ -758,8 +784,8 @@ class IterationBridge:
         self,
         *,
         iteration_id: str,
-        workspace: object | None = None,
-    ) -> dict:
+        workspace: SelfModifyWorkspace | None = None,
+    ) -> dict[str, Any]:
         """Approve and merge an iteration that has a PR.
 
         Checks that the iteration is in 'pr_created' state, checks that
@@ -787,16 +813,13 @@ class IterationBridge:
             }
 
         # Verify benchmark passed (from stored metadata)
-        entry = self._kernel._find_entry(iteration_id)
+        entry = self._kernel.find_entry(iteration_id)
         if entry is not None:
             raw_meta = entry.get("metadata")
-            meta: dict = {}
-            if raw_meta:
-                try:
-                    meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
-                except (json.JSONDecodeError, TypeError):
-                    meta = {}
+            meta = parse_metadata(raw_meta)
             benchmark = meta.get("benchmark_results", {})
+            if not isinstance(benchmark, dict):
+                return {"error": "Cannot approve: no benchmark results found"}
             if not benchmark:
                 return {"error": "Cannot approve: no benchmark results found"}
 
@@ -926,7 +949,7 @@ class IterationBridge:
         *,
         iteration_id: str,
         result: str,
-        lane_artifacts: dict,
+        lane_artifacts: dict[str, list[dict[str, Any]]],
     ) -> str:
         """Build, export, and store an iteration proof bundle.
 
@@ -952,18 +975,13 @@ class IterationBridge:
 
     def _store_proof_hash(self, iteration_id: str, chain_hash: str) -> None:
         """Store the proof chain_hash in the spec_backlog metadata."""
-        entry = self._kernel._find_entry(iteration_id)
+        entry = self._kernel.find_entry(iteration_id)
         if entry is None:
             return
 
         spec_id = entry["spec_id"]
         raw_meta = entry.get("metadata")
-        meta: dict = {}
-        if raw_meta:
-            try:
-                meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
+        meta = parse_metadata(raw_meta)
 
         meta["proof_chain_hash"] = chain_hash
 
@@ -977,24 +995,19 @@ class IterationBridge:
         self,
         iteration_id: str,
         *,
-        benchmark_results: dict,
+        benchmark_results: dict[str, Any],
         reconciliation_summary: str,
         replay_stable: bool = False,
         unexplained_drift: list[str] | None = None,
     ) -> None:
         """Merge promotion-gate fields into the spec metadata."""
-        entry = self._kernel._find_entry(iteration_id)
+        entry = self._kernel.find_entry(iteration_id)
         if entry is None:
             return
 
         spec_id = entry["spec_id"]
         raw_meta = entry.get("metadata")
-        meta: dict = {}
-        if raw_meta:
-            try:
-                meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
+        meta = parse_metadata(raw_meta)
 
         meta["benchmark_results"] = benchmark_results
         meta["reconciliation_summary"] = reconciliation_summary
@@ -1008,20 +1021,15 @@ class IterationBridge:
             metadata=meta,
         )
 
-    def _inject_pr_metadata(self, iteration_id: str, pr_info: dict) -> None:
+    def _inject_pr_metadata(self, iteration_id: str, pr_info: dict[str, Any]) -> None:
         """Store PR info in the spec_backlog metadata."""
-        entry = self._kernel._find_entry(iteration_id)
+        entry = self._kernel.find_entry(iteration_id)
         if entry is None:
             return
 
         spec_id = entry["spec_id"]
         raw_meta = entry.get("metadata")
-        meta: dict = {}
-        if raw_meta:
-            try:
-                meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
+        meta = parse_metadata(raw_meta)
 
         meta["pr_info"] = pr_info
 

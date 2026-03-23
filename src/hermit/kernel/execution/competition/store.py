@@ -21,7 +21,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
 
     def _init_competition_schema(self) -> None:
         """Create competition tables if they don't exist."""
-        self._get_conn().execute(
+        self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS competitions (
                 competition_id TEXT PRIMARY KEY,
@@ -44,7 +44,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
             )
             """
         )
-        self._get_conn().execute(
+        self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS competition_candidates (
                 candidate_id TEXT PRIMARY KEY,
@@ -85,7 +85,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         criteria_json = json.dumps(evaluation_criteria or {}, ensure_ascii=False)
         weights_json = json.dumps(scoring_weights or {}, ensure_ascii=False)
         with self._get_conn():
-            self._get_conn().execute(
+            self._conn.execute(
                 """
                 INSERT INTO competitions (
                     competition_id, parent_task_id, goal, strategy,
@@ -177,7 +177,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 sets.append("evaluation_artifact_ref = ?")
                 params.append(evaluation_artifact_ref)
             params.append(competition_id)
-            self._get_conn().execute(
+            self._conn.execute(
                 f"UPDATE competitions SET {', '.join(sets)} WHERE competition_id = ?",
                 tuple(params),
             )
@@ -195,7 +195,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         candidate_id = self._id("cand")
         now = time.time()
         with self._get_conn():
-            self._get_conn().execute(
+            self._conn.execute(
                 """
                 INSERT INTO competition_candidates (
                     candidate_id, competition_id, task_id, label,
@@ -276,7 +276,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 sets.append("discard_reason = ?")
                 params.append(discard_reason)
             params.append(candidate_id)
-            self._get_conn().execute(
+            self._conn.execute(
                 f"UPDATE competition_candidates SET {', '.join(sets)} WHERE candidate_id = ?",
                 tuple(params),
             )
@@ -310,7 +310,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 sets.append("promoted = ?")
                 params.append(1 if promoted else 0)
             params.append(candidate_id)
-            self._get_conn().execute(
+            self._conn.execute(
                 f"UPDATE competition_candidates SET {', '.join(sets)} WHERE candidate_id = ?",
                 tuple(params),
             )

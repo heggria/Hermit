@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.executor.execution_helpers import (
-    _is_governed_action,
+    is_governed_action,
 )
 from hermit.kernel.execution.executor.execution_helpers import (
     set_attempt_phase as _set_attempt_phase,
@@ -15,6 +15,7 @@ __all__ = [
     "PhaseTracker",
     "_execution_status_from_result_code",
     "_is_governed_action",
+    "is_governed_action",
     "needs_witness",
 ]
 
@@ -50,6 +51,9 @@ def _execution_status_from_result_code(result_code: str) -> str:
     if result_code == "unknown_outcome":
         return "needs_attention"
     return "succeeded"
+
+
+_is_governed_action = is_governed_action
 
 
 class PhaseTracker:

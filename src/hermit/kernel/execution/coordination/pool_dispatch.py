@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import threading
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -322,9 +322,17 @@ class PoolAwareDispatchService:
             role = step_kind_to_role(step.kind) if step is not None else _DEFAULT_ROLE
             # Extract supervisor/workspace from attempt context for
             # admission control (per-supervisor cap, conflict domains).
-            ctx = attempt.context if hasattr(attempt, "context") and attempt.context else {}
-            supervisor_id = ctx.get("supervisor_id")
-            workspace = ctx.get("workspace")
+            attempt_context = cast(
+                dict[Any, Any] | None,
+                getattr(attempt, "context", None),
+            )
+            ctx: dict[str, Any] = (
+                cast(dict[str, Any], attempt_context)
+                if isinstance(attempt_context, dict)
+                else {}
+            )
+            supervisor_id = cast(str | None, ctx.get("supervisor_id"))
+            workspace = cast(str | None, ctx.get("workspace"))
             return (role, supervisor_id, workspace)
         except Exception:
             log.warning("pool_dispatch_peek_failed")
@@ -376,7 +384,7 @@ class PoolAwareDispatchService:
         # Gate: check if deliberation is required before dispatch.
         # Delegates to the inner service which updates step status and
         # records a ledger event when deliberation is needed.
-        if self._inner._check_deliberation_needed(attempt.step_attempt_id):
+        if self._inner.check_deliberation_needed(attempt.step_attempt_id):
             self._pool.release_slot(slot.slot_id)
             log.info(
                 "pool_dispatch.deliberation_required",

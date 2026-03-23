@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 
-def parse_metadata(raw: Any) -> dict:
+def parse_metadata(raw: Any) -> dict[str, Any]:
     """Parse JSON metadata that may be a JSON string, dict, or None.
 
     Handles str (JSON-encoded), dict (already parsed), None, and
@@ -18,4 +18,4 @@ def parse_metadata(raw: Any) -> dict:
         meta = json.loads(raw) if isinstance(raw, str) else raw
     except (json.JSONDecodeError, TypeError):
         return {}
-    return meta if isinstance(meta, dict) else {}
+    return cast(dict[str, Any], meta) if isinstance(meta, dict) else {}

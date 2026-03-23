@@ -29,7 +29,7 @@ from hermit.runtime.capability.registry.tools import ToolSpec
 # ---------------------------------------------------------------------------
 
 
-def _is_governed_action(tool: ToolSpec, policy: PolicyDecision) -> bool:
+def is_governed_action(tool: ToolSpec, policy: PolicyDecision) -> bool:
     """Return True when the action must pass through the full governance path.
 
     Read-only tools that are explicitly allowed, cheap network reads that don't

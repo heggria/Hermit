@@ -11,9 +11,9 @@ import pytest
 
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.executor.execution_helpers import (
-    _contract_refs,
-    _load_witness_payload,
-    _set_attempt_phase,
+    contract_refs,
+    load_witness_payload,
+    set_attempt_phase,
 )
 from hermit.kernel.execution.executor.reconciliation_executor import ReconciliationExecutor
 from hermit.kernel.execution.recovery.reconcile import ReconcileOutcome
@@ -93,7 +93,7 @@ def executor(mock_store: MagicMock, mock_deps: dict[str, MagicMock]) -> Reconcil
 
 
 # ---------------------------------------------------------------------------
-# _contract_refs
+# contract_refs
 # ---------------------------------------------------------------------------
 
 
@@ -102,7 +102,7 @@ class TestContractRefs:
         self, executor: ReconciliationExecutor, mock_store: MagicMock
     ) -> None:
         ctx = _make_attempt_ctx()
-        refs = _contract_refs(mock_store, ctx)
+        refs = contract_refs(mock_store, ctx)
         assert refs == ("contract-1", "evidence-1", "authplan-1")
         mock_store.get_step_attempt.assert_called_once_with("attempt-1")
 
@@ -111,11 +111,11 @@ class TestContractRefs:
     ) -> None:
         mock_store.get_step_attempt.return_value = None
         ctx = _make_attempt_ctx()
-        assert _contract_refs(mock_store, ctx) == (None, None, None)
+        assert contract_refs(mock_store, ctx) == (None, None, None)
 
 
 # ---------------------------------------------------------------------------
-# _set_attempt_phase
+# set_attempt_phase
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +124,7 @@ class TestSetAttemptPhase:
         self, executor: ReconciliationExecutor, mock_store: MagicMock
     ) -> None:
         ctx = _make_attempt_ctx()
-        _set_attempt_phase(mock_store, ctx, "reconciling", reason="test")
+        set_attempt_phase(mock_store, ctx, "reconciling", reason="test")
         mock_store.update_step_attempt.assert_called_once_with(
             "attempt-1", context={"phase": "reconciling"}
         )
@@ -140,7 +140,7 @@ class TestSetAttemptPhase:
             context={"phase": "executing"}
         )
         ctx = _make_attempt_ctx()
-        _set_attempt_phase(mock_store, ctx, "executing")
+        set_attempt_phase(mock_store, ctx, "executing")
         mock_store.update_step_attempt.assert_not_called()
         mock_store.append_event.assert_not_called()
 
@@ -149,12 +149,12 @@ class TestSetAttemptPhase:
     ) -> None:
         mock_store.get_step_attempt.return_value = None
         ctx = _make_attempt_ctx()
-        _set_attempt_phase(mock_store, ctx, "reconciling")
+        set_attempt_phase(mock_store, ctx, "reconciling")
         mock_store.update_step_attempt.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# _load_witness_payload
+# load_witness_payload
 # ---------------------------------------------------------------------------
 
 
@@ -162,13 +162,13 @@ class TestLoadWitnessPayload:
     def test_returns_empty_dict_for_none_ref(
         self, mock_store: MagicMock, mock_deps: dict[str, MagicMock]
     ) -> None:
-        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], None) == {}
+        assert load_witness_payload(mock_store, mock_deps["artifact_store"], None) == {}
 
     def test_returns_empty_dict_when_artifact_missing(
         self, mock_store: MagicMock, mock_deps: dict[str, MagicMock]
     ) -> None:
         mock_store.get_artifact.return_value = None
-        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
+        assert load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
 
     def test_returns_parsed_dict(
         self,
@@ -178,7 +178,7 @@ class TestLoadWitnessPayload:
         artifact = SimpleNamespace(uri="file:///witness.json")
         mock_store.get_artifact.return_value = artifact
         mock_deps["artifact_store"].read_text.return_value = json.dumps({"key": "value"})
-        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {
+        assert load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {
             "key": "value"
         }
 
@@ -190,7 +190,7 @@ class TestLoadWitnessPayload:
         artifact = SimpleNamespace(uri="file:///bad.json")
         mock_store.get_artifact.return_value = artifact
         mock_deps["artifact_store"].read_text.return_value = "not json"
-        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
+        assert load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
 
     def test_returns_empty_dict_on_os_error(
         self,
@@ -200,7 +200,7 @@ class TestLoadWitnessPayload:
         artifact = SimpleNamespace(uri="file:///missing.json")
         mock_store.get_artifact.return_value = artifact
         mock_deps["artifact_store"].read_text.side_effect = OSError("not found")
-        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
+        assert load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
 
     def test_returns_empty_dict_for_non_dict_json(
         self,
@@ -210,7 +210,7 @@ class TestLoadWitnessPayload:
         artifact = SimpleNamespace(uri="file:///array.json")
         mock_store.get_artifact.return_value = artifact
         mock_deps["artifact_store"].read_text.return_value = json.dumps([1, 2, 3])
-        assert _load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
+        assert load_witness_payload(mock_store, mock_deps["artifact_store"], "witness-1") == {}
 
 
 # ---------------------------------------------------------------------------

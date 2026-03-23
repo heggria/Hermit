@@ -279,9 +279,32 @@ def _make_pattern_context(*, invocation_count: int = 5, success_rate: float = 0.
 
 
 class TestApplyTaskPattern:
-    def test_high_confidence_pattern_downgrades_risk(self) -> None:
+    def test_high_confidence_pattern_downgrades_risk_safe_class(self) -> None:
+        """Risk downgrade applies for safe action classes."""
         request = ActionRequest(
             request_id="req-pat-1",
+            tool_name="bash",
+            action_class="execute_command",
+            context=_make_pattern_context(invocation_count=5, success_rate=0.90),
+        )
+        outcomes = [
+            RuleOutcome(
+                verdict="approval_required",
+                reasons=[PolicyReason("test", "Test")],
+                obligations=PolicyObligations(require_approval=True),
+                risk_level="high",
+            )
+        ]
+
+        adjusted = _apply_task_pattern(request, outcomes)
+        assert len(adjusted) == 1
+        assert adjusted[0].risk_level == "medium"
+        assert any(r.code == "task_pattern_match" for r in adjusted[0].reasons)
+
+    def test_high_confidence_pattern_no_downgrade_unsafe_class(self) -> None:
+        """Risk downgrade is blocked for unsafe action classes like write_local."""
+        request = ActionRequest(
+            request_id="req-pat-1b",
             tool_name="write_file",
             action_class="write_local",
             context=_make_pattern_context(invocation_count=5, success_rate=0.90),
@@ -297,7 +320,9 @@ class TestApplyTaskPattern:
 
         adjusted = _apply_task_pattern(request, outcomes)
         assert len(adjusted) == 1
-        assert adjusted[0].risk_level == "medium"
+        # Risk stays at "high" — not downgraded for unsafe class
+        assert adjusted[0].risk_level == "high"
+        # Pattern match is still annotated
         assert any(r.code == "task_pattern_match" for r in adjusted[0].reasons)
 
     def test_critical_risk_not_downgraded(self) -> None:

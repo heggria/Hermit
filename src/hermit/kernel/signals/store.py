@@ -54,7 +54,7 @@ class SignalStoreMixin(KernelStoreTypingBase):
 
     def _init_signal_schema(self) -> None:
         """Call from KernelStore._init_schema to set up the signals table."""
-        conn = self._get_conn()
+        conn = self._conn
         conn.executescript(SIGNAL_DDL)
         for idx in SIGNAL_INDEXES:
             conn.execute(idx)
@@ -62,8 +62,9 @@ class SignalStoreMixin(KernelStoreTypingBase):
     # ── Signal CRUD ──
 
     def create_signal(self, signal: EvidenceSignal) -> EvidenceSignal:
-        conn = self._get_conn()
-        with conn:
+        lock = self._lock
+        conn = self._conn
+        with lock, conn:
             conn.execute(
                 """INSERT INTO evidence_signals (
                     signal_id, source_kind, source_ref, conversation_id, task_id,
@@ -97,10 +98,12 @@ class SignalStoreMixin(KernelStoreTypingBase):
         return signal
 
     def get_signal(self, signal_id: str) -> EvidenceSignal | None:
-        conn = self._get_conn()
-        row = conn.execute(
-            "SELECT * FROM evidence_signals WHERE signal_id = ?", (signal_id,)
-        ).fetchone()
+        lock = self._lock
+        conn = self._conn
+        with lock:
+            row = conn.execute(
+                "SELECT * FROM evidence_signals WHERE signal_id = ?", (signal_id,)
+            ).fetchone()
         if row is None:
             return None
         return self._signal_from_row(row)
@@ -113,8 +116,9 @@ class SignalStoreMixin(KernelStoreTypingBase):
         acted_at: float | None = None,
         produced_task_id: str | None = None,
     ) -> None:
-        conn = self._get_conn()
-        with conn:
+        lock = self._lock
+        conn = self._conn
+        with lock, conn:
             if acted_at is not None:
                 conn.execute(
                     "UPDATE evidence_signals SET disposition = ?, acted_at = ? WHERE signal_id = ?",
@@ -133,50 +137,72 @@ class SignalStoreMixin(KernelStoreTypingBase):
 
     # ── Query helpers ──
 
-    def check_cooldown(self, cooldown_key: str, cooldown_seconds: int) -> bool:
-        """Return True if a signal with this cooldown_key was created within cooldown_seconds."""
+    def check_cooldown(
+        self, cooldown_key: str, cooldown_seconds: int, *, task_id: str | None = None
+    ) -> bool:
+        """Return True if a signal with this cooldown_key was created within cooldown_seconds.
+
+        When *task_id* is provided the check is scoped to that task only,
+        otherwise the check applies globally across all tasks.
+        """
         since = time.time() - cooldown_seconds
-        conn = self._get_conn()
-        row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM evidence_signals "
-            "WHERE cooldown_key = ? AND created_at >= ?",
-            (cooldown_key, since),
-        ).fetchone()
+        lock = self._lock
+        conn = self._conn
+        if task_id is not None:
+            with lock:
+                row = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM evidence_signals "
+                    "WHERE cooldown_key = ? AND created_at >= ? AND task_id = ?",
+                    (cooldown_key, since, task_id),
+                ).fetchone()
+        else:
+            with lock:
+                row = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM evidence_signals "
+                    "WHERE cooldown_key = ? AND created_at >= ?",
+                    (cooldown_key, since),
+                ).fetchone()
         return bool(row and int(row["cnt"]) > 0)
 
     def actionable_signals(self, limit: int = 50) -> list[EvidenceSignal]:
         now = time.time()
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM evidence_signals "
-            "WHERE disposition = 'pending' AND (expires_at IS NULL OR expires_at > ?) "
-            "AND source_kind NOT LIKE 'steering:%' "
-            "ORDER BY created_at ASC LIMIT ?",
-            (now, limit),
-        ).fetchall()
+        lock = self._lock
+        conn = self._conn
+        with lock:
+            rows = conn.execute(
+                "SELECT * FROM evidence_signals "
+                "WHERE disposition = 'pending' AND (expires_at IS NULL OR expires_at > ?) "
+                "AND source_kind NOT LIKE 'steering:%' "
+                "ORDER BY created_at ASC LIMIT ?",
+                (now, limit),
+            ).fetchall()
         return [self._signal_from_row(r) for r in rows]
 
     def signal_stats(self, since: float | None = None) -> dict[str, int]:
-        conn = self._get_conn()
-        if since is not None:
-            rows = conn.execute(
-                "SELECT disposition, COUNT(*) as cnt FROM evidence_signals "
-                "WHERE created_at >= ? GROUP BY disposition",
-                (since,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT disposition, COUNT(*) as cnt FROM evidence_signals GROUP BY disposition"
-            ).fetchall()
+        lock = self._lock
+        conn = self._conn
+        with lock:
+            if since is not None:
+                rows = conn.execute(
+                    "SELECT disposition, COUNT(*) as cnt FROM evidence_signals "
+                    "WHERE created_at >= ? GROUP BY disposition",
+                    (since,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT disposition, COUNT(*) as cnt FROM evidence_signals GROUP BY disposition"
+                ).fetchall()
         return {str(r["disposition"]): int(r["cnt"]) for r in rows}
 
     def list_signals(self, limit: int = 50) -> list[EvidenceSignal]:
         """Return the most recent signals, newest first."""
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM evidence_signals ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        lock = self._lock
+        conn = self._conn
+        with lock:
+            rows = conn.execute(
+                "SELECT * FROM evidence_signals ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [self._signal_from_row(r) for r in rows]
 
     # ── Steering convenience ──
@@ -191,32 +217,36 @@ class SignalStoreMixin(KernelStoreTypingBase):
         disposition: str | None = None,
         limit: int = 50,
     ) -> list[SteeringDirective]:
-        conn = self._get_conn()
-        if disposition is not None:
-            rows = conn.execute(
-                "SELECT * FROM evidence_signals "
-                "WHERE task_id = ? AND source_kind LIKE 'steering:%' "
-                "AND disposition = ? ORDER BY created_at ASC LIMIT ?",
-                (task_id, disposition, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM evidence_signals "
-                "WHERE task_id = ? AND source_kind LIKE 'steering:%' "
-                "ORDER BY created_at ASC LIMIT ?",
-                (task_id, limit),
-            ).fetchall()
+        lock = self._lock
+        conn = self._conn
+        with lock:
+            if disposition is not None:
+                rows = conn.execute(
+                    "SELECT * FROM evidence_signals "
+                    "WHERE task_id = ? AND source_kind LIKE 'steering:%' "
+                    "AND disposition = ? ORDER BY created_at ASC LIMIT ?",
+                    (task_id, disposition, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM evidence_signals "
+                    "WHERE task_id = ? AND source_kind LIKE 'steering:%' "
+                    "ORDER BY created_at ASC LIMIT ?",
+                    (task_id, limit),
+                ).fetchall()
         return [SteeringDirective.from_signal(self._signal_from_row(r)) for r in rows]
 
     def active_steerings_for_task(self, task_id: str) -> list[SteeringDirective]:
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT * FROM evidence_signals "
-            "WHERE task_id = ? AND source_kind LIKE 'steering:%' "
-            "AND disposition IN ('pending', 'acknowledged', 'applied') "
-            "ORDER BY created_at ASC",
-            (task_id,),
-        ).fetchall()
+        lock = self._lock
+        conn = self._conn
+        with lock:
+            rows = conn.execute(
+                "SELECT * FROM evidence_signals "
+                "WHERE task_id = ? AND source_kind LIKE 'steering:%' "
+                "AND disposition IN ('pending', 'acknowledged', 'applied') "
+                "ORDER BY created_at ASC",
+                (task_id,),
+            ).fetchall()
         return [SteeringDirective.from_signal(self._signal_from_row(r)) for r in rows]
 
     def update_steering_disposition(
@@ -225,8 +255,9 @@ class SignalStoreMixin(KernelStoreTypingBase):
         disposition: str,
         applied_at: float | None = None,
     ) -> None:
-        conn = self._get_conn()
-        with conn:
+        lock = self._lock
+        conn = self._conn
+        with lock, conn:
             conn.execute(
                 "UPDATE evidence_signals SET disposition = ? WHERE signal_id = ?",
                 (disposition, directive_id),
