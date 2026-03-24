@@ -118,6 +118,7 @@ _STATUS: dict[str, tuple[str, str]] = {
     "running": ("●", "cyan"),
     "queued": ("○", "bright_blue"),
     "reconciling": ("⟳", "white"),
+    "needs_attention": ("!", "orange3"),
     "completed": ("✓", "green"),
     "failed": ("✗", "red"),
     "blocked": ("⚠", "yellow"),

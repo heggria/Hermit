@@ -235,12 +235,13 @@ def extract_tool_payload(response: dict) -> dict:
 
 ANALYSIS_TEMPLATES = [
     (
-        "improve",
-        "Read the file {module_path} and find one concrete issue to fix. "
+        "review",
+        "Read the file {module_path} and identify one concrete issue if any exists. "
         "Focus on edge cases: missing None checks, unhandled exceptions, "
         "empty collection access without guards, or integer overflow risks. "
-        "If the file looks fine and there is no real issue, do nothing and stop. "
-        "Do not invent problems. Only apply a fix if a genuine issue exists.",
+        "Report the issue with the exact line number and a brief explanation. "
+        "If the file looks fine and there is no real issue, just say 'No issues found.' "
+        "Do NOT modify any files. This is a read-only review task.",
     ),
 ]
 
