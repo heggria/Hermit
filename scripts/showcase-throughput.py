@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
-"""Hermit Throughput Showcase — submits 500+ analysis tasks for high-concurrency demo.
+"""Hermit Throughput Showcase — high-concurrency governed task execution demo.
 
-Demonstrates Hermit's ability to consume tokens at scale via parallel governed
-execution.  Each task reads source files, analyzes them with the LLM, and produces
-detailed reports — all under governed policy with receipts and proofs.
+Usage:
+    # One-command run (auto-starts dev service if needed):
+    uv run python scripts/showcase-throughput.py
 
-Prerequisites:
-    # Start Hermit serve with showcase env vars:
-    HERMIT_LLM_CONCURRENCY=100 \\
-    HERMIT_POOL_SCALE=25 \\
-    HERMIT_MAX_TOKENS=8192 \\
-    HERMIT_MODEL=claude-sonnet-4-6 \\
-    HERMIT_MCP_SERVER_ENABLED=true \\
-    hermit serve
+    # Custom options:
+    uv run python scripts/showcase-throughput.py --max-tasks 512 --batch-size 512
+    uv run python scripts/showcase-throughput.py --monitor          # monitor only
+    uv run python scripts/showcase-throughput.py --dry-run          # preview tasks
 
-    # Then run this script:
-    python scripts/showcase-throughput.py [--submit] [--monitor] [--batch-size 50]
+The script will:
+1. Check if the dev MCP server is running (port 8322)
+2. If not, ensure required env vars are in ~/.hermit-dev/.env and start the service
+3. Submit tasks and monitor progress
 
-Modes:
-    --submit    Generate and submit tasks (default: both submit + monitor)
-    --monitor   Monitor existing tasks only
-    --batch-size  Tasks per MCP batch call (default 50)
+Required env vars (auto-added to ~/.hermit-dev/.env if missing):
+    HERMIT_MCP_SERVER_ENABLED=true
+    HERMIT_LLM_CONCURRENCY=256
+    HERMIT_DISPATCH_THREAD_MAX=1024
+    HERMIT_POOL_EXECUTOR_MAX=1024
+    HERMIT_MAX_SAME_WORKSPACE=1024
+    HERMIT_SQLITE_BUSY_TIMEOUT=300000
 """
 
 from __future__ import annotations
@@ -36,7 +37,86 @@ from pathlib import Path
 
 MCP_URL = os.environ.get("HERMIT_MCP_URL", "http://127.0.0.1:8322/mcp")
 CODEBASE_ROOT = Path(__file__).resolve().parents[1] / "src" / "hermit"
+SCRIPTS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPTS_DIR.parent
 STATE_FILE = Path("/tmp/hermit_showcase_state.json")
+DEV_ENV_FILE = Path.home() / ".hermit-dev" / ".env"
+
+# Required env vars for high-concurrency showcase
+_REQUIRED_ENV = {
+    "HERMIT_MCP_SERVER_ENABLED": "true",
+    "HERMIT_LLM_CONCURRENCY": "256",
+    "HERMIT_DISPATCH_THREAD_MAX": "1024",
+    "HERMIT_POOL_EXECUTOR_MAX": "1024",
+    "HERMIT_MAX_SAME_WORKSPACE": "1024",
+    "HERMIT_SQLITE_BUSY_TIMEOUT": "300000",
+}
+
+
+def _ensure_dev_env() -> None:
+    """Ensure ~/.hermit-dev/.env has all required showcase settings."""
+    DEV_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict[str, str] = {}
+    if DEV_ENV_FILE.exists():
+        for line in DEV_ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            existing[k] = v
+
+    added = []
+    for key, default in _REQUIRED_ENV.items():
+        if key not in existing:
+            existing[key] = default
+            added.append(f"  {key}={default}")
+
+    if added:
+        lines = [f"{k}={v}" for k, v in existing.items()]
+        DEV_ENV_FILE.write_text("\n".join(lines) + "\n")
+        print(f"Added to {DEV_ENV_FILE}:")
+        print("\n".join(added))
+
+
+def _is_mcp_running() -> bool:
+    """Check if MCP server is reachable."""
+    try:
+        result = subprocess.run(
+            ["curl", "-s", "-m", "2", "-o", "/dev/null", "-w", "%{http_code}", MCP_URL],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0 and result.stdout.strip() != "000"
+    except Exception:
+        return False
+
+
+def _start_dev_service() -> None:
+    """Start the dev service via hermit-envctl.sh."""
+    envctl = PROJECT_ROOT / "scripts" / "hermit-envctl.sh"
+    if not envctl.exists():
+        print(f"ERROR: {envctl} not found. Start Hermit manually.")
+        sys.exit(1)
+
+    print("Starting dev service...")
+    subprocess.run([str(envctl), "dev", "restart"], capture_output=True, timeout=30)
+
+    # Wait for MCP to come up
+    for _ in range(20):
+        time.sleep(1)
+        if _is_mcp_running():
+            print("MCP server ready.\n")
+            return
+    print("ERROR: MCP server did not start within 20s.")
+    sys.exit(1)
+
+
+def ensure_service() -> None:
+    """Ensure dev environment is configured and MCP server is running."""
+    _ensure_dev_env()
+    if not _is_mcp_running():
+        _start_dev_service()
 
 
 # ── MCP client ──────────────────────────────────────────────────────────────
@@ -459,18 +539,7 @@ def main() -> None:
         tasks = tasks[: args.max_tasks]
         print(f"Generated {len(tasks)} analysis tasks\n")
 
-        try:
-            init_session()
-        except Exception as e:
-            print(f"ERROR: Cannot connect to Hermit MCP server: {e}")
-            print("Start Hermit first:\n")
-            print("  HERMIT_LLM_CONCURRENCY=100 \\")
-            print("  HERMIT_POOL_SCALE=25 \\")
-            print("  HERMIT_MAX_TOKENS=8192 \\")
-            print("  HERMIT_MODEL=claude-sonnet-4-6 \\")
-            print("  HERMIT_MCP_SERVER_ENABLED=true \\")
-            print("  hermit serve")
-            sys.exit(1)
+        ensure_service()
 
         state = submit_tasks(tasks, batch_size=args.batch_size)
 
