@@ -220,6 +220,7 @@ class HermitMcpServer:
         description: str,
         priority: str,
         policy_profile: str,
+        workspace_root: str = "",
     ) -> tuple[str | None, str]:
         """Submit one task via task controller directly. Returns (task_id, session_id).
 
@@ -247,7 +248,7 @@ class HermitMcpServer:
             source_channel="mcp-supervisor",
             kind="respond",
             policy_profile=policy_profile or "autonomous",
-            workspace_root=str(getattr(runner.agent, "workspace_root", "") or ""),
+            workspace_root=workspace_root or str(getattr(runner.agent, "workspace_root", "") or ""),
             parent_task_id=None,
             requested_by="supervisor",
             ingress_metadata=metadata,
@@ -322,6 +323,7 @@ class HermitMcpServer:
             priority: str = "normal",
             policy_profile: str = "autonomous",
             await_completion: int = 0,
+            workspace_root: str = "",
         ) -> dict[str, Any]:
             """Submit one or more tasks to the Hermit kernel for governed execution.
 
@@ -368,7 +370,10 @@ class HermitMcpServer:
 
                         t_priority = task_def.get("priority", priority)
                         t_policy = task_def.get("policy_profile", policy_profile)
-                        tid, sid = self._submit_single(runner, desc, t_priority, t_policy)
+                        t_workspace = task_def.get("workspace_root", workspace_root)
+                        tid, sid = self._submit_single(
+                            runner, desc, t_priority, t_policy, t_workspace
+                        )
                         if tid:
                             task_ids.append(tid)
                         results.append(
@@ -417,6 +422,7 @@ class HermitMcpServer:
                 description,
                 priority,
                 policy_profile,
+                workspace_root,
             )
 
             if await_completion > 0 and task_id is not None:

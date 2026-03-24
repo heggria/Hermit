@@ -328,6 +328,7 @@ def submit_tasks(tasks: list[dict], batch_size: int = 50) -> dict:
             {
                 "tasks": batch,
                 "policy_profile": "autonomous",
+                "workspace_root": str(ATLAS_ROOT),
             },
             session_id,
         )

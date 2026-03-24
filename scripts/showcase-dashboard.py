@@ -117,7 +117,7 @@ def _init_session() -> str:
 _STATUS: dict[str, tuple[str, str]] = {
     "running": ("●", "cyan"),
     "queued": ("○", "bright_blue"),
-    "reconciling": ("⟳", "magenta"),
+    "reconciling": ("⟳", "white"),
     "completed": ("✓", "green"),
     "failed": ("✗", "red"),
     "blocked": ("⚠", "yellow"),
@@ -166,6 +166,8 @@ class StatCard(Widget):
     StatCard.failed   Digits { color: red; }
     StatCard.blocked  { border: tall yellow; }
     StatCard.blocked  Digits { color: yellow; }
+    StatCard.reconciling  { border: tall white; }
+    StatCard.reconciling  Digits { color: white; }
     """
 
     def __init__(self, label: str, card_class: str = "", **kwargs) -> None:
@@ -288,6 +290,7 @@ class HermitDashboard(App):
             yield StatCard("DONE", card_class="done", id="card-done")
             yield StatCard("FAILED", card_class="failed", id="card-failed")
             yield StatCard("BLOCKED", card_class="blocked", id="card-blocked")
+            yield StatCard("RECONCILING", card_class="reconciling", id="card-reconciling")
         yield ProgressRow(id="progress-row")
         yield DataTable(id="task-table", cursor_type="row")
         with Horizontal(id="bottom-row"):
@@ -413,6 +416,7 @@ class HermitDashboard(App):
             "completed": 0,
             "failed": 0,
             "blocked": 0,
+            "reconciling": 0,
             "cancelled": 0,
         }
         for t in task_rows:
@@ -427,6 +431,7 @@ class HermitDashboard(App):
         running = counts["running"]
         failed = counts["failed"]
         blocked = counts["blocked"]
+        reconciling = counts["reconciling"]
 
         # ── Status bar ────────────────────────────────────────────────────
         level = str(health.get("health_level", "unknown") or "unknown")
@@ -459,6 +464,7 @@ class HermitDashboard(App):
         self.query_one("#card-done", StatCard).set_value(done)
         self.query_one("#card-failed", StatCard).set_value(failed)
         self.query_one("#card-blocked", StatCard).set_value(blocked)
+        self.query_one("#card-reconciling", StatCard).set_value(reconciling)
 
         # ── Progress bar ──────────────────────────────────────────────────
         self.query_one(ProgressRow).update_progress(done, total)
