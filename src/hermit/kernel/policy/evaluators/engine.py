@@ -54,7 +54,10 @@ class PolicyEngine:
         decision.rule_outcomes = [outcome.to_dict() for outcome in outcomes]
 
         # Autonomous mode: auto-approve everything — skip all approval gates.
-        if request.policy_profile == "autonomous" and decision.obligations.require_approval:
+        if (
+            request.context.get("policy_profile") == "autonomous"
+            and decision.obligations.require_approval
+        ):
             decision.verdict = "allow_with_receipt"
             decision.obligations = PolicyObligations(
                 require_receipt=decision.obligations.require_receipt,

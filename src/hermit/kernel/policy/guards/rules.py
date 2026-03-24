@@ -867,7 +867,7 @@ def _evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
     if (
         request.action_class in {"write_local", "patch_file"}
         and kernel_paths
-        and request.policy_profile != "autonomous"
+        and request.context.get("policy_profile") != "autonomous"
     ):
         from pathlib import Path as _Path
 

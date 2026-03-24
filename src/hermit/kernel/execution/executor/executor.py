@@ -1043,8 +1043,8 @@ class ToolExecutor:
     ) -> ToolExecutionResult:
         if workspace_lease_id is not None:
             self.workspace_lease_service.release(workspace_lease_id)
-        if capability_grant_id is not None:
-            self.capability_service.revoke(capability_grant_id)
+        # Note: do NOT revoke the capability grant on enforcement failure.
+        # The grant was issued but never consumed — it should remain "issued" for audit.
         self.store.append_event(
             event_type="dispatch.denied",
             entity_type="capability_grant",

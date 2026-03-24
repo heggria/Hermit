@@ -602,6 +602,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         *,
         task_id: str | None = None,
         step_attempt_id: str | None = None,
+        workspace_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
     ) -> list[WorkspaceLeaseRecord]:
@@ -613,6 +614,9 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         if step_attempt_id:
             clauses.append("step_attempt_id = ?")
             params.append(step_attempt_id)
+        if workspace_id:
+            clauses.append("workspace_id = ?")
+            params.append(workspace_id)
         if status:
             clauses.append("status = ?")
             params.append(status)
