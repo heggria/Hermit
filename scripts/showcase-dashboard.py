@@ -117,6 +117,7 @@ def _init_session() -> str:
 _STATUS: dict[str, tuple[str, str]] = {
     "running": ("●", "cyan"),
     "queued": ("○", "bright_blue"),
+    "reconciling": ("⟳", "magenta"),
     "completed": ("✓", "green"),
     "failed": ("✗", "red"),
     "blocked": ("⚠", "yellow"),

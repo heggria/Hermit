@@ -183,8 +183,12 @@ class AuthorizationHandler:
             return None
         existing = self.store.get_step_attempt(attempt_ctx.step_attempt_id)
         if existing is not None and existing.workspace_lease_id:
-            lease = self.workspace_lease_service.validate_active(existing.workspace_lease_id)
-            return lease.lease_id
+            try:
+                lease = self.workspace_lease_service.validate_active(existing.workspace_lease_id)
+                return lease.lease_id
+            except RuntimeError:
+                # Lease expired or invalid — fall through to acquire a fresh one.
+                pass
         lease_mode = "mutable" if approval_mode == "mutable_workspace" else "scoped"
         lease = self.workspace_lease_service.acquire(
             task_id=attempt_ctx.task_id,

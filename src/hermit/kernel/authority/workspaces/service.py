@@ -48,7 +48,7 @@ class WorkspaceLeaseService:
     MAX_LEASE_AGE_SECONDS: float = 86400.0  # 24 hours
 
     def __init__(
-        self, store: KernelStore, artifact_store: ArtifactStore, *, default_ttl_seconds: int = 300
+        self, store: KernelStore, artifact_store: ArtifactStore, *, default_ttl_seconds: int = 1800
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store

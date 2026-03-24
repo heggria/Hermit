@@ -15,7 +15,7 @@ class CapabilityGrantError(RuntimeError):
 
 
 class CapabilityGrantService:
-    def __init__(self, store: KernelStore, *, default_ttl_seconds: int = 300) -> None:
+    def __init__(self, store: KernelStore, *, default_ttl_seconds: int = 1800) -> None:
         self.store = store
         self.default_ttl_seconds = default_ttl_seconds
 
