@@ -67,7 +67,7 @@ format_pid_state() {
 matching_pids() {
   local marker="$1"
   ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v marker="${marker}" '
-    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, marker) {print $1}
+    index($0, "HERMIT_BASE_DIR=" base) && index($0, marker) {print $1}
   '
 }
 
@@ -80,9 +80,10 @@ _fallback_service_pids() {
     printf '%s\n' "${pid}"
     return
   fi
-  # Match "hermit serve --adapter <adapter>" without HERMIT_BASE_DIR
+  # Match installed binary: "hermit serve --adapter <adapter>"
+  # Also match dev checkout: "-m hermit.surfaces.cli serve --adapter <adapter>"
   ps -ax -o pid=,command= | awk -v adapter="${ADAPTER}" '
-    /hermit serve --adapter / && index($0, adapter) {print $1}
+    /hermit.*serve.*--adapter / && index($0, adapter) {print $1}
   '
 }
 

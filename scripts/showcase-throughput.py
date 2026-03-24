@@ -36,9 +36,12 @@ import time
 from pathlib import Path
 
 MCP_URL = os.environ.get("HERMIT_MCP_URL", "http://127.0.0.1:8322/mcp")
-CODEBASE_ROOT = Path(__file__).resolve().parents[1] / "src" / "hermit"
 SCRIPTS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPTS_DIR.parent
+ATLAS_ROOT = Path(
+    os.environ.get("SHOWCASE_TARGET_ROOT", str(PROJECT_ROOT.parent / "agent-usage-atlas"))
+)
+CODEBASE_ROOT = ATLAS_ROOT / "src" / "agent_usage_atlas"
 STATE_FILE = Path("/tmp/hermit_showcase_state.json")
 DEV_ENV_FILE = Path.home() / ".hermit-dev" / ".env"
 
@@ -236,7 +239,8 @@ ANALYSIS_TEMPLATES = [
         "Read the file {module_path} and find one concrete issue to fix. "
         "Focus on edge cases: missing None checks, unhandled exceptions, "
         "empty collection access without guards, or integer overflow risks. "
-        "Apply the fix by writing the corrected file.",
+        "If the file looks fine and there is no real issue, do nothing and stop. "
+        "Do not invent problems. Only apply a fix if a genuine issue exists.",
     ),
 ]
 
@@ -281,9 +285,8 @@ def generate_tasks() -> list[dict[str, str]]:
 
     # File-level analysis using read-only operations (bypasses deliberation)
     for py_file in files:
-        rel_path = py_file.relative_to(CODEBASE_ROOT.parent.parent)
         for _analysis_type, template in ANALYSIS_TEMPLATES:
-            desc = template.format(module_path=rel_path)
+            desc = template.format(module_path=py_file)
             tasks.append(
                 {
                     "description": desc,
@@ -367,6 +370,21 @@ def submit_tasks(tasks: list[dict], batch_size: int = 50) -> dict:
 
 
 # ── Monitoring ───────────────────────────────────────────────────────────────
+
+
+def _launch_dashboard(task_ids: list[str], session_id: str) -> None:
+    """Launch the Textual dashboard as a subprocess."""
+    dashboard = SCRIPTS_DIR / "showcase-dashboard.py"
+    if not dashboard.exists():
+        print("showcase-dashboard.py not found; falling back to text monitor.")
+        monitor_throughput(session_id, task_ids=task_ids or None)
+        return
+    cmd = [sys.executable, str(dashboard)]
+    if task_ids:
+        cmd += ["--task-ids", ",".join(task_ids)]
+    if session_id:
+        cmd += ["--session-id", session_id]
+    subprocess.run(cmd)
 
 
 def monitor_throughput(session_id: str = "", task_ids: list[str] | None = None) -> None:
@@ -488,6 +506,11 @@ def main() -> None:
         "--max-tasks", type=int, default=500, help="Max tasks to generate (default 500)"
     )
     parser.add_argument("--dry-run", action="store_true", help="Generate tasks without submitting")
+    parser.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        help="Use text-only monitor (default: Textual dashboard)",
+    )
     args = parser.parse_args()
 
     # Default: both submit and monitor
@@ -549,7 +572,10 @@ def main() -> None:
         if do_submit:
             session_id = state.get("session_id", "")  # type: ignore[possibly-undefined]
             task_ids = state.get("task_ids", [])  # type: ignore[possibly-undefined]
-        monitor_throughput(session_id, task_ids=task_ids)
+        if args.no_dashboard:
+            monitor_throughput(session_id, task_ids=task_ids)
+        else:
+            _launch_dashboard(task_ids or [], session_id)
 
 
 if __name__ == "__main__":

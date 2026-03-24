@@ -174,6 +174,8 @@ class KernelStore(
         self._task_locks: OrderedDict[str, threading.Lock] = OrderedDict()
         self._task_locks_guard = threading.Lock()
         self._local = threading.local()
+        self._all_conns: list[sqlite3.Connection] = []
+        self._all_conns_lock = threading.Lock()
         self._connect_target: str | Path = ":memory:" if self._in_memory else self.db_path
         self._busy_timeout = int(os.environ.get("HERMIT_SQLITE_BUSY_TIMEOUT", "120000"))
 
@@ -220,13 +222,16 @@ class KernelStore(
         raw.execute("PRAGMA foreign_keys=ON")
         raw.execute(f"PRAGMA busy_timeout={self._busy_timeout}")
         raw.execute("PRAGMA synchronous=NORMAL")
-        mmap_size = int(os.environ.get("HERMIT_SQLITE_MMAP_SIZE", "268435456"))
-        cache_size = int(os.environ.get("HERMIT_SQLITE_CACHE_SIZE", "-65536"))
+        mmap_size = int(os.environ.get("HERMIT_SQLITE_MMAP_SIZE", "67108864"))
+        cache_size = int(os.environ.get("HERMIT_SQLITE_CACHE_SIZE", "-8192"))
         raw.execute(f"PRAGMA mmap_size={mmap_size}")
         raw.execute(f"PRAGMA cache_size={cache_size}")
         raw.execute("PRAGMA temp_store=MEMORY")
         raw.execute("PRAGMA wal_autocheckpoint=2000")
-        return _BatchableConnection(raw, self)
+        conn = _BatchableConnection(raw, self)
+        with self._all_conns_lock:
+            self._all_conns.append(conn)
+        return conn
 
     @property
     def _conn(self) -> sqlite3.Connection:
@@ -280,18 +285,27 @@ class KernelStore(
         with self._lock:
             if hasattr(self, "_batcher"):
                 self._batcher.stop()
-            conn = getattr(self._local, "conn", None)
-            if conn is not None:
-                conn.close()
-                self._local.conn = None
+            with self._all_conns_lock:
+                for conn in self._all_conns:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                self._all_conns.clear()
+            self._local.conn = None
 
     def __del__(self) -> None:
         try:
             if hasattr(self, "_batcher"):
                 self._batcher.stop()
-            conn = getattr(self._local, "conn", None)
-            if conn is not None:
-                conn.close()
+            if hasattr(self, "_all_conns_lock"):
+                with self._all_conns_lock:
+                    for conn in self._all_conns:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                    self._all_conns.clear()
         except Exception:
             pass
 
