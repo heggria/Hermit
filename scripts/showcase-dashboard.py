@@ -467,7 +467,7 @@ class HermitDashboard(App):
         table.clear()
         sorted_rows = sorted(
             task_rows,
-            key=lambda t: float(t.get("created_at") or 0),
+            key=lambda t: float(t.get("updated_at") or 0),
             reverse=False,
         )
         for t in sorted_rows[:50]:
