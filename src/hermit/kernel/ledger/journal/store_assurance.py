@@ -119,7 +119,10 @@ class AssuranceStoreMixin(KernelStoreTypingBase):
             "SELECT * FROM assurance_trace_envelopes WHERE trace_id = ?",
             (trace_id,),
         )
-        assert row is not None
+        if row is None:
+            raise RuntimeError(
+                f"INSERT into assurance_trace_envelopes succeeded but row not found: trace_id={trace_id!r}"
+            )
         return _row_to_dict(row)
 
     def get_trace_envelopes(
@@ -193,7 +196,10 @@ class AssuranceStoreMixin(KernelStoreTypingBase):
             "SELECT * FROM assurance_scenarios WHERE scenario_id = ?",
             (scenario_id,),
         )
-        assert row is not None
+        if row is None:
+            raise RuntimeError(
+                f"INSERT into assurance_scenarios succeeded but row not found: scenario_id={scenario_id!r}"
+            )
         return _row_to_dict(row)
 
     def get_scenario(self, scenario_id: str) -> dict | None:
@@ -235,7 +241,10 @@ class AssuranceStoreMixin(KernelStoreTypingBase):
             "SELECT * FROM assurance_reports WHERE report_id = ?",
             (report_id,),
         )
-        assert row is not None
+        if row is None:
+            raise RuntimeError(
+                f"INSERT into assurance_reports succeeded but row not found: report_id={report_id!r}"
+            )
         return _row_to_dict(row)
 
     def get_report(self, report_id: str) -> dict | None:
@@ -309,7 +318,10 @@ class AssuranceStoreMixin(KernelStoreTypingBase):
             "SELECT * FROM assurance_replay_entries WHERE entry_id = ?",
             (entry_id,),
         )
-        assert row is not None
+        if row is None:
+            raise RuntimeError(
+                f"INSERT into assurance_replay_entries succeeded but row not found: entry_id={entry_id!r}"
+            )
         return _row_to_dict(row)
 
     def list_replay_entries(

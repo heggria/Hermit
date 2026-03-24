@@ -119,4 +119,4 @@ class SteeringProtocol:
                 payload={"reason": "steering_directive_issued"},
             )
         except Exception:
-            log.debug("steering_directive_error", exc_info=True)
+            log.warning("mark_input_dirty_failed", task_id=task_id, exc_info=True)

@@ -322,10 +322,21 @@ def export_iteration_proof(
     verification = verify_iteration_proof(proof)
     payload["verification"] = verification
 
-    filepath.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    try:
+        filepath.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.error(
+            "iteration_proof.export_failed",
+            iteration_id=proof.iteration_id,
+            path=str(filepath),
+            error=str(exc),
+        )
+        raise RuntimeError(
+            f"Failed to export iteration proof for {proof.iteration_id!r} to {filepath}: {exc}"
+        ) from exc
 
     logger.info(
         "iteration_proof.exported",

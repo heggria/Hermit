@@ -229,6 +229,8 @@ class HybridRetrievalService:
         # Score only candidates (not all memories)
         scored: list[tuple[str, float]] = []
         for m in memories:
+            if m.memory_id not in candidate_ids:
+                continue
             mem_tokens = {t for t in topic_tokens(m.claim_text) if len(t) >= 2}
             if not mem_tokens:
                 scored.append((m.memory_id, 0.0))
@@ -247,10 +249,6 @@ class HybridRetrievalService:
         self, query: str, memories: list[MemoryRecord], store: KernelStore
     ) -> list[str]:
         """Rank by embedding similarity."""
-        if not self._embeddings.is_available():
-            # Fallback embeddings still work
-            pass
-
         try:
             results = self._embeddings.search(query, store, limit=len(memories))
             memory_ids = {m.memory_id for m in memories}

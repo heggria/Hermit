@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import contextlib
+import os
 import re
 import sqlite3
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -34,7 +37,7 @@ from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 from hermit.kernel.verification.benchmark.history import BenchmarkHistoryStoreMixin
 
 _SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-_SCHEMA_VERSION = "18"
+_SCHEMA_VERSION = "19"
 _MIGRATABLE_SCHEMA_VERSIONS = {
     "5",
     "6",
@@ -49,6 +52,7 @@ _MIGRATABLE_SCHEMA_VERSIONS = {
     "15",
     "16",
     "17",
+    "18",
     _SCHEMA_VERSION,
 }
 _KNOWN_KERNEL_TABLES = {
@@ -106,6 +110,44 @@ class KernelSchemaError(RuntimeError):
     """Raised when an existing kernel database does not match the hard-cut schema."""
 
 
+class _BatchableConnection:
+    """Thin wrapper around sqlite3.Connection that suppresses commit/rollback
+    when a ``KernelStore.batch()`` transaction is active.
+
+    Delegates all attribute access to the underlying connection.  The only
+    overridden behavior is ``__enter__``/``__exit__`` (used by ``with self._conn:``
+    in store methods): when the store's thread-local ``_batch_depth > 0``,
+    the context manager becomes a no-op so all writes accumulate in the
+    batch transaction.
+    """
+
+    __slots__ = ("_raw", "_store")
+
+    def __init__(self, raw: sqlite3.Connection, store: Any) -> None:
+        object.__setattr__(self, "_raw", raw)
+        object.__setattr__(self, "_store", store)
+
+    def __enter__(self):
+        if self._store._in_batch:
+            return self
+        self._raw.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        if self._store._in_batch:
+            return False
+        return self._raw.__exit__(*args)
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+    def __setattr__(self, name, value):
+        if name in ("_raw", "_store"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._raw, name, value)
+
+
 class KernelStore(
     KernelTaskStoreMixin,
     KernelLedgerStoreMixin,
@@ -128,31 +170,148 @@ class KernelStore(
         if not self._in_memory:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        connect_target: str | Path = ":memory:" if self._in_memory else self.db_path
-        self._conn = sqlite3.connect(connect_target, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._chain_lock = threading.RLock()
+        self._task_locks: OrderedDict[str, threading.Lock] = OrderedDict()
+        self._task_locks_guard = threading.Lock()
+        self._local = threading.local()
+        self._connect_target: str | Path = ":memory:" if self._in_memory else self.db_path
+        self._busy_timeout = int(os.environ.get("HERMIT_SQLITE_BUSY_TIMEOUT", "120000"))
+
+        # Bootstrap: create the first connection on the init thread.
+        # For :memory: databases (tests), ALL threads share this one connection
+        # because each sqlite3.connect(":memory:") creates a separate DB.
+        init_conn = self._create_conn()
+        self._local.conn = init_conn
+        if self._in_memory:
+            self._shared_conn = init_conn
         self._validate_existing_schema()
         self._init_schema()
+
+        # WriteBatcher for non-critical writes.
+        from hermit.kernel.ledger.journal.write_batcher import WriteBatcher
+
+        self._batcher = WriteBatcher(get_conn=self._get_conn, close_conn=self.close_thread_conn)
+
+    _MAX_TASK_LOCKS = int(os.environ.get("HERMIT_TASK_LOCK_CACHE_SIZE", "2048"))
+
+    def _task_chain_lock(self, task_id: str | None) -> threading.Lock:
+        """Return a per-task lock for hash chain serialization (LRU bounded)."""
+        key = task_id or "__global__"
+        with self._task_locks_guard:
+            lock = self._task_locks.get(key)
+            if lock is not None:
+                self._task_locks.move_to_end(key)
+                return lock
+            lock = threading.Lock()
+            self._task_locks[key] = lock
+            # Evict oldest entries if over capacity
+            while len(self._task_locks) > self._MAX_TASK_LOCKS:
+                oldest_key, oldest_lock = next(iter(self._task_locks.items()))
+                if oldest_lock.locked():
+                    break  # Don't evict locked entries
+                self._task_locks.pop(oldest_key)
+            return lock
+
+    def _create_conn(self) -> sqlite3.Connection:
+        """Create a new SQLite connection with WAL mode and performance tuning."""
+        raw = sqlite3.connect(self._connect_target, check_same_thread=False)
+        raw.row_factory = sqlite3.Row
+        raw.execute("PRAGMA journal_mode=WAL")
+        raw.execute("PRAGMA foreign_keys=ON")
+        raw.execute(f"PRAGMA busy_timeout={self._busy_timeout}")
+        raw.execute("PRAGMA synchronous=NORMAL")
+        mmap_size = int(os.environ.get("HERMIT_SQLITE_MMAP_SIZE", "268435456"))
+        cache_size = int(os.environ.get("HERMIT_SQLITE_CACHE_SIZE", "-65536"))
+        raw.execute(f"PRAGMA mmap_size={mmap_size}")
+        raw.execute(f"PRAGMA cache_size={cache_size}")
+        raw.execute("PRAGMA temp_store=MEMORY")
+        raw.execute("PRAGMA wal_autocheckpoint=2000")
+        return _BatchableConnection(raw, self)
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        if self._in_memory:
+            return self._shared_conn
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._create_conn()
+            self._local.conn = conn
+        return conn
 
     def _get_conn(self) -> sqlite3.Connection:
         return self._conn
 
+    @contextlib.contextmanager
+    def batch(self):
+        """Batch multiple writes into a single SQLite transaction.
+
+        While active, individual ``with self._conn:`` blocks skip commit/rollback.
+        The entire batch is committed when the context exits, or rolled back on
+        exception.  Reduces WAL lock contention from N transactions to 1.
+
+        Safe to nest — only the outermost batch commits.
+        """
+        local = self._local
+        depth = getattr(local, "_batch_depth", 0)
+        conn = self._conn
+        if depth == 0:
+            conn.execute("BEGIN IMMEDIATE")
+        local._batch_depth = depth + 1
+        try:
+            yield
+        except BaseException:
+            local._batch_depth = depth
+            if depth == 0:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            raise
+        else:
+            local._batch_depth = depth
+            if depth == 0:
+                conn.commit()
+
+    @property
+    def _in_batch(self) -> bool:
+        return getattr(self._local, "_batch_depth", 0) > 0
+
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            if hasattr(self, "_batcher"):
+                self._batcher.stop()
+            conn = getattr(self._local, "conn", None)
+            if conn is not None:
+                conn.close()
+                self._local.conn = None
 
     def __del__(self) -> None:
         try:
-            self._conn.close()
+            if hasattr(self, "_batcher"):
+                self._batcher.stop()
+            conn = getattr(self._local, "conn", None)
+            if conn is not None:
+                conn.close()
         except Exception:
             pass
 
+    def close_thread_conn(self) -> None:
+        """Close the connection held by the current thread, if any."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
+
+    def _batch_execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        """Submit a non-critical write to the batch queue and flush."""
+        self._batcher.enqueue(sql, params)
+        self._batcher.flush()
+
     def schema_version(self) -> str:
-        with self._lock:
-            row = self._row("SELECT value FROM kernel_meta WHERE key = 'schema_version'")
+        row = self._row("SELECT value FROM kernel_meta WHERE key = 'schema_version'")
         return str(row["value"]) if row is not None else ""
 
     def get_schema_version(self) -> str:
@@ -188,7 +347,7 @@ class KernelStore(
             )
 
     def _init_schema(self) -> None:
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS kernel_meta (
@@ -284,7 +443,8 @@ class KernelStore(
                     started_at REAL,
                     finished_at REAL,
                     created_at REAL,
-                    updated_at REAL
+                    updated_at REAL,
+                    ready_for_dispatch INTEGER DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS step_attempts (
                     step_attempt_id TEXT PRIMARY KEY,
@@ -816,6 +976,28 @@ class KernelStore(
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_step_attempts_ready_queue ON step_attempts(status, queue_priority DESC, started_at ASC)"
             )
+            # High-scale indexes for 2048-task concurrency
+            self._ensure_column("steps", "ready_for_dispatch", "INTEGER DEFAULT 0")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_steps_ready_dispatch "
+                "ON steps(task_id, status, ready_for_dispatch)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_step_attempts_step_status "
+                "ON step_attempts(step_id, status)"
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+            # Additional high-scale indexes for 2048-task query paths
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_steps_task_status_v2 ON steps(task_id, status)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_step_attempts_task_status "
+                "ON step_attempts(task_id, status)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_status_goal ON tasks(status, goal)"
+            )
             self._ensure_column("memory_records", "freshness_class", "TEXT")
             self._ensure_column("memory_records", "last_accessed_at", "REAL")
             self._conn.executescript(
@@ -893,6 +1075,10 @@ class KernelStore(
             self._init_delegation_schema()
             self._ensure_column("delegations", "approval_policy_json", "TEXT")
             self._init_signal_schema()
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_evidence_signals_task_disposition "
+                "ON evidence_signals(task_id, disposition)"
+            )
             self._init_competition_schema()
             self._init_assurance_schema()
             self._ensure_benchmark_history_table()
@@ -908,6 +1094,7 @@ class KernelStore(
             self._migrate_budget_v17()
             self._migrate_self_iterate_v18()
             self._migrate_contract_verification_fields()
+            self._migrate_to_v19()
             self._ensure_column("memory_records", "importance", "INTEGER NOT NULL DEFAULT 5")
             self._ensure_column("step_attempts", "claimed_at", "REAL")
             self._ensure_column("step_attempts", "waiting_reason", "TEXT")
@@ -1291,6 +1478,50 @@ class KernelStore(
             ],
         )
 
+    def _migrate_to_v19(self) -> None:
+        """Migrate from schema v18 to v19: ready_for_dispatch column + indexes.
+
+        Idempotent — safe to run on databases that already have the column and
+        indexes (e.g. freshly created via ``_init_schema``).
+        """
+        # 1. Ensure the column exists (no-op if already present from _init_schema)
+        self._ensure_column("steps", "ready_for_dispatch", "INTEGER DEFAULT 0")
+
+        # 2. Create high-scale concurrency indexes
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_steps_ready_dispatch "
+            "ON steps(task_id, status, ready_for_dispatch)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_step_attempts_step_status "
+            "ON step_attempts(step_id, status)"
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_steps_task_status_v2 ON steps(task_id, status)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_step_attempts_task_status "
+            "ON step_attempts(task_id, status)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_status_goal ON tasks(status, goal)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_evidence_signals_task_disposition "
+            "ON evidence_signals(task_id, disposition)"
+        )
+
+        # 3. Backfill: mark steps with no unfinished dependencies as ready
+        self._conn.execute(
+            """
+            UPDATE steps SET ready_for_dispatch = 1
+            WHERE (depends_on_json IS NULL OR depends_on_json = '[]')
+              AND status IN ('ready', 'running')
+              AND ready_for_dispatch = 0
+            """
+        )
+
     # ------------------------------------------------------------------
     # Blackboard CRUD
     # ------------------------------------------------------------------
@@ -1671,7 +1902,7 @@ class KernelStore(
         known tables, this is largely a no-op but keeps the modules self-
         contained for standalone or migration use.
         """
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.executescript(ddl)
 
     def execute_raw(
@@ -1696,12 +1927,11 @@ class KernelStore(
         """
         resolved_params = tuple(params) if params else ()
         if write:
-            with self._lock, self._conn:
+            with self._conn:
                 self._conn.execute(sql, resolved_params)
             return []
-        with self._lock:
-            cursor = self._conn.execute(sql, resolved_params)
-            return list(cursor.fetchall())
+        cursor = self._conn.execute(sql, resolved_params)
+        return list(cursor.fetchall())
 
     def _infer_principal_type(self, value: str) -> str:
         normalized = value.strip().lower()
@@ -1730,7 +1960,7 @@ class KernelStore(
     ) -> PrincipalRecord:
         now = time.time()
         resolved_id = principal_id or f"principal_{self._principal_slug(display_name)}"
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO principals (
@@ -1791,7 +2021,7 @@ class KernelStore(
         return principal_id
 
     def update_task_priority(self, task_id: str, *, priority: str) -> None:
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 "UPDATE tasks SET priority = ?, updated_at = ? WHERE task_id = ?",
                 (priority, time.time(), task_id),
@@ -1820,17 +2050,20 @@ class KernelStore(
         causation_id: str | None = None,
         correlation_id: str | None = None,
     ) -> str:
-        # Acquire the RLock to serialize hash chain reads and writes.
-        # Most callers already hold self._lock (e.g. ``with self._lock, self._conn:``),
-        # but some (observation ticket methods) only hold a connection transaction.
-        # Using the reentrant lock here provides defense in depth — callers that
-        # already hold it will not deadlock.
-        with self._lock:
+        # --- Pre-lock phase: CPU-bound preparation (no DB dependency) ---
+        payload_json = _canonical_json(payload or {})
+        occurred_at = time.time()
+        # Pre-canonicalize the payload for hash computation so this work
+        # is not repeated inside the serialized critical section.
+        canonical_payload_for_hash = _canonical_json_from_raw(payload_json)
+
+        # Acquire a per-task lock to serialize hash chain reads and writes.
+        with self._task_chain_lock(task_id):
+            # _ensure_principal_id does a DB write (INSERT OR IGNORE) so it
+            # must be inside the lock when using a shared in-memory connection.
             actor_principal_id = self._ensure_principal_id(actor)
-            payload_json = _canonical_json(payload or {})
-            occurred_at = time.time()
             prev_event_hash = self._latest_task_event_hash(task_id)
-            event_hash = self._compute_event_hash(
+            event_hash = self._compute_event_hash_from_canonical(
                 event_id=event_id,
                 task_id=task_id,
                 step_id=step_id,
@@ -1838,7 +2071,7 @@ class KernelStore(
                 entity_id=entity_id,
                 event_type=event_type,
                 actor=actor_principal_id,
-                payload_json=payload_json,
+                canonical_payload=canonical_payload_for_hash,
                 occurred_at=occurred_at,
                 causation_id=causation_id,
                 correlation_id=correlation_id,
@@ -1929,7 +2162,48 @@ class KernelStore(
         correlation_id: str | None,
         prev_event_hash: str | None,
     ) -> str:
-        payload = {
+        """Compute event hash, canonicalizing payload_json internally.
+
+        Used by backfill and migration paths where the canonical payload
+        has not been pre-computed.
+        """
+        return self._compute_event_hash_from_canonical(
+            event_id=event_id,
+            task_id=task_id,
+            step_id=step_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            event_type=event_type,
+            actor=actor,
+            canonical_payload=_canonical_json_from_raw(payload_json),
+            occurred_at=occurred_at,
+            causation_id=causation_id,
+            correlation_id=correlation_id,
+            prev_event_hash=prev_event_hash,
+        )
+
+    def _compute_event_hash_from_canonical(
+        self,
+        *,
+        event_id: str,
+        task_id: str | None,
+        step_id: str | None,
+        entity_type: str,
+        entity_id: str,
+        event_type: str,
+        actor: str,
+        canonical_payload: str,
+        occurred_at: float,
+        causation_id: str | None,
+        correlation_id: str | None,
+        prev_event_hash: str | None,
+    ) -> str:
+        """Compute event hash from an already-canonicalized payload string.
+
+        This avoids redundant JSON parse+serialize when the caller has
+        already prepared the canonical payload outside the critical section.
+        """
+        hash_input = {
             "event_id": event_id,
             "task_id": task_id,
             "step_id": step_id,
@@ -1937,13 +2211,13 @@ class KernelStore(
             "entity_id": entity_id,
             "event_type": event_type,
             "actor": actor,
-            "payload": _canonical_json_from_raw(payload_json),
+            "payload": canonical_payload,
             "occurred_at": occurred_at,
             "causation_id": causation_id,
             "correlation_id": correlation_id,
             "prev_event_hash": prev_event_hash or "",
         }
-        return _sha256_hex(_canonical_json(payload))
+        return _sha256_hex(_canonical_json(hash_input))
 
     def _migrate_event_hashes_table(self) -> None:
         """Create the event_hashes table for append-only hash chain storage.

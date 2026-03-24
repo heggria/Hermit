@@ -221,22 +221,39 @@ class HermitMcpServer:
         priority: str,
         policy_profile: str,
     ) -> tuple[str | None, str]:
-        """Submit one task via enqueue_ingress. Returns (task_id, session_id)."""
+        """Submit one task via task controller directly. Returns (task_id, session_id).
+
+        Bypasses system prompt compilation for faster batch ingestion.
+        The prompt context is built lazily when the dispatch worker picks up the task.
+        """
         session_id = f"mcp-supervisor-{uuid4().hex[:8]}"
         metadata: dict[str, object] = {
             "source": "mcp-supervisor",
             "priority": priority,
+            "dispatch_mode": "async",
+            "entry_prompt": description,
+            "raw_text": description,
+            "notify": {},
+            "source_ref": "mcp-supervisor",
+            "disable_tools": False,
+            "readonly_only": False,
+            "detected_payload_kinds": [],
         }
         if policy_profile:
             metadata["policy_profile"] = policy_profile
-        ctx = runner.enqueue_ingress(
-            session_id,
-            description,
+        ctx = runner.task_controller.enqueue_task(
+            conversation_id=session_id,
+            goal=description,
             source_channel="mcp-supervisor",
-            source_ref="mcp-supervisor",
+            kind="respond",
+            policy_profile=policy_profile or "autonomous",
+            workspace_root=str(getattr(runner.agent, "workspace_root", "") or ""),
+            parent_task_id=None,
             requested_by="supervisor",
             ingress_metadata=metadata,
+            source_ref="mcp-supervisor",
         )
+        runner.wake_dispatcher()
         task_id = getattr(ctx, "task_id", None) if ctx else None
         return task_id, session_id
 
@@ -336,25 +353,36 @@ class HermitMcpServer:
                 results: list[dict[str, Any]] = []
                 task_ids: list[str] = []
 
-                for i, task_def in enumerate(tasks):
-                    desc = task_def.get("description")
-                    if not desc:
-                        results.append({"index": i, "error": "Missing 'description' field"})
-                        continue
+                # Pause dispatch during batch submission to avoid
+                # submit/execute WAL lock contention on SQLite.
+                dispatch_svc = getattr(runner, "_dispatch_service", None)
+                if dispatch_svc and hasattr(dispatch_svc, "pause_dispatch"):
+                    dispatch_svc.pause_dispatch()
 
-                    t_priority = task_def.get("priority", priority)
-                    t_policy = task_def.get("policy_profile", policy_profile)
-                    tid, sid = self._submit_single(runner, desc, t_priority, t_policy)
-                    if tid:
-                        task_ids.append(tid)
-                    results.append(
-                        {
-                            "index": i,
-                            "task_id": tid,
-                            "session_id": sid,
-                            "status": "accepted",
-                        }
-                    )
+                try:
+                    for i, task_def in enumerate(tasks):
+                        desc = task_def.get("description")
+                        if not desc:
+                            results.append({"index": i, "error": "Missing 'description' field"})
+                            continue
+
+                        t_priority = task_def.get("priority", priority)
+                        t_policy = task_def.get("policy_profile", policy_profile)
+                        tid, sid = self._submit_single(runner, desc, t_priority, t_policy)
+                        if tid:
+                            task_ids.append(tid)
+                        results.append(
+                            {
+                                "index": i,
+                                "task_id": tid,
+                                "session_id": sid,
+                                "status": "accepted",
+                            }
+                        )
+                finally:
+                    # Resume dispatch — wakes the loop to process all queued tasks.
+                    if dispatch_svc and hasattr(dispatch_svc, "resume_dispatch"):
+                        dispatch_svc.resume_dispatch()
 
                 out: dict[str, Any] = {
                     "task_ids": task_ids,
@@ -1084,7 +1112,7 @@ class HermitMcpServer:
                     "approval_rate": metrics.approval_rate,
                     "avg_approval_latency": metrics.avg_approval_latency,
                     "rollback_rate": metrics.rollback_rate,
-                    "evidence_sufficiency_avg": metrics.evidence_sufficiency_avg,
+                    "avg_evidence_sufficiency": metrics.avg_evidence_sufficiency,
                     "tool_usage_counts": metrics.tool_usage_counts,
                     "action_class_distribution": metrics.action_class_distribution,
                     "risk_entries": [

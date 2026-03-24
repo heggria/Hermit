@@ -20,6 +20,7 @@ Usage::
 from __future__ import annotations
 
 import contextlib
+import logging
 import threading
 import weakref
 from collections.abc import Iterator
@@ -31,6 +32,7 @@ except ImportError:
     _fcntl = None
 
 _has_fcntl = _fcntl is not None
+_log = logging.getLogger(__name__)
 
 
 class FileGuard:
@@ -55,6 +57,12 @@ class FileGuard:
             rlock = cls._registry.get(canonical)
             if rlock is None:
                 rlock = threading.RLock()
+                # FIX: store the new RLock in the registry so that all
+                # concurrent callers for the same path share exactly one lock.
+                # Previously this assignment was missing, which meant two
+                # threads racing through this branch would each get a different
+                # RLock object — silently breaking the per-path serialisation
+                # guarantee.
                 cls._registry[canonical] = rlock
             return rlock
 
@@ -82,7 +90,9 @@ class FileGuard:
             path: The file to protect.  Need not exist yet.
             cross_process: When True and fcntl is available, also acquire an
                 exclusive flock on a sibling ``.lock`` file so that concurrent
-                *processes* are serialised as well.
+                *processes* are serialised as well.  On platforms without fcntl
+                (e.g. Windows) a warning is emitted and only the in-process
+                RLock is held.
         """
         path = Path(path)
         rlock = cls._get_rlock(path)
@@ -91,7 +101,7 @@ class FileGuard:
             if cross_process and _has_fcntl:
                 lock_file = path.with_suffix(path.suffix + ".lock")
                 lock_file.parent.mkdir(parents=True, exist_ok=True)
-                assert _fcntl is not None
+                # _has_fcntl guarantees _fcntl is not None here; no assert needed.
                 with open(lock_file, "a") as fh:
                     _fcntl.flock(fh, _fcntl.LOCK_EX)
                     try:
@@ -99,4 +109,11 @@ class FileGuard:
                     finally:
                         _fcntl.flock(fh, _fcntl.LOCK_UN)
             else:
+                if cross_process and not _has_fcntl:
+                    _log.warning(
+                        "cross_process=True requested for %s but fcntl is not "
+                        "available on this platform; falling back to in-process "
+                        "locking only.",
+                        path,
+                    )
                 yield

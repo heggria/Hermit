@@ -63,4 +63,13 @@ esac
 
 export PYTHONUNBUFFERED=1
 
+# Export env-specific .env variables so that values read via os.environ.get
+# (e.g. HERMIT_POOL_SCALE, HERMIT_LLM_CONCURRENCY) are available to the process.
+if [[ -f "${HERMIT_BASE_DIR}/.env" ]]; then
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    export "$key=$value"
+  done < "${HERMIT_BASE_DIR}/.env"
+fi
+
 exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 --no-sync python -m hermit.surfaces.cli "$@"

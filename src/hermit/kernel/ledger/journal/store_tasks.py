@@ -33,7 +33,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         source_ref: str | None = None,
     ) -> ConversationRecord:
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             row = self._row(
                 "SELECT * FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
@@ -67,28 +67,23 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return self._conversation_from_row(row)
 
     def get_conversation(self, conversation_id: str) -> ConversationRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM conversations WHERE conversation_id = ?", (conversation_id,)
-            )
+        row = self._row("SELECT * FROM conversations WHERE conversation_id = ?", (conversation_id,))
         return self._conversation_from_row(row) if row is not None else None
 
     def list_conversations(self) -> list[str]:
-        with self._lock:
-            rows = self._rows("SELECT conversation_id FROM conversations ORDER BY updated_at DESC")
+        rows = self._rows("SELECT conversation_id FROM conversations ORDER BY updated_at DESC")
         return [str(row["conversation_id"]) for row in rows]
 
     def list_conversation_records(self, *, limit: int = 50) -> list[ConversationRecord]:
-        with self._lock:
-            rows = self._rows(
-                "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
-            )
+        rows = self._rows(
+            "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        )
         return [self._conversation_from_row(row) for row in rows]
 
     def update_conversation_metadata(self, conversation_id: str, metadata: dict[str, Any]) -> None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 "UPDATE conversations SET metadata_json = ?, updated_at = ? WHERE conversation_id = ?",
                 (json.dumps(metadata, ensure_ascii=False), now, conversation_id),
@@ -98,7 +93,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         self, conversation_id: str, *, task_id: str | None, reason: str = ""
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE conversations
@@ -142,7 +137,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         last_task_id: str | None,
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE conversations
@@ -191,7 +186,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             if requested_by is not None
             else None
         )
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO tasks (
@@ -250,8 +245,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return task
 
     def get_task(self, task_id: str) -> TaskRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
+        row = self._row("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
         return self._task_from_row(row) if row is not None else None
 
     def list_tasks(
@@ -268,49 +262,46 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM tasks {where} ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._task_from_row(row) for row in rows]
 
     def list_open_tasks_for_conversation(
         self, *, conversation_id: str, limit: int = 20
     ) -> list[TaskRecord]:
-        with self._lock:
-            rows = self._rows(
-                """
-                SELECT *
-                FROM tasks
-                WHERE conversation_id = ?
-                  AND status IN ('queued', 'running', 'blocked', 'planning_ready')
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (conversation_id, limit),
-            )
+        rows = self._rows(
+            """
+            SELECT *
+            FROM tasks
+            WHERE conversation_id = ?
+              AND status IN ('queued', 'running', 'blocked', 'planning_ready')
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (conversation_id, limit),
+        )
         return [self._task_from_row(row) for row in rows]
 
     def list_child_tasks(
         self, *, parent_task_id: str, limit: int | None = None
     ) -> list[TaskRecord]:
         """Return tasks whose parent_task_id matches the given value."""
-        with self._lock:
-            if limit is not None:
-                rows = self._rows(
-                    "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT ?",
-                    (parent_task_id, limit),
-                )
-            else:
-                rows = self._rows(
-                    "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC",
-                    (parent_task_id,),
-                )
+        if limit is not None:
+            rows = self._rows(
+                "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC LIMIT ?",
+                (parent_task_id, limit),
+            )
+        else:
+            rows = self._rows(
+                "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC",
+                (parent_task_id,),
+            )
         return [self._task_from_row(row) for row in rows]
 
     def update_task_status(
         self, task_id: str, status: str, *, payload: dict[str, Any] | None = None
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
                 (status, now, task_id),
@@ -343,18 +334,17 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             sets.append("budget_tokens_limit = ?")
             params.append(budget_tokens_limit)
         params.append(task_id)
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 f"UPDATE tasks SET {', '.join(sets)} WHERE task_id = ?",
                 params,
             )
 
     def get_last_task_for_conversation(self, conversation_id: str) -> TaskRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM tasks WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1",
-                (conversation_id,),
-            )
+        row = self._row(
+            "SELECT * FROM tasks WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1",
+            (conversation_id,),
+        )
         return self._task_from_row(row) if row is not None else None
 
     def create_step(
@@ -380,16 +370,21 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         resolved_input_bindings = dict(input_bindings or {})
         resolved_verifies = list(verifies or [])
         resolved_supersedes = list(supersedes or [])
-        with self._lock, self._conn:
+        ready_for_dispatch = 1 if not depends_on else 0
+        depends_on_json = json.dumps(list(depends_on or []), ensure_ascii=False)
+        bindings_json = json.dumps(resolved_input_bindings, ensure_ascii=False)
+        verifies_json = json.dumps(resolved_verifies, ensure_ascii=False)
+        supersedes_json = json.dumps(resolved_supersedes, ensure_ascii=False)
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO steps (
                     step_id, task_id, kind, status, attempt, title, contract_ref,
                     depends_on_json, max_attempts, join_strategy, input_bindings_json,
                     node_key, verification_required, verifies_json, supersedes_json,
-                    started_at, created_at, updated_at
+                    started_at, created_at, updated_at, ready_for_dispatch
                 )
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step_id,
@@ -398,17 +393,18 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     status,
                     title or kind,
                     contract_ref,
-                    json.dumps(list(depends_on or []), ensure_ascii=False),
+                    depends_on_json,
                     max(int(max_attempts or 1), 1),
                     resolved_join_strategy,
-                    json.dumps(resolved_input_bindings, ensure_ascii=False),
+                    bindings_json,
                     node_key,
                     1 if verification_required else 0,
-                    json.dumps(resolved_verifies, ensure_ascii=False),
-                    json.dumps(resolved_supersedes, ensure_ascii=False),
+                    verifies_json,
+                    supersedes_json,
                     now,
                     now,
                     now,
+                    ready_for_dispatch,
                 ),
             )
             self._append_event_tx(
@@ -447,8 +443,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return step
 
     def get_step(self, step_id: str) -> StepRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM steps WHERE step_id = ?", (step_id,))
+        row = self._row("SELECT * FROM steps WHERE step_id = ?", (step_id,))
         return self._step_from_row(row) if row is not None else None
 
     def get_step_by_node_key(self, task_id: str, node_key: str) -> StepRecord | None:
@@ -457,11 +452,10 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         Returns the matching :class:`StepRecord`, or ``None`` if no step has
         that ``node_key`` in the given task.
         """
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM steps WHERE task_id = ? AND node_key = ? LIMIT 1",
-                (task_id, node_key),
-            )
+        row = self._row(
+            "SELECT * FROM steps WHERE task_id = ? AND node_key = ? LIMIT 1",
+            (task_id, node_key),
+        )
         return self._step_from_row(row) if row is not None else None
 
     def update_step(
@@ -489,7 +483,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             "finished_at": finished_at if finished_at is not None else step.finished_at,
             "updated_at": now,
         }
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE steps
@@ -561,7 +555,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         now = time.time()
         step_attempt_id = self._id("attempt")
         normalized_context = sqlite_dict(context)
-        with self._lock, self._conn:
+        context_json = json.dumps(normalized_context, ensure_ascii=False)
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO step_attempts (
@@ -580,7 +575,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     step_id,
                     attempt,
                     status,
-                    json.dumps(normalized_context, ensure_ascii=False),
+                    context_json,
                     sqlite_int(queue_priority),
                     sqlite_optional_text(context_pack_ref),
                     sqlite_optional_text(working_state_ref),
@@ -654,10 +649,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return self.get_step_attempt(step_attempt_id)  # type: ignore[return-value]
 
     def get_step_attempt(self, step_attempt_id: str) -> StepAttemptRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM step_attempts WHERE step_attempt_id = ?", (step_attempt_id,)
-            )
+        row = self._row("SELECT * FROM step_attempts WHERE step_attempt_id = ?", (step_attempt_id,))
         return self._step_attempt_from_row(row) if row is not None else None
 
     def list_step_attempts(
@@ -682,8 +674,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM step_attempts {where} ORDER BY started_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock:
-            rows = self._rows(query, tuple(params))
+        rows = self._rows(query, tuple(params))
         return [self._step_attempt_from_row(row) for row in rows]
 
     def list_ready_step_attempts(self, *, limit: int = 100) -> list[StepAttemptRecord]:
@@ -698,13 +689,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             ORDER BY sa.queue_priority DESC, sa.started_at ASC
             LIMIT ?
         """
-        with self._lock:
-            rows = self._rows(query, (limit,))
+        rows = self._rows(query, (limit,))
         return [self._step_attempt_from_row(row) for row in rows]
 
     def claim_next_ready_step_attempt(self) -> StepAttemptRecord | None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             row = self._row(
                 """
                 UPDATE step_attempts
@@ -713,19 +703,13 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     SELECT sa.step_attempt_id
                     FROM step_attempts sa
                     JOIN steps s ON s.step_id = sa.step_id
+                        AND s.ready_for_dispatch = 1
                     JOIN tasks t ON t.task_id = sa.task_id
                     WHERE sa.status = 'ready'
                       AND s.status = 'ready'
-                      AND t.status IN ('queued', 'running', 'reconciling', 'blocked', 'planning_ready')
-                      AND NOT EXISTS (
-                          SELECT 1 FROM steps dep
-                          WHERE dep.task_id = s.task_id
-                            AND dep.step_id IN (
-                                SELECT value FROM json_each(s.depends_on_json)
-                            )
-                            AND dep.status NOT IN (
-                                'succeeded', 'completed', 'skipped', 'needs_attention'
-                            )
+                      AND t.status IN (
+                          'queued', 'running', 'reconciling',
+                          'blocked', 'planning_ready'
                       )
                       AND NOT EXISTS (
                           SELECT 1 FROM step_attempts sa2
@@ -745,10 +729,6 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             if row is None:
                 return None
             attempt = self._step_attempt_from_row(row)
-            self._conn.execute(
-                "UPDATE step_attempts SET status = ? WHERE step_attempt_id = ?",
-                ("running", attempt.step_attempt_id),
-            )
             self._conn.execute(
                 "UPDATE steps SET status = ?, finished_at = NULL WHERE step_id = ?",
                 ("running", attempt.step_id),
@@ -775,8 +755,17 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         """Activate waiting steps whose dependencies are all satisfied.
 
         Returns the list of step_ids that were activated (waiting -> ready).
+
+        The method uses a two-phase approach to reduce lock contention:
+        1. Read phase: query candidates and check join barriers (no write lock held).
+        2. Write phase: activate each qualifying step in its own transaction.
+
+        ``_append_event_tx`` acquires a per-task ``threading.Lock`` (non-reentrant),
+        so we cannot wrap multiple calls in a single outer transaction without
+        risk of deadlock.  Separating reads from writes still avoids holding the
+        SQLite WAL write lock during barrier checks, which is the main contention
+        source when many steps complete concurrently.
         """
-        activated: list[str] = []
         candidates = self._rows(
             """
             SELECT s.step_id, s.depends_on_json, s.join_strategy
@@ -787,38 +776,50 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             """,
             (task_id, completed_step_id),
         )
+
+        # --- Read phase: check barriers without holding any write lock ----------
+        to_activate: list[tuple[str, str]] = []
         for row in candidates:
             step_id = str(row["step_id"])
             deps = list(json.loads(str(row["depends_on_json"] or "[]")))
             strategy = str(row["join_strategy"] or "all_required")
             if self._join_barrier_satisfied(task_id, deps, strategy):
-                now = time.time()
-                with self._lock, self._conn:
-                    self._conn.execute(
-                        "UPDATE steps SET status = 'ready', updated_at = ? WHERE step_id = ?",
-                        (now, step_id),
-                    )
-                    self._conn.execute(
-                        """
-                        UPDATE step_attempts SET status = 'ready'
-                        WHERE step_id = ? AND status = 'waiting'
-                        """,
-                        (step_id,),
-                    )
-                    self._append_event_tx(
-                        event_id=self._id("event"),
-                        event_type="step.dependency_satisfied",
-                        entity_type="step",
-                        entity_id=step_id,
-                        task_id=task_id,
-                        step_id=step_id,
-                        actor="kernel",
-                        payload={
-                            "activated_by": completed_step_id,
-                            "strategy": strategy,
-                        },
-                    )
-                activated.append(step_id)
+                to_activate.append((step_id, strategy))
+
+        if not to_activate:
+            return []
+
+        # --- Write phase: activate all qualifying steps -------------------------
+        activated: list[str] = []
+        now = time.time()
+        for step_id, strategy in to_activate:
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE steps SET status = 'ready', ready_for_dispatch = 1, "
+                    "updated_at = ? WHERE step_id = ?",
+                    (now, step_id),
+                )
+                self._conn.execute(
+                    """
+                    UPDATE step_attempts SET status = 'ready'
+                    WHERE step_id = ? AND status = 'waiting'
+                    """,
+                    (step_id,),
+                )
+                self._append_event_tx(
+                    event_id=self._id("event"),
+                    event_type="step.dependency_satisfied",
+                    entity_type="step",
+                    entity_id=step_id,
+                    task_id=task_id,
+                    step_id=step_id,
+                    actor="kernel",
+                    payload={
+                        "activated_by": completed_step_id,
+                        "strategy": strategy,
+                    },
+                )
+            activated.append(step_id)
         return activated
 
     def _join_barrier_satisfied(self, task_id: str, deps: list[str], strategy: str) -> bool:
@@ -886,7 +887,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
 
             if should_cascade:
                 now = time.time()
-                with self._lock, self._conn:
+                with self._conn:
                     self._conn.execute(
                         "UPDATE steps SET status = 'failed', finished_at = ?,"
                         " updated_at = ? WHERE step_id = ?",
@@ -932,7 +933,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             raise ValueError(f"Step {step_id!r} not found")
         next_attempt_num = step.attempt + 1
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE steps
@@ -976,7 +977,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
     ) -> None:
         """Mark a step as skipped (terminal) and activate downstream dependents."""
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE steps
@@ -1042,7 +1043,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             )
             new_status = "ready" if all_success else "waiting"
 
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE steps
@@ -1096,80 +1097,74 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         Only considers tasks in active (non-terminal) statuses.
         """
         cutoff = time.time() - threshold_seconds
-        with self._lock:
-            rows = self._rows(
-                """
-                SELECT * FROM tasks
-                WHERE status IN ('running', 'blocked', 'queued', 'planning_ready', 'reconciling')
-                  AND updated_at < ?
-                ORDER BY updated_at ASC
-                LIMIT ?
-                """,
-                (cutoff, limit),
-            )
+        rows = self._rows(
+            """
+            SELECT * FROM tasks
+            WHERE status IN ('running', 'blocked', 'queued', 'planning_ready', 'reconciling')
+              AND updated_at < ?
+            ORDER BY updated_at ASC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        )
         return [self._task_from_row(row) for row in rows]
 
     def count_tasks_by_status(self) -> dict[str, int]:
         """Return a mapping of task status to count across all tasks."""
-        with self._lock:
-            rows = self._rows("SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status")
+        rows = self._rows("SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status")
         return {str(row["status"]): int(row["cnt"]) for row in rows}
 
     def count_completed_in_window(self, window_seconds: float) -> int:
         """Count tasks that completed within the given look-back window."""
         cutoff = time.time() - window_seconds
-        with self._lock:
-            row = self._row(
-                """
-                SELECT COUNT(*) AS cnt FROM tasks
-                WHERE status = 'completed' AND updated_at >= ?
-                """,
-                (cutoff,),
-            )
+        row = self._row(
+            """
+            SELECT COUNT(*) AS cnt FROM tasks
+            WHERE status = 'completed' AND updated_at >= ?
+            """,
+            (cutoff,),
+        )
         return int(row["cnt"]) if row is not None else 0
 
     def list_recent_failures(self, window_seconds: float, limit: int = 200) -> list[TaskRecord]:
         """Return tasks that failed within the given look-back window."""
         cutoff = time.time() - window_seconds
-        with self._lock:
-            rows = self._rows(
-                """
-                SELECT * FROM tasks
-                WHERE status = 'failed' AND updated_at >= ?
-                ORDER BY updated_at DESC
-                LIMIT ?
-                """,
-                (cutoff, limit),
-            )
+        rows = self._rows(
+            """
+            SELECT * FROM tasks
+            WHERE status = 'failed' AND updated_at >= ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        )
         return [self._task_from_row(row) for row in rows]
 
     def list_active_tasks(self, *, limit: int = 200) -> list[TaskRecord]:
         """Return tasks in active (non-terminal) states."""
-        with self._lock:
-            rows = self._rows(
-                """
-                SELECT * FROM tasks
-                WHERE status IN ('queued', 'running', 'blocked', 'planning_ready')
-                ORDER BY updated_at DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
+        rows = self._rows(
+            """
+            SELECT * FROM tasks
+            WHERE status IN ('queued', 'running', 'blocked', 'planning_ready')
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
         return [self._task_from_row(row) for row in rows]
 
     def list_terminal_tasks_since(self, *, since: float, limit: int = 200) -> list[TaskRecord]:
         """Return tasks that reached a terminal state since the given timestamp."""
-        with self._lock:
-            rows = self._rows(
-                """
-                SELECT * FROM tasks
-                WHERE status IN ('completed', 'failed', 'cancelled')
-                  AND updated_at >= ?
-                ORDER BY updated_at DESC
-                LIMIT ?
-                """,
-                (since, limit),
-            )
+        rows = self._rows(
+            """
+            SELECT * FROM tasks
+            WHERE status IN ('completed', 'failed', 'cancelled')
+              AND updated_at >= ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (since, limit),
+        )
         return [self._task_from_row(row) for row in rows]
 
     def has_active_task_with_goal(self, goal: str, *, policy_profile: str | None = None) -> bool:
@@ -1188,11 +1183,10 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             clauses.append("policy_profile = ?")
             params.append(policy_profile)
         where = " AND ".join(clauses)
-        with self._lock:
-            row = self._row(
-                f"SELECT COUNT(*) AS cnt FROM tasks WHERE {where}",
-                tuple(params),
-            )
+        row = self._row(
+            f"SELECT COUNT(*) AS cnt FROM tasks WHERE {where}",
+            tuple(params),
+        )
         return bool(row and int(row["cnt"]) > 0)
 
     def batch_get_step_attempts(self, step_attempt_ids: list[str]) -> dict[str, StepAttemptRecord]:
@@ -1200,11 +1194,10 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         if not step_attempt_ids:
             return {}
         placeholders = ",".join("?" for _ in step_attempt_ids)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM step_attempts WHERE step_attempt_id IN ({placeholders})",
-                tuple(step_attempt_ids),
-            )
+        rows = self._rows(
+            f"SELECT * FROM step_attempts WHERE step_attempt_id IN ({placeholders})",
+            tuple(step_attempt_ids),
+        )
         return {str(row["step_attempt_id"]): self._step_attempt_from_row(row) for row in rows}
 
     def list_events_for_tasks(
@@ -1213,51 +1206,146 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         *,
         limit_per_task: int = 500,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Return events grouped by task_id for multiple tasks."""
+        """Fetch events for multiple tasks in a single query per chunk."""
         if not task_ids:
             return {}
-        result: dict[str, list[dict[str, Any]]] = {}
-        for task_id in task_ids:
-            result[task_id] = self.list_events(task_id=task_id, limit=limit_per_task)
+        result: dict[str, list[dict[str, Any]]] = {tid: [] for tid in task_ids}
+        # SQLite SQLITE_MAX_VARIABLE_NUMBER default is 999; chunk to be safe
+        chunk_size = 900
+        for i in range(0, len(task_ids), chunk_size):
+            chunk = task_ids[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._rows(
+                f"""
+                SELECT * FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY task_id ORDER BY event_seq DESC
+                    ) AS rn
+                    FROM events WHERE task_id IN ({placeholders})
+                ) WHERE rn <= ?
+                ORDER BY task_id, event_seq ASC
+                """,
+                (*chunk, limit_per_task),
+            )
+            for row in rows:
+                tid = str(row["task_id"])
+                if tid in result:
+                    result[tid].append(self._event_dict_from_row(row))
         return result
 
     def get_last_event_per_task(
         self,
         task_ids: list[str],
     ) -> dict[str, dict[str, Any]]:
-        """Return the most recent event for each task_id."""
+        """Fetch the most recent event for each task in a single query per chunk."""
         if not task_ids:
             return {}
         result: dict[str, dict[str, Any]] = {}
-        for task_id in task_ids:
-            events = self.list_events(task_id=task_id, limit=1)
-            if events:
-                result[task_id] = events[-1]
+        chunk_size = 900
+        for i in range(0, len(task_ids), chunk_size):
+            chunk = task_ids[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._rows(
+                f"""
+                SELECT * FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY task_id ORDER BY event_seq DESC
+                    ) AS rn
+                    FROM events WHERE task_id IN ({placeholders})
+                ) WHERE rn = 1
+                """,
+                tuple(chunk),
+            )
+            for row in rows:
+                result[str(row["task_id"])] = self._event_dict_from_row(row)
         return result
+
+    @staticmethod
+    def _event_dict_from_row(row: Any) -> dict[str, Any]:
+        return {
+            "event_seq": int(row["event_seq"]),
+            "event_id": str(row["event_id"]),
+            "task_id": row["task_id"],
+            "step_id": row["step_id"],
+            "entity_type": str(row["entity_type"]),
+            "entity_id": str(row["entity_id"]),
+            "event_type": str(row["event_type"]),
+            "actor_principal_id": str(row["actor_principal_id"]),
+            "actor": str(row["actor_principal_id"]),
+            "payload": json_loads(row["payload_json"]),
+            "occurred_at": float(row["occurred_at"]),
+            "event_hash": row["event_hash"],
+            "prev_event_hash": row["prev_event_hash"],
+            "hash_chain_algo": row["hash_chain_algo"],
+        }
+
+    def batch_update_step_attempts(
+        self,
+        updates: list[tuple[str, str, float]],
+    ) -> int:
+        """Batch update step attempt statuses via executemany.
+
+        Each tuple is ``(status, step_attempt_id, finished_at)``.
+        Returns the number of rows submitted for update.
+        """
+        if not updates:
+            return 0
+        with self._conn:
+            self._conn.executemany(
+                "UPDATE step_attempts SET status = ?, finished_at = ? WHERE step_attempt_id = ?",
+                [(s, f, sid) for s, sid, f in updates],
+            )
+        return len(updates)
+
+    def batch_list_step_attempts(
+        self,
+        task_ids: list[str],
+        *,
+        status: str | None = None,
+        limit: int = 2000,
+    ) -> list[StepAttemptRecord]:
+        """Retrieve step attempts for multiple task_ids in one query."""
+        if not task_ids:
+            return []
+        results: list[StepAttemptRecord] = []
+        chunk_size = 900
+        for i in range(0, len(task_ids), chunk_size):
+            chunk = task_ids[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            if status:
+                rows = self._rows(
+                    f"SELECT * FROM step_attempts WHERE task_id IN ({placeholders}) "
+                    "AND status = ? LIMIT ?",
+                    (*chunk, status, limit),
+                )
+            else:
+                rows = self._rows(
+                    f"SELECT * FROM step_attempts WHERE task_id IN ({placeholders}) LIMIT ?",
+                    (*chunk, limit),
+                )
+            results.extend(self._step_attempt_from_row(row) for row in rows)
+        return results
 
     def count_steps_by_status(self, task_id: str) -> dict[str, int]:
         """Return a mapping of step status to count for a given task."""
-        with self._lock:
-            rows = self._rows(
-                "SELECT status, COUNT(*) AS cnt FROM steps WHERE task_id = ? GROUP BY status",
-                (task_id,),
-            )
+        rows = self._rows(
+            "SELECT status, COUNT(*) AS cnt FROM steps WHERE task_id = ? GROUP BY status",
+            (task_id,),
+        )
         return {str(row["status"]): int(row["cnt"]) for row in rows}
 
     def list_steps(self, *, task_id: str | None = None, limit: int = 200) -> list[StepRecord]:
         """Return steps, optionally filtered by task_id."""
         if task_id:
-            with self._lock:
-                rows = self._rows(
-                    "SELECT * FROM steps WHERE task_id = ? ORDER BY created_at ASC LIMIT ?",
-                    (task_id, limit),
-                )
+            rows = self._rows(
+                "SELECT * FROM steps WHERE task_id = ? ORDER BY created_at ASC LIMIT ?",
+                (task_id, limit),
+            )
         else:
-            with self._lock:
-                rows = self._rows(
-                    "SELECT * FROM steps ORDER BY created_at ASC LIMIT ?",
-                    (limit,),
-                )
+            rows = self._rows(
+                "SELECT * FROM steps ORDER BY created_at ASC LIMIT ?",
+                (limit,),
+            )
         return [self._step_from_row(row) for row in rows]
 
     def get_key_to_step_id(self, task_id: str) -> dict[str, str]:
@@ -1265,11 +1353,10 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
 
         Steps without a node_key are excluded from the mapping.
         """
-        with self._lock:
-            rows = self._rows(
-                "SELECT step_id, node_key FROM steps WHERE task_id = ? AND node_key IS NOT NULL",
-                (task_id,),
-            )
+        rows = self._rows(
+            "SELECT step_id, node_key FROM steps WHERE task_id = ? AND node_key IS NOT NULL",
+            (task_id,),
+        )
         return {str(row["node_key"]): str(row["step_id"]) for row in rows}
 
     def has_non_terminal_steps(self, task_id: str) -> bool:
@@ -1308,18 +1395,22 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         Returns True if the update was applied, False if the attempt was already
         in a terminal state (another worker finalized it first).
         """
-        with self._lock:
-            attempt = self.get_step_attempt(step_attempt_id)
-            if attempt is None:
-                return False
-            if attempt.status in self._TERMINAL_ATTEMPT_STATUSES:
-                return False
-            self.update_step_attempt(
-                step_attempt_id,
-                status=status,
-                finished_at=finished_at,
+        ts = finished_at or time.time()
+        with self._conn:
+            cursor = self._conn.execute(
+                """
+                UPDATE step_attempts
+                SET    status      = ?,
+                       finished_at = ?
+                WHERE  step_attempt_id = ?
+                  AND  status NOT IN (
+                           'succeeded','completed','skipped',
+                           'failed','cancelled','superseded'
+                       )
+                """,
+                (status, ts, step_attempt_id),
             )
-            return True
+        return cursor.rowcount == 1
 
     def try_supersede_step_attempt(
         self,
@@ -1332,18 +1423,36 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         Returns True if the update was applied, False if the attempt was already
         in a terminal state (another worker superseded or finalized it first).
         """
-        with self._lock:
-            attempt = self.get_step_attempt(step_attempt_id)
-            if attempt is None:
-                return False
-            if attempt.status in self._TERMINAL_ATTEMPT_STATUSES:
-                return False
-            self.update_step_attempt(
-                step_attempt_id,
-                status="superseded",
-                finished_at=finished_at,
+        ts = finished_at or time.time()
+        with self._conn:
+            cursor = self._conn.execute(
+                """
+                UPDATE step_attempts
+                SET    status      = 'superseded',
+                       finished_at = ?
+                WHERE  step_attempt_id = ?
+                  AND  status NOT IN (
+                           'succeeded','completed','skipped',
+                           'failed','cancelled','superseded'
+                       )
+                """,
+                (ts, step_attempt_id),
             )
-            return True
+        return cursor.rowcount == 1
+
+    def touch_heartbeat(self, step_attempt_id: str) -> None:
+        """Lightweight heartbeat update — only touches the timestamp column.
+
+        Unlike ``update_step_attempt()``, this does NOT read back the row,
+        re-write all 30 columns, or append an event record, minimising WAL
+        write-lock hold time under high worker concurrency.
+        """
+        now = time.time()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE step_attempts SET last_heartbeat_at = ? WHERE step_attempt_id = ?",
+                (now, step_attempt_id),
+            )
 
     def update_step_attempt(
         self,
@@ -1579,7 +1688,8 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         normalized_context = sqlite_dict(
             attempt.context if context is UNSET else context, default=dict(attempt.context or {})
         )
-        with self._lock, self._conn:
+        context_json = json.dumps(normalized_context, ensure_ascii=False)
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE step_attempts
@@ -1588,7 +1698,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 """,
                 (
                     payload["status"],
-                    json.dumps(normalized_context, ensure_ascii=False),
+                    context_json,
                     payload["queue_priority"],
                     payload["waiting_reason"],
                     payload["approval_id"],
@@ -1661,7 +1771,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
             if actor is not None
             else None
         )
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO ingresses (
@@ -1710,8 +1820,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         return ingress
 
     def get_ingress(self, ingress_id: str) -> IngressRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM ingresses WHERE ingress_id = ?", (ingress_id,))
+        row = self._row("SELECT * FROM ingresses WHERE ingress_id = ?", (ingress_id,))
         return self._ingress_from_row(row) if row is not None else None
 
     def list_ingresses(
@@ -1736,21 +1845,19 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM ingresses {where} ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock:
-            rows = self._rows(query, tuple(params))
+        rows = self._rows(query, tuple(params))
         return [self._ingress_from_row(row) for row in rows]
 
     def count_pending_ingresses(self, *, conversation_id: str) -> int:
-        with self._lock:
-            row = self._row(
-                """
-                SELECT COUNT(*) AS count
-                FROM ingresses
-                WHERE conversation_id = ?
-                  AND status IN ('received', 'pending_disambiguation')
-                """,
-                (conversation_id,),
-            )
+        row = self._row(
+            """
+            SELECT COUNT(*) AS count
+            FROM ingresses
+            WHERE conversation_id = ?
+              AND status IN ('received', 'pending_disambiguation')
+            """,
+            (conversation_id,),
+        )
         return int(row["count"] if row is not None else 0)
 
     def update_ingress(
@@ -1802,7 +1909,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         }
         chosen_task_id_value = cast(str | None, payload["chosen_task_id"])
         now = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE ingresses
@@ -1859,7 +1966,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         correlation_id: str | None = None,
     ) -> str:
         event_id = self._id("event")
-        with self._lock, self._conn:
+        with self._conn:
             self._append_event_tx(
                 event_id=event_id,
                 event_type=event_type,
@@ -1915,8 +2022,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 ORDER BY e.event_seq DESC LIMIT ?
             """
             params = [limit]
-        with self._lock:
-            rows = self._rows(query, tuple(params))
+        rows = self._rows(query, tuple(params))
         return [
             {
                 "event_seq": int(row["event_seq"]),
@@ -1966,12 +2072,11 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         event_type: str,
     ) -> int:
         """Count events matching entity_type, entity_id, and event_type."""
-        with self._lock:
-            row = self._row(
-                """
-                SELECT COUNT(*) AS cnt FROM events
-                WHERE entity_type = ? AND entity_id = ? AND event_type = ?
-                """,
-                (entity_type, entity_id, event_type),
-            )
+        row = self._row(
+            """
+            SELECT COUNT(*) AS cnt FROM events
+            WHERE entity_type = ? AND entity_id = ? AND event_type = ?
+            """,
+            (entity_type, entity_id, event_type),
+        )
         return int(row["cnt"]) if row is not None else 0

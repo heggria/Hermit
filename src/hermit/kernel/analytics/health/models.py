@@ -111,8 +111,8 @@ class KernelHealthReport:
 
     health_level: HealthLevel
     health_score: float
-    stale_tasks: list[StaleTaskInfo] = field(default_factory=lambda: [])
-    active_task_health: list[TaskHealthStatus] = field(default_factory=lambda: [])
+    stale_tasks: list[StaleTaskInfo] = field(default_factory=list)
+    active_task_health: list[TaskHealthStatus] = field(default_factory=list)
     throughput: ThroughputWindow | None = None
     total_active_tasks: int = 0
     total_stale_tasks: int = 0
@@ -120,4 +120,4 @@ class KernelHealthReport:
     scored_at: float = 0.0
     stale_threshold_seconds: float = 0.0
     window_seconds: float = 0.0
-    notes: list[str] = field(default_factory=lambda: [])
+    notes: list[str] = field(default_factory=list)

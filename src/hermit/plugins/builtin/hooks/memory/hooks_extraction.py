@@ -65,6 +65,9 @@ def save_memories(
     if not messages:
         log.info("memory_save_skipped", session_id=session_id, reason="no_messages")
         return
+    if session_id and session_id.startswith("mcp-supervisor-"):
+        log.info("memory_save_skipped", session_id=session_id, reason="mcp_supervisor")
+        return
     if not settings.has_auth:
         log.info("memory_save_skipped", session_id=session_id, reason="no_auth")
         return
@@ -86,7 +89,7 @@ def checkpoint_memories(
     if not session_id:
         log.info("memory_checkpoint_skipped", reason="missing_session_id")
         return
-    if session_id == "cli-oneshot":
+    if session_id == "cli-oneshot" or session_id.startswith("mcp-supervisor-"):
         log.info("memory_checkpoint_skipped", session_id=session_id, reason="cli_oneshot")
         return
     if not messages:

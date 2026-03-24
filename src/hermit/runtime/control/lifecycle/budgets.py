@@ -39,8 +39,8 @@ class Deadline:
 class ExecutionBudget:
     ingress_ack_deadline: float = 5.0
     provider_connect_timeout: float = 5.0
-    provider_read_timeout: float = 120.0
-    provider_stream_idle_timeout: float = 600.0
+    provider_read_timeout: float = 15.0
+    provider_stream_idle_timeout: float = 15.0
     tool_soft_deadline: float = 30.0
     tool_hard_deadline: float = 600.0
     observation_window: float = 600.0

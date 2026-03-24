@@ -84,6 +84,21 @@ def evaluate_governance_rules(request: ActionRequest) -> list[RuleOutcome] | Non
             )
         ]
 
+    if request.action_class == "patrol_execution":
+        return [
+            RuleOutcome(
+                verdict="allow_with_receipt",
+                reasons=[
+                    PolicyReason(
+                        "patrol_execution",
+                        "Patrol execution is a governed kernel action and must emit a receipt.",
+                    )
+                ],
+                obligations=PolicyObligations(require_receipt=True),
+                risk_level=request.risk_hint or "medium",
+            )
+        ]
+
     if request.action_class == "memory_write":
         if request.actor.get("kind") == "kernel" and request.context.get("evidence_refs"):
             return [

@@ -22,7 +22,7 @@ def test_schema_version_returns_current(tmp_path: Path) -> None:
 def test_schema_version_matches_constant(tmp_path: Path) -> None:
     """The value stored in the DB should equal the module-level constant."""
     store = _make_store(tmp_path)
-    assert store.schema_version() == "18"
+    assert store.schema_version() == "19"
 
 
 # ── get_schema_version() ────────────────────────────────────────────

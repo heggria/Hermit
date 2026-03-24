@@ -46,7 +46,8 @@ class ApprovalCopyService:
     ) -> None:
         self._formatter = formatter
         self._formatter_timeout_ms = formatter_timeout_ms
-        self._locale = resolve_locale(locale) if locale else None
+        # Resolve once at construction time so _t() never re-reads the environment.
+        self._locale = resolve_locale(locale)
         # A single shared executor avoids spawning a new thread per call.
         # Only allocated when a formatter is actually provided.
         self._executor: concurrent.futures.ThreadPoolExecutor | None = (
@@ -62,7 +63,7 @@ class ApprovalCopyService:
             self._executor = None
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-        return tr(message_key, locale=resolve_locale(self._locale), default=default, **kwargs)
+        return tr(message_key, locale=self._locale, default=default, **kwargs)
 
     def build_canonical_copy(
         self, requested_action: dict[str, Any], approval_id: str | None = None

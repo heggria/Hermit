@@ -114,7 +114,8 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 "SELECT * FROM competitions WHERE competition_id = ?",
                 (competition_id,),
             )
-        assert row is not None
+        if row is None:
+            raise RuntimeError(f"Failed to retrieve competition after insert: {competition_id}")
         return self._competition_from_row(row)
 
     def get_competition(self, competition_id: str) -> CompetitionRecord | None:
@@ -209,7 +210,8 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 "SELECT * FROM competition_candidates WHERE candidate_id = ?",
                 (candidate_id,),
             )
-        assert row is not None
+        if row is None:
+            raise RuntimeError(f"Failed to retrieve candidate after insert: {candidate_id}")
         return self._candidate_from_row(row)
 
     def list_candidates(

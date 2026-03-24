@@ -30,8 +30,10 @@ class DecaySweepTransition:
     """A single freshness state transition observed during a sweep."""
 
     memory_id: str
-    previous_state: str | None
-    new_state: str
+    # Use FreshnessState instead of raw str so callers cannot pass arbitrary
+    # strings and type-checkers can validate every transition.
+    previous_state: FreshnessState | None
+    new_state: FreshnessState
 
 
 @dataclass
@@ -41,10 +43,10 @@ class DecaySweepReport:
     sweep_id: str
     swept_at: float
     total_evaluated: int = 0
-    transitions: list[DecaySweepTransition] = field(
-        default_factory=lambda: list[DecaySweepTransition]()
-    )
-    quarantine_candidates: list[str] = field(default_factory=lambda: list[str]())
+    # Use `list` directly as the factory — `lambda: list[T]()` is redundant;
+    # `list[T]` is not a typed constructor and the lambda adds no value.
+    transitions: list[DecaySweepTransition] = field(default_factory=list)
+    quarantine_candidates: list[str] = field(default_factory=list)
 
 
 __all__ = [

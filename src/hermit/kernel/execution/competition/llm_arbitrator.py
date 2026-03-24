@@ -197,9 +197,9 @@ class ArbitrationEngine:
                 "escalation_required": decision.escalation_required,
                 "fallback": True,
             }
-            artifact_store.store_json(artifact_payload)
-            store.update_step_attempt(attempt.step_attempt_id, status="succeeded")
-            store.update_step(step.step_id, status="completed")
+            _ref, _hash = artifact_store.store_json(artifact_payload)
+            store.update_step_attempt(attempt.step_attempt_id, status="failed")
+            store.update_step(step.step_id, status="failed")
             return decision
         finally:
             pool.release_slot(slot.slot_id)

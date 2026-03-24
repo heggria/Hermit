@@ -42,19 +42,18 @@ def _make_attempt(
 
 
 class TestReportHeartbeat:
-    def test_updates_step_attempt_heartbeat(self) -> None:
+    def test_calls_touch_heartbeat(self) -> None:
         store = MagicMock()
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
 
-        with patch("time.time", return_value=1000.0):
-            svc.report_heartbeat("sa-1")
+        svc.report_heartbeat("sa-1")
 
-        store.update_step_attempt.assert_called_once_with("sa-1", last_heartbeat_at=1000.0)
+        store.touch_heartbeat.assert_called_once_with("sa-1")
 
     def test_heartbeat_exception_logged_not_raised(self) -> None:
         store = MagicMock()
-        store.update_step_attempt.side_effect = RuntimeError("db error")
+        store.touch_heartbeat.side_effect = RuntimeError("db error")
         runner = _make_runner(store)
         svc = KernelDispatchService(runner)
 

@@ -123,7 +123,8 @@ class AnalyticsEngine:
         tasks = [
             t
             for t in tasks
-            if window_start <= t.created_at <= window_end
+            if t.created_at is not None
+            and window_start <= t.created_at <= window_end
             and (task_id is None or t.task_id == task_id)
         ]
         task_throughput = len(tasks)
@@ -149,11 +150,11 @@ class AnalyticsEngine:
 
         # Evidence sufficiency average from evidence cases
         if evidence_cases:
-            evidence_sufficiency_avg = sum(e.sufficiency_score for e in evidence_cases) / len(
+            avg_evidence_sufficiency = sum(e.sufficiency_score for e in evidence_cases) / len(
                 evidence_cases
             )
         else:
-            evidence_sufficiency_avg = 0.0
+            avg_evidence_sufficiency = 0.0
 
         # Tool usage counts from receipt action_type
         tool_usage_counts: dict[str, int] = {}
@@ -193,7 +194,7 @@ class AnalyticsEngine:
             approval_rate=approval_rate,
             avg_approval_latency=avg_approval_latency,
             rollback_rate=rollback_rate,
-            evidence_sufficiency_avg=evidence_sufficiency_avg,
+            avg_evidence_sufficiency=avg_evidence_sufficiency,
             tool_usage_counts=tool_usage_counts,
             action_class_distribution=action_class_distribution,
             risk_entries=risk_entries,

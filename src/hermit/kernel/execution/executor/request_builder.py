@@ -193,7 +193,7 @@ class RequestBuilder:
                     file_path = (Path(root_hint) / path).resolve()
                     if file_path.exists():
                         old_content = file_path.read_text(encoding="utf-8")
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     old_content = ""
             diff = "\n".join(
                 difflib.unified_diff(

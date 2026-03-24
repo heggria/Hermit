@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any, cast
 
+import structlog
+
 from hermit.kernel.artifacts.lineage.evidence_cases import EvidenceCaseService
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
@@ -120,8 +122,6 @@ class ReconciliationExecutor:
             self.store, attempt_ctx
         )
         if contract_ref is None:
-            import structlog
-
             structlog.get_logger().warning(
                 "reconciliation_skipped_no_contract",
                 step_attempt_id=attempt_ctx.step_attempt_id,

@@ -32,7 +32,11 @@ class Verdict(StrEnum):
     DENY = "deny"
 
     # Non-policy special verdicts used in specific subsystems
-    REQUIRE_APPROVAL = "require_approval"  # legacy alias kept for compatibility
+    # REQUIRE_APPROVAL is a legacy alias for APPROVAL_REQUIRED.
+    # Both share the same underlying string value ("approval_required"), so
+    # they compare equal and serialise identically — use APPROVAL_REQUIRED in
+    # new code.
+    REQUIRE_APPROVAL = "approval_required"  # true alias; same value as APPROVAL_REQUIRED
     SELECTED = "selected"  # task-plan selection verdict
 
 

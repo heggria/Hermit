@@ -125,10 +125,9 @@ class MemoryRecordService:
                 )
                 return None
         else:
-            # Conversation-scoped (ephemeral) memories are allowed without reconciliation.
-            # They serve as working memory and do not persist durably.
-            if resolved_reconciliation_ref is None:
-                resolved_reconciliation_ref = None  # explicit: no reconciliation needed
+            # Conversation-scoped (ephemeral) memories are allowed without reconciliation;
+            # they serve as working memory and do not persist durably.
+            pass
         existing = self.store.list_memory_records(status="active", limit=500)
         duplicate_record, superseded_records = self.governance.find_superseded_records(
             classification=classification,

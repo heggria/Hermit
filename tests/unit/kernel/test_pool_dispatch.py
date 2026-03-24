@@ -22,6 +22,9 @@ from hermit.kernel.execution.workers.models import (
     WorkerSlotConfig,
 )
 
+# New default total: 256+128+64+64+64+64+32+32+32 = 736
+_DEFAULT_TOTAL = 736
+
 # ── step_kind_to_role mapping ───────────────────────────────────────────────
 
 
@@ -103,37 +106,37 @@ class TestDefaultPoolConfig:
 
     def test_executor_slots(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.executor].max_active == 4
+        assert cfg.slots[WorkerRole.executor].max_active == 256
 
     def test_verifier_slots(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.verifier].max_active == 3
+        assert cfg.slots[WorkerRole.verifier].max_active == 128
 
     def test_planner_slots(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.planner].max_active == 2
+        assert cfg.slots[WorkerRole.planner].max_active == 64
 
     def test_benchmarker_slots(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.benchmarker].max_active == 2
+        assert cfg.slots[WorkerRole.benchmarker].max_active == 64
 
     def test_researcher_slots(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.researcher].max_active == 2
+        assert cfg.slots[WorkerRole.researcher].max_active == 64
 
     def test_reconciler_slots(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.reconciler].max_active == 1
+        assert cfg.slots[WorkerRole.reconciler].max_active == 32
 
     def test_conflict_limits(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.conflict_limits == {"max_same_workspace": 1, "max_same_module": 2}
+        assert cfg.conflict_limits == {"max_same_workspace": 8, "max_same_module": 16}
 
     def test_total_slots(self) -> None:
-        """Total = sum of all per-role max_active, not a hard global cap."""
+        """Total = sum of all per-role max_active."""
         cfg = _default_pool_config()
         total = sum(sc.max_active for sc in cfg.slots.values())
-        assert total == 17  # 4+3+2+2+2+2+1+1
+        assert total == _DEFAULT_TOTAL
 
     def test_all_mapped_roles_have_slots(self) -> None:
         """Every role referenced in _KIND_TO_ROLE must have a slot config."""
@@ -147,16 +150,21 @@ class TestDefaultPoolConfig:
             WorkerRole.reconciler,
             WorkerRole.tester,
             WorkerRole.spec,
+            WorkerRole.reviewer,
         ):
             assert role in cfg.slots, f"{role} missing from default config"
 
     def test_tester_slots(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.tester].max_active == 2
+        assert cfg.slots[WorkerRole.tester].max_active == 64
 
     def test_spec_slots(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.spec].max_active == 1
+        assert cfg.slots[WorkerRole.spec].max_active == 32
+
+    def test_reviewer_slots(self) -> None:
+        cfg = _default_pool_config()
+        assert cfg.slots[WorkerRole.reviewer].max_active == 32
 
     def test_executor_output_artifact_kinds(self) -> None:
         cfg = _default_pool_config()
@@ -165,6 +173,10 @@ class TestDefaultPoolConfig:
     def test_benchmarker_output_artifact_kinds(self) -> None:
         cfg = _default_pool_config()
         assert "benchmark_report" in cfg.slots[WorkerRole.benchmarker].output_artifact_kinds
+
+    def test_max_physical_threads(self) -> None:
+        cfg = _default_pool_config()
+        assert cfg.max_physical_threads == 256
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -297,6 +309,7 @@ def _make_fake_store(
         has_non_terminal_steps=MagicMock(return_value=True),
         get_task=MagicMock(return_value=None),
         retry_step=MagicMock(),
+        close_thread_conn=MagicMock(),
     )
 
 
@@ -317,7 +330,7 @@ class TestPoolAwareDispatchServiceInit:
         svc = PoolAwareDispatchService(runner)
         status = svc.get_pool_status()
         assert status.pool_id == "kernel-dispatch"
-        assert status.idle_slots == 17  # 4+3+2+2+2+2+1+1
+        assert status.idle_slots == _DEFAULT_TOTAL
         svc.stop()
 
     def test_creates_with_custom_config(self) -> None:

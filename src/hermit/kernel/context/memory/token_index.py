@@ -14,8 +14,8 @@ class TokenIndex:
     least one token with the query.
     """
 
-    _index: dict[str, set[str]] = field(default_factory=lambda: {})
-    _memory_tokens: dict[str, frozenset[str]] = field(default_factory=lambda: {})
+    _index: dict[str, set[str]] = field(default_factory=dict)
+    _memory_tokens: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def add(self, memory_id: str, tokens: frozenset[str]) -> None:
         """Add a memory's tokens to the index."""
@@ -23,7 +23,7 @@ class TokenIndex:
         for token in tokens:
             bucket: set[str] | None = self._index.get(token)
             if bucket is None:
-                bucket = set[str]()
+                bucket = set()
                 self._index[token] = bucket
             bucket.add(memory_id)
 

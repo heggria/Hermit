@@ -348,8 +348,9 @@ class ApprovalService:
         for a in approvals:
             resolution = dict(a.resolution or {})
             if resolution.get("batch_id") == batch_id:
-                self.approve(a.approval_id, resolved_by=resolved_by)
-                approved.append(a.approval_id)
+                result = self.approve(a.approval_id, resolved_by=resolved_by)
+                if result is not None:
+                    approved.append(a.approval_id)
         return approved
 
     def approve_batch_ids(
@@ -364,8 +365,9 @@ class ApprovalService:
         """
         approved: list[str] = []
         for aid in approval_ids:
-            self.approve(aid, resolved_by=resolved_by)
-            approved.append(aid)
+            result = self.approve(aid, resolved_by=resolved_by)
+            if result is not None:
+                approved.append(aid)
         return approved
 
     def request_with_delegation_check(

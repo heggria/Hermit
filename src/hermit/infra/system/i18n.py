@@ -95,10 +95,18 @@ def _load_catalog(locale: str) -> dict[str, str]:
 
 
 def _read_catalog(locale: str) -> dict[str, str]:
+    import logging
+
     merged: dict[str, str] = {}
     for path in _catalog_paths(locale):
         with path.open("r", encoding="utf-8") as handle:
-            raw = json.load(handle)
+            try:
+                raw = json.load(handle)
+            except json.JSONDecodeError as exc:
+                logging.getLogger(__name__).warning(
+                    "i18n: skipping malformed catalog file %s: %s", path, exc
+                )
+                continue
         if not isinstance(raw, dict):
             continue
         items = cast(dict[str, object], raw)

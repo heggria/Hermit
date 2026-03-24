@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC
+import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from hermit.kernel.ledger.journal.store_types import KernelStoreTypingBase
+
+_logger = logging.getLogger(__name__)
 
 SPEC_BACKLOG_DDL = """
 CREATE TABLE IF NOT EXISTS spec_backlog (
@@ -56,8 +59,6 @@ def _json(obj: Any) -> str:
 
 
 def _now_iso() -> str:
-    from datetime import datetime
-
     return datetime.now(UTC).isoformat()
 
 
@@ -71,7 +72,12 @@ def _parse_json_field(raw: str | None) -> Any:
         return None
     try:
         return json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _logger.warning(
+            "Failed to parse JSON field (returning None): %s — value preview: %.120r",
+            exc,
+            raw,
+        )
         return None
 
 

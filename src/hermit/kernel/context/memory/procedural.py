@@ -26,7 +26,7 @@ class ProceduralRecord:
     trigger_pattern: str
     steps: list[str]
     confidence: float = 0.5
-    source_memory_ids: list[str] = field(default_factory=lambda: list[str]())
+    source_memory_ids: list[str] = field(default_factory=list)
     success_count: int = 0
     failure_count: int = 0
     status: str = "active"
@@ -256,7 +256,6 @@ class ProceduralMemoryService:
 
     @staticmethod
     def _row_to_record(row: Any) -> ProceduralRecord:
-
         return ProceduralRecord(
             procedure_id=str(row["procedure_id"]),
             trigger_pattern=str(row["trigger_pattern"]),

@@ -30,7 +30,9 @@ class GraphEdge:
         str  # same_entity | related_topic | causal | temporal_sequence | contradicts | elaborates
     )
     weight: float = 1.0
-    metadata: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    # Use `dict` directly — the previous `lambda: dict[str, Any]()` was an
+    # unnecessary indirection through a subscripted generic alias.
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = 0.0
 
 
@@ -42,6 +44,14 @@ class GraphQueryResult:
     target_memory_id: str
     hop_count: int
     aggregate_weight: float
+
+    def __post_init__(self) -> None:
+        if self.hop_count < 0:
+            raise ValueError(f"hop_count must be non-negative, got {self.hop_count!r}")
+        if self.aggregate_weight < 0.0:
+            raise ValueError(
+                f"aggregate_weight must be non-negative, got {self.aggregate_weight!r}"
+            )
 
 
 __all__ = [

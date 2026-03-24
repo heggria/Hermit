@@ -15,15 +15,19 @@ from hermit.runtime.capability.registry.tools import serialize_tool_result
 
 BLOCK_TYPES = {"text", "image"}
 
+# Separator inserted by truncate_middle between the head and tail fragments.
+_TRUNCATION_SEPARATOR = "\n...\n"
+
 
 def truncate_middle(text: str, limit: int) -> str:
     if limit <= 0 or len(text) <= limit:
         return text
     if limit <= 32:
         return text[:limit]
-    head = max(1, limit // 2 - 8)
-    tail = max(1, limit - head - len("\n...\n"))
-    return f"{text[:head]}\n...\n{text[-tail:]}"
+    sep_len = len(_TRUNCATION_SEPARATOR)
+    head = max(1, limit // 2 - sep_len // 2)
+    tail = max(1, limit - head - sep_len)
+    return f"{text[:head]}{_TRUNCATION_SEPARATOR}{text[-tail:]}"
 
 
 def format_model_content(value: Any, limit: int) -> Any:
@@ -37,7 +41,12 @@ def format_model_content(value: Any, limit: int) -> Any:
         for item in cast(list[Any], serialized)
     ):
         return cast(list[Any], serialized)
-    text = json.dumps(serialized, ensure_ascii=True, indent=2, sort_keys=True)
+    try:
+        text = json.dumps(serialized, ensure_ascii=True, indent=2, sort_keys=True)
+    except TypeError:
+        # Fallback for objects that are not JSON-serialisable (e.g. bytes,
+        # custom types) so that formatting never raises an unhandled exception.
+        text = repr(serialized)
     return truncate_middle(text, limit)
 
 

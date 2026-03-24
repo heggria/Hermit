@@ -86,6 +86,10 @@ class DeliberationIntegration:
         self.arbitrator = arbitrator
         self._pool = pool or self._build_default_pool()
         self.deliberation = DeliberationService(store, arbitrator=arbitrator)
+        # Cache resolved decisions by debate_id so to_contract_packet does not
+        # re-run arbitration (which would trigger a redundant LLM call and could
+        # produce a different result than the one already committed to the ledger).
+        self._decisions: dict[str, ArbitrationDecision] = {}
 
     @staticmethod
     def _build_default_pool() -> WorkerPoolManager:
@@ -538,6 +542,9 @@ class DeliberationIntegration:
             },
         )
 
+        # Cache so to_contract_packet can retrieve it without re-arbitrating.
+        self._decisions[debate_id] = decision
+
         logger.info(
             "deliberation_integration.resolved",
             debate_id=debate_id,
@@ -569,14 +576,15 @@ class DeliberationIntegration:
         if bundle is None:
             raise ValueError(f"Debate not found: {debate_id}")
 
-        # Find the resolved decision by looking at the arbitration output.
-        decision = self.deliberation.arbitrate(
-            debate_id,
-            task_id=task_id,
-            pool=self._pool,
-            store=self.store,
-            artifact_store=self.artifact_store,
-        )
+        # Use the cached decision from resolve_debate rather than re-running
+        # arbitration.  Re-arbitrating would waste LLM cost, risk producing a
+        # different outcome, and violates the method's own docstring contract.
+        decision = self._decisions.get(debate_id)
+        if decision is None:
+            raise ValueError(
+                f"No resolved decision found for debate {debate_id!r}. "
+                "Call resolve_debate() before to_contract_packet()."
+            )
         if decision.escalation_required or decision.selected_candidate_id is None:
             raise ValueError(f"Cannot convert to contract: debate {debate_id} requires escalation")
 

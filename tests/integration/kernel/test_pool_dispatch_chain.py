@@ -26,6 +26,9 @@ from hermit.kernel.execution.workers.models import (
     WorkerRole,
 )
 
+# New default total: 256+128+64+64+64+64+32+32+32 = 736
+_DEFAULT_TOTAL = 736
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -93,6 +96,7 @@ def _make_fake_store(
         has_non_terminal_steps=MagicMock(return_value=True),
         get_task=MagicMock(return_value=None),
         retry_step=MagicMock(),
+        close_thread_conn=MagicMock(),
     )
 
 
@@ -190,37 +194,41 @@ class TestDefaultPoolConfig:
 
     def test_executor_max_active(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.executor].max_active == 4
+        assert cfg.slots[WorkerRole.executor].max_active == 256
 
     def test_verifier_max_active(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.verifier].max_active == 3
+        assert cfg.slots[WorkerRole.verifier].max_active == 128
 
     def test_planner_max_active(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.planner].max_active == 2
+        assert cfg.slots[WorkerRole.planner].max_active == 64
 
     def test_benchmarker_max_active(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.benchmarker].max_active == 2
+        assert cfg.slots[WorkerRole.benchmarker].max_active == 64
 
     def test_researcher_max_active(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.researcher].max_active == 2
+        assert cfg.slots[WorkerRole.researcher].max_active == 64
 
     def test_tester_max_active(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.tester].max_active == 2
+        assert cfg.slots[WorkerRole.tester].max_active == 64
 
     def test_spec_max_active(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.spec].max_active == 1
+        assert cfg.slots[WorkerRole.spec].max_active == 32
 
     def test_reconciler_max_active(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.slots[WorkerRole.reconciler].max_active == 1
+        assert cfg.slots[WorkerRole.reconciler].max_active == 32
 
-    def test_all_eight_roles_have_slot_configs(self) -> None:
+    def test_reviewer_max_active(self) -> None:
+        cfg = _default_pool_config()
+        assert cfg.slots[WorkerRole.reviewer].max_active == 32
+
+    def test_all_nine_roles_have_slot_configs(self) -> None:
         cfg = _default_pool_config()
         expected_roles = {
             WorkerRole.executor,
@@ -231,6 +239,7 @@ class TestDefaultPoolConfig:
             WorkerRole.tester,
             WorkerRole.spec,
             WorkerRole.reconciler,
+            WorkerRole.reviewer,
         }
         assert set(cfg.slots.keys()) == expected_roles
 
@@ -258,15 +267,15 @@ class TestTotalWorkerCount:
     def test_total_equals_sum_of_role_max_active(self) -> None:
         cfg = _default_pool_config()
         expected_total = sum(sc.max_active for sc in cfg.slots.values())
-        # 4 + 3 + 2 + 2 + 2 + 2 + 1 + 1 = 17
-        assert expected_total == 17
+        assert expected_total == _DEFAULT_TOTAL
 
-    def test_pool_dispatch_service_thread_pool_matches_total(self) -> None:
+    def test_pool_dispatch_service_thread_pool_capped_by_max_physical(self) -> None:
         """PoolAwareDispatchService creates a ThreadPoolExecutor with
-        total = sum(per-role max_active)."""
+        min(total_logical, max_physical_threads)."""
         runner = _make_fake_runner()
         svc = PoolAwareDispatchService(runner)
-        assert svc._inner.worker_count == 17
+        # Physical thread pool is capped at 256 (max_physical_threads default)
+        assert svc._inner.worker_count == 256
         svc.stop()
 
 
@@ -274,7 +283,7 @@ class TestTotalWorkerCount:
 
 
 class TestConflictLimits:
-    """Verify default max_same_workspace=1, max_same_module=2."""
+    """Verify default conflict limits."""
 
     def test_default_conflict_limits_constant(self) -> None:
         assert DEFAULT_CONFLICT_LIMITS == {
@@ -282,10 +291,10 @@ class TestConflictLimits:
             "max_same_module": 2,
         }
 
-    def test_default_pool_config_uses_default_conflict_limits(self) -> None:
+    def test_default_pool_config_uses_expanded_conflict_limits(self) -> None:
         cfg = _default_pool_config()
-        assert cfg.conflict_limits["max_same_workspace"] == 1
-        assert cfg.conflict_limits["max_same_module"] == 2
+        assert cfg.conflict_limits["max_same_workspace"] == 8
+        assert cfg.conflict_limits["max_same_module"] == 16
 
     def test_workspace_conflict_enforced(self) -> None:
         """Two workers cannot operate on the same workspace with max_same_workspace=1."""
@@ -294,23 +303,28 @@ class TestConflictLimits:
         pool = svc._pool
 
         s1 = pool.claim_slot(WorkerRole.executor, workspace="ws-alpha")
-        s2 = pool.claim_slot(WorkerRole.executor, workspace="ws-alpha")
         assert s1 is not None
-        assert s2 is None  # blocked by workspace conflict
+        # Default max_same_workspace is now 8, so a second claim on same ws succeeds
+        s2 = pool.claim_slot(WorkerRole.executor, workspace="ws-alpha")
+        assert s2 is not None
         svc.stop()
 
     def test_module_conflict_enforced(self) -> None:
-        """Only max_same_module=2 workers can target the same module."""
+        """Only max_same_module workers can target the same module."""
         runner = _make_fake_runner()
         svc = PoolAwareDispatchService(runner)
         pool = svc._pool
 
-        s1 = pool.claim_slot(WorkerRole.executor, module="kernel.policy")
-        s2 = pool.claim_slot(WorkerRole.executor, module="kernel.policy")
-        s3 = pool.claim_slot(WorkerRole.executor, module="kernel.policy")
-        assert s1 is not None
-        assert s2 is not None
-        assert s3 is None  # blocked by module conflict
+        # Default max_same_module is 16, claim 16 on same module
+        slots = []
+        for i in range(16):
+            s = pool.claim_slot(WorkerRole.executor, module="kernel.policy")
+            assert s is not None, f"Claim {i + 1} failed unexpectedly"
+            slots.append(s)
+
+        # 17th should be blocked
+        s17 = pool.claim_slot(WorkerRole.executor, module="kernel.policy")
+        assert s17 is None
         svc.stop()
 
 
@@ -344,6 +358,7 @@ class TestOutputArtifactKinds:
             (WorkerRole.spec, "iteration_spec"),
             (WorkerRole.reconciler, "reconciliation_record"),
             (WorkerRole.reconciler, "lesson_pack"),
+            (WorkerRole.reviewer, "review_report"),
         ],
     )
     def test_specific_output_artifact_kind_present(
@@ -371,7 +386,7 @@ class TestPoolLifecycle:
         assert status.pool_id == "kernel-dispatch"
         assert status.active_slots == 0
         assert status.interrupted_slots == 0
-        assert status.idle_slots == 17
+        assert status.idle_slots == _DEFAULT_TOTAL
         # Every role should report 0 active
         for role_name, active_count in status.by_role.items():
             assert active_count == 0, f"Role {role_name} should be idle, got {active_count}"
@@ -421,14 +436,14 @@ class TestPoolLifecycle:
 
         status = svc.get_pool_status()
         assert status.active_slots == 1
-        assert status.idle_slots == 16
+        assert status.idle_slots == _DEFAULT_TOTAL - 1
         assert status.by_role["verifier"] == 1
 
         svc._pool.release_slot(slot.slot_id)
 
         status = svc.get_pool_status()
         assert status.active_slots == 0
-        assert status.idle_slots == 17
+        assert status.idle_slots == _DEFAULT_TOTAL
         assert status.by_role["verifier"] == 0
         svc.stop()
 

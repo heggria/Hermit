@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from hermit.kernel.ledger.journal.store import KernelStore
+
+logger = logging.getLogger(__name__)
 
 
 class StepDataFlowService:
@@ -35,6 +38,12 @@ class StepDataFlowService:
         for local_name, binding in step.input_bindings.items():
             parts = binding.split(".", 1)
             if len(parts) != 2:
+                logger.warning(
+                    "data_flow: malformed input binding for step %s — "
+                    "expected '<source_key>.<output_field>', got %r; skipping",
+                    step_id,
+                    binding,
+                )
                 continue
             source_key, output_field = parts
 
@@ -51,10 +60,35 @@ class StepDataFlowService:
                     source_step = self._store.get_step(source_key)
 
             if source_step is None:
+                logger.warning(
+                    "data_flow: could not resolve source step for binding %r "
+                    "(task=%s, step=%s, source_key=%r); skipping",
+                    binding,
+                    task_id,
+                    step_id,
+                    source_key,
+                )
                 continue
 
-            if output_field == "output_ref" and source_step.output_ref:
-                resolved[local_name] = source_step.output_ref
+            if output_field == "output_ref":
+                if source_step.output_ref:
+                    resolved[local_name] = source_step.output_ref
+                else:
+                    logger.warning(
+                        "data_flow: source step %s has no output_ref yet "
+                        "(binding %r for step %s); skipping",
+                        source_step.step_id,
+                        binding,
+                        step_id,
+                    )
+            else:
+                logger.warning(
+                    "data_flow: unknown output field %r in binding %r (task=%s, step=%s); skipping",
+                    output_field,
+                    binding,
+                    task_id,
+                    step_id,
+                )
 
         return resolved
 
@@ -68,6 +102,10 @@ class StepDataFlowService:
             return
         attempt = self._store.get_step_attempt(step_attempt_id)
         if attempt is None:
+            logger.warning(
+                "data_flow: step attempt %s not found; cannot inject resolved inputs",
+                step_attempt_id,
+            )
             return
         context: dict[str, Any] = dict(attempt.context or {})
         context["resolved_inputs"] = resolved

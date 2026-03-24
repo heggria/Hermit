@@ -34,7 +34,7 @@ class CandidateProposal:
     proposer_role: str
     target_scope: str
     plan_summary: str
-    contract_draft: dict[str, Any] = field(default_factory=lambda: {})
+    contract_draft: dict[str, Any] = field(default_factory=dict)
     expected_cost: str = ""
     expected_risk: str = ""
     expected_reward: str = ""
@@ -50,7 +50,7 @@ class CritiqueRecord:
     critic_role: str
     issue_type: str
     severity: str
-    evidence_refs: list[str] = field(default_factory=lambda: [])
+    evidence_refs: list[str] = field(default_factory=list)
     suggested_fix: str = ""
     created_at: float = 0.0
 
@@ -62,10 +62,10 @@ class DebateBundle:
     debate_id: str
     decision_point: str
     trigger: DeliberationTrigger
-    proposals: list[CandidateProposal] = field(default_factory=lambda: [])
-    critiques: list[CritiqueRecord] = field(default_factory=lambda: [])
-    post_execution_reviews: list[PostExecutionReview] = field(default_factory=lambda: [])
-    arbitration_input: dict[str, Any] = field(default_factory=lambda: {})
+    proposals: list[CandidateProposal] = field(default_factory=list)
+    critiques: list[CritiqueRecord] = field(default_factory=list)
+    post_execution_reviews: list[PostExecutionReview] = field(default_factory=list)
+    arbitration_input: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -75,7 +75,7 @@ class ArbitrationDecision:
     decision_id: str
     debate_id: str
     selected_candidate_id: str | None = None
-    rejection_reasons: list[str] = field(default_factory=lambda: [])
+    rejection_reasons: list[str] = field(default_factory=list)
     merge_notes: str = ""
     confidence: float = 0.0
     escalation_required: bool = False
@@ -97,6 +97,6 @@ class PostExecutionReview:
     challenge_type: str  # e.g. "spec_compliance", "benchmark_interpretation", "risk_assessment"
     finding: str
     severity: str  # "low", "medium", "high", "critical"
-    evidence_refs: list[str] = field(default_factory=lambda: [])
+    evidence_refs: list[str] = field(default_factory=list)
     recommendation: str = ""  # e.g. "reject", "accept_with_followups", "re_execute"
     created_at: float = 0.0

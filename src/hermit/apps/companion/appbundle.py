@@ -89,11 +89,11 @@ def _install_bundle_icon(resources_dir: Path) -> str | None:
 
     icon_name = "HermitMenu"
     iconset_dir = resources_dir / f"{icon_name}.iconset"
-    if iconset_dir.exists():
-        shutil.rmtree(iconset_dir)
-    iconset_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        if iconset_dir.exists():
+            shutil.rmtree(iconset_dir)
+        iconset_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="hermit-icon-") as temp_dir:
             temp_path = Path(temp_dir)
             raster_png = temp_path / "hermit-icon.png"
@@ -267,9 +267,16 @@ def install_app_bundle(
 
 
 def open_app_bundle(target: Path | None = None) -> None:
-    subprocess.Popen(
-        ["open", str(app_path(target))], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+    bundle = app_path(target)
+    if not bundle.exists():
+        raise RuntimeError(
+            _t(
+                "companion.appbundle.open.bundle_missing",
+                "App bundle not found: {bundle}",
+                bundle=bundle,
+            )
+        )
+    subprocess.Popen(["open", str(bundle)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _run_osascript(script: str) -> str:

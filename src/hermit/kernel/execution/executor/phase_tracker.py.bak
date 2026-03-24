@@ -13,6 +13,8 @@ from hermit.kernel.ledger.journal.store import KernelStore
 # The canonical implementation now lives in execution_helpers.
 __all__ = [
     "PhaseTracker",
+    "_execution_status_from_result_code",
+    "_is_governed_action",
     "is_governed_action",
     "needs_witness",
 ]
@@ -34,13 +36,13 @@ def needs_witness(action_class: str) -> bool:
 
 
 def _execution_status_from_result_code(result_code: str) -> str:
-    if result_code == "approval_required":
+    if result_code in {"approval_required"}:
         return "awaiting_approval"
-    if result_code == "contract_blocked":
+    if result_code in {"contract_blocked"}:
         return "blocked"
-    if result_code == "observation_submitted":
+    if result_code in {"observation_submitted"}:
         return "observing"
-    if result_code == "denied":
+    if result_code in {"denied"}:
         return "failed"
     if result_code in {"failed", "timeout", "cancelled"}:
         return "failed"

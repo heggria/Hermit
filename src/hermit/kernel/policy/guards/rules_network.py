@@ -17,6 +17,8 @@ _NETWORK_MUTATION_CLASSES = frozenset(
     }
 )
 
+_DEFAULT_RISK_LEVEL = "high"
+
 
 def evaluate_network_rules(request: ActionRequest) -> list[RuleOutcome] | None:
     """Evaluate network/external mutation rules.
@@ -27,12 +29,14 @@ def evaluate_network_rules(request: ActionRequest) -> list[RuleOutcome] | None:
     if request.action_class not in _NETWORK_MUTATION_CLASSES:
         return None
 
+    risk_level = request.risk_hint or _DEFAULT_RISK_LEVEL
+
     _log.info(
         "guard.network.approval_required",
         rule="external_mutation",
         tool=request.tool_name,
         action_class=request.action_class,
-        risk_level=request.risk_hint or "high",
+        risk_level=risk_level,
     )
     return [
         RuleOutcome(
@@ -44,13 +48,13 @@ def evaluate_network_rules(request: ActionRequest) -> list[RuleOutcome] | None:
                 require_receipt=True,
                 require_preview=request.supports_preview,
                 require_approval=True,
-                approval_risk_level=request.risk_hint or "high",
+                approval_risk_level=risk_level,
             ),
             approval_packet={
                 "title": f"Approve external mutation via {request.tool_name}",
                 "summary": "This action mutates external state.",
-                "risk_level": request.risk_hint or "high",
+                "risk_level": risk_level,
             },
-            risk_level=request.risk_hint or "high",
+            risk_level=risk_level,
         )
     ]

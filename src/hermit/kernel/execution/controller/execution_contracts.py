@@ -308,11 +308,24 @@ class ExecutionContractService:
             return "compensatable"
         return "limited"
 
+    # Contracts awaiting human review (approval gate or witness-required) need
+    # more time for the operator to respond; routine contracts should expire
+    # quickly so stale actions cannot be replayed.
+    _TTL_SECONDS_ROUTINE: int = 5 * 60  # 5 min – low-risk, self-contained
+    _TTL_SECONDS_REVIEWED: int = 30 * 60  # 30 min – approval / witness gate
+
     @staticmethod
     def _expiry_at(*, policy: PolicyDecision, witness_ref: str | None) -> float:
-        ttl_seconds = 15 * 60
+        """Return the Unix timestamp at which the contract expires.
+
+        Contracts that require human approval or have an attached witness are
+        held open longer so the operator has adequate time to respond.
+        Routine (unapproved) contracts expire sooner to prevent stale replay.
+        """
         if policy.obligations.require_approval or witness_ref:
-            ttl_seconds = 5 * 60
+            ttl_seconds = ExecutionContractService._TTL_SECONDS_REVIEWED
+        else:
+            ttl_seconds = ExecutionContractService._TTL_SECONDS_ROUTINE
         return time.time() + ttl_seconds
 
     @staticmethod

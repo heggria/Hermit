@@ -50,7 +50,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         lineage_ref_value = (
             lineage_ref or str((metadata or {}).get("lineage_ref", "") or "") or None
         )
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO artifacts (
@@ -98,8 +98,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         )
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM artifacts WHERE artifact_id = ?", (artifact_id,))
+        row = self._row("SELECT * FROM artifacts WHERE artifact_id = ?", (artifact_id,))
         return self._artifact_from_row(row) if row is not None else None
 
     def list_artifacts(
@@ -111,17 +110,15 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         else:
             query = "SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?"
             params = (limit,)
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._artifact_from_row(row) for row in rows]
 
     def list_artifacts_for_task(self, task_id: str) -> list[ArtifactRecord]:
         """Return all artifacts belonging to *task_id*, ordered by creation time."""
-        with self._lock:
-            rows = self._rows(
-                "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at ASC",
-                (task_id,),
-            )
+        rows = self._rows(
+            "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at ASC",
+            (task_id,),
+        )
         return [self._artifact_from_row(row) for row in rows]
 
     def list_artifacts_by_kind(
@@ -134,8 +131,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         else:
             query = "SELECT * FROM artifacts WHERE kind = ? ORDER BY created_at DESC"
             params = (kind,)
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._artifact_from_row(row) for row in rows]
 
     def get_artifact_manifest(self, task_id: str) -> dict[str, Any]:
@@ -143,11 +139,10 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
 
         Returns a dict with keys ``total``, ``counts_by_kind``, and ``artifact_ids``.
         """
-        with self._lock:
-            rows = self._rows(
-                "SELECT artifact_id, kind FROM artifacts WHERE task_id = ? ORDER BY created_at ASC",
-                (task_id,),
-            )
+        rows = self._rows(
+            "SELECT artifact_id, kind FROM artifacts WHERE task_id = ? ORDER BY created_at ASC",
+            (task_id,),
+        )
         counts_by_kind: dict[str, int] = {}
         artifact_ids: list[str] = []
         for row in rows:
@@ -195,8 +190,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         return "default"
 
     def get_principal(self, principal_id: str) -> PrincipalRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM principals WHERE principal_id = ?", (principal_id,))
+        row = self._row("SELECT * FROM principals WHERE principal_id = ?", (principal_id,))
         return self._principal_from_row(row) if row is not None else None
 
     def list_principals(
@@ -208,8 +202,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         else:
             query = "SELECT * FROM principals ORDER BY updated_at DESC LIMIT ?"
             params = (limit,)
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._principal_from_row(row) for row in rows]
 
     def create_decision(
@@ -262,7 +255,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             "decided_by_principal_id": decided_by_principal_id,
             "created_at": created_at,
         }
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO decisions (
@@ -311,8 +304,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         return decision
 
     def get_decision(self, decision_id: str) -> DecisionRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM decisions WHERE decision_id = ?", (decision_id,))
+        row = self._row("SELECT * FROM decisions WHERE decision_id = ?", (decision_id,))
         return self._decision_from_row(row) if row is not None else None
 
     def list_decisions(
@@ -324,8 +316,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         else:
             query = "SELECT * FROM decisions ORDER BY created_at DESC LIMIT ?"
             params = (limit,)
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._decision_from_row(row) for row in rows]
 
     def create_capability_grant(
@@ -371,7 +362,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             "consumed_at": None,
             "revoked_at": None,
         }
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO capability_grants (
@@ -416,8 +407,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         return grant
 
     def get_capability_grant(self, grant_id: str) -> CapabilityGrantRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM capability_grants WHERE grant_id = ?", (grant_id,))
+        row = self._row("SELECT * FROM capability_grants WHERE grant_id = ?", (grant_id,))
         return self._capability_grant_from_row(row) if row is not None else None
 
     def update_capability_grant(
@@ -433,7 +423,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             return
         updated_consumed_at = grant.consumed_at if consumed_at is UNSET else consumed_at
         updated_revoked_at = grant.revoked_at if revoked_at is UNSET else revoked_at
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE capability_grants
@@ -482,8 +472,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         else:
             query = "SELECT * FROM capability_grants ORDER BY issued_at DESC LIMIT ?"
             params = (limit,)
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._capability_grant_from_row(row) for row in rows]
 
     def create_workspace_lease(
@@ -518,7 +507,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             "expires_at": expires_at,
             "released_at": None,
         }
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO workspace_leases (
@@ -557,8 +546,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         return lease
 
     def get_workspace_lease(self, lease_id: str) -> WorkspaceLeaseRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM workspace_leases WHERE lease_id = ?", (lease_id,))
+        row = self._row("SELECT * FROM workspace_leases WHERE lease_id = ?", (lease_id,))
         return self._workspace_lease_from_row(row) if row is not None else None
 
     def update_workspace_lease(
@@ -576,7 +564,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         updated_status = lease.status if status is UNSET else str(status)
         updated_expires_at = lease.expires_at if expires_at is UNSET else expires_at
         updated_released_at = lease.released_at if released_at is UNSET else released_at
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE workspace_leases
@@ -630,11 +618,10 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             params.append(status)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM workspace_leases {where} ORDER BY acquired_at DESC LIMIT ?",
-                tuple(params),
-            )
+        rows = self._rows(
+            f"SELECT * FROM workspace_leases {where} ORDER BY acquired_at DESC LIMIT ?",
+            tuple(params),
+        )
         return [self._workspace_lease_from_row(row) for row in rows]
 
     def create_belief(
@@ -667,7 +654,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         belief_id = self._id("belief")
         created_at = time.time()
         claim = (claim_text or content or "").strip()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO beliefs (
@@ -745,8 +732,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         return belief
 
     def get_belief(self, belief_id: str) -> BeliefRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM beliefs WHERE belief_id = ?", (belief_id,))
+        row = self._row("SELECT * FROM beliefs WHERE belief_id = ?", (belief_id,))
         return self._belief_from_row(row) if row is not None else None
 
     def list_beliefs(
@@ -774,10 +760,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             params.append(status)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM beliefs {where} ORDER BY updated_at DESC LIMIT ?", params
-            )
+        rows = self._rows(f"SELECT * FROM beliefs {where} ORDER BY updated_at DESC LIMIT ?", params)
         return [self._belief_from_row(row) for row in rows]
 
     def update_belief(
@@ -825,7 +808,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         next_supersession_reason = (
             belief.supersession_reason if supersession_reason is UNSET else supersession_reason
         )
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE beliefs
@@ -933,7 +916,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         normalized_reason = invalidation_reason or (
             "superseded" if status == "superseded" else None
         )
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO memory_records (
@@ -1019,8 +1002,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         return record
 
     def get_memory_record(self, memory_id: str) -> MemoryRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM memory_records WHERE memory_id = ?", (memory_id,))
+        row = self._row("SELECT * FROM memory_records WHERE memory_id = ?", (memory_id,))
         return self._memory_record_from_row(row) if row is not None else None
 
     def list_memory_records(
@@ -1060,10 +1042,9 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             params.append(scope_ref)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM memory_records {where} ORDER BY updated_at DESC LIMIT ?", params
-            )
+        rows = self._rows(
+            f"SELECT * FROM memory_records {where} ORDER BY updated_at DESC LIMIT ?", params
+        )
         return [self._memory_record_from_row(row) for row in rows]
 
     def update_memory_record(
@@ -1134,7 +1115,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         next_last_accessed_at = (
             record.last_accessed_at if last_accessed_at is UNSET else last_accessed_at
         )
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE memory_records
@@ -1206,7 +1187,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
     ) -> RollbackRecord:
         rollback_id = self._id("rollback")
         created_at = time.time()
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO rollbacks (
@@ -1251,16 +1232,14 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         return record
 
     def get_rollback(self, rollback_id: str) -> RollbackRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM rollbacks WHERE rollback_id = ?", (rollback_id,))
+        row = self._row("SELECT * FROM rollbacks WHERE rollback_id = ?", (rollback_id,))
         return self._rollback_from_row(row) if row is not None else None
 
     def get_rollback_for_receipt(self, receipt_ref: str) -> RollbackRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM rollbacks WHERE receipt_ref = ? ORDER BY created_at DESC LIMIT 1",
-                (receipt_ref,),
-            )
+        row = self._row(
+            "SELECT * FROM rollbacks WHERE receipt_ref = ? ORDER BY created_at DESC LIMIT 1",
+            (receipt_ref,),
+        )
         return self._rollback_from_row(row) if row is not None else None
 
     def update_rollback(
@@ -1279,7 +1258,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             if executed_at is UNSET and status in {"succeeded", "failed"}
             else (record.executed_at if executed_at is UNSET else executed_at)
         )
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE rollbacks
@@ -1327,7 +1306,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         approval_id = self._id("approval")
         requested_at = time.time()
         approval_packet_ref = approval_packet_ref or request_packet_ref
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO approvals (
@@ -1397,8 +1376,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         return approval
 
     def get_approval(self, approval_id: str) -> ApprovalRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,))
+        row = self._row("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,))
         return self._approval_from_row(row) if row is not None else None
 
     def list_approvals(
@@ -1422,10 +1400,9 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             params.append(status)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM approvals {where} ORDER BY requested_at DESC LIMIT ?", params
-            )
+        rows = self._rows(
+            f"SELECT * FROM approvals {where} ORDER BY requested_at DESC LIMIT ?", params
+        )
         return [self._approval_from_row(row) for row in rows]
 
     def get_latest_pending_approval(self, conversation_id: str) -> ApprovalRecord | None:
@@ -1446,7 +1423,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         if approval is None:
             return False
         resolved_by_principal_id = self._ensure_principal_id(resolved_by)
-        with self._lock, self._conn:
+        with self._conn:
             if expected_status is not None:
                 cursor = self._conn.execute(
                     """
@@ -1503,7 +1480,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         approval = self.get_approval(approval_id)
         if approval is None:
             return
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 "UPDATE approvals SET resolution_json = ? WHERE approval_id = ?",
                 (json.dumps(resolution, ensure_ascii=False), approval_id),
@@ -1515,7 +1492,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             return
         resolution = dict(approval.resolution or {})
         resolution["status"] = "consumed"
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE approvals
@@ -1582,7 +1559,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         created_at = time.time()
         receipt_class = receipt_class or action_type
         policy_result_ref = policy_result_ref or policy_ref
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO receipts (
@@ -1739,7 +1716,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         updated_verifiability = receipt.verifiability if verifiability is UNSET else verifiability
         updated_signature = receipt.signature if signature is UNSET else signature
         updated_signer_ref = receipt.signer_ref if signer_ref is UNSET else signer_ref
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE receipts
@@ -1800,7 +1777,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             if rollback_artifact_refs is UNSET
             else list(cast(list[str], rollback_artifact_refs))
         )
-        with self._lock, self._conn:
+        with self._conn:
             self._conn.execute(
                 """
                 UPDATE receipts
@@ -1838,8 +1815,7 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
             )
 
     def get_receipt(self, receipt_id: str) -> ReceiptRecord | None:
-        with self._lock:
-            row = self._row("SELECT * FROM receipts WHERE receipt_id = ?", (receipt_id,))
+        row = self._row("SELECT * FROM receipts WHERE receipt_id = ?", (receipt_id,))
         return self._receipt_from_row(row) if row is not None else None
 
     def list_receipts(self, *, task_id: str | None = None, limit: int = 50) -> list[ReceiptRecord]:
@@ -1849,6 +1825,5 @@ class KernelLedgerStoreMixin(KernelStoreTypingBase):
         else:
             query = "SELECT * FROM receipts ORDER BY created_at DESC LIMIT ?"
             params = (limit,)
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._receipt_from_row(row) for row in rows]

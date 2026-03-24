@@ -5,22 +5,25 @@ Wraps :class:`KernelDispatchService` and gates step-attempt dispatch on
 ``worker_count`` limit, each step attempt is mapped to a
 :class:`WorkerRole` via its ``step.kind`` field and must claim an idle
 slot before being submitted to the thread pool.
+
+Logical slot capacity (up to 2048 total) is decoupled from physical
+thread count (controlled by ``max_physical_threads`` or the
+``HERMIT_DISPATCH_THREAD_MAX`` env var).
 """
 
 from __future__ import annotations
 
 import concurrent.futures
+import os
 import threading
 from typing import Any, cast
 
 import structlog
 
 from hermit.kernel.execution.coordination.dispatch import (
-    POLL_INTERVAL_SECONDS,
     KernelDispatchService,
 )
 from hermit.kernel.execution.workers.models import (
-    DEFAULT_CONFLICT_LIMITS,
     WorkerPoolConfig,
     WorkerPoolStatus,
     WorkerRole,
@@ -70,6 +73,11 @@ _KIND_TO_ROLE: dict[str, WorkerRole] = {
 
 _DEFAULT_ROLE = WorkerRole.executor
 
+# Maximum number of step attempts to claim and dispatch per tick of the
+# dispatch loop.  Prevents the inner loop from monopolising the thread
+# when a large backlog of ready attempts exists.
+_MAX_CLAIMS_PER_TICK = 16
+
 
 def step_kind_to_role(kind: str) -> WorkerRole:
     """Map a step kind string to the corresponding :class:`WorkerRole`.
@@ -82,77 +90,106 @@ def step_kind_to_role(kind: str) -> WorkerRole:
 # ── default pool configuration ──────────────────────────────────────────────
 
 
+def _env_int(key: str, default: int) -> int:
+    """Read an integer from env, falling back to *default*."""
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def _default_pool_config() -> WorkerPoolConfig:
-    """Build the default pool configuration with sensible per-role limits.
+    """Build the default pool configuration with high-capacity per-role limits.
 
-    Spec-defined concurrency limits:
-    - exec: max 4
-    - verify: max 3
-    - planner: max 2  (spec says "1-2")
-    - benchmarker: max 2
-    - researcher: max 2
-    - tester: max 2
-    - spec: max 1
-    - reconciler: max 1
+    Each per-role limit is overridable via env vars (e.g.
+    ``HERMIT_POOL_EXECUTOR_MAX=512``).
 
-    Conflict-domain limits from spec:
-    - max_same_workspace: 1
-    - max_same_module: 2
+    Default logical slot totals: 256+128+64+64+64+64+32+32+32 = 736.
+    Physical thread pool is capped separately by ``max_physical_threads``
+    (default 256) or ``HERMIT_DISPATCH_THREAD_MAX``.
     """
+    executor_max = _env_int("HERMIT_POOL_EXECUTOR_MAX", 256)
+    verifier_max = _env_int("HERMIT_POOL_VERIFIER_MAX", 128)
+    planner_max = _env_int("HERMIT_POOL_PLANNER_MAX", 64)
+    benchmarker_max = _env_int("HERMIT_POOL_BENCHMARKER_MAX", 64)
+    researcher_max = _env_int("HERMIT_POOL_RESEARCHER_MAX", 64)
+    tester_max = _env_int("HERMIT_POOL_TESTER_MAX", 64)
+    spec_max = _env_int("HERMIT_POOL_SPEC_MAX", 32)
+    reconciler_max = _env_int("HERMIT_POOL_RECONCILER_MAX", 32)
+    reviewer_max = _env_int("HERMIT_POOL_REVIEWER_MAX", 32)
+
+    max_same_workspace = _env_int("HERMIT_MAX_SAME_WORKSPACE", 8)
+    max_same_module = _env_int("HERMIT_MAX_SAME_MODULE", 16)
+
+    max_physical = _env_int("HERMIT_DISPATCH_THREAD_MAX", 256)
+
     return WorkerPoolConfig(
         pool_id="kernel-dispatch",
         team_id="default",
         slots={
             WorkerRole.executor: WorkerSlotConfig(
                 role=WorkerRole.executor,
-                max_active=4,
+                max_active=executor_max,
                 accepted_step_kinds=["execute", "code", "patch", "edit", "publish", "rollback"],
                 output_artifact_kinds=["diff", "command_output"],
             ),
             WorkerRole.verifier: WorkerSlotConfig(
                 role=WorkerRole.verifier,
-                max_active=3,
+                max_active=verifier_max,
                 accepted_step_kinds=["review", "verify", "check"],
                 output_artifact_kinds=["verdict", "critique"],
             ),
             WorkerRole.planner: WorkerSlotConfig(
                 role=WorkerRole.planner,
-                max_active=2,
+                max_active=planner_max,
                 accepted_step_kinds=["plan", "decompose"],
                 output_artifact_kinds=["contract_packet", "dag_fragment"],
             ),
             WorkerRole.benchmarker: WorkerSlotConfig(
                 role=WorkerRole.benchmarker,
-                max_active=2,
+                max_active=benchmarker_max,
                 accepted_step_kinds=["benchmark"],
                 output_artifact_kinds=["benchmark_report", "raw_metrics"],
             ),
             WorkerRole.researcher: WorkerSlotConfig(
                 role=WorkerRole.researcher,
-                max_active=2,
+                max_active=researcher_max,
                 accepted_step_kinds=["search", "research", "inspect"],
                 output_artifact_kinds=["evidence_bundle", "inspection_report"],
             ),
             WorkerRole.tester: WorkerSlotConfig(
                 role=WorkerRole.tester,
-                max_active=2,
+                max_active=tester_max,
                 accepted_step_kinds=["test", "run_tests"],
                 output_artifact_kinds=["test_report"],
             ),
             WorkerRole.spec: WorkerSlotConfig(
                 role=WorkerRole.spec,
-                max_active=1,
+                max_active=spec_max,
                 accepted_step_kinds=["spec"],
                 output_artifact_kinds=["iteration_spec"],
             ),
             WorkerRole.reconciler: WorkerSlotConfig(
                 role=WorkerRole.reconciler,
-                max_active=1,
+                max_active=reconciler_max,
                 accepted_step_kinds=["reconcile", "learn"],
                 output_artifact_kinds=["reconciliation_record", "lesson_pack"],
             ),
+            WorkerRole.reviewer: WorkerSlotConfig(
+                role=WorkerRole.reviewer,
+                max_active=reviewer_max,
+                accepted_step_kinds=["review"],
+                output_artifact_kinds=["review_report"],
+            ),
         },
-        conflict_limits=dict(DEFAULT_CONFLICT_LIMITS),
+        conflict_limits={
+            "max_same_workspace": max_same_workspace,
+            "max_same_module": max_same_module,
+        },
+        max_physical_threads=max_physical,
     )
 
 
@@ -195,15 +232,14 @@ class PoolAwareDispatchService:
         config = pool_config or _default_pool_config()
         self._pool = WorkerPoolManager(config)
 
-        # Total thread pool size = sum of all per-role max_active slots.
-        total_workers = sum(sc.max_active for sc in config.slots.values())
-        total_workers = max(total_workers, 1)
+        # Physical thread pool: capped by max_physical_threads, decoupled
+        # from the logical slot capacity.
+        total_logical = sum(sc.max_active for sc in config.slots.values())
+        thread_max = min(total_logical, config.max_physical_threads)
+        thread_max = max(thread_max, 1)
 
-        # Build the inner dispatch service with the aggregate worker count.
-        # We override _capacity_available and the dispatch loop to use pool
-        # slots instead of the flat counter, but the thread pool still needs
-        # enough threads to handle concurrent work across all roles.
-        self._inner = KernelDispatchService(runner, worker_count=total_workers)
+        # Build the inner dispatch service with the physical thread count.
+        self._inner = KernelDispatchService(runner, worker_count=thread_max)
 
         # Slot tracking: future -> slot_id, used to release slots on
         # completion or failure.
@@ -260,6 +296,14 @@ class PoolAwareDispatchService:
         """Record a heartbeat for a running step attempt (delegated to inner)."""
         self._inner.report_heartbeat(step_attempt_id)
 
+    def pause_dispatch(self) -> None:
+        """Pause dispatch — loop skips claiming until resumed."""
+        self._inner.pause_dispatch()
+
+    def resume_dispatch(self) -> None:
+        """Resume dispatch and wake loop immediately."""
+        self._inner.resume_dispatch()
+
     def check_heartbeat_timeouts(self) -> None:
         """Scan running attempts for heartbeat timeouts (delegated to inner)."""
         self._inner.check_heartbeat_timeouts()
@@ -267,21 +311,46 @@ class PoolAwareDispatchService:
     # ── pool-gated dispatch loop ─────────────────────────────────────────
 
     def _loop(self) -> None:
-        """Main dispatch loop — claims slots before submitting attempts."""
+        """Main dispatch loop — claims slots before submitting attempts.
+
+        Uses adaptive poll intervals based on pool utilization:
+        - <50% utilization: 10ms (lots of capacity, fill fast)
+        - 50-90% utilization: 50ms (normal operation)
+        - >90% utilization: 200ms (nearly full, back off)
+
+        Batch claiming is capped at ``_MAX_CLAIMS_PER_TICK`` to prevent
+        the inner loop from monopolising the dispatch thread when many
+        ready attempts are queued.
+        """
+        _heartbeat_counter = 0
         while not self._inner.stop_event.is_set():
             self._reap_futures()
-            self._inner.check_heartbeat_timeouts()
+            # Only check heartbeat timeouts every 10 iterations to reduce overhead.
+            _heartbeat_counter += 1
+            if _heartbeat_counter >= 10:
+                self._inner.check_heartbeat_timeouts()
+                _heartbeat_counter = 0
 
-            claimed = False
-            while True:
-                attempt_info = self._try_claim_and_dispatch()
-                if attempt_info is None:
-                    break
-                claimed = True
+            claimed_count = 0
+            if not self._inner._paused.is_set():
+                while claimed_count < _MAX_CLAIMS_PER_TICK:
+                    attempt_info = self._try_claim_and_dispatch()
+                    if attempt_info is None:
+                        break
+                    claimed_count += 1
 
-            if claimed:
-                continue
-            self._inner.wake_event.wait(POLL_INTERVAL_SECONDS)
+            # Adaptive wait time based on pool utilization.
+            pool_status = self._pool.get_status()
+            total = pool_status.active_slots + pool_status.idle_slots
+            utilization = pool_status.active_slots / max(total, 1)
+            if utilization < 0.5:
+                wait_time = 0.01  # 10ms — lots of capacity, fill fast
+            elif utilization < 0.9:
+                wait_time = 0.05  # 50ms — normal operation
+            else:
+                wait_time = 0.2  # 200ms — nearly full, back off
+
+            self._inner.wake_event.wait(wait_time)
             self._inner.wake_event.clear()
 
     def _resolve_role_for_attempt(self, step_attempt_id: str) -> WorkerRole:
@@ -333,8 +402,29 @@ class PoolAwareDispatchService:
             workspace = cast(str | None, ctx.get("workspace"))
             return (role, supervisor_id, workspace)
         except Exception:
-            log.warning("pool_dispatch_peek_failed")
+            log.warning("pool_dispatch_peek_failed", exc_info=True)
             return None
+
+    @staticmethod
+    def _dispatch_with_cleanup(
+        handler: Any,
+        attempt_id: str,
+        store: Any,
+    ) -> Any:
+        """Run *handler* and close the thread-local SQLite connection afterwards.
+
+        Worker threads in the ThreadPoolExecutor create thread-local SQLite
+        connections via ``KernelStore._conn``.  Without explicit cleanup the
+        connection (and its file descriptors) leaks until the thread is
+        reaped by the pool — which may never happen for long-lived pools.
+        """
+        try:
+            return handler(attempt_id)
+        finally:
+            try:
+                store.close_thread_conn()
+            except Exception:
+                pass
 
     def _try_claim_and_dispatch(self) -> str | None:
         """Attempt to claim a pool slot and dispatch the next ready attempt.
@@ -395,8 +485,11 @@ class PoolAwareDispatchService:
         # submit() raises (e.g. executor shutdown), the claimed pool slot
         # is released — otherwise the slot leaks permanently.
         handler = self._inner.resolve_handler(attempt.step_attempt_id)
+        store = self._runner.task_controller.store
         try:
-            future = self._inner.executor.submit(handler, attempt.step_attempt_id)
+            future = self._inner.executor.submit(
+                self._dispatch_with_cleanup, handler, attempt.step_attempt_id, store
+            )
         except Exception:
             self._pool.release_slot(slot.slot_id)
             raise
@@ -414,13 +507,18 @@ class PoolAwareDispatchService:
         return attempt.step_attempt_id
 
     def _reap_futures(self) -> None:
-        """Reap completed futures, release pool slots, and handle failures."""
+        """Reap completed futures, release pool slots, and handle failures.
+
+        After releasing slots, wakes the dispatch loop so that newly
+        available capacity can be filled promptly.
+        """
         done: list[concurrent.futures.Future[Any]] = []
         with self._inner.lock:
             for future in list(self._inner.futures):
                 if future.done():
                     done.append(future)
 
+        slots_released = False
         for future in done:
             attempt_id = ""
             slot_id = ""
@@ -432,6 +530,7 @@ class PoolAwareDispatchService:
             # Always release the pool slot regardless of outcome.
             if slot_id:
                 self._pool.release_slot(slot_id)
+                slots_released = True
 
             try:
                 future.result()
@@ -442,3 +541,8 @@ class PoolAwareDispatchService:
                     step_attempt_id=attempt_id,
                 )
                 self._inner.force_fail_attempt(attempt_id)
+
+        # Wake the dispatch loop when slots were released so new ready
+        # attempts can fill the freed capacity immediately.
+        if slots_released:
+            self._inner.wake_event.set()

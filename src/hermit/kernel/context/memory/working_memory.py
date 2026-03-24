@@ -29,7 +29,9 @@ class WorkingMemoryItem:
 class WorkingMemoryPack:
     """The result of working memory selection."""
 
-    items: list[WorkingMemoryItem] = field(default_factory=lambda: list[WorkingMemoryItem]())
+    # Use plain `list` as the factory; `list[WorkingMemoryItem]()` is a generic-alias
+    # call that works on CPython by accident but is semantically incorrect.
+    items: list[WorkingMemoryItem] = field(default_factory=list)
     total_tokens: int = 0
     budget_used_pct: float = 0.0
     overflow_count: int = 0
@@ -138,9 +140,8 @@ class WorkingMemoryManager:
 
     @staticmethod
     def _make_item(memory: MemoryRecord, priority: str) -> WorkingMemoryItem:
-        tokens = max(
-            1, (len(memory.claim_text) + _CHARS_PER_TOKEN_ESTIMATE - 1) // _CHARS_PER_TOKEN_ESTIMATE
-        )
+        # Delegate to _estimate_tokens rather than duplicating the ceiling-division formula.
+        tokens = WorkingMemoryManager._estimate_tokens(memory.claim_text)
         return WorkingMemoryItem(
             memory_id=memory.memory_id,
             claim_text=memory.claim_text,

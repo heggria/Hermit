@@ -13,6 +13,7 @@ def evaluate_monotonicity_guard(request: ActionRequest) -> RuleOutcome | None:
     """Skip coordination overhead for readonly/additive steps.
 
     Returns an allow-without-approval outcome for monotonic steps,
+    a warning outcome for unrecognised monotonicity classes,
     or None to let the normal policy chain continue.
     """
     monotonicity_class = request.context.get("monotonicity_class", "")
@@ -34,6 +35,28 @@ def evaluate_monotonicity_guard(request: ActionRequest) -> RuleOutcome | None:
                 require_approval=False,
             ),
             risk_level="low",
+        )
+    # Warn on unrecognised monotonicity classes rather than silently falling
+    # through to the normal policy chain.  A typo (e.g. "irreversibe_mutation")
+    # would otherwise be indistinguishable from an absent class, potentially
+    # skipping required coordination without any observable signal.
+    if monotonicity_class not in _VALID_MONOTONICITY_CLASSES:
+        return RuleOutcome(
+            verdict="allow",
+            reasons=[
+                PolicyReason(
+                    "monotonicity_unknown",
+                    f"Unrecognised monotonicity_class '{monotonicity_class}';"
+                    f" expected one of {sorted(_VALID_MONOTONICITY_CLASSES)}."
+                    " Falling back to full coordination.",
+                    "warning",
+                )
+            ],
+            obligations=PolicyObligations(
+                require_receipt=True,
+                require_approval=True,
+            ),
+            risk_level="medium",
         )
     return None
 
@@ -70,7 +93,9 @@ def evaluate_communication_budget_guard(
     ratio_threshold = float(
         request.context.get("communication_budget_ratio", _DEFAULT_COMMUNICATION_BUDGET_RATIO)
     )
-    if budget_tokens_limit > 0 and communication_tokens > 0:
+    # budget_tokens_limit > 0 is guaranteed by the early-return guard above;
+    # the redundant re-check has been removed.
+    if communication_tokens > 0:
         comm_ratio = communication_tokens / budget_tokens_limit
         if comm_ratio > ratio_threshold:
             return RuleOutcome(

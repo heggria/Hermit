@@ -33,10 +33,10 @@ class EpisodeKnowledge:
 
     task_id: str
     summary: str = ""
-    tool_names: list[str] = field(default_factory=lambda: list[str]())
-    artifact_refs: list[str] = field(default_factory=lambda: list[str]())
+    tool_names: list[str] = field(default_factory=list)
+    artifact_refs: list[str] = field(default_factory=list)
     outcome: str = ""
-    metadata: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = [

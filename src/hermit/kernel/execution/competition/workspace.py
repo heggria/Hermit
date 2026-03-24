@@ -40,8 +40,18 @@ class CompetitionWorkspaceManager:
         return str(worktree_path)
 
     def merge_winner(self, competition_id: str, workspace_ref: str) -> None:
-        """Merge the winner branch back into the current branch."""
+        """Merge the winner branch back into the current branch.
+
+        Raises:
+            ValueError: If *workspace_ref* does not point to an existing directory.
+            subprocess.CalledProcessError: If the underlying git command fails.
+        """
         worktree_path = Path(workspace_ref)
+        if not worktree_path.is_dir():
+            raise ValueError(
+                f"workspace_ref does not point to an existing directory: {workspace_ref!r}"
+            )
+
         # Determine branch name from worktree
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],

@@ -34,17 +34,27 @@ class AutoParkService:
         return candidate
 
     def on_task_unparked(self, conversation_id: str, resumed_task_id: str) -> None:
-        """Approval granted: re-evaluate focus (resumed task may be higher priority)."""
-        scores = self._prioritizer.recalculate_priorities(conversation_id)
-        if not scores:
-            return
+        """Approval granted: restore focus to the resumed task.
 
-        best = scores[0]
-        if best.task_id == resumed_task_id:
-            self._store.set_conversation_focus(
-                conversation_id, task_id=resumed_task_id, reason="auto_unpark"
-            )
+        The resumed task is always given focus because it represents an explicit
+        user intent (approval was just granted).  A subsequent scheduling cycle
+        will re-evaluate priorities and may switch focus again if a higher-priority
+        task is still runnable.
+        """
+        scores = self._prioritizer.recalculate_priorities(conversation_id)
+
+        if scores and scores[0].task_id != resumed_task_id:
             log.info(
-                "auto_unpark_focus_switched",
-                to_task=resumed_task_id,
+                "auto_unpark_higher_priority_exists",
+                resumed_task=resumed_task_id,
+                highest_priority_task=scores[0].task_id,
+                note="Restoring focus to resumed task; scheduler will re-evaluate.",
             )
+
+        self._store.set_conversation_focus(
+            conversation_id, task_id=resumed_task_id, reason="auto_unpark"
+        )
+        log.info(
+            "auto_unpark_focus_switched",
+            to_task=resumed_task_id,
+        )

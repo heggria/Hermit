@@ -64,8 +64,6 @@ def log_companion_event(
     lines = [f"[{timestamp}] {level.upper()} {action}: {message}"]
     if detail:
         lines.append(detail.rstrip())
-    if not path.exists():
-        path.touch()
     with path.open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n\n")
     return path

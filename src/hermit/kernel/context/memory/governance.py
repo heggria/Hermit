@@ -508,8 +508,9 @@ class MemoryGovernanceService:
     ) -> bool:
         if not self._subject_matches(left_subject, right_subject):
             return False
-        if left_subject and right_subject and left_subject == right_subject:
-            return True
+        # When both subjects are non-empty and equal, _subject_matches already confirmed
+        # the match above; fall through to shares_topic only when at least one subject is
+        # absent (ambiguous entity) so we can use claim-level similarity as a tiebreaker.
         return shares_topic(left_claim, right_claim)
 
 

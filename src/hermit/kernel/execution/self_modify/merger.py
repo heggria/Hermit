@@ -12,6 +12,7 @@ removed. All iteration changes now go through a PR review workflow.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -146,7 +147,9 @@ class WorktreeMerger:
         if iteration_summary:
             body_parts.append(f"\n### Summary\n{iteration_summary}")
         if benchmark_results:
-            body_parts.append(f"\n### Benchmark Results\n```json\n{benchmark_results}\n```")
+            body_parts.append(
+                f"\n### Benchmark Results\n```json\n{json.dumps(benchmark_results, indent=2)}\n```"
+            )
         if lessons:
             lesson_text = "\n".join(f"- {ls}" for ls in lessons)
             body_parts.append(f"\n### Lessons Learned\n{lesson_text}")

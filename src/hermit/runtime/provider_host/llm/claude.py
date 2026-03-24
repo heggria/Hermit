@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Iterable
@@ -23,7 +24,7 @@ from hermit.runtime.provider_host.shared.messages import (
     split_internal_tool_context,
 )
 
-_LLM_CONCURRENCY_LIMIT = 16  # Max concurrent API calls
+_LLM_CONCURRENCY_LIMIT = int(os.environ.get("HERMIT_LLM_CONCURRENCY", "64"))
 _llm_semaphore = threading.Semaphore(_LLM_CONCURRENCY_LIMIT)
 
 log = structlog.get_logger()
@@ -129,6 +130,8 @@ def _strip_thinking_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any
 
 _CONTENT_FILTER_MAX_RETRIES: int = 2
 _CONTENT_FILTER_RETRY_DELAY: float = 1.0
+_TRANSIENT_MAX_RETRIES: int = 10
+_TRANSIENT_BASE_DELAY: float = 1.0
 
 
 def _is_content_filter_error(exc: BaseException) -> bool:
@@ -143,6 +146,27 @@ def _is_rate_limit_error(exc: BaseException) -> bool:
         return True
     status = getattr(exc, "status_code", None)
     return status == 429
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    """Return True if *exc* is a transient error worth retrying.
+
+    Covers: connection timeouts, read timeouts, network errors,
+    connection resets, and 5xx server errors.
+    """
+    import httpx
+
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, ConnectionError, OSError)):
+        return True
+    status = getattr(exc, "status_code", None) or getattr(
+        getattr(exc, "response", None), "status_code", None
+    )
+    if isinstance(status, int) and status >= 500:
+        return True
+    text = str(exc).lower()
+    return any(
+        k in text for k in ("timeout", "timed out", "connection reset", "broken pipe", "eof")
+    )
 
 
 def _nudge_payload_for_retry(payload: dict, attempt: int) -> dict:
@@ -196,10 +220,10 @@ class ClaudeProvider(Provider):
         if usage is None:
             return UsageMetrics()
         return UsageMetrics(
-            input_tokens=getattr(usage, "input_tokens", 0),
-            output_tokens=getattr(usage, "output_tokens", 0),
-            cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0),
-            cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0),
+            input_tokens=int(getattr(usage, "input_tokens", None) or 0),
+            output_tokens=int(getattr(usage, "output_tokens", None) or 0),
+            cache_read_tokens=int(getattr(usage, "cache_read_input_tokens", None) or 0),
+            cache_creation_tokens=int(getattr(usage, "cache_creation_input_tokens", None) or 0),
         )
 
     def _payload(self, request: ProviderRequest, *, stream: bool = False) -> dict[str, Any]:
@@ -238,10 +262,10 @@ class ClaudeProvider(Provider):
         payload = self._payload(request)
         last_exc: BaseException | None = None
         with _llm_semaphore:
-            for _attempt in range(_CONTENT_FILTER_MAX_RETRIES + 1):
+            for _attempt in range(_TRANSIENT_MAX_RETRIES + 1):
                 try:
                     if _attempt > 0:
-                        time.sleep(_CONTENT_FILTER_RETRY_DELAY)
+                        time.sleep(min(_TRANSIENT_BASE_DELAY * (2 ** (_attempt - 1)), 30))
                         response = self.client.messages.create(
                             **_nudge_payload_for_retry(payload, _attempt)
                         )
@@ -249,14 +273,22 @@ class ClaudeProvider(Provider):
                         response = self.client.messages.create(**payload)
                     break
                 except Exception as exc:
+                    last_exc = exc
                     if _is_content_filter_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
-                        last_exc = exc
                         continue
-                    if _is_rate_limit_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
+                    if _is_rate_limit_error(exc) and _attempt < _TRANSIENT_MAX_RETRIES:
                         delay = min(30, 2**_attempt)
                         log.warning("claude_rate_limit_retry", attempt=_attempt, delay=delay)
                         time.sleep(delay)
-                        last_exc = exc
+                        continue
+                    if _is_transient_error(exc) and _attempt < _TRANSIENT_MAX_RETRIES:
+                        delay = min(_TRANSIENT_BASE_DELAY * (2**_attempt), 30)
+                        log.warning(
+                            "claude_transient_retry",
+                            attempt=_attempt,
+                            delay=delay,
+                            error=str(exc)[:200],
+                        )
                         continue
                     raise
             else:
@@ -284,10 +316,10 @@ class ClaudeProvider(Provider):
         last_exc: BaseException | None = None
         raw_stream = None
         with _llm_semaphore:
-            for _attempt in range(_CONTENT_FILTER_MAX_RETRIES + 1):
+            for _attempt in range(_TRANSIENT_MAX_RETRIES + 1):
                 try:
                     if _attempt > 0:
-                        time.sleep(_CONTENT_FILTER_RETRY_DELAY)
+                        time.sleep(min(_TRANSIENT_BASE_DELAY * (2 ** (_attempt - 1)), 30))
                         raw_stream = self.client.messages.create(
                             **_nudge_payload_for_retry(payload, _attempt)
                         )
@@ -295,14 +327,22 @@ class ClaudeProvider(Provider):
                         raw_stream = self.client.messages.create(**payload)
                     break
                 except Exception as exc:
+                    last_exc = exc
                     if _is_content_filter_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
-                        last_exc = exc
                         continue
-                    if _is_rate_limit_error(exc) and _attempt < _CONTENT_FILTER_MAX_RETRIES:
+                    if _is_rate_limit_error(exc) and _attempt < _TRANSIENT_MAX_RETRIES:
                         delay = min(30, 2**_attempt)
                         log.warning("claude_rate_limit_retry", attempt=_attempt, delay=delay)
                         time.sleep(delay)
-                        last_exc = exc
+                        continue
+                    if _is_transient_error(exc) and _attempt < _TRANSIENT_MAX_RETRIES:
+                        delay = min(_TRANSIENT_BASE_DELAY * (2**_attempt), 30)
+                        log.warning(
+                            "claude_transient_retry",
+                            attempt=_attempt,
+                            delay=delay,
+                            error=str(exc)[:200],
+                        )
                         continue
                     raise
             else:
@@ -362,7 +402,7 @@ class ClaudeProvider(Provider):
                         stop_reason = sr
                 event_usage = getattr(event, "usage", None)
                 if event_usage:
-                    usage.output_tokens = getattr(event_usage, "output_tokens", 0)
+                    usage.output_tokens = int(getattr(event_usage, "output_tokens", None) or 0)
 
         yield ProviderEvent(type="message_end", stop_reason=stop_reason, usage=usage)
 
@@ -391,8 +431,8 @@ def build_claude_provider(
         budget = ExecutionBudget(
             ingress_ack_deadline=5.0,
             provider_connect_timeout=legacy,
-            provider_read_timeout=600.0,
-            provider_stream_idle_timeout=600.0,
+            provider_read_timeout=15.0,
+            provider_stream_idle_timeout=15.0,
             tool_soft_deadline=legacy,
             tool_hard_deadline=max(legacy, 600.0),
             observation_window=600.0,

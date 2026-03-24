@@ -116,6 +116,12 @@ class FakeDispatchStore:
     def set_next_ready(self, attempt: SimpleNamespace | None) -> None:
         self._next_ready = attempt
 
+    def close_thread_conn(self) -> None:
+        pass
+
+    def touch_heartbeat(self, step_attempt_id: str) -> None:
+        self.updates.append((step_attempt_id, {"touch_heartbeat": True}))
+
 
 def _build_service(store: FakeDispatchStore, worker_count: int = 2) -> KernelDispatchService:
     """Build a KernelDispatchService with a fake runner wired to *store*."""
@@ -426,5 +432,5 @@ class TestReportHeartbeat:
         svc = _build_service(store)
         svc.report_heartbeat("sa-1")
         assert len(store.updates) == 1
-        _, kwargs = store.updates[0]
-        assert "last_heartbeat_at" in kwargs
+        said, _kwargs = store.updates[0]
+        assert said == "sa-1"

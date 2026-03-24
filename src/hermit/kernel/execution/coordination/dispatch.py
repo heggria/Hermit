@@ -12,7 +12,7 @@ from hermit.runtime.capability.contracts.base import HookEvent
 
 log = structlog.get_logger()
 
-POLL_INTERVAL_SECONDS = 0.5
+POLL_INTERVAL_SECONDS = 0.1
 
 _INFLIGHT_STATUSES = frozenset(
     {
@@ -45,6 +45,7 @@ class KernelDispatchService:
         self.kind_handlers: dict[str, Any] = {}
         self.reaper_thread: threading.Thread | None = None
         self.emitted_complete: set[str] = set()
+        self._paused = threading.Event()  # When set, dispatch loop skips claiming
 
     def register_kind_handler(self, kind: str, handler: Any) -> None:
         """Register a custom handler for a step kind.
@@ -78,16 +79,30 @@ class KernelDispatchService:
     def wake(self) -> None:
         self.wake_event.set()
 
+    def pause_dispatch(self) -> None:
+        """Pause the dispatch loop — it will skip claiming until resumed."""
+        self._paused.set()
+
+    def resume_dispatch(self) -> None:
+        """Resume the dispatch loop and wake it immediately."""
+        self._paused.clear()
+        self.wake_event.set()
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused.is_set()
+
     def report_heartbeat(self, step_attempt_id: str) -> None:
         """Record a heartbeat for a running step attempt.
 
-        Called by step executors to signal liveness.  The heartbeat timestamp
-        is written to the dedicated ``last_heartbeat_at`` column so the
-        background check can compare it against the configured interval.
+        Called by step executors to signal liveness.  Uses the lightweight
+        ``touch_heartbeat()`` store method which only updates the dedicated
+        ``last_heartbeat_at`` column — no full-row rewrite, no event append —
+        so heartbeats do not contend for the WAL write lock at high concurrency.
         """
         try:
             store = self.runner.task_controller.store
-            store.update_step_attempt(step_attempt_id, last_heartbeat_at=time.time())
+            store.touch_heartbeat(step_attempt_id)
         except Exception:
             log.exception(
                 "kernel_dispatch_heartbeat_failed",
@@ -103,56 +118,63 @@ class KernelDispatchService:
         yet) is older than the configured interval, the attempt is marked
         failed with reason ``heartbeat_timeout`` and a retry attempt is
         created if allowed by ``max_attempts``.
+
+        Uses a single combined query across all in-flight statuses to reduce
+        database round-trips (previously 3 separate queries).
         """
         store = self.runner.task_controller.store
         now = time.time()
-        for status in ("running", "dispatching", "executing"):
-            for attempt in store.list_step_attempts(status=status, limit=500):
-                ctx = attempt.context or {}
-                interval = ctx.get("heartbeat_interval_seconds")
-                if interval is None:
-                    continue
-                interval = float(interval)
-                last_beat = attempt.last_heartbeat_at or attempt.claimed_at or attempt.started_at
-                if last_beat is None:
-                    continue
-                if now - float(last_beat) <= interval:
-                    continue
-                # Heartbeat timed out — fail this attempt.
-                log.warning(
-                    "heartbeat_timeout",
-                    step_attempt_id=attempt.step_attempt_id,
-                    last_heartbeat_at=last_beat,
-                    interval=interval,
-                )
-                store.update_step_attempt(
-                    attempt.step_attempt_id,
-                    status="failed",
-                    waiting_reason="heartbeat_timeout",
-                    status_reason="heartbeat_timeout",
-                    finished_at=now,
-                )
-                store.update_step(attempt.step_id, status="failed", finished_at=now)
-                # Trigger retry via the store if max_attempts allows.
-                step = store.get_step(attempt.step_id)
-                if step is not None and step.attempt < step.max_attempts:
-                    store.retry_step(attempt.task_id, attempt.step_id)
-                else:
-                    store.propagate_step_failure(attempt.task_id, attempt.step_id)
-                    if not store.has_non_terminal_steps(attempt.task_id):
-                        store.update_task_status(
-                            attempt.task_id,
-                            "failed",
-                            payload={
-                                "result_preview": "heartbeat_timeout",
-                                "result_text": "heartbeat_timeout",
-                            },
-                        )
-                        self._emit_subtask_complete_for_task(
-                            attempt.task_id,
-                            success=False,
-                            error="heartbeat_timeout",
-                        )
+        # Combine all heartbeat-relevant statuses into a single query pass.
+        _heartbeat_statuses = ("running", "dispatching", "executing")
+        candidates: list[Any] = []
+        for status in _heartbeat_statuses:
+            candidates.extend(store.list_step_attempts(status=status, limit=500))
+        for attempt in candidates:
+            ctx = attempt.context or {}
+            interval = ctx.get("heartbeat_interval_seconds")
+            if interval is None:
+                continue
+            interval = float(interval)
+            last_beat = attempt.last_heartbeat_at or attempt.claimed_at or attempt.started_at
+            if last_beat is None:
+                continue
+            if now - float(last_beat) <= interval:
+                continue
+            # Heartbeat timed out — fail this attempt.
+            log.warning(
+                "heartbeat_timeout",
+                step_attempt_id=attempt.step_attempt_id,
+                last_heartbeat_at=last_beat,
+                interval=interval,
+            )
+            store.update_step_attempt(
+                attempt.step_attempt_id,
+                status="failed",
+                waiting_reason="heartbeat_timeout",
+                status_reason="heartbeat_timeout",
+                finished_at=now,
+            )
+            store.update_step(attempt.step_id, status="failed", finished_at=now)
+            # Trigger retry via the store if max_attempts allows.
+            step = store.get_step(attempt.step_id)
+            if step is not None and step.attempt < step.max_attempts:
+                store.retry_step(attempt.task_id, attempt.step_id)
+            else:
+                store.propagate_step_failure(attempt.task_id, attempt.step_id)
+                if not store.has_non_terminal_steps(attempt.task_id):
+                    store.update_task_status(
+                        attempt.task_id,
+                        "failed",
+                        payload={
+                            "result_preview": "heartbeat_timeout",
+                            "result_text": "heartbeat_timeout",
+                        },
+                    )
+                    self._emit_subtask_complete_for_task(
+                        attempt.task_id,
+                        success=False,
+                        error="heartbeat_timeout",
+                    )
 
     def resolve_handler(self, step_attempt_id: str) -> Any:
         """Return the handler for the given step attempt based on step kind."""
@@ -169,23 +191,49 @@ class KernelDispatchService:
             log.warning("kind_handler_resolve_failed", step_attempt_id=step_attempt_id)
         return self.runner.process_claimed_attempt
 
+    @staticmethod
+    def _dispatch_with_cleanup(
+        handler: Any,
+        attempt_id: str,
+        store: Any,
+    ) -> Any:
+        """Run *handler* and close the thread-local SQLite connection afterwards.
+
+        Worker threads in the ThreadPoolExecutor create thread-local SQLite
+        connections via ``KernelStore._conn``.  Without explicit cleanup the
+        connection (and its file descriptors) leaks until the thread is
+        reaped by the pool — which may never happen for long-lived pools.
+        """
+        try:
+            return handler(attempt_id)
+        finally:
+            try:
+                store.close_thread_conn()
+            except Exception:
+                pass
+
     def _loop(self) -> None:
+        _heartbeat_counter = 0
         while not self.stop_event.is_set():
             self._reap_futures()
-            self.check_heartbeat_timeouts()
+            _heartbeat_counter += 1
+            if _heartbeat_counter >= 10:
+                self.check_heartbeat_timeouts()
+                _heartbeat_counter = 0
             claimed = False
-            while self._capacity_available():
-                attempt = self.runner.task_controller.store.claim_next_ready_step_attempt()
-                if attempt is None:
-                    break
-                handler = self.resolve_handler(attempt.step_attempt_id)
-                future = self.executor.submit(
-                    handler,
-                    attempt.step_attempt_id,
-                )
-                with self.lock:
-                    self.futures[future] = attempt.step_attempt_id
-                claimed = True
+            if not self._paused.is_set():
+                while self._capacity_available():
+                    attempt = self.runner.task_controller.store.claim_next_ready_step_attempt()
+                    if attempt is None:
+                        break
+                    handler = self.resolve_handler(attempt.step_attempt_id)
+                    future = self.executor.submit(
+                        handler,
+                        attempt.step_attempt_id,
+                    )
+                    with self.lock:
+                        self.futures[future] = attempt.step_attempt_id
+                    claimed = True
             if claimed:
                 continue
             self.wake_event.wait(POLL_INTERVAL_SECONDS)
@@ -374,6 +422,11 @@ class KernelDispatchService:
 
         ctx = attempt.context or {}
         risk_band = ctx.get("risk_band", "low")
+
+        # Skip deliberation for autonomous policy profile tasks.
+        policy_profile = ctx.get("ingress_metadata", {}).get("policy_profile", "")
+        if policy_profile == "autonomous":
+            return False
 
         step = store.get_step(attempt.step_id)
         step_kind = step.kind if step else "execute"

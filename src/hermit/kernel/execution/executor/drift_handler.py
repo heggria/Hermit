@@ -16,6 +16,9 @@ from hermit.kernel.policy.permits.authorization_plans import AuthorizationPlanSe
 if TYPE_CHECKING:
     from hermit.kernel.execution.executor.executor import ToolExecutionResult
 
+# Deferred to avoid a circular import (executor.py imports DriftHandler lazily).
+from hermit.kernel.execution.executor.executor import ToolExecutionResult
+
 log = structlog.get_logger()
 
 _MAX_DRIFT_REENTRIES = 3
@@ -156,8 +159,6 @@ class DriftHandler:
                     ),
                 },
             )
-            from hermit.kernel.execution.executor.executor import ToolExecutionResult
-
             return ToolExecutionResult(
                 model_content=f"Step failed: exceeded {_MAX_DRIFT_REENTRIES} consecutive "
                 f"{drift_reason} reentries.",
@@ -253,8 +254,6 @@ class DriftHandler:
                 step_attempt_id=current.step_attempt_id,
                 drift_reason=drift_reason,
             )
-            from hermit.kernel.execution.executor.executor import ToolExecutionResult
-
             return ToolExecutionResult(
                 model_content=(
                     f"Drift supersession skipped: attempt {current.step_attempt_id!r} "

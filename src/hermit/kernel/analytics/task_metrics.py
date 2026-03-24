@@ -89,7 +89,9 @@ class TaskMetricsService:
             started = step.started_at
             finished = step.finished_at
 
-            # Fall back to step-attempt timing when the step itself has no timing
+            # Fall back to step-attempt timing when the step itself has no timing.
+            # Walk all attempts and keep the timestamps of the last attempt that
+            # has both a start and an end so we reflect the most-recent execution.
             if (started is None or finished is None) and step.status not in {
                 "pending",
                 "ready",
@@ -101,17 +103,9 @@ class TaskMetricsService:
                 )
                 for attempt in attempts:
                     effective_start = attempt.claimed_at or attempt.started_at
-                    if effective_start is not None:
-                        if started is None:
-                            started = effective_start
-                        if attempt.finished_at is not None and finished is None:
-                            finished = attempt.finished_at
-                    # Use the most-recent finished attempt's timestamps
-                    effective_start_2 = attempt.claimed_at or attempt.started_at
-                    if effective_start_2 is not None and attempt.finished_at is not None:
-                        started = effective_start_2
+                    if effective_start is not None and attempt.finished_at is not None:
+                        started = effective_start
                         finished = attempt.finished_at
-                        break
 
             if started is not None and finished is not None and finished >= started:
                 duration = finished - started

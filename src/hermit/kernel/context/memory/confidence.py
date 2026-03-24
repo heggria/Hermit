@@ -48,7 +48,9 @@ class ConfidenceDecayService:
         now: float | None = None,
     ) -> float:
         """Compute effective confidence using half-life decay."""
-        now = now or time.time()
+        # Use explicit None check so that now=0.0 (e.g. in tests) is not treated as falsy.
+        if now is None:
+            now = time.time()
         base = memory.confidence
         half_life = self._half_life_for(memory)
 
@@ -77,7 +79,9 @@ class ConfidenceDecayService:
         now: float | None = None,
     ) -> None:
         """Update last_accessed_at to reset the decay clock when a memory is referenced."""
-        now = now or time.time()
+        # Use explicit None check so that now=0.0 (e.g. in tests) is not treated as falsy.
+        if now is None:
+            now = time.time()
         record = store.get_memory_record(memory_id)
         if record is None or record.status != "active":
             return
@@ -98,7 +102,9 @@ class ConfidenceDecayService:
         low_confidence_threshold: float = 0.1,
     ) -> ConfidenceReport:
         """Batch recompute effective confidence for all active memories."""
-        now = now or time.time()
+        # Use explicit None check so that now=0.0 (e.g. in tests) is not treated as falsy.
+        if now is None:
+            now = time.time()
         records = store.list_memory_records(status="active", limit=5000)
 
         report = ConfidenceReport(recomputed_at=now, total_evaluated=len(records))
@@ -108,15 +114,24 @@ class ConfidenceDecayService:
             if effective < low_confidence_threshold:
                 report.below_threshold += 1
 
-            # Store effective confidence in structured_assertion for retrieval scoring
-            store.update_memory_record(
-                record.memory_id,
-                structured_assertion={
-                    **dict(record.structured_assertion or {}),
-                    "effective_confidence": effective,
-                    "confidence_computed_at": now,
-                },
-            )
+            # Store effective confidence in structured_assertion for retrieval scoring.
+            # Each update is wrapped independently so a single store failure does not
+            # abort the entire batch.
+            try:
+                store.update_memory_record(
+                    record.memory_id,
+                    structured_assertion={
+                        **dict(record.structured_assertion or {}),
+                        "effective_confidence": effective,
+                        "confidence_computed_at": now,
+                    },
+                )
+            except Exception:
+                log.warning(
+                    "confidence_batch_recompute.update_failed",
+                    memory_id=record.memory_id,
+                    exc_info=True,
+                )
 
         log.info(
             "confidence_batch_recompute",

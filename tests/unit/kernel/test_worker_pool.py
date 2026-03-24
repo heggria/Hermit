@@ -273,10 +273,9 @@ def test_release_slot_makes_slot_available_again() -> None:
     mgr.release_slot(slot.slot_id)
     assert mgr.can_accept(WorkerRole.verifier) is True
 
-    # Can claim again after release
+    # Can claim again after release (lazy allocation creates a new slot)
     reclaimed = mgr.claim_slot(WorkerRole.verifier)
     assert reclaimed is not None
-    assert reclaimed.slot_id == slot.slot_id
 
 
 def test_release_unknown_slot_does_not_raise() -> None:
@@ -333,7 +332,8 @@ def test_status_tracks_interrupted_slots() -> None:
     slot = mgr.claim_slot(WorkerRole.executor)
     assert slot is not None
 
-    # Manually set a slot to interrupted (simulating worker failure)
+    # Manually set a slot to interrupted (simulating worker failure).
+    # With lazy allocation, we replace the slot in the internal structures.
     with mgr._lock:
         internal_slot = mgr._slot_index[slot.slot_id]
         interrupted_slot = replace(internal_slot, status=SlotStatus.interrupted)
@@ -343,6 +343,9 @@ def test_status_tracks_interrupted_slots() -> None:
             if s.slot_id == slot.slot_id:
                 role_slots[idx] = interrupted_slot
                 break
+        # Adjust busy counter since the slot is no longer busy
+        mgr._busy_count -= 1
+        mgr._role_busy_counts[WorkerRole.executor] -= 1
 
     status = mgr.get_status()
     assert status.active_slots == 0
@@ -443,3 +446,17 @@ def test_default_conflict_limits() -> None:
 def test_pool_status_interrupted_default() -> None:
     status = WorkerPoolStatus(pool_id="p", active_slots=0, idle_slots=0)
     assert status.interrupted_slots == 0
+
+
+# -- max_physical_threads field ----------------------------------------------
+
+
+def test_worker_pool_config_max_physical_threads_default() -> None:
+    """WorkerPoolConfig should have max_physical_threads defaulting to 256."""
+    cfg = WorkerPoolConfig(pool_id="p", team_id="t")
+    assert cfg.max_physical_threads == 256
+
+
+def test_worker_pool_config_max_physical_threads_custom() -> None:
+    cfg = WorkerPoolConfig(pool_id="p", team_id="t", max_physical_threads=128)
+    assert cfg.max_physical_threads == 128

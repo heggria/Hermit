@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from hermit.kernel.context.memory.text import topic_tokens
+
 if TYPE_CHECKING:
     from hermit.kernel.context.memory.graph import MemoryGraphService
     from hermit.kernel.ledger.journal.store import KernelStore
@@ -120,8 +122,6 @@ class ReflectionService:
         records: list[MemoryRecord],
     ) -> list[list[MemoryRecord]]:
         """Group memories by shared topic tokens."""
-        from hermit.kernel.context.memory.text import topic_tokens
-
         topic_map: dict[str, list[MemoryRecord]] = {}
         for r in records:
             tokens = topic_tokens(r.claim_text)
@@ -157,8 +157,6 @@ class ReflectionService:
             prefix = "Observed pattern: "
 
         # Build insight text from common keywords
-        from hermit.kernel.context.memory.text import topic_tokens
-
         all_tokens: dict[str, int] = {}
         for claim in claims:
             for token in topic_tokens(claim):

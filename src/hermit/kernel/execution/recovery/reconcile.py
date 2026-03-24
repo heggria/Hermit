@@ -107,10 +107,32 @@ class ReconcileService:
                 summary=f"Observed local write target is missing for {path}.",
                 observed_refs=[str(candidate)],
             )
+        # For patch_file actions the tool_input does not carry the final
+        # expected content — only a diff/patch.  Skip the content-match
+        # check and treat file existence as sufficient evidence.
+        action_type = str(tool_input.get("action_type", "")).strip()
+        if action_type == "patch_file":
+            return ReconcileOutcome(
+                result_code="reconciled_observed",
+                summary=f"Observed patch target exists at {path}; content match skipped for patch actions.",
+                observed_refs=[str(candidate)],
+            )
         try:
             actual = candidate.read_text(encoding="utf-8")
-        except OSError:
-            actual = None
+        except OSError as exc:
+            # File exists but is unreadable (e.g. permission denied).
+            # Returning reconciled_not_applied here would be misleading;
+            # surface the I/O error explicitly so callers can react.
+            log.warning(
+                "reconcile.local_write.read_error",
+                path=str(candidate),
+                error=str(exc),
+            )
+            return ReconcileOutcome(
+                result_code="reconcile_error",
+                summary=f"I/O error reading {path} during reconciliation: {exc}",
+                observed_refs=[str(candidate)],
+            )
         if actual == content:
             return ReconcileOutcome(
                 result_code="reconciled_applied",

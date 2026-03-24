@@ -164,13 +164,13 @@ class ProjectionService:
         proof = self.proofs.build_proof_summary(task_id)
         if cache is None:
             return {"valid": False, "reason": "missing", "head_hash": proof["head_hash"]}
-        return {
-            "valid": cache["schema_version"] == _PROJECTION_SCHEMA_VERSION
-            and cache["event_head_hash"] == proof["head_hash"],
-            "reason": "ok"
-            if cache["schema_version"] == _PROJECTION_SCHEMA_VERSION
+        is_valid = (
+            cache["schema_version"] == _PROJECTION_SCHEMA_VERSION
             and cache["event_head_hash"] == proof["head_hash"]
-            else "stale",
+        )
+        return {
+            "valid": is_valid,
+            "reason": "ok" if is_valid else "stale",
             "head_hash": proof["head_hash"],
             "cached_head_hash": cache["event_head_hash"],
             "schema_version": cache["schema_version"],

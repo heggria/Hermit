@@ -77,33 +77,54 @@ class GitWorktreeInspector:
         )
 
     def hard_reset(self, workspace_root: Path, head: str) -> None:
-        subprocess.run(
-            ["git", "reset", "--hard", head],
-            cwd=workspace_root.resolve(),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            subprocess.run(
+                ["git", "reset", "--hard", head],
+                cwd=workspace_root.resolve(),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            raise RuntimeError(
+                f"git reset --hard {head!r} failed (exit {exc.returncode})"
+                + (f": {stderr}" if stderr else "")
+            ) from exc
 
     def create_worktree(self, *, repo_root: Path, path: Path, branch: str) -> None:
         """Create a new git worktree with a new branch."""
-        subprocess.run(
-            ["git", "worktree", "add", "-b", branch, str(path)],
-            cwd=repo_root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            subprocess.run(
+                ["git", "worktree", "add", "-b", branch, str(path)],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            raise RuntimeError(
+                f"git worktree add -b {branch!r} {str(path)!r} failed (exit {exc.returncode})"
+                + (f": {stderr}" if stderr else "")
+            ) from exc
 
     def remove_worktree(self, *, repo_root: Path, path: Path) -> None:
         """Remove a git worktree."""
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", str(path)],
-            cwd=repo_root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(path)],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            raise RuntimeError(
+                f"git worktree remove --force {str(path)!r} failed (exit {exc.returncode})"
+                + (f": {stderr}" if stderr else "")
+            ) from exc
 
     def _command_error(self, result: Any, *, default: str) -> str | None:
         returncode = int(getattr(result, "returncode", 0) or 0)

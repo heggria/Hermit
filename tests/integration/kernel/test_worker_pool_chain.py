@@ -373,7 +373,9 @@ class TestCombinedPressure:
         # Verify no slot leaks: pool status must be consistent
         status = mgr.get_status()
         assert status.active_slots == len(claimed)
-        assert status.active_slots + status.idle_slots == 5
+        # With lazy allocation, idle_slots = total_capacity - active
+        total_capacity = 5  # executor=5
+        assert status.active_slots + status.idle_slots == total_capacity
 
     def test_concurrent_claim_release_cycle(self) -> None:
         """Threads claim and release in tight loops. No slot leaks allowed."""
@@ -403,10 +405,10 @@ class TestCombinedPressure:
         for t in threads:
             t.join()
 
-        # After all cycles, every slot must be idle (no leaks)
+        # After all cycles, every slot must be released (no leaks)
         status = mgr.get_status()
         assert status.active_slots == 0, f"Slot leak: {status.active_slots} still active"
-        assert status.idle_slots == 5, f"Expected 5 idle, got {status.idle_slots}"
+        assert status.idle_slots == 5, f"Expected 5 idle (capacity), got {status.idle_slots}"
         assert len(errors) == 0
 
     def test_all_four_layers_interact(self) -> None:

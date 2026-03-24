@@ -225,8 +225,13 @@ class MemoryGraphService:
                         store=store,
                     )
                     edges.append(edge)
-            except Exception:
-                log.debug("auto_link_embedding_fallback", memory_id=new_memory_id)
+            except Exception as exc:
+                log.debug(
+                    "auto_link_embedding_fallback",
+                    memory_id=new_memory_id,
+                    error=str(exc),
+                    exc_info=True,
+                )
 
         if not edges:
             edges = self._auto_link_by_topic(record, store)

@@ -178,7 +178,9 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> None:
         contract = self.get_execution_contract(contract_id)
         if contract is None:
-            return
+            raise ValueError(
+                f"update_execution_contract: no contract found with id={contract_id!r}"
+            )
         updated_at = time.time()
         payload = {
             "evidence_case_ref": contract.evidence_case_ref
@@ -347,7 +349,9 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> None:
         record = self.get_evidence_case(evidence_case_id)
         if record is None:
-            return
+            raise ValueError(
+                f"update_evidence_case: no evidence case found with id={evidence_case_id!r}"
+            )
         updated_at = time.time()
         next_status = record.status if status is UNSET else str(status)
         next_contradiction_refs = (
@@ -546,7 +550,9 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> None:
         record = self.get_authorization_plan(authorization_plan_id)
         if record is None:
-            return
+            raise ValueError(
+                f"update_authorization_plan: no authorization plan found with id={authorization_plan_id!r}"
+            )
         updated_at = time.time()
         next_status = record.status if status is UNSET else str(status)
         next_current_gaps = (

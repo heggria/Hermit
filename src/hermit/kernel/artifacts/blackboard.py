@@ -139,7 +139,11 @@ class BlackboardService:
             },
         )
         updated = self._store.get_blackboard_entry(entry_id)
-        assert updated is not None
+        if updated is None:
+            raise RuntimeError(
+                f"Blackboard entry {entry_id!r} disappeared after status update — "
+                "possible store consistency failure"
+            )
         return updated
 
 

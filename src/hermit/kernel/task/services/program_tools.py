@@ -155,7 +155,16 @@ class ProgramToolService:
             return {"error": str(exc)}
 
         # Link milestone to the parent program.
-        self.store.add_milestone_to_program(team.program_id, milestone.milestone_id)
+        try:
+            self.store.add_milestone_to_program(team.program_id, milestone.milestone_id)
+        except Exception as exc:
+            _log.error(
+                "milestone_link_failed",
+                milestone_id=milestone.milestone_id,
+                program_id=team.program_id,
+                error=str(exc),
+            )
+            return {"error": str(exc)}
 
         _log.info(
             "milestone_added",
@@ -265,6 +274,10 @@ class ProgramToolService:
         if team is None:
             return {"error": f"Team not found: {team_id}"}
 
+        # Fetch milestones once; reused by the fallback branch and the
+        # enrichment block below to avoid a redundant store round-trip.
+        milestones = self.store.list_milestones_by_team(team_id=team_id)
+
         try:
             projection = self._projection.get_team_status(team_id)
             result: dict[str, Any] = {
@@ -278,7 +291,6 @@ class ProgramToolService:
             }
         except KeyError:
             # No matching task — fall back to direct team record.
-            milestones = self.store.list_milestones_by_team(team_id=team_id)
             done = sum(1 for m in milestones if m.status == "completed")
             result = {
                 "team_id": team.team_id,
@@ -290,8 +302,7 @@ class ProgramToolService:
                 "blockers": [],
             }
 
-        # Enrich with milestone details.
-        milestones = self.store.list_milestones_by_team(team_id=team_id)
+        # Enrich with milestone details (uses the list fetched above).
         result["milestones"] = [
             {
                 "milestone_id": m.milestone_id,

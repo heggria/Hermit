@@ -36,8 +36,12 @@ class SignalProtocol:
         )
 
     def suppress(self, signal_id: str, reason: str = "") -> None:
-        """Mark signal as suppressed."""
-        self._store.update_signal_disposition(signal_id, "suppressed")
+        """Mark signal as suppressed, persisting the reason for auditability."""
+        self._store.update_signal_disposition(
+            signal_id,
+            "suppressed",
+            reason=reason,
+        )
 
     def actionable(self, limit: int = 50) -> list[EvidenceSignal]:
         """Return pending, non-expired signals (excluding steering signals)."""

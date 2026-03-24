@@ -180,7 +180,7 @@ def test_find_competition_by_candidate_task(fast_store: KernelStore) -> None:
 
 
 def test_schema_version_bumped_to_11(fast_store: KernelStore) -> None:
-    assert fast_store.schema_version() == "18"
+    assert fast_store.schema_version() == "19"
 
 
 def test_update_competition_status_not_found(fast_store: KernelStore) -> None:

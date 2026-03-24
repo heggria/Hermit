@@ -62,6 +62,15 @@ class WorkerSlotConfig:
     required_capabilities: list[str] = field(default_factory=list)
     output_artifact_kinds: list[str] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        if self.max_active < 1:
+            raise ValueError(
+                f"WorkerSlotConfig.max_active must be >= 1 for role "
+                f"'{self.role}'; got {self.max_active!r}. "
+                "A pool slot with zero or negative capacity would block all "
+                "admission-control decisions for that role."
+            )
+
 
 @dataclass(frozen=True)
 class WorkerSlot:
@@ -106,6 +115,10 @@ class WorkerPoolConfig:
     ``max_per_supervisor`` limits how many slots a single supervisor can
     hold concurrently.  0 means unlimited.
 
+    ``max_physical_threads`` caps the number of OS threads used by the
+    dispatch thread pool, decoupling logical slot capacity from physical
+    thread count.
+
     ``conflict_limits`` keys follow the spec naming convention:
     ``max_same_workspace``, ``max_same_module``.
     """
@@ -116,6 +129,7 @@ class WorkerPoolConfig:
     conflict_limits: dict[str, int] = field(default_factory=dict)
     max_global_active: int = 0
     max_per_supervisor: int = 0
+    max_physical_threads: int = 256
 
 
 @dataclass

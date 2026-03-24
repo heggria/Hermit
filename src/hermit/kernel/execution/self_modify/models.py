@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -76,19 +77,13 @@ class SelfModSession:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def with_phase(self, phase: SelfModPhase, **updates: Any) -> SelfModSession:
-        """Return a new session with updated phase and optional field overrides."""
-        fields = {
-            "iteration_id": self.iteration_id,
-            "worktree_path": self.worktree_path,
-            "branch_name": self.branch_name,
-            "phase": phase,
-            "verification": self.verification,
-            "commit_sha": self.commit_sha,
-            "error": self.error,
-            "metadata": self.metadata,
-        }
-        fields.update(updates)
-        return SelfModSession(**fields)
+        """Return a new session with updated phase and optional field overrides.
+
+        Uses ``dataclasses.replace`` so that any future fields added to
+        ``SelfModSession`` are automatically carried forward without needing
+        manual updates here.
+        """
+        return dataclasses.replace(self, phase=phase, **updates)
 
 
 class MergeConflictError(RuntimeError):

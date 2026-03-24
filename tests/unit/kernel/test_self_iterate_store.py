@@ -289,7 +289,7 @@ class TestSchemaVersion:
             .fetchone()
         )
         assert row is not None
-        assert row[0] == "18"
+        assert row[0] == "19"
 
     def test_tables_exist(self, store: KernelStore) -> None:
         tables = {

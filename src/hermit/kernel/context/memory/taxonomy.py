@@ -20,11 +20,11 @@ def classify_memory_type(record: MemoryRecord) -> MemoryType:
     """Classify a memory record into cognitive memory type.
 
     Classification rules:
-    - episode_index → EPISODIC
-    - procedural memory_kind or "how-to" patterns → PROCEDURAL
-    - influence_link, pitfall_warning → SEMANTIC
-    - volatile facts with short TTL → WORKING
-    - everything else → SEMANTIC
+    - episode_index -> EPISODIC
+    - procedural memory_kind or "how-to" patterns -> PROCEDURAL
+    - influence_link, pitfall_warning -> SEMANTIC
+    - volatile facts with short TTL -> WORKING
+    - everything else -> SEMANTIC
     """
     kind = record.memory_kind or "durable_fact"
 
@@ -46,8 +46,13 @@ def classify_memory_type(record: MemoryRecord) -> MemoryType:
     return MemoryType.SEMANTIC
 
 
-def _is_procedural_text(text: str) -> bool:
-    """Heuristic detection of procedural/how-to content."""
+def _is_procedural_text(text: str | None) -> bool:
+    """Heuristic detection of procedural/how-to content.
+
+    Returns False safely when *text* is None or empty.
+    """
+    if not text:
+        return False
     lower = text.lower()
     markers = [
         "to do this",

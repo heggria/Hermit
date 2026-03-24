@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, cast
 
 from hermit.kernel.policy.guards.rules import RuleOutcome
@@ -118,29 +119,23 @@ def apply_task_pattern(request: ActionRequest, outcomes: list[RuleOutcome]) -> l
             "task_pattern_match",
             f"Action matches known-good task pattern ({basis})",
         )
-        if outcome.verdict == "approval_required" and outcome.risk_level != "critical":
-            downgraded_risk = "medium" if outcome.risk_level == "high" else outcome.risk_level
-            adjusted.append(
-                RuleOutcome(
-                    verdict=outcome.verdict,
-                    reasons=outcome.reasons + [reason],
-                    obligations=outcome.obligations,
-                    normalized_constraints=outcome.normalized_constraints,
-                    approval_packet=outcome.approval_packet,
-                    risk_level=downgraded_risk,
-                )
+        # Downgrade risk by one level for high-risk approval_required outcomes;
+        # critical risk is never downgraded.
+        effective_risk = (
+            "medium"
+            if outcome.verdict == "approval_required" and outcome.risk_level == "high"
+            else outcome.risk_level
+        )
+        adjusted.append(
+            RuleOutcome(
+                verdict=outcome.verdict,
+                reasons=outcome.reasons + [reason],
+                obligations=outcome.obligations,
+                normalized_constraints=outcome.normalized_constraints,
+                approval_packet=outcome.approval_packet,
+                risk_level=effective_risk,
             )
-        else:
-            adjusted.append(
-                RuleOutcome(
-                    verdict=outcome.verdict,
-                    reasons=outcome.reasons + [reason],
-                    obligations=outcome.obligations,
-                    normalized_constraints=outcome.normalized_constraints,
-                    approval_packet=outcome.approval_packet,
-                    risk_level=outcome.risk_level,
-                )
-            )
+        )
 
     return adjusted
 
@@ -265,8 +260,6 @@ def evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
         and kernel_paths
         and not is_self_iteration
     ):
-        from pathlib import Path as _Path
-
         return [
             RuleOutcome(
                 verdict="approval_required",
@@ -288,7 +281,7 @@ def evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
                     "title": "Approve kernel self-modification (autonomous)",
                     "summary": (
                         f"Even in autonomous mode, kernel changes require approval: "
-                        f"{', '.join(_Path(p).name for p in kernel_paths)}"
+                        f"{', '.join(Path(p).name for p in kernel_paths)}"
                     ),
                     "risk_level": "critical",
                 },

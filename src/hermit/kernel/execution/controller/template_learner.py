@@ -648,7 +648,7 @@ class ContractTemplateLearner:
                 continue
             rate = float(sa.get("success_rate", 0.0))
             if rate < min_success_rate:
-                return None  # Any workspace below threshold blocks promotion
+                continue  # Skip workspaces below success-rate threshold; let the count guard decide
             matching.append(r)
             distinct_workspaces.add(r.scope_ref or "")
 

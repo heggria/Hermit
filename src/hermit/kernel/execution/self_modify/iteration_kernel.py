@@ -46,6 +46,12 @@ logger = structlog.get_logger()
 # Default risk bands that are allowed for self-iteration.
 _ALLOWED_RISK_BANDS: set[str] = {"low", "medium", "high"}
 
+# Kernel paths that are protected from self-modification.
+_FORBIDDEN_PREFIXES: tuple[str, ...] = (
+    "src/hermit/kernel/policy/",
+    "src/hermit/kernel/verification/",
+)
+
 # Maximum depth for seed chains (A → B → C → ...).  Prevents unbounded
 # or circular self-iteration loops.
 MAX_SEED_CHAIN_DEPTH = 10
@@ -211,10 +217,6 @@ class IterationKernel:
             errors.append("change_units must be non-empty (rollback scope required)")
 
         # 6. Self-modification safety — forbid changes to policy/verification engine.
-        _FORBIDDEN_PREFIXES = (
-            "src/hermit/kernel/policy/",
-            "src/hermit/kernel/verification/",
-        )
         for unit in spec.change_units:
             for prefix in _FORBIDDEN_PREFIXES:
                 if unit.startswith(prefix) or f"/{prefix}" in unit:

@@ -53,11 +53,25 @@ else:  # pragma: no cover - exercised manually on macOS
     _import_error = None
 
 
+# Module-level locale cache: resolved once on first use to avoid redundant
+# get_settings() + resolve_locale() calls on every _t() invocation.
+# Call _clear_locale_cache() after a profile/settings change if the locale may shift.
+_cached_locale: str | None = None
+
+
+def _clear_locale_cache() -> None:
+    """Reset the cached locale so the next _t() call re-resolves it from settings."""
+    global _cached_locale
+    _cached_locale = None
+
+
 def _t(key: str, **kwargs: object) -> str:
-    settings = get_settings()
-    locale_raw = getattr(settings, "locale", None)
-    locale = resolve_locale(str(locale_raw) if locale_raw is not None else None)
-    return tr(key, locale=locale, **kwargs)  # type: ignore[arg-type]
+    global _cached_locale
+    if _cached_locale is None:
+        settings = get_settings()
+        locale_raw = getattr(settings, "locale", None)
+        _cached_locale = resolve_locale(str(locale_raw) if locale_raw is not None else None)
+    return tr(key, locale=_cached_locale, **kwargs)  # type: ignore[arg-type]
 
 
 def _profile_menu_entry(profile_name: str, *, base_dir: Path) -> tuple[str, bool]:

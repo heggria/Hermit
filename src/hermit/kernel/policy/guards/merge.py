@@ -19,6 +19,11 @@ _PRIORITY = {
 def merge_outcomes(
     outcomes: list[RuleOutcome], *, action_class: str, default_risk: str
 ) -> PolicyDecision:
+    if not outcomes:
+        raise ValueError(
+            "merge_outcomes received an empty outcomes list; "
+            "at least one RuleOutcome is required to produce a PolicyDecision"
+        )
     chosen = sorted(outcomes, key=lambda item: _PRIORITY.get(item.verdict, 0), reverse=True)[0]
     obligations = PolicyObligations()
     reasons: list[PolicyReason] = []

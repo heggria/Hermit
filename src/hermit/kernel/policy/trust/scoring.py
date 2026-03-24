@@ -118,6 +118,7 @@ class TrustScorer:
             entity_id=adjustment.subject_ref,
             task_id=task_id,
             step_id=step_id,
+            step_attempt_id=step_attempt_id,
             actor="trust_scorer",
             payload={
                 "subject_kind": adjustment.subject_kind,
@@ -126,6 +127,7 @@ class TrustScorer:
                 "suggested_risk_band": adjustment.suggested_risk_band,
                 "reason": adjustment.reason,
                 "trust_score_ref": adjustment.trust_score_ref,
+                "step_attempt_id": step_attempt_id,
                 "advisory_only": True,
             },
         )

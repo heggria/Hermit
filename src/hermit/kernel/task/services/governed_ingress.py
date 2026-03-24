@@ -423,7 +423,7 @@ class GovernedIngressService:
             log.info("governed_ingress.program_paused", program_id=program_id)
             return {
                 "program_id": program_id,
-                "previous_status": program.status,
+                "previous_status": str(program.status),
                 "new_status": str(ProgramState.paused),
                 "applied": True,
             }
@@ -433,7 +433,7 @@ class GovernedIngressService:
             log.info("governed_ingress.program_resumed", program_id=program_id)
             return {
                 "program_id": program_id,
-                "previous_status": program.status,
+                "previous_status": str(program.status),
                 "new_status": str(ProgramState.active),
                 "applied": True,
             }
@@ -443,7 +443,7 @@ class GovernedIngressService:
             log.info("governed_ingress.program_cancelled", program_id=program_id)
             return {
                 "program_id": program_id,
-                "previous_status": program.status,
+                "previous_status": str(program.status),
                 "new_status": str(ProgramState.failed),
                 "applied": True,
             }

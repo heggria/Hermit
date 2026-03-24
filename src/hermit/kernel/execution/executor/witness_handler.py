@@ -23,8 +23,8 @@ class WitnessHandler:
         artifact_store: ArtifactStore,
         witness: WitnessCapture,
     ) -> None:
-        self.store = store
-        self.artifact_store = artifact_store
+        self._store = store
+        self._artifact_store = artifact_store
         self._witness = witness
 
     def capture_state_witness(
@@ -58,4 +58,4 @@ class WitnessHandler:
         return self._witness.validate(witness_ref, action_request, attempt_ctx)
 
     def load_witness_payload(self, witness_ref: str | None) -> dict[str, Any]:
-        return _load_witness_payload(self.store, self.artifact_store, witness_ref)
+        return _load_witness_payload(self._store, self._artifact_store, witness_ref)

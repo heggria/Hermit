@@ -396,6 +396,30 @@ class ToolExecutor:
         *,
         request_overrides: dict[str, Any] | None = None,
     ) -> ToolExecutionResult:
+        # Batch all DB writes into a single SQLite transaction.
+        batch_ctx = self.store.batch()
+        batch_ctx.__enter__()
+        try:
+            result = self._execute_governed(
+                attempt_ctx, tool_name, tool_input, request_overrides=request_overrides
+            )
+        except BaseException:
+            import sys as _sys
+
+            batch_ctx.__exit__(*_sys.exc_info())
+            raise
+        else:
+            batch_ctx.__exit__(None, None, None)
+            return result
+
+    def _execute_governed(
+        self,
+        attempt_ctx: TaskExecutionContext,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        request_overrides: dict[str, Any] | None = None,
+    ) -> ToolExecutionResult:
         tool = self.registry.get(tool_name)
         action_request = self.policy_engine.build_action_request(
             tool, tool_input, attempt_ctx=attempt_ctx
@@ -523,7 +547,8 @@ class ToolExecutor:
                 )
 
         deliberation_ref: str | None = None
-        if governed and self._deliberation is not None:
+        is_autonomous = getattr(attempt_ctx, "policy_profile", "") == "autonomous"
+        if governed and self._deliberation is not None and not is_autonomous:
             dlb_result = self._run_deliberation_gate(
                 attempt_ctx=attempt_ctx,
                 tool_name=tool_name,

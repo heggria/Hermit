@@ -22,7 +22,7 @@ class GovernanceMetrics:
     approval_rate: float = 0.0
     avg_approval_latency: float = 0.0
     rollback_rate: float = 0.0
-    evidence_sufficiency_avg: float = 0.0
+    avg_evidence_sufficiency: float = 0.0
     tool_usage_counts: dict[str, int] = field(default_factory=dict[str, int])
     action_class_distribution: dict[str, int] = field(default_factory=dict[str, int])
     risk_entries: list[ActionRiskEntry] = field(default_factory=list[ActionRiskEntry])

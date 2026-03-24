@@ -73,7 +73,12 @@ class AntiPatternService:
         task_id: str = "",
         conversation_id: str | None = None,
     ) -> MemoryRecord | None:
-        """Invert a failing memory into a pitfall_warning, invalidating the original."""
+        """Invert a failing memory into a pitfall_warning, invalidating the original.
+
+        The inversion is applied atomically: if pitfall creation fails after the
+        original has been invalidated, the original is restored to 'active' so
+        the memory store is never left in an inconsistent state.
+        """
         original = store.get_memory_record(memory_id)
         if original is None or original.status != "active":
             return None
@@ -84,7 +89,7 @@ class AntiPatternService:
         )
         pitfall_text = f"PITFALL: {original.claim_text}"
 
-        # Invalidate original
+        # Invalidate original first; roll back on any subsequent failure.
         store.update_memory_record(
             memory_id,
             status="invalidated",
@@ -92,26 +97,35 @@ class AntiPatternService:
             invalidated_at=time.time(),
         )
 
-        # Create pitfall warning
-        pitfall = store.create_memory_record(
-            task_id=task_id or original.task_id,
-            conversation_id=conversation_id or original.conversation_id,
-            category=original.category,
-            claim_text=pitfall_text,
-            structured_assertion={
-                "original_memory_id": memory_id,
-                "original_claim": original.claim_text,
-                "inverted_at": time.time(),
-                "pitfall_type": "failure_inversion",
-            },
-            scope_kind=original.scope_kind,
-            scope_ref=original.scope_ref,
-            promotion_reason="pitfall_inversion",
-            retention_class="pitfall_warning",
-            memory_kind="pitfall_warning",
-            confidence=pitfall_confidence,
-            trust_tier="durable",
-        )
+        try:
+            # Create pitfall warning
+            pitfall = store.create_memory_record(
+                task_id=task_id or original.task_id,
+                conversation_id=conversation_id or original.conversation_id,
+                category=original.category,
+                claim_text=pitfall_text,
+                structured_assertion={
+                    "original_memory_id": memory_id,
+                    "original_claim": original.claim_text,
+                    "inverted_at": time.time(),
+                    "pitfall_type": "failure_inversion",
+                },
+                scope_kind=original.scope_kind,
+                scope_ref=original.scope_ref,
+                promotion_reason="pitfall_inversion",
+                retention_class="pitfall_warning",
+                memory_kind="pitfall_warning",
+                confidence=pitfall_confidence,
+                trust_tier="durable",
+            )
+        except Exception:
+            # Roll back the invalidation so the original memory remains usable.
+            log.exception(
+                "pitfall_creation_failed_rolling_back",
+                memory_id=memory_id,
+            )
+            store.update_memory_record(memory_id, status="active")
+            return None
 
         log.info(
             "memory_inverted_to_pitfall",

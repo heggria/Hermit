@@ -61,7 +61,7 @@ class MemoryQualityService:
         geometric mean: score = decay^w_d * confidence^w_c where weights
         are normalised so w_d + w_c = 1.
         """
-        now = now or time.time()
+        now = now if now is not None else time.time()  # explicit check: 0.0 is a valid timestamp
 
         record = _to_record_proxy(memory_record)
 
@@ -96,7 +96,7 @@ class MemoryQualityService:
         now: float | None = None,
     ) -> list[float]:
         """Compute quality scores for a batch of memory records."""
-        now = now or time.time()
+        now = now if now is not None else time.time()  # explicit check: 0.0 is a valid timestamp
         return [self.quality_score(r, now=now) for r in records]
 
 

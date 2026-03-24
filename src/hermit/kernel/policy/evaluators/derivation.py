@@ -181,9 +181,11 @@ def _is_sensitive_path(path: str, workspace_root: str) -> bool:
     normalized = path.replace("\\", "/")
     if normalized.startswith(_SENSITIVE_ABS_PREFIXES):
         return True
-    if workspace_root and normalized.startswith(workspace_root.replace("\\", "/")):
-        rel = normalized[len(workspace_root.replace("\\", "/")) :].lstrip("/")
-        return any(rel == prefix or rel.startswith(prefix) for prefix in _SENSITIVE_PREFIXES)
+    if workspace_root:
+        ws_normalized = workspace_root.replace("\\", "/").rstrip("/") + "/"
+        if normalized.startswith(ws_normalized):
+            rel = normalized[len(ws_normalized) :]
+            return any(rel == prefix or rel.startswith(prefix) for prefix in _SENSITIVE_PREFIXES)
     return any(part in normalized for part in ("/.ssh/", "/.gnupg/", "/.aws/"))
 
 

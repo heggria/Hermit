@@ -17,6 +17,9 @@ _RISK_PENALTIES: dict[str, int] = {
     "default": 5,
     "critical": 20,
     "elevated": 10,
+    # "autonomous" tasks operate without human approval gates; treat them the
+    # same as "elevated" so they are not unfairly boosted over supervised tasks.
+    "autonomous": 10,
 }
 
 
@@ -115,8 +118,18 @@ class TaskPrioritizer:
                 conversation_id=conversation_id, limit=100
             )
         else:
-            tasks = self._store.list_tasks(status="running", limit=200)
-            tasks += self._store.list_tasks(status="queued", limit=200)
+            # Deduplicate by task_id: a task may transition between "running" and
+            # "queued" between the two store calls, causing it to appear twice.
+            seen: set[str] = set()
+            tasks = []
+            for t in self._store.list_tasks(status="running", limit=200):
+                if t.task_id not in seen:
+                    seen.add(t.task_id)
+                    tasks.append(t)
+            for t in self._store.list_tasks(status="queued", limit=200):
+                if t.task_id not in seen:
+                    seen.add(t.task_id)
+                    tasks.append(t)
 
         scores: list[PriorityScore] = []
         for t in tasks:

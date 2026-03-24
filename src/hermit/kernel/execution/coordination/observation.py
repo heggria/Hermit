@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -12,6 +13,10 @@ from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, get_runtim
 log = structlog.get_logger()
 
 _OBSERVATION_ENVELOPE_KEY = "_hermit_observation"
+
+# Maximum number of observing step attempts to poll per tick.  Configurable
+# via the ``HERMIT_OBSERVATION_LIMIT`` environment variable.
+_OBSERVATION_LIMIT = int(os.environ.get("HERMIT_OBSERVATION_LIMIT", "1000"))
 
 
 @dataclass
@@ -300,7 +305,7 @@ class ObservationService:
         tool_executor = getattr(agent, "tool_executor", None)
         if controller is None or tool_executor is None:
             return
-        attempts = controller.store.list_step_attempts(status="observing", limit=200)
+        attempts = controller.store.list_step_attempts(status="observing", limit=_OBSERVATION_LIMIT)
         now = time.time()
         for attempt in attempts:
             with self._lock:

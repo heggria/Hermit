@@ -98,7 +98,7 @@ class TestRequiredTables:
         store = _make_store()
         version = store.schema_version()
         assert version == _SCHEMA_VERSION
-        assert version == "18"
+        assert version == "19"
 
     def test_core_tables_present(self) -> None:
         """Core governed execution tables must exist."""
@@ -518,7 +518,7 @@ class TestSchemaValidation:
 
     def test_fresh_store_initializes_correctly(self) -> None:
         store = _make_store()
-        assert store.schema_version() == "18"
+        assert store.schema_version() == "19"
 
     def test_existing_tables_constant_covers_all_known_tables(self) -> None:
         """The _KNOWN_KERNEL_TABLES constant should match actual tables (excluding meta/entity/observation)."""
