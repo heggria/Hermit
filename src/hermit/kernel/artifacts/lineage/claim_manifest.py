@@ -83,62 +83,73 @@ PROFILE_LABELS = {
 }
 
 # ---------------------------------------------------------------------------
-# Startup validation
+# Module-level integrity guard
 # ---------------------------------------------------------------------------
-# Catch structural problems as early as possible — at import time — so that
-# a typo in a profile name or a missing required key surfaces immediately
-# rather than silently producing wrong behaviour at distant call-sites.
-
-_REQUIRED_KEYS = frozenset({"id", "label", "profiles"})
-_KNOWN_PROFILES = frozenset(PROFILE_LABELS)
-
+# Catch malformed entries (missing required keys or duplicate IDs) at import
+# time rather than silently propagating bad data to callers.
+_REQUIRED_KEYS = {"id", "label", "profiles"}
+_seen_ids: set[str] = set()
 for _row in CLAIM_ROWS:
     _missing = _REQUIRED_KEYS - _row.keys()
     if _missing:
-        raise ValueError(f"claim_manifest: row {_row!r} is missing required key(s): {_missing}")
-    _unknown = frozenset(_row["profiles"]) - _KNOWN_PROFILES
-    if _unknown:
+        raise ValueError(f"claim_manifest: row is missing required keys {_missing!r}: {_row!r}")
+    if _row["id"] in _seen_ids:
+        raise ValueError(f"claim_manifest: duplicate claim id {_row['id']!r}")
+    _seen_ids.add(_row["id"])
+del _seen_ids, _row  # keep module namespace clean
+
+
+# ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
+
+
+def get_claims_for_profile(profile: str) -> list[dict[str, Any]]:
+    """Return all non-conditional claims that apply to *profile*.
+
+    Args:
+        profile: One of the keys in :data:`PROFILE_LABELS` (``"core"``,
+            ``"governed"``, or ``"verifiable"``).
+
+    Returns:
+        A list of claim dicts whose ``profiles`` list includes *profile* and
+        whose ``conditional`` flag is not set to ``True``.
+
+    Raises:
+        ValueError: If *profile* is not a recognised profile key.
+    """
+    if profile not in PROFILE_LABELS:
         raise ValueError(
-            f"claim_manifest: claim '{_row['id']}' references unknown profile(s): {_unknown}. "
-            f"Known profiles are: {set(_KNOWN_PROFILES)}"
+            f"Unknown profile {profile!r}. Valid options are: {sorted(PROFILE_LABELS)}"
         )
-
-del _row, _missing, _unknown  # keep module namespace tidy
-
-
-# ---------------------------------------------------------------------------
-# Lookup helpers
-# ---------------------------------------------------------------------------
+    return [
+        row
+        for row in CLAIM_ROWS
+        if profile in row["profiles"] and not row.get("conditional", False)
+    ]
 
 
-def get_claim(claim_id: str) -> dict[str, Any]:
-    """Return the claim row for *claim_id*.
+def get_claim_by_id(claim_id: str) -> dict[str, Any]:
+    """Look up a single claim by its ``id`` field.
 
-    Raises ``KeyError`` if no row with that id exists, so callers get a clear
-    error instead of silently receiving ``None`` and propagating it downstream.
+    Args:
+        claim_id: The ``id`` value of the desired claim row.
+
+    Returns:
+        The matching claim dict.
+
+    Raises:
+        KeyError: If no claim with the given *claim_id* exists.
     """
     for row in CLAIM_ROWS:
         if row["id"] == claim_id:
             return row
-    raise KeyError(f"claim_manifest: no claim with id '{claim_id}'")
-
-
-def claims_for_profile(profile: str) -> list[dict[str, Any]]:
-    """Return all claim rows that include *profile* in their profiles list.
-
-    Raises ``KeyError`` for unknown profile names so callers catch typos early.
-    """
-    if profile not in PROFILE_LABELS:
-        raise KeyError(
-            f"claim_manifest: unknown profile '{profile}'. "
-            f"Known profiles are: {set(PROFILE_LABELS)}"
-        )
-    return [row for row in CLAIM_ROWS if profile in row["profiles"]]
+    raise KeyError(f"No claim found with id {claim_id!r}")
 
 
 __all__ = [
     "CLAIM_ROWS",
     "PROFILE_LABELS",
-    "claims_for_profile",
-    "get_claim",
+    "get_claim_by_id",
+    "get_claims_for_profile",
 ]

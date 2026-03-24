@@ -54,6 +54,48 @@ def _normalise_effect(effect: str) -> str:
     return effect
 
 
+# Read-only shell commands that produce no durable effects and are not worth
+# learning contract templates for.  Matching is done on the command preview
+# stored in ``command:<preview>`` effect strings.
+_READONLY_COMMAND_PREFIXES: frozenset[str] = frozenset(
+    {
+        "cat ",
+        "head ",
+        "tail ",
+        "grep ",
+        "rg ",
+        "ls ",
+        "find ",
+        "wc ",
+        "printf ",
+        "diff ",
+        "sort ",
+        "uniq ",
+        "cut ",
+        "awk ",
+        "sed ",
+        "stat ",
+        "file ",
+        "which ",
+        "type ",
+        "env ",
+        "printenv ",
+    }
+)
+
+
+def _is_readonly_bash_command(tool_name: str, effects: list[str]) -> bool:
+    """Return True when the bash command only reads data and is not worth learning."""
+    if tool_name != "bash":
+        return False
+    for effect in effects:
+        if effect.startswith("command:"):
+            cmd = effect[len("command:") :].lstrip()
+            if any(cmd.startswith(prefix) for prefix in _READONLY_COMMAND_PREFIXES):
+                return True
+    return False
+
+
 def _effects_similarity(a: list[str], b: list[str]) -> float:
     """Return 0..1 Jaccard similarity on normalised effects."""
     norm_a = {_normalise_effect(e) for e in a}
@@ -111,6 +153,16 @@ class ContractTemplateLearner:
 
         tool_name = str(contract.success_criteria.get("tool_name", "") or "")
         action_class = str(contract.success_criteria.get("action_class", "") or "")
+
+        # Skip read-only bash commands — they produce no durable effects and
+        # generate per-file noise in the memory store.
+        if _is_readonly_bash_command(tool_name, list(contract.expected_effects)):
+            log.debug(
+                "contract_template.skipped_readonly",
+                tool_name=tool_name,
+                effects=list(contract.expected_effects)[:3],
+            )
+            return None
         if not action_class:
             action_class = (
                 contract.action_contract_refs[0] if contract.action_contract_refs else "unknown"

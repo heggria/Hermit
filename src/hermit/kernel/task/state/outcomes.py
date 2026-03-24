@@ -19,6 +19,14 @@ def clean_runtime_text(value: Any) -> str:
 
 
 def trim_text(value: Any, *, limit: int) -> str:
+    """Return *value* cleaned and truncated to at most *limit* characters.
+
+    Raises ``ValueError`` if *limit* is negative, which would otherwise cause
+    ``cleaned[: limit - 1]`` to silently slice from the end of the string and
+    return a wrong result.
+    """
+    if limit < 0:
+        raise ValueError(f"trim_text: limit must be >= 0, got {limit!r}")
     cleaned = clean_runtime_text(value)
     if len(cleaned) <= limit:
         return cleaned

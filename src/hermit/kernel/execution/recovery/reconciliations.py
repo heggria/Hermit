@@ -155,6 +155,11 @@ class ReconciliationService:
             "reconciled_observed",
         }:
             return "partial"
+        if result_code_hint in {"unknown_outcome"} and outcome.result_code == "reconciled_inferred":
+            # Execution threw but reconciliation found no observable mutations —
+            # treat the same as a successful execution that reconciliation couldn't
+            # fully verify rather than escalating to ambiguous/park_and_escalate.
+            return "satisfied_with_downgrade"
         if result_code_hint in {"unknown_outcome"}:
             return "ambiguous"
         if result_code_hint in {

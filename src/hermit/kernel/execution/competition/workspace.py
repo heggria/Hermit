@@ -40,18 +40,8 @@ class CompetitionWorkspaceManager:
         return str(worktree_path)
 
     def merge_winner(self, competition_id: str, workspace_ref: str) -> None:
-        """Merge the winner branch back into the current branch.
-
-        Raises:
-            ValueError: If *workspace_ref* does not point to an existing directory.
-            subprocess.CalledProcessError: If the underlying git command fails.
-        """
+        """Merge the winner branch back into the current branch."""
         worktree_path = Path(workspace_ref)
-        if not worktree_path.is_dir():
-            raise ValueError(
-                f"workspace_ref does not point to an existing directory: {workspace_ref!r}"
-            )
-
         # Determine branch name from worktree
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -82,10 +72,16 @@ class CompetitionWorkspaceManager:
         )
 
     def cleanup_all(self, competition_id: str) -> None:
-        """Remove all worktrees associated with a competition."""
+        """Remove all worktrees associated with a competition.
+
+        Raises RuntimeError listing every worktree path that could not be
+        removed, so callers are never silently left with leaked worktrees.
+        """
         competition_dir = self._repo_root / ".hermit" / "competition" / competition_id
         if not competition_dir.exists():
             return
+
+        failed_paths: list[str] = []
         for child in sorted(competition_dir.iterdir()):
             if child.is_dir():
                 try:
@@ -96,12 +92,25 @@ class CompetitionWorkspaceManager:
                         path=str(child),
                         exc_info=True,
                     )
-        # Remove competition directory itself
+                    failed_paths.append(str(child))
+
+        # Remove competition directory itself only when it is empty.
         try:
             competition_dir.rmdir()
         except OSError:
-            pass
+            logger.warning(
+                "competition.workspace.dir_not_removed",
+                competition_dir=str(competition_dir),
+                reason="directory not empty or permission error",
+            )
+
         logger.info("competition.workspace.cleanup_done", competition_id=competition_id)
+
+        if failed_paths:
+            raise RuntimeError(
+                f"cleanup_all: {len(failed_paths)} worktree(s) could not be removed "
+                f"for competition '{competition_id}': {failed_paths}"
+            )
 
     def list_orphans(self) -> list[str]:
         """List worktree directories under .hermit/competition/ that have no matching record."""

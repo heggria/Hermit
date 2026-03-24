@@ -3,19 +3,27 @@ from __future__ import annotations
 from hermit.kernel.policy.guards.rules import RuleOutcome
 from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations, PolicyReason
 
-# Action classes that are unconditionally auto-allowed as readonly.
-# Each entry maps action_class -> (reason_code, description, use_request_receipt).
-# When use_request_receipt is False the outcome never requests a receipt.
-_READONLY_CLASSES: dict[str, tuple[str, str, bool]] = {
+# ---------------------------------------------------------------------------
+# Dispatch table for readonly action classes.
+#
+# Each entry maps an action_class string to a tuple of:
+#   (rule_key, description, require_receipt_override)
+#
+# ``require_receipt_override`` is:
+#   - True  → always require a receipt
+#   - False → never require a receipt (override the request flag)
+#   - None  → defer to request.requires_receipt
+# ---------------------------------------------------------------------------
+_READONLY_RULES: dict[str, tuple[str, str, bool | None]] = {
     "read_local": (
         "readonly_tool",
         "Readonly tool auto-allowed.",
-        True,
+        None,
     ),
     "network_read": (
         "readonly_network",
         "Readonly network access is auto-allowed.",
-        True,
+        None,
     ),
     "delegate_reasoning": (
         "delegate_reasoning",
@@ -30,39 +38,27 @@ _READONLY_CLASSES: dict[str, tuple[str, str, bool]] = {
 }
 
 
-def _allow_outcome(
-    request: ActionRequest,
-    reason_code: str,
-    description: str,
-    use_request_receipt: bool,
-) -> RuleOutcome:
-    """Build a single auto-allow RuleOutcome for a readonly action class."""
-    require_receipt = request.requires_receipt if use_request_receipt else False
-    return RuleOutcome(
-        verdict="allow",
-        reasons=[PolicyReason(reason_code, description)],
-        obligations=PolicyObligations(require_receipt=require_receipt),
-        risk_level=request.risk_hint or "low",
-    )
-
-
 def evaluate_readonly_rules(request: ActionRequest) -> list[RuleOutcome] | None:
     """Evaluate auto-allow rules for readonly action classes.
 
     Returns a list of RuleOutcome if the request matches a readonly pattern,
-    or None if the request does not match (so the caller knows to continue
+    or None if the request doesn't match (so the caller knows to continue
     evaluation with the full rule set).
-
-    Raises:
-        TypeError: If *request* is None, to surface caller bugs early rather
-                   than raising an opaque AttributeError deep inside the guard.
     """
-    if request is None:
-        raise TypeError("evaluate_readonly_rules requires a non-None ActionRequest")
-
-    entry = _READONLY_CLASSES.get(request.action_class)
+    entry = _READONLY_RULES.get(request.action_class)
     if entry is None:
         return None
 
-    reason_code, description, use_request_receipt = entry
-    return [_allow_outcome(request, reason_code, description, use_request_receipt)]
+    rule_key, description, require_receipt_override = entry
+    require_receipt = (
+        request.requires_receipt if require_receipt_override is None else require_receipt_override
+    )
+
+    return [
+        RuleOutcome(
+            verdict="allow",
+            reasons=[PolicyReason(rule_key, description)],
+            obligations=PolicyObligations(require_receipt=require_receipt),
+            risk_level=request.risk_hint or "low",
+        )
+    ]

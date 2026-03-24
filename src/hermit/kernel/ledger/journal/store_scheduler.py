@@ -8,8 +8,9 @@ from hermit.plugins.builtin.hooks.scheduler.models import JobExecutionRecord, Sc
 
 class KernelSchedulerStoreMixin(KernelStoreTypingBase):
     def create_schedule(self, job: ScheduledJob) -> None:
-        with self._get_conn():
-            self._get_conn().execute(
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
                 """
                 INSERT OR REPLACE INTO schedule_specs (
                     id, name, prompt, schedule_type, cron_expr, once_at, interval_seconds,
@@ -44,8 +45,9 @@ class KernelSchedulerStoreMixin(KernelStoreTypingBase):
         return job
 
     def delete_schedule(self, job_id: str) -> bool:
-        with self._get_conn():
-            cursor = self._get_conn().execute("DELETE FROM schedule_specs WHERE id = ?", (job_id,))
+        conn = self._get_conn()
+        with conn:
+            cursor = conn.execute("DELETE FROM schedule_specs WHERE id = ?", (job_id,))
         return cursor.rowcount > 0
 
     def get_schedule(self, job_id: str) -> ScheduledJob | None:
@@ -57,8 +59,9 @@ class KernelSchedulerStoreMixin(KernelStoreTypingBase):
         return [self._schedule_from_row(row) for row in rows]
 
     def append_schedule_history(self, record: JobExecutionRecord) -> None:
-        with self._get_conn():
-            self._get_conn().execute(
+        conn = self._get_conn()
+        with conn:
+            conn.execute(
                 """
                 INSERT INTO schedule_history (
                     job_id, job_name, started_at, finished_at, success, result_text, error,

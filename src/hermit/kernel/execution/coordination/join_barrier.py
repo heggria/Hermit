@@ -38,11 +38,10 @@ class JoinBarrierService:
     def evaluate(self, task_id: str, step_id: str) -> JoinBarrierResult:
         """Check whether the join barrier for a step is satisfied.
 
-        A dependency step that cannot be found in the store is counted as
-        *missing* and treated as still-pending (not succeeded, not failed).
-        This prevents ``BEST_EFFORT`` barriers from resolving prematurely
-        when store reads fail transiently, and makes the gap observable via
-        ``JoinBarrierResult.missing``.
+        A dependency whose step record cannot be found in the store is counted
+        as *missing* and treated as failed for strategy evaluation purposes.
+        This prevents missing records from silently inflating the pending count
+        and masking data-integrity problems.
         """
         step = self._store.get_step(step_id)
         if step is None:
@@ -69,23 +68,22 @@ class JoinBarrierService:
             )
 
         statuses: dict[str, str] = {}
-        missing = 0
+        missing_ids: list[str] = []
         for dep_id in deps:
             dep_step = self._store.get_step(dep_id)
             if dep_step is not None:
                 statuses[dep_id] = dep_step.status
             else:
-                missing += 1
+                missing_ids.append(dep_id)
 
         total = len(deps)
         succeeded = sum(1 for s in statuses.values() if s in _SUCCEEDED_STATUSES)
-        failed = sum(1 for s in statuses.values() if s in _FAILED_STATUSES)
-        # missing deps are treated as pending so barriers cannot resolve
-        # while some dependency records are unreadable.
+        # Missing deps are treated as failed for strategy evaluation.
+        failed = sum(1 for s in statuses.values() if s in _FAILED_STATUSES) + len(missing_ids)
         pending = total - succeeded - failed
 
         strategy = JoinStrategy(step.join_strategy)
-        satisfied = _evaluate_strategy(strategy, total, succeeded, failed, missing)
+        satisfied = _evaluate_strategy(strategy, total, succeeded, failed)
 
         return JoinBarrierResult(
             satisfied=satisfied,
@@ -94,7 +92,7 @@ class JoinBarrierService:
             succeeded=succeeded,
             failed=failed,
             pending=pending,
-            missing=missing,
+            missing=len(missing_ids),
         )
 
     def check_failure_cascade(self, task_id: str, failed_step_id: str) -> list[str]:
@@ -102,27 +100,14 @@ class JoinBarrierService:
         return self._store.propagate_step_failure(task_id, failed_step_id)
 
 
-def _evaluate_strategy(
-    strategy: JoinStrategy,
-    total: int,
-    succeeded: int,
-    failed: int,
-    missing: int = 0,
-) -> bool:
-    """Return True when *strategy* is satisfied given the current dep counts.
-
-    ``missing`` deps (store look-up failures) are treated as pending so that
-    no strategy resolves while dependency records are unavailable.
-    """
+def _evaluate_strategy(strategy: JoinStrategy, total: int, succeeded: int, failed: int) -> bool:
     terminal = succeeded + failed
     if strategy == JoinStrategy.ALL_REQUIRED:
-        return succeeded == total and missing == 0
+        return succeeded == total
     elif strategy == JoinStrategy.ANY_SUFFICIENT:
         return succeeded >= 1
     elif strategy == JoinStrategy.MAJORITY:
         return succeeded > total / 2
     elif strategy == JoinStrategy.BEST_EFFORT:
-        # All deps must reach a terminal state; missing records are not terminal.
-        return terminal == total and missing == 0
-    # Unreachable — all JoinStrategy members are handled above.
-    raise ValueError(f"Unhandled join strategy: {strategy!r}")
+        return terminal == total
+    return succeeded == total

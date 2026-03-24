@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import structlog
 
 from hermit.kernel.policy.guards.rules import RuleOutcome
@@ -84,8 +86,6 @@ def evaluate_filesystem_rules(request: ActionRequest) -> list[RuleOutcome] | Non
     # -- Kernel self-modification guard ---------------------------------------
     kernel_paths = list(request.derived.get("kernel_paths", []))
     if kernel_paths:
-        from pathlib import Path as _Path
-
         _log.warning(
             "guard.filesystem.approval_required",
             rule="kernel_self_modification",
@@ -98,24 +98,22 @@ def evaluate_filesystem_rules(request: ActionRequest) -> list[RuleOutcome] | Non
                 reasons=[
                     PolicyReason(
                         "kernel_self_modification",
-                        "Modifying kernel source requires elevated approval. "
-                        "This action targets governed execution internals.",
-                        "warning",
+                        "Modifying kernel source requires explicit approval.",
+                        "error",
                     )
                 ],
                 obligations=PolicyObligations(
                     require_receipt=True,
                     require_preview=True,
                     require_approval=True,
-                    require_evidence=True,
                     approval_risk_level="critical",
                 ),
                 normalized_constraints={"kernel_paths": kernel_paths},
                 approval_packet={
-                    "title": "Approve kernel self-modification",
+                    "title": f"Approve kernel self-modification via {request.tool_name}",
                     "summary": (
                         f"Agent requests to modify kernel source: "
-                        f"{', '.join(_Path(p).name for p in kernel_paths)}. "
+                        f"{', '.join(Path(p).name for p in kernel_paths)}. "
                         f"This changes governed execution internals."
                     ),
                     "risk_level": "critical",
@@ -156,38 +154,39 @@ def evaluate_filesystem_rules(request: ActionRequest) -> list[RuleOutcome] | Non
         return outcomes
 
     # -- Non-sensitive workspace mutation: preview or approval ----------------
-    if not sensitive_paths:
-        verdict = "preview_required" if request.supports_preview else "approval_required"
-        outcomes.append(
-            RuleOutcome(
-                verdict=verdict,
-                reasons=[
-                    PolicyReason(
-                        "workspace_mutation",
-                        "Workspace mutation requires preview before execution.",
-                        "warning",
-                    )
-                ],
-                obligations=PolicyObligations(
-                    require_receipt=True,
-                    require_preview=request.supports_preview,
-                    require_approval=not request.supports_preview,
-                    approval_risk_level=(request.risk_hint or "high")
-                    if not request.supports_preview
-                    else None,
-                ),
-                normalized_constraints={"allowed_paths": target_paths},
-                approval_packet=(
-                    {
-                        "title": f"Approve file mutation via {request.tool_name}",
-                        "summary": "The requested file change cannot be safely previewed.",
-                        "risk_level": request.risk_hint or "high",
-                    }
-                    if not request.supports_preview
-                    else None
-                ),
-                risk_level=request.risk_hint or "high",
-            )
+    # NOTE: at this point sensitive_paths is always empty (non-empty sensitive_paths
+    # caused an early return above), so the guard is unconditional by construction.
+    verdict = "preview_required" if request.supports_preview else "approval_required"
+    outcomes.append(
+        RuleOutcome(
+            verdict=verdict,
+            reasons=[
+                PolicyReason(
+                    "workspace_mutation",
+                    "Workspace mutation requires preview before execution.",
+                    "warning",
+                )
+            ],
+            obligations=PolicyObligations(
+                require_receipt=True,
+                require_preview=request.supports_preview,
+                require_approval=not request.supports_preview,
+                approval_risk_level=(request.risk_hint or "high")
+                if not request.supports_preview
+                else None,
+            ),
+            normalized_constraints={"allowed_paths": target_paths},
+            approval_packet=(
+                {
+                    "title": f"Approve file mutation via {request.tool_name}",
+                    "summary": "The requested file change cannot be safely previewed.",
+                    "risk_level": request.risk_hint or "high",
+                }
+                if not request.supports_preview
+                else None
+            ),
+            risk_level=request.risk_hint or "high",
         )
+    )
 
     return outcomes

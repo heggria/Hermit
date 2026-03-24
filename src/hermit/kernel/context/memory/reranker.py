@@ -43,22 +43,12 @@ class CrossEncoderReranker:
             return self._model
         if not self.is_available():
             return None
-        try:
-            from sentence_transformers import (  # pyright: ignore[reportMissingImports]
-                CrossEncoder,  # pyright: ignore[reportUnknownVariableType]
-            )
+        from sentence_transformers import (  # pyright: ignore[reportMissingImports]
+            CrossEncoder,  # pyright: ignore[reportUnknownVariableType]
+        )
 
-            self._model = cast(Any, CrossEncoder(self._model_name))  # pyright: ignore[reportUnknownVariableType]
-            log.info("cross_encoder_loaded", model=self._model_name)
-        except Exception:
-            # Model load failed (e.g. bad model name, network error, disk I/O).
-            # Mark unavailable so subsequent calls skip the load attempt.
-            self._available = False
-            log.warning(
-                "cross_encoder_load_failed",
-                model=self._model_name,
-                fallback="passthrough",
-            )
+        self._model = cast(Any, CrossEncoder(self._model_name))  # pyright: ignore[reportUnknownVariableType]
+        log.info("cross_encoder_loaded", model=self._model_name)
         return self._model
 
     def rerank(
@@ -106,8 +96,13 @@ class CrossEncoderReranker:
                 top_score=round(scored[0][2], 4) if scored else 0.0,
             )
             return scored[:limit]
-        except Exception:
-            log.warning("cross_encoder_rerank_failed", fallback="passthrough")
+        except Exception as exc:
+            log.warning(
+                "cross_encoder_rerank_failed",
+                fallback="passthrough",
+                error=str(exc),
+                exc_info=True,
+            )
             return candidates[:limit]
 
 

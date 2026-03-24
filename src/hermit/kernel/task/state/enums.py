@@ -65,6 +65,12 @@ TERMINAL_TASK_STATES: frozenset[TaskState] = frozenset(
         TaskState.COMPLETED,
         TaskState.FAILED,
         TaskState.CANCELLED,
+        # BUDGET_EXCEEDED and NEEDS_ATTENTION are end-states: the task cannot
+        # make forward progress without external intervention, so they must be
+        # treated as terminal to avoid them being silently ignored by cleanup,
+        # scheduling, and progress-check logic.
+        TaskState.BUDGET_EXCEEDED,
+        TaskState.NEEDS_ATTENTION,
     }
 )
 
@@ -74,6 +80,16 @@ ACTIVE_TASK_STATES: frozenset[TaskState] = frozenset(
         TaskState.RUNNING,
         TaskState.BLOCKED,
         TaskState.PLANNING_READY,
+    }
+)
+
+# States where the task exists but is neither actively running nor terminally
+# done.  Callers previously had to infer this by exclusion; naming it
+# explicitly avoids subtle off-by-one errors.
+SUSPENDED_TASK_STATES: frozenset[TaskState] = frozenset(
+    {
+        TaskState.PAUSED,
+        TaskState.RECONCILING,
     }
 )
 

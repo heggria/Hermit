@@ -45,7 +45,7 @@ def _create_task_chain(store: KernelStore, suffix: str = "1") -> dict:
         step_attempt_id=attempt.step_attempt_id,
         objective="bash: execute_command",
         proposed_action_refs=[],
-        expected_effects=["command:echo test"],
+        expected_effects=["command:git commit -m test"],
         success_criteria={
             "tool_name": "bash",
             "action_class": "execute_command",

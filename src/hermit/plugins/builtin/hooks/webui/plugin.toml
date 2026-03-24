@@ -1,0 +1,33 @@
+[plugin]
+name = "webui"
+version = "0.1.0"
+description = "Real-time web dashboard for task monitoring, approvals, and governance inspection"
+author = "Hermit"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+
+[variables.webui_enabled]
+setting = "webui_enabled"
+env = ["HERMIT_WEBUI_ENABLED"]
+default = true
+description = "Enable WebUI server on serve"
+
+[variables.webui_host]
+setting = "webui_host"
+env = ["HERMIT_WEBUI_HOST"]
+default = "127.0.0.1"
+description = "WebUI bind host"
+
+[variables.webui_port]
+setting = "webui_port"
+env = ["HERMIT_WEBUI_PORT"]
+default = 8323
+description = "WebUI bind port"
+
+[variables.webui_open_browser]
+setting = "webui_open_browser"
+env = ["HERMIT_WEBUI_OPEN_BROWSER"]
+default = true
+description = "Auto-open browser when WebUI starts"

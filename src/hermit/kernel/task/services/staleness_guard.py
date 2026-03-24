@@ -65,15 +65,30 @@ class StalenessGuard:
                     target_status = (
                         _PAUSED_TERMINAL if task.status == TaskState.PAUSED else _DEFAULT_TERMINAL
                     )
-                    self.store.update_task_status(
-                        task.task_id,
-                        target_status,
-                        payload={
-                            "reason": _TIMEOUT_REASON,
-                            "original_status": task.status,
-                            "stale_seconds": int(time.time() - task.updated_at),
-                        },
-                    )
+                    # Guard the status transition so that a single store failure
+                    # (e.g. DB error, concurrent deletion, state-machine violation)
+                    # does not abort the entire sweep and leave remaining stale
+                    # tasks unprocessed.
+                    try:
+                        self.store.update_task_status(
+                            task.task_id,
+                            target_status,
+                            payload={
+                                "reason": _TIMEOUT_REASON,
+                                "original_status": task.status,
+                                "stale_seconds": int(time.time() - task.updated_at),
+                            },
+                        )
+                    except Exception:
+                        log.warning(
+                            "staleness_guard.status_update_failed",
+                            task_id=task.task_id,
+                            original_status=task.status,
+                            target_status=target_status,
+                            exc_info=True,
+                        )
+                        continue
+
                     # C11: Resolve any active observation tickets for the stale
                     # task so they do not remain orphaned after timeout.
                     try:

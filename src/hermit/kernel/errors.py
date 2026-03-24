@@ -4,17 +4,18 @@ from __future__ import annotations
 class KernelError(RuntimeError):
     """Base for all kernel-layer errors.
 
-    Subclasses should declare a class-level ``default_code`` so raise sites
-    don't have to repeat the error-code string, reducing the risk of typos or
-    inconsistent codes scattered across the codebase.
+    Attributes:
+        code:    A short machine-readable error code (e.g. ``"SNAPSHOT_INVALID"``).
+        message: Human-readable explanation forwarded to :class:`RuntimeError`.
     """
 
-    # Fallback used when no subclass overrides it and no explicit code is given.
+    # Subclasses may override this to supply a sensible default code so that
+    # call sites do not have to hard-code the same magic string repeatedly.
     default_code: str = "KERNEL_ERROR"
 
-    def __init__(self, message: str, *, code: str | None = None) -> None:
+    def __init__(self, message: str, code: str | None = None) -> None:
         super().__init__(message)
-        self.code = code if code is not None else self.default_code
+        self.code: str = code if code is not None else self.default_code
 
 
 class ContractError(KernelError):
@@ -36,6 +37,6 @@ class RollbackError(KernelError):
 
 
 class ReconciliationError(KernelError):
-    """Raised when post-execution reconciliation fails."""
+    """Raised for post-execution reconciliation failures."""
 
     default_code = "RECONCILIATION_FAILED"

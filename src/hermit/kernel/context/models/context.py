@@ -41,6 +41,12 @@ class TaskExecutionContext:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TaskExecutionContext:
+        required_fields = ("conversation_id", "task_id", "step_id", "step_attempt_id")
+        for field_name in required_fields:
+            if field_name not in data:
+                raise ValueError(
+                    f"TaskExecutionContext.from_dict: missing required field {field_name!r}"
+                )
         return cls(
             conversation_id=str(data["conversation_id"]),
             task_id=str(data["task_id"]),

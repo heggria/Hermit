@@ -27,16 +27,23 @@ def evaluate_planning_rules(request: ActionRequest) -> list[RuleOutcome] | None:
     Returns ``None`` when the planning gate does not apply, allowing the
     caller to fall through to subsequent rule evaluation.
     """
-    planning_required = bool(request.context.get("planning_required", False))
+    ctx = request.context
+
+    planning_required = bool(ctx.get("planning_required", False))
     if not planning_required:
         return None
 
-    selected_plan_ref = str(request.context.get("selected_plan_ref", "") or "").strip()
+    selected_plan_ref = str(ctx.get("selected_plan_ref", "") or "").strip()
     if selected_plan_ref:
         return None
 
     if request.action_class not in _PLANNING_GATED_ACTION_CLASSES:
         return None
+
+    # Compute the effective risk level once to avoid repeating the same
+    # ``request.risk_hint or "high"`` expression across multiple fields,
+    # which would create an inconsistency risk if only one site is updated.
+    risk_level = request.risk_hint or "high"
 
     return [
         RuleOutcome(
@@ -52,13 +59,13 @@ def evaluate_planning_rules(request: ActionRequest) -> list[RuleOutcome] | None:
                 require_receipt=True,
                 require_preview=False,
                 require_approval=True,
-                approval_risk_level=request.risk_hint or "high",
+                approval_risk_level=risk_level,
             ),
             approval_packet={
                 "title": "Select an execution plan first",
                 "summary": "This action requires a confirmed plan before it can run.",
-                "risk_level": request.risk_hint or "high",
+                "risk_level": risk_level,
             },
-            risk_level=request.risk_hint or "high",
+            risk_level=risk_level,
         )
     ]

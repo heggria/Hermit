@@ -18,11 +18,15 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
+import structlog
+
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import PolicyDecision
 from hermit.runtime.capability.registry.tools import ToolSpec
+
+log = structlog.get_logger()
 
 # ---------------------------------------------------------------------------
 # _is_governed_action
@@ -140,6 +144,12 @@ def load_witness_payload(
     Returns an empty dict when *witness_ref* is falsy, the artifact is missing,
     or the stored bytes cannot be decoded as a JSON object.
 
+    A structured warning is emitted when a non-empty *witness_ref* resolves to
+    an artifact but that artifact cannot be read or decoded.  This distinguishes
+    the silent "no witness was ever captured" case (falsy ref or missing artifact)
+    from the actionable "witness exists but is unreadable" case, matching the
+    logging pattern already used in ``WitnessCapture.validate``.
+
     Previously duplicated verbatim in:
     - ``ToolExecutor._load_witness_payload`` (one-liner delegate to WitnessHandler)
     - ``WitnessHandler.load_witness_payload`` (canonical)
@@ -153,6 +163,11 @@ def load_witness_payload(
         return {}
     try:
         payload: Any = json.loads(artifact_store.read_text(artifact.uri))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning(
+            "witness_payload_load_failed",
+            witness_ref=witness_ref,
+            error=str(exc),
+        )
         return {}
     return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}

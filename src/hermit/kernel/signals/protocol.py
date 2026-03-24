@@ -27,7 +27,16 @@ class SignalProtocol:
         return signal
 
     def consume(self, signal_id: str, produced_task_id: str) -> None:
-        """Mark signal as acted and link to produced task."""
+        """Mark signal as acted and link to produced task.
+
+        Raises:
+            ValueError: If produced_task_id is empty, which would silently
+                corrupt the audit trail.
+        """
+        if not produced_task_id:
+            raise ValueError(
+                f"produced_task_id must not be empty when consuming signal {signal_id!r}"
+            )
         self._store.update_signal_disposition(
             signal_id,
             "acted",
@@ -36,12 +45,14 @@ class SignalProtocol:
         )
 
     def suppress(self, signal_id: str, reason: str = "") -> None:
-        """Mark signal as suppressed, persisting the reason for auditability."""
-        self._store.update_signal_disposition(
-            signal_id,
-            "suppressed",
-            reason=reason,
-        )
+        """Mark signal as suppressed.
+
+        Args:
+            signal_id: The ID of the signal to suppress.
+            reason: Optional human-readable explanation for suppression.
+                    Forwarded to the store so the audit trail is preserved.
+        """
+        self._store.update_signal_disposition(signal_id, "suppressed", reason=reason)
 
     def actionable(self, limit: int = 50) -> list[EvidenceSignal]:
         """Return pending, non-expired signals (excluding steering signals)."""

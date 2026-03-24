@@ -33,6 +33,8 @@ def validate_transition(
     allowed = transitions.get(current)
     if allowed is None:
         raise ValueError(f"Unknown {label} state: {current!r}")
+    if target not in transitions:
+        raise ValueError(f"Unknown {label} state: {target!r}")
     if target not in allowed:
         raise ValueError(
             f"Invalid {label} transition: {current!r} -> {target!r} "
@@ -63,13 +65,6 @@ class CompetitionRecord:
     created_at: float = 0.0
     updated_at: float = 0.0
 
-    def __post_init__(self) -> None:
-        if self.status not in COMPETITION_TRANSITIONS:
-            raise ValueError(
-                f"Invalid initial competition status: {self.status!r} "
-                f"(valid: {sorted(COMPETITION_TRANSITIONS)})"
-            )
-
 
 @dataclass
 class CompetitionCandidateRecord:
@@ -86,13 +81,6 @@ class CompetitionCandidateRecord:
     discard_reason: str | None = None
     created_at: float = 0.0
     finished_at: float | None = None
-
-    def __post_init__(self) -> None:
-        if self.status not in CANDIDATE_TRANSITIONS:
-            raise ValueError(
-                f"Invalid initial candidate status: {self.status!r} "
-                f"(valid: {sorted(CANDIDATE_TRANSITIONS)})"
-            )
 
 
 @dataclass

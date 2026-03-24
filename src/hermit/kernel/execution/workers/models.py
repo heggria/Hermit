@@ -65,10 +65,8 @@ class WorkerSlotConfig:
     def __post_init__(self) -> None:
         if self.max_active < 1:
             raise ValueError(
-                f"WorkerSlotConfig.max_active must be >= 1 for role "
-                f"'{self.role}'; got {self.max_active!r}. "
-                "A pool slot with zero or negative capacity would block all "
-                "admission-control decisions for that role."
+                f"WorkerSlotConfig.max_active must be >= 1, "
+                f"got {self.max_active!r} for role {self.role!r}"
             )
 
 
@@ -130,6 +128,13 @@ class WorkerPoolConfig:
     max_global_active: int = 0
     max_per_supervisor: int = 0
     max_physical_threads: int = 256
+
+    def __post_init__(self) -> None:
+        if self.max_physical_threads < 1:
+            raise ValueError(
+                f"WorkerPoolConfig.max_physical_threads must be >= 1, "
+                f"got {self.max_physical_threads!r}"
+            )
 
 
 @dataclass

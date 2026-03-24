@@ -32,12 +32,13 @@ class Verdict(StrEnum):
     DENY = "deny"
 
     # Non-policy special verdicts used in specific subsystems
-    # REQUIRE_APPROVAL is a legacy alias for APPROVAL_REQUIRED.
-    # Both share the same underlying string value ("approval_required"), so
-    # they compare equal and serialise identically — use APPROVAL_REQUIRED in
-    # new code.
-    REQUIRE_APPROVAL = "approval_required"  # true alias; same value as APPROVAL_REQUIRED
+    REQUIRE_APPROVAL = "require_approval"  # legacy alias kept for compatibility
     SELECTED = "selected"  # task-plan selection verdict
+
+    @classmethod
+    def _missing_(cls, value: object) -> None:
+        valid = ", ".join(f'"{m.value}"' for m in cls)
+        raise ValueError(f"{value!r} is not a valid {cls.__name__}. Expected one of: {valid}")
 
 
 class ActionClass(StrEnum):
@@ -79,3 +80,8 @@ class ActionClass(StrEnum):
 
     # Fallback
     UNKNOWN = "unknown"
+
+    @classmethod
+    def _missing_(cls, value: object) -> None:
+        valid = ", ".join(f'"{m.value}"' for m in cls)
+        raise ValueError(f"{value!r} is not a valid {cls.__name__}. Expected one of: {valid}")

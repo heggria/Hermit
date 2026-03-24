@@ -20,10 +20,22 @@ def merge_outcomes(
     outcomes: list[RuleOutcome], *, action_class: str, default_risk: str
 ) -> PolicyDecision:
     if not outcomes:
-        raise ValueError(
-            "merge_outcomes received an empty outcomes list; "
-            "at least one RuleOutcome is required to produce a PolicyDecision"
+        _log.warning(
+            "guard.merge.empty_outcomes",
+            action_class=action_class,
+            default_risk=default_risk,
+            msg="No rule outcomes to merge; falling back to default allow decision.",
         )
+        return PolicyDecision(
+            verdict="allow",
+            action_class=action_class,
+            reasons=[],
+            obligations=PolicyObligations(),
+            normalized_constraints={},
+            approval_packet=None,
+            risk_level=default_risk,
+        )
+
     chosen = sorted(outcomes, key=lambda item: _PRIORITY.get(item.verdict, 0), reverse=True)[0]
     obligations = PolicyObligations()
     reasons: list[PolicyReason] = []

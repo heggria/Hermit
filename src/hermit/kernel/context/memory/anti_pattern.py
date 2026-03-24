@@ -75,9 +75,10 @@ class AntiPatternService:
     ) -> MemoryRecord | None:
         """Invert a failing memory into a pitfall_warning, invalidating the original.
 
-        The inversion is applied atomically: if pitfall creation fails after the
-        original has been invalidated, the original is restored to 'active' so
-        the memory store is never left in an inconsistent state.
+        The operation is two-phase: first the original is invalidated, then the
+        pitfall record is created.  If the create step raises, we attempt to
+        restore the original to ``active`` so no data is silently lost.  Either
+        way the error is logged and ``None`` is returned on failure.
         """
         original = store.get_memory_record(memory_id)
         if original is None or original.status != "active":
@@ -89,16 +90,23 @@ class AntiPatternService:
         )
         pitfall_text = f"PITFALL: {original.claim_text}"
 
-        # Invalidate original first; roll back on any subsequent failure.
-        store.update_memory_record(
-            memory_id,
-            status="invalidated",
-            invalidation_reason="inverted_to_pitfall",
-            invalidated_at=time.time(),
-        )
-
+        # Phase 1 – invalidate the original record.
         try:
-            # Create pitfall warning
+            store.update_memory_record(
+                memory_id,
+                status="invalidated",
+                invalidation_reason="inverted_to_pitfall",
+                invalidated_at=time.time(),
+            )
+        except Exception:
+            log.exception(
+                "pitfall_inversion_failed_on_invalidate",
+                memory_id=memory_id,
+            )
+            return None
+
+        # Phase 2 – create the replacement pitfall record.
+        try:
             pitfall = store.create_memory_record(
                 task_id=task_id or original.task_id,
                 conversation_id=conversation_id or original.conversation_id,
@@ -119,12 +127,23 @@ class AntiPatternService:
                 trust_tier="durable",
             )
         except Exception:
-            # Roll back the invalidation so the original memory remains usable.
+            # Roll back: restore the original to active so it is not silently lost.
             log.exception(
-                "pitfall_creation_failed_rolling_back",
+                "pitfall_inversion_failed_on_create",
                 memory_id=memory_id,
             )
-            store.update_memory_record(memory_id, status="active")
+            try:
+                store.update_memory_record(
+                    memory_id,
+                    status="active",
+                    invalidation_reason=None,
+                    invalidated_at=None,
+                )
+            except Exception:
+                log.exception(
+                    "pitfall_inversion_rollback_failed",
+                    memory_id=memory_id,
+                )
             return None
 
         log.info(

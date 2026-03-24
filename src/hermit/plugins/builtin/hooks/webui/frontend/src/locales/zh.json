@@ -1,0 +1,678 @@
+{
+  "nav": {
+    "controlCenter": "控制中心",
+    "dashboard": "仪表盘",
+    "tasks": "任务",
+    "approvals": "审批",
+    "policy": "策略",
+    "chat": "对话",
+    "memory": "记忆",
+    "signals": "信号",
+    "metrics": "指标",
+    "config": "配置",
+    "grants": "授权管理",
+    "artifacts": "构件库",
+    "memoryStats": "记忆分析",
+    "iterations": "自迭代",
+    "schedules": "定时任务",
+    "webhooks": "Webhooks",
+    "reconciliation": "协调日志",
+    "patterns": "执行模式"
+  },
+  "controlCenter": {
+    "title": "控制中心",
+    "subtitle": "提交任务，实时监控执行。",
+    "inputPlaceholder": "描述你的任务...",
+    "submit": "提交",
+    "submitting": "提交中...",
+    "submitSuccess": "任务提交成功",
+    "policy": "策略：",
+    "policyOptions": {
+      "autonomous": "自主模式",
+      "supervised": "监督模式",
+      "default": "默认"
+    },
+    "tabs": {
+      "active": "进行中",
+      "blocked": "待审批",
+      "recent": "最近完成",
+      "archived": "已归档"
+    },
+    "selectTask": "选择一个任务查看详情",
+    "selectTaskHint": "点击左侧任务卡片",
+    "emptyActive": "暂无进行中的任务。在上方输入任务描述开始。",
+    "emptyBlocked": "暂无阻塞的任务，一切正常。",
+    "emptyRecent": "暂无最近完成的任务。",
+    "emptyArchived": "暂无已归档的任务。",
+    "archiveAll": "归档所有已完成",
+    "blockedNotice": "有任务需要注意——它已被阻塞，等待审批。",
+    "activeTasks": "进行中",
+    "blockedTasks": "待审批",
+    "recentTasks": "最近完成",
+    "archivedTasks": "已归档",
+    "noActiveTasks": "暂无进行中的任务",
+    "noActiveTasksHint": "在上方输入任务描述开始",
+    "taskCreated": "任务已创建",
+    "steps": "步骤",
+    "receipts": "凭证",
+    "proof": "证明",
+    "viewDetails": "查看详情",
+    "archive": "归档",
+    "expand": "展开",
+    "collapse": "收起",
+    "autoArchive": "自动归档已查看任务",
+    "stepStatus": {
+      "running": "运行中",
+      "completed": "已完成",
+      "pending": "等待中",
+      "failed": "失败",
+      "blocked": "已阻塞"
+    },
+    "policyProfile": "策略配置",
+    "autonomous": "自主模式",
+    "supervised": "监督模式",
+    "default": "默认",
+    "actions": {
+      "cancel": "取消",
+      "cancelConfirm": "确定取消此任务？",
+      "rollback": "回滚",
+      "rollbackConfirm": "回滚此任务的所有可逆操作？",
+      "rollbackSuccess": "回滚完成",
+      "pause": "暂停",
+      "resume": "恢复"
+    },
+    "output": {
+      "title": "执行结果",
+      "noOutput": "暂无输出",
+      "actions": "个操作",
+      "effect": "影响"
+    },
+    "drawer": {
+      "steerPlaceholder": "引导此任务...",
+      "continuePlaceholder": "基于此任务继续...",
+      "send": "发送",
+      "newTask": "新建任务",
+      "steering": "引导任务中",
+      "followUp": "后续任务",
+      "steerSuccess": "引导消息已发送",
+      "followUpSuccess": "后续任务已创建",
+      "followUpPrefix": "基于"
+    }
+  },
+  "dashboard": {
+    "title": "仪表盘",
+    "subtitle": "任务执行与治理的实时概览。",
+    "statsCards": {
+      "running": "运行中",
+      "blocked": "已阻塞",
+      "completed": "已完成（24小时）",
+      "failed": "已失败（24小时）"
+    },
+    "recentTasks": {
+      "title": "最近任务",
+      "noTasks": "暂无最近任务。"
+    },
+    "pendingApprovals": {
+      "title": "待审批",
+      "noApprovals": "暂无待审批项。",
+      "pendingReview": "待审核"
+    },
+    "governanceMetrics": "治理指标（24小时）",
+    "metricsSummary": {
+      "title": "治理指标（24小时）",
+      "approvalRate": "审批通过率",
+      "rollbackRate": "回滚率",
+      "avgLatency": "平均延迟",
+      "throughput": "吞吐量"
+    }
+  },
+  "tasks": {
+    "title": "任务",
+    "subtitle": "浏览和监控所有已提交的任务。",
+    "filterAll": "全部",
+    "filterRunning": "运行中",
+    "filterBlocked": "已阻塞",
+    "filterCompleted": "已完成",
+    "filterFailed": "已失败",
+    "table": {
+      "title": "标题",
+      "status": "状态",
+      "priority": "优先级",
+      "source": "来源",
+      "created": "创建时间",
+      "updated": "更新时间",
+      "tokensUsed": "Token 用量"
+    },
+    "noTasks": "未找到任务。",
+    "showing": "显示 {{count}} / {{total}} 个任务",
+    "previous": "上一页",
+    "next": "下一页"
+  },
+  "taskDetail": {
+    "back": "返回",
+    "noTaskId": "未提供任务 ID。",
+    "loading": "加载任务中...",
+    "loadError": "加载任务失败：{{message}}",
+    "notFound": "未找到任务。",
+    "created": "创建于 {{time}}",
+    "started": "开始于 {{time}}",
+    "finished": "完成于 {{time}}",
+    "tokens": "{{count}} tokens",
+    "tabs": {
+      "steps": "步骤",
+      "events": "事件",
+      "receipts": "收据",
+      "proof": "证明"
+    },
+    "loadingSteps": "加载步骤中...",
+    "loadingEvents": "加载事件中...",
+    "loadingReceipts": "加载收据中...",
+    "steps": {
+      "noSteps": "暂无步骤记录。",
+      "attempt": "第 {{number}} 次尝试",
+      "dependsOn": "依赖："
+    },
+    "events": {
+      "noEvents": "暂无事件记录。",
+      "by": "操作者：{{actor}}"
+    },
+    "receipts": {
+      "noReceipts": "暂无收据记录。",
+      "actionType": "操作类型",
+      "result": "结果",
+      "summary": "摘要",
+      "rollback": "回滚",
+      "supported": "支持"
+    },
+    "proof": {
+      "loading": "加载证明数据中...",
+      "noData": "暂无证明数据。",
+      "chainVerification": "链验证",
+      "status": "状态：",
+      "valid": "有效",
+      "invalid": "无效",
+      "unknown": "未知",
+      "checkedHashes": "已检查哈希数：",
+      "proofSummary": "证明摘要",
+      "rawJson": "原始 JSON",
+      "exportProof": "导出证明"
+    }
+  },
+  "approvals": {
+    "title": "待审批",
+    "loading": "加载审批中...",
+    "loadError": "加载审批失败：{{message}}",
+    "noApprovals": "暂无待审批项，一切正常。",
+    "approve": "批准",
+    "deny": "拒绝",
+    "denyDialog": {
+      "title": "拒绝审批",
+      "description": "请提供拒绝该操作的原因，此信息将记录在治理账本中。",
+      "placeholder": "拒绝原因...",
+      "cancel": "取消",
+      "confirmDeny": "确认拒绝"
+    },
+    "card": {
+      "task": "任务：",
+      "requested": "请求于 {{time}}"
+    }
+  },
+  "policy": {
+    "title": "策略配置",
+    "subtitle": "管理审批策略、守卫链和操作分类。",
+    "profiles": "策略配置文件",
+    "profilesDesc": "控制审批行为的可用策略配置文件。",
+    "guards": "守卫链",
+    "guardsDesc": "应用于每个操作请求的有序策略守卫序列。",
+    "actionClasses": "操作分类",
+    "actionClassesDesc": "操作按风险分类及其默认裁决。",
+    "quickActions": "快捷操作",
+    "quickActionsDesc": "待审批项的批量操作。",
+    "approveAll": "批准所有待审批",
+    "approveAllConfirm": "确定要批准所有待审批项吗？",
+    "approveAllSuccess": "已批准 {{count}} / {{total}} 个待审批项。",
+    "table": {
+      "name": "名称",
+      "description": "描述",
+      "mode": "模式",
+      "actionClass": "操作类别",
+      "risk": "风险",
+      "defaultVerdict": "默认裁决"
+    }
+  },
+  "chat": {
+    "title": "对话",
+    "connected": "已连接",
+    "disconnected": "已断开",
+    "clear": "清空",
+    "send": "发送",
+    "placeholder": "输入消息...",
+    "placeholderDisabled": "连接中...",
+    "emptyState": "发送消息以开始对话。",
+    "welcome": "有什么可以帮您？",
+    "welcomeSubtext": "发送消息以开始与 Hermit 的对话。",
+    "errorOccurred": "发生错误",
+    "approved": "已批准",
+    "toolCompleted": "已完成",
+    "toolRunning": "运行中...",
+    "inputs": "输入",
+    "result": "结果",
+    "toolExecution": {
+      "inputs": "输入",
+      "result": "结果"
+    }
+  },
+  "memory": {
+    "title": "记忆",
+    "searchPlaceholder": "搜索记忆...",
+    "filterAll": "全部",
+    "filterActive": "有效",
+    "filterInvalidated": "已失效",
+    "loading": "加载记忆中...",
+    "loadError": "加载记忆失败",
+    "noMemories": "未找到记忆。",
+    "noResults": "未找到记忆。",
+    "confidence": "置信度",
+    "card": {
+      "confidence": "置信度",
+      "evidence": "{{count}} 条证据",
+      "evidences": "{{count}} 条证据"
+    }
+  },
+  "signals": {
+    "title": "证据信号",
+    "actionable": "{{count}} 条可操作",
+    "filterAll": "全部",
+    "filterPending": "待处理",
+    "filterActed": "已处理",
+    "filterDismissed": "已忽略",
+    "loading": "加载信号中...",
+    "loadError": "加载信号失败",
+    "noSignals": "未找到信号。",
+    "noResults": "未找到信号。",
+    "goal": "目标",
+    "act": "执行",
+    "suppress": "抑制",
+    "card": {
+      "confidence": "{{percent}}% 置信度",
+      "goal": "目标：",
+      "act": "执行",
+      "suppress": "抑制"
+    }
+  },
+  "metrics": {
+    "title": "治理指标",
+    "subtitle": "{{window}}内的执行治理概览。",
+    "description": "{{window}}内的执行治理概览。",
+    "lastHours": "过去 {{count}} 小时",
+    "lastDays": "过去 {{count}} 天",
+    "taskThroughput": "任务吞吐量",
+    "taskThroughputUnit": "任务 / {{window}}",
+    "approvalRate": "审批通过率",
+    "approvalRateDesc": "治理操作审批通过占比",
+    "rollbackRate": "回滚率",
+    "rollbackRateDesc": "执行后回滚占比",
+    "avgLatency": "平均审批延迟",
+    "avgLatencyDesc": "审批中位等待时间",
+    "toolUsage": "工具使用",
+    "toolUsageTop": "工具使用（前 10）",
+    "noToolData": "暂无工具使用数据。",
+    "actionClass": "操作类别分布",
+    "noActionData": "暂无操作类别数据。",
+    "riskEntries": "最近风险记录",
+    "noRiskEntries": "暂无风险记录。",
+    "actionType": "操作类型",
+    "riskLevel": "风险级别",
+    "resultCode": "结果代码",
+    "rollback": "回滚",
+    "cards": {
+      "taskThroughput": "任务吞吐量",
+      "approvalRate": "审批通过率",
+      "rollbackRate": "回滚率",
+      "avgApprovalLatency": "平均审批延迟",
+      "tasksPerWindow": "任务 / {{window}}",
+      "approvedActions": "治理操作审批通过占比",
+      "rolledBack": "执行后回滚占比",
+      "medianWait": "审批中位等待时间"
+    },
+    "charts": {
+      "toolUsage": "工具使用",
+      "toolUsageTop10": "工具使用（前 10）",
+      "noToolData": "暂无工具使用数据。",
+      "actionClassDist": "操作类别分布",
+      "noActionData": "暂无操作类别数据。",
+      "riskEntries": "最近风险记录",
+      "noRiskEntries": "暂无风险记录。"
+    },
+    "riskTable": {
+      "actionType": "操作类型",
+      "riskLevel": "风险级别",
+      "resultCode": "结果代码",
+      "rollback": "回滚",
+      "yes": "是",
+      "no": "否"
+    },
+    "timeWindow": {
+      "lastHour": "过去 {{count}} 小时",
+      "lastHours": "过去 {{count}} 小时",
+      "lastDay": "过去 {{count}} 天",
+      "lastDays": "过去 {{count}} 天"
+    }
+  },
+  "config": {
+    "title": "配置",
+    "subtitle": "系统状态与已加载插件。",
+    "description": "系统状态与已加载插件。",
+    "systemStatus": "系统状态",
+    "systemStatusDesc": "Hermit 服务运行时信息",
+    "statusError": "无法获取系统状态。",
+    "hostname": "主机名",
+    "port": "端口",
+    "pid": "进程 ID",
+    "uptime": "运行时长",
+    "plugins": "已加载插件",
+    "pluginName": "名称",
+    "pluginVersion": "版本",
+    "pluginDescription": "描述",
+    "pluginType": "类型",
+    "pluginBuiltin": "内置",
+    "pluginUser": "用户",
+    "noPlugins": "暂无已加载插件。"
+  },
+  "control": {
+    "taskCard": {
+      "steps": "步骤",
+      "moreSteps": "还有 {{count}} 个",
+      "receipts": "凭证",
+      "duration": "用时"
+    },
+    "inlineApproval": {
+      "title": "需要审批",
+      "approveTrust": "批准并信任"
+    },
+    "expanded": {
+      "receiptsSummary": "{{total}} 个收据 · {{rollback}} 个支持回滚",
+      "viewDetails": "查看完整详情",
+      "rollbackAll": "全部回滚",
+      "cancelTask": "取消任务",
+      "output": "输出",
+      "noOutput": "暂无输出记录。"
+    },
+    "actions": {
+      "cancel": "取消",
+      "rollback": "回滚",
+      "cancelConfirm": "确定要取消此任务吗？",
+      "rollbackConfirm": "确定要回滚此凭证吗？",
+      "rollbackAllConfirm": "确定要回滚所有支持回滚的凭证吗？"
+    },
+    "output": {
+      "title": "输出",
+      "noOutput": "暂无输出记录。",
+      "response": "回复",
+      "fullResponse": "完整回复"
+    }
+  },
+  "common": {
+    "loading": "加载中...",
+    "error": "错误",
+    "noData": "暂无数据",
+    "save": "保存",
+    "cancel": "取消",
+    "confirm": "确认",
+    "close": "关闭",
+    "yes": "是",
+    "no": "否",
+    "unknown": "未知",
+    "delete": "删除",
+    "justNow": "刚刚",
+    "governedAgentKernel": "治理型智能体内核",
+    "switchLang": {
+      "en": "EN",
+      "zh": "中"
+    },
+    "switchToLight": "切换到亮色模式",
+    "switchToDark": "切换到暗色模式",
+    "status": {
+      "queued": "排队中",
+      "running": "运行中",
+      "blocked": "已阻塞",
+      "completed": "已完成",
+      "failed": "已失败",
+      "cancelled": "已取消",
+      "reconciling": "协调中",
+      "pending": "待处理",
+      "granted": "已授权",
+      "denied": "已拒绝"
+    },
+    "risk": {
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "critical": "严重"
+    },
+    "time": {
+      "justNow": "刚刚",
+      "minutesAgo": "{{count}} 分钟前",
+      "hoursAgo": "{{count}} 小时前",
+      "daysAgo": "{{count}} 天前",
+      "weeksAgo": "{{count}} 周前",
+      "monthsAgo": "{{count}} 个月前",
+      "yearsAgo": "{{count}} 年前"
+    }
+  },
+  "grants": {
+    "title": "授权管理",
+    "tabGrants": "能力授权",
+    "tabLeases": "工作区租约",
+    "filterAll": "全部",
+    "filterIssued": "已颁发",
+    "filterConsumed": "已使用",
+    "filterRevoked": "已撤销",
+    "filterExpired": "已过期",
+    "loading": "加载中...",
+    "loadError": "加载失败",
+    "noResults": "未找到记录。",
+    "columns": {
+      "grantId": "授权 ID",
+      "leaseId": "租约 ID",
+      "taskId": "任务 ID",
+      "actionType": "操作类型",
+      "status": "状态",
+      "grantedAt": "授权时间",
+      "expiresAt": "过期时间",
+      "workspaceRoot": "工作区根路径",
+      "mode": "模式",
+      "acquiredAt": "获取时间",
+      "releasedAt": "释放时间"
+    },
+    "leases": {
+      "filterActive": "活跃",
+      "filterReleased": "已释放"
+    }
+  },
+  "artifacts": {
+    "title": "构件库",
+    "searchPlaceholder": "搜索构件...",
+    "filterAll": "全部",
+    "loading": "加载中...",
+    "loadError": "加载构件失败",
+    "noArtifacts": "未找到构件。",
+    "card": {
+      "task": "任务"
+    },
+    "detail": {
+      "producer": "生产者",
+      "mediaType": "媒体类型",
+      "size": "大小",
+      "created": "创建时间",
+      "taskId": "任务 ID",
+      "hash": "哈希值",
+      "lineage": "血缘",
+      "siblings": "此任务共 {{count}} 个构件"
+    }
+  },
+  "memoryStats": {
+    "title": "记忆分析",
+    "description": "治理型记忆子系统的汇总统计。",
+    "loadError": "加载记忆统计失败",
+    "totalMemories": "记忆总数",
+    "active": "有效记忆",
+    "avgConfidence": "平均置信度",
+    "evidenceBacked": "有证据支撑",
+    "recentPromotions": "{{count}} 条近期晋升",
+    "confidenceDistribution": "置信度分布",
+    "confidence": {
+      "high": "高（≥0.8）",
+      "medium": "中（0.5–0.8）",
+      "low": "低（<0.5）"
+    },
+    "byCategory": "按类别分布",
+    "noData": "暂无分类数据。"
+  },
+  "schedules": {
+    "title": "定时任务",
+    "subtitle": "管理周期性定时任务。",
+    "newSchedule": "新建定时任务",
+    "create": "创建定时任务",
+    "deleteConfirm": "删除定时任务「{{name}}」？",
+    "noSchedules": "暂未配置定时任务。",
+    "noSchedulesHint": "点击「新建定时任务」创建一个。",
+    "enable": "启用",
+    "disable": "禁用",
+    "delete": "删除",
+    "jobCount": "共 {{count}} 个定时任务",
+    "columns": {
+      "name": "名称",
+      "cron": "Cron 表达式",
+      "goal": "目标",
+      "policy": "策略",
+      "enabled": "启用",
+      "lastRun": "上次执行",
+      "nextRun": "下次执行",
+      "actions": "操作"
+    },
+    "form": {
+      "title": "创建定时任务",
+      "name": "名称",
+      "namePlaceholder": "例如：每日健康检查",
+      "cronExpr": "Cron 表达式",
+      "cronHint": "标准 5 字段 Cron（分 时 日 月 周）",
+      "goal": "目标",
+      "goalPlaceholder": "描述定时任务应完成的工作...",
+      "policy": "策略配置",
+      "policyAutonomous": "自主模式",
+      "policySupervised": "监督模式",
+      "policyDefault": "默认",
+      "cancel": "取消",
+      "creating": "创建中...",
+      "validationError": "名称、Cron 表达式和目标均为必填项。"
+    }
+  },
+  "webhooks": {
+    "title": "Webhooks",
+    "subtitle": "HTTP Webhook 路由与触发日志。",
+    "tabRoutes": "路由",
+    "tabLogs": "日志",
+    "routesDesc": "已配置的 Webhook 路由，用于触发 Hermit 任务。",
+    "noRoutes": "暂未配置 Webhook 路由。",
+    "noLogs": "暂无 Webhook 触发日志。",
+    "copyPath": "复制路径到剪贴板",
+    "columns": {
+      "path": "路径",
+      "goalTemplate": "目标模板",
+      "policyProfile": "策略",
+      "timestamp": "时间",
+      "status": "状态",
+      "taskCreated": "创建的任务"
+    },
+    "form": {
+      "addRoute": "添加路由",
+      "path": "路径",
+      "name": "名称（可选）",
+      "namePlaceholder": "友好名称",
+      "goalTemplate": "目标模板",
+      "goalTemplatePlaceholder": "描述任务目标，可用 {{payload}} 引用请求体。",
+      "policyProfile": "策略配置",
+      "save": "保存路由",
+      "required": "路径和目标模板为必填项。"
+    }
+  },
+  "reconciliation": {
+    "title": "协调日志",
+    "subtitle": "授权效果与实际观测效果的对比记录。",
+    "filterAll": "全部",
+    "loading": "加载协调记录中...",
+    "loadError": "加载失败",
+    "noRecords": "未找到协调记录。",
+    "columns": {
+      "task": "任务",
+      "step": "步骤",
+      "authorized": "授权效果",
+      "observed": "观测效果",
+      "resolution": "建议解决方案",
+      "confidence": "置信度变化",
+      "receipts": "凭证数",
+      "observedRefs": "观测引用"
+    },
+    "verdict": {
+      "satisfied": "满足",
+      "satisfied_with_downgrade": "满足（降级）",
+      "violated": "违规",
+      "ambiguous": "模糊",
+      "partial": "部分满足",
+      "unauthorized": "未授权",
+      "drifted": "已偏移",
+      "rolled_back": "已回滚"
+    }
+  },
+  "patterns": {
+    "title": "执行模式",
+    "subtitle": "已学习的操作模式与合成的执行模板。",
+    "tabPatterns": "已学习模式",
+    "tabTemplates": "执行模板",
+    "noPatterns": "暂未学习到任何模式。",
+    "noTemplates": "暂未合成任何模板。",
+    "usageCount": "{{count}} 次使用",
+    "columns": {
+      "actionType": "操作类型",
+      "toolName": "工具",
+      "hitCount": "命中次数",
+      "successRate": "成功率",
+      "lastSeen": "最后见到"
+    }
+  },
+  "iterations": {
+    "title": "自迭代监控",
+    "subtitle": "监控 Hermit 的自我改进流水线。",
+    "loading": "加载迭代记录中...",
+    "loadError": "加载迭代记录失败",
+    "noResults": "未找到迭代记录。",
+    "filterAll": "全部",
+    "filterInProgress": "进行中",
+    "filterCompleted": "已完成",
+    "filterFailed": "已失败",
+    "created": "创建于 {{time}}",
+    "proof": "证明",
+    "viewPr": "查看 PR",
+    "phases": {
+      "spec": "规格",
+      "parse": "解析",
+      "branch": "分支",
+      "execute": "执行",
+      "proof": "证明",
+      "pr": "PR"
+    },
+    "status": {
+      "pending": "待处理",
+      "researching": "研究中",
+      "running": "运行中",
+      "executing": "执行中",
+      "branching": "分支中",
+      "proving": "生成证明",
+      "completed": "已完成",
+      "accepted": "已接受",
+      "failed": "已失败",
+      "rejected": "已拒绝"
+    }
+  }
+}

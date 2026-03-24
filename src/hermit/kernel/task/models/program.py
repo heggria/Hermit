@@ -85,9 +85,9 @@ class ProgramRecord:
     description: str = ""
     priority: str = "normal"
     program_contract_ref: str | None = None
-    budget_limits: dict[str, Any] = field(default_factory=dict[str, Any])
-    milestone_ids: list[str] = field(default_factory=list[str])
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    budget_limits: dict[str, Any] = field(default_factory=dict)
+    milestone_ids: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=lambda: datetime.now(UTC).timestamp())
     updated_at: float = field(default_factory=lambda: datetime.now(UTC).timestamp())
 
@@ -105,6 +105,6 @@ class ProgramStatusProjection:
     blocked_items: int = 0
     awaiting_human: bool = False
     latest_summary: str = ""
-    latest_risks: list[str] = field(default_factory=list[str])
+    latest_risks: list[str] = field(default_factory=list)
     latest_benchmark_status: str = ""
     last_updated_at: float = 0.0

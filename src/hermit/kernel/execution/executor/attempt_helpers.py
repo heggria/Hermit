@@ -8,7 +8,8 @@ import ``attempt_helpers.set_attempt_phase`` / ``.contract_refs`` /
 New code should import directly from ``execution_helpers`` instead.
 
 .. deprecated::
-    This shim will be removed in a future release.  Update all imports to use
+    Importing from ``attempt_helpers`` is deprecated and will be removed in a
+    future release.  Update your imports to use
     ``hermit.kernel.execution.executor.execution_helpers`` directly.
 """
 
@@ -17,11 +18,8 @@ from __future__ import annotations
 import warnings
 
 warnings.warn(
-    (
-        "attempt_helpers is a deprecated compatibility shim. "
-        "Import from hermit.kernel.execution.executor.execution_helpers instead. "
-        "This shim will be removed in a future release."
-    ),
+    "hermit.kernel.execution.executor.attempt_helpers is deprecated. "
+    "Import from hermit.kernel.execution.executor.execution_helpers instead.",
     DeprecationWarning,
     stacklevel=2,
 )

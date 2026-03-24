@@ -171,12 +171,22 @@ class ReconcileService:
                 summary=f"Observed repository state change after {action_type}.",
                 observed_refs=[str(Path(workspace_root).resolve())] if workspace_root else [],
             )
-        if git_changed is False and (
-            action_type == "vcs_mutation" or str(observables.get("vcs_operation", "")).strip()
-        ):
+        if git_changed is False:
+            if action_type == "vcs_mutation" or str(observables.get("vcs_operation", "")).strip():
+                return ReconcileOutcome(
+                    result_code="reconciled_not_applied",
+                    summary=f"Observed repository state did not change after {action_type}.",
+                    observed_refs=[str(Path(workspace_root).resolve())] if workspace_root else [],
+                )
+            # Git witness explicitly confirms no repository mutations for a
+            # non-vcs action — infer the command completed without observable
+            # filesystem side effects rather than falling through to still_unknown.
             return ReconcileOutcome(
-                result_code="reconciled_not_applied",
-                summary=f"Observed repository state did not change after {action_type}.",
+                result_code="reconciled_inferred",
+                summary=(
+                    f"Git witness confirms no repository state change after {action_type}; "
+                    "inferring command completed without observable mutations."
+                ),
                 observed_refs=[str(Path(workspace_root).resolve())] if workspace_root else [],
             )
 
@@ -191,10 +201,14 @@ class ReconcileService:
         # the reconciliation layer simply has nothing to check.  Return an
         # inferred-success so the caller can combine it with the execution
         # hint instead of falling through to ``still_unknown``.
+        # Also applies when a git witness exists but git is currently
+        # unavailable (git_changed=None) for a non-vcs action type — the
+        # absence of target-path changes is still a positive signal.
         has_target_paths = bool(observables.get("target_paths"))
         has_git_witness = bool(witness.get("git"))
         has_vcs_op = bool(str(observables.get("vcs_operation", "")).strip())
-        if not has_target_paths and not has_git_witness and not has_vcs_op:
+        git_inconclusive = git_changed is None and has_git_witness and not has_vcs_op
+        if not has_target_paths and not has_vcs_op and (not has_git_witness or git_inconclusive):
             return ReconcileOutcome(
                 result_code="reconciled_inferred",
                 summary=(

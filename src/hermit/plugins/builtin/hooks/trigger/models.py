@@ -13,6 +13,7 @@ class TriggerRule:
     risk_level: str = "low"
     policy_profile: str = "autonomous"
     cooldown_key_template: str = ""  # supports {match} placeholder
+    summary_template: str = ""  # optional; supports {match} and {context} placeholders
     enabled: bool = True
 
 

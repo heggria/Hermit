@@ -3,10 +3,9 @@ from __future__ import annotations
 from hermit.kernel.policy.guards.rules import RuleOutcome
 from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations, PolicyReason
 
-# Canonical set of adapter actor IDs that are permitted to ingest attachments.
-# Add new adapter IDs here when a new platform adapter is introduced so that
-# every allow-list check in this module stays in sync automatically.
-_KNOWN_ADAPTER_IDS: frozenset[str] = frozenset(
+# Adapters that are permitted to ingest attachments on behalf of users.
+# Add new adapter IDs here when onboarding additional platform adapters.
+_ALLOWED_INGEST_ADAPTERS: frozenset[str] = frozenset(
     {
         "feishu_adapter",
         "slack_adapter",
@@ -27,7 +26,7 @@ def evaluate_attachment_rules(request: ActionRequest) -> list[RuleOutcome] | Non
     actor_kind = str(request.actor.get("kind", "") or "")
     actor_id = str(request.actor.get("agent_id", "") or "")
 
-    if actor_kind == "adapter" and actor_id in _KNOWN_ADAPTER_IDS:
+    if actor_kind == "adapter" and actor_id in _ALLOWED_INGEST_ADAPTERS:
         return [
             RuleOutcome(
                 verdict="allow_with_receipt",
