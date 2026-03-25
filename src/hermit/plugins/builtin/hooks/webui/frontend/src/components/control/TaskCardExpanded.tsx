@@ -20,9 +20,10 @@ import {
   useApprovals,
   useCancelTask,
   useRollbackReceipt,
+  useToolCalls,
 } from "@/api/hooks";
 import { InlineApproval } from "@/components/control/InlineApproval";
-import type { TaskRecord, StepRecord, ReceiptRecord } from "@/types";
+import type { TaskRecord, StepRecord, ReceiptRecord, ToolCallRecord } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Step icon config — icons are component-specific, colors come from central styles
@@ -92,6 +93,23 @@ function groupReceiptsByStep(
   return map;
 }
 
+/** Group tool calls by their step_id. */
+function groupToolCallsByStep(
+  toolCalls: ReadonlyArray<ToolCallRecord>,
+): Map<string, ToolCallRecord[]> {
+  const map = new Map<string, ToolCallRecord[]>();
+  for (const tc of toolCalls) {
+    if (!tc.step_id) continue;
+    const existing = map.get(tc.step_id);
+    if (existing) {
+      existing.push(tc);
+    } else {
+      map.set(tc.step_id, [tc]);
+    }
+  }
+  return map;
+}
+
 // ---------------------------------------------------------------------------
 // Live duration hook — ticks every second while any step is running
 // ---------------------------------------------------------------------------
@@ -132,8 +150,10 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
 
   const { data: stepsData, isLoading: stepsLoading } = useTaskSteps(
     task.task_id,
+    isActive,
   );
-  const { data: receiptsData } = useTaskReceipts(task.task_id);
+  const { data: receiptsData } = useTaskReceipts(task.task_id, isActive);
+  const { data: toolCallsData } = useToolCalls(task.task_id, isActive);
   const { data: approvalsData } = useApprovals("pending", 50);
 
   const cancelMutation = useCancelTask();
@@ -141,11 +161,13 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
 
   const steps: ReadonlyArray<StepRecord> = stepsData?.steps ?? [];
   const receipts = receiptsData?.receipts ?? [];
+  const toolCalls = toolCallsData?.tool_calls ?? [];
   const taskApprovals = (approvalsData?.approvals ?? []).filter(
     (a) => a.task_id === task.task_id,
   );
 
   const receiptsByStep = groupReceiptsByStep(receipts);
+  const toolCallsByStep = groupToolCallsByStep(toolCalls);
 
   const rollbackReceipts = receipts.filter((r) => r.rollback_supported);
   const rollbackCount = rollbackReceipts.length;
@@ -209,6 +231,10 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
               (a) => a.step_id === step.step_id,
             );
             const stepReceipts = receiptsByStep.get(step.step_id) ?? [];
+            const stepToolCalls = toolCallsByStep.get(step.step_id) ?? [];
+            // Show tool calls when available; fall back to receipts
+            const hasToolCalls = stepToolCalls.length > 0;
+            const hasReceipts = stepReceipts.length > 0;
 
             return (
               <div key={step.step_id} className="relative flex gap-2 pb-3">
@@ -255,8 +281,40 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
                     )}
                   </div>
 
-                  {/* Inline receipts (tool use entries) */}
-                  {stepReceipts.length > 0 && (
+                  {/* Inline tool calls — shows all tool invocations including read-only ones.
+                      Falls back to receipts when tool-calls endpoint unavailable. */}
+                  {hasToolCalls ? (
+                    <div className="mt-1 space-y-0.5">
+                      {stepToolCalls.map((tc, idx) => (
+                        <div
+                          key={`${tc.tool_name}-${tc.occurred_at ?? idx}`}
+                          className="flex items-center gap-1.5 text-[11px]"
+                        >
+                          <span
+                            className={cn(
+                              "size-1.5 shrink-0 rounded-full",
+                              tc.result_code === "succeeded"
+                                ? "bg-emerald-500"
+                                : tc.result_code === "failed"
+                                  ? "bg-rose-500"
+                                  : tc.has_receipt
+                                    ? "bg-muted-foreground/40"
+                                    : "bg-sky-400",
+                            )}
+                          />
+                          <span className="shrink-0 font-medium text-foreground/60">
+                            {tc.tool_name}
+                          </span>
+                          <span
+                            className="min-w-0 flex-1 truncate font-mono text-muted-foreground/60"
+                            title={tc.action_label || tc.action_class || ""}
+                          >
+                            {tc.action_label || tc.action_class || ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : hasReceipts ? (
                     <div className="mt-1 space-y-0.5">
                       {stepReceipts.map((receipt) => (
                         <div
@@ -297,7 +355,7 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
                         </div>
                       ))}
                     </div>
-                  )}
+                  ) : null}
 
                   {/* Running indicator when step is active */}
                   {isStepRunning && (
@@ -312,7 +370,7 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
                             </span>
                           )}
                         </>
-                      ) : stepReceipts.length === 0 ? (
+                      ) : (stepReceipts.length === 0 && stepToolCalls.length === 0) ? (
                         <span>{t("taskDetail.steps.executing")}</span>
                       ) : null}
                     </div>

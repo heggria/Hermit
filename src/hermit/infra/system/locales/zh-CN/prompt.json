@@ -21,6 +21,7 @@
   "prompt.context.workspace_boundary.line_1": "- 绝对不要将文件写入 /tmp/、/private/tmp/ 或工作区目录之外的任何路径。所有文件操作必须在 <hermit_runtime> 中显示的工作区根目录内进行。",
   "prompt.context.workspace_boundary.line_2": "- 需要临时或草稿文件时，使用工作区内的 .hermit/tmp/ 子目录（如不存在则创建）。写入工作区外的路径将被治理层阻止。",
   "prompt.runtime.max_turns_exceeded": "[系统提示] 你已使用了最大允许的工具调用轮次。请根据目前收集到的信息，直接给出你的最终回答。不要再调用任何工具。",
+  "prompt.runtime.summarize_results": "请简要总结你做了什么以及结果。",
   "prompt.runtime.final_summary_failed": "已达到最大轮次限制（{max_turns}），且最终总结请求失败：{error}。请简要说明已经完成的内容，以及当前还剩哪些阻塞点。",
   "prompt.available_skills.read_skill.description": "把某个 skill 的完整说明加载进当前上下文。当任务明确匹配目录里的 skill 描述时使用。",
   "prompt.available_skills.read_skill.name": "要加载到当前上下文中的 skill 名称。",

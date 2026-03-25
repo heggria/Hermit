@@ -61,8 +61,26 @@ def _enrich_prompt_with_dag_metadata(prompt: str, dag_meta: dict[str, Any]) -> s
         else:
             extra_parts.append(f"Constraints: {constraints}")
 
+    # Team role context — surface before the generic catch-all.
+    team_role = dag_meta.get("team_role")
+    if team_role:
+        extra_parts.append(f"Your role in the team: {team_role}")
+        role_config = dag_meta.get("role_config")
+        if isinstance(role_config, dict) and role_config.get("instruction"):
+            extra_parts.append(f"Role instructions: {role_config['instruction']}")
+
     # Surface any remaining keys that aren't already handled above.
-    _HANDLED = {"description", "file", "goal", "target", "constraints"}
+    _HANDLED = {
+        "description",
+        "file",
+        "goal",
+        "target",
+        "constraints",
+        "team_role",
+        "team_id",
+        "role_count",
+        "role_config",
+    }
     for key, value in dag_meta.items():
         if key not in _HANDLED and value:
             extra_parts.append(f"{key}: {value}")

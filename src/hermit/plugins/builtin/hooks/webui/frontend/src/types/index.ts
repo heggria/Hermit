@@ -56,6 +56,17 @@ export interface ReceiptRecord {
   created_at: number | null;
 }
 
+export interface ToolCallRecord {
+  tool_name: string;
+  action_class: string;
+  step_id: string;
+  occurred_at: number | null;
+  has_receipt: boolean;
+  action_label?: string;
+  result_code?: string;
+  rollback_supported?: boolean;
+}
+
 export interface MemoryRecord {
   memory_id: string;
   task_id: string;

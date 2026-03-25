@@ -202,12 +202,31 @@
     }
   },
   "approvals": {
-    "title": "Pending Approvals",
+    "title": "Approvals",
+    "subtitle": "Review and manage governance approval requests.",
     "loading": "Loading approvals...",
     "loadError": "Failed to load approvals: {{message}}",
     "noApprovals": "No pending approvals. All clear.",
+    "noResults": "No matching approvals.",
+    "noResultsHint": "Try adjusting your filters or search query.",
+    "pendingCount": "{{count}} pending",
+    "searchPlaceholder": "Search by tool or task...",
+    "filterAll": "All",
+    "filterPending": "Pending",
+    "filterApproved": "Approved",
+    "filterDenied": "Denied",
     "approve": "Approve",
     "deny": "Deny",
+    "stats": {
+      "pending": "Pending",
+      "pendingDesc": "Awaiting decision",
+      "approved": "Approved",
+      "approvedDesc": "Actions granted",
+      "denied": "Denied",
+      "deniedDesc": "Actions rejected",
+      "recent": "Recent (24h)",
+      "recentDesc": "Resolved last 24 hours"
+    },
     "denyDialog": {
       "title": "Deny Approval",
       "description": "Provide a reason for denying this action. This will be recorded in the governance ledger.",
@@ -267,6 +286,7 @@
   },
   "memory": {
     "title": "Memory",
+    "subtitle": "Evidence-governed knowledge acquired through task execution",
     "searchPlaceholder": "Search memories...",
     "filterAll": "All",
     "filterActive": "Active",
@@ -276,14 +296,33 @@
     "noMemories": "No memories found.",
     "noResults": "No memories found.",
     "confidence": "Confidence",
+    "stats": {
+      "total": "Total",
+      "totalDesc": "memories acquired",
+      "avgConfidence": "Avg Confidence",
+      "avgConfidenceDesc": "across all records",
+      "evidenceBacked": "Evidence-backed",
+      "evidenceBackedDesc": "with proof references",
+      "recentPromotions": "Recent",
+      "recentPromotionsDesc": "promoted in 24h"
+    },
     "card": {
       "confidence": "Confidence",
       "evidence": "{{count}} evidence",
-      "evidences": "{{count}} evidences"
+      "evidences": "{{count}} evidences",
+      "importance": "Importance"
+    },
+    "category": {
+      "contract_template": "Contract Template",
+      "execution_pattern": "Execution Pattern",
+      "policy_learning": "Policy Learning",
+      "risk_assessment": "Risk Assessment",
+      "unknown": "General"
     }
   },
   "signals": {
     "title": "Evidence Signals",
+    "subtitle": "Automated evidence detection from code health, tests, and security scans",
     "actionable": "{{count}} actionable",
     "filterAll": "All",
     "filterPending": "Pending",
@@ -293,14 +332,35 @@
     "loadError": "Failed to load signals",
     "noSignals": "No signals found.",
     "noResults": "No signals found.",
+    "noResultsHint": "Evidence signals appear when patrols detect issues in code health, tests, security, or coverage.",
     "goal": "Goal",
     "act": "Act",
     "suppress": "Suppress",
+    "confidence": "{{value}}%",
+    "stats": {
+      "total": "Total",
+      "totalDesc": "signals detected",
+      "pending": "Pending",
+      "pendingDesc": "awaiting action",
+      "highRisk": "High Risk",
+      "highRiskDesc": "high or critical level",
+      "recent": "Recent",
+      "recentDesc": "detected in 24h"
+    },
+    "source": {
+      "test_failure": "Test Failure",
+      "todo_scan": "TODO Marker",
+      "lint_violation": "Lint Issue",
+      "security_vuln": "Security",
+      "coverage_drop": "Coverage",
+      "unknown": "Other"
+    },
     "card": {
       "confidence": "{{percent}}% confidence",
       "goal": "Goal: ",
       "act": "Act",
-      "suppress": "Suppress"
+      "suppress": "Suppress",
+      "expired": "Expired"
     }
   },
   "metrics": {
@@ -854,6 +914,7 @@
     "toolCount": "{{count}} tool",
     "toolCount_plural": "{{count}} tools",
     "create": "Add MCP Server",
+    "reload": "Reload",
     "builtinBadge": "Builtin",
     "deleteTitle": "Delete MCP Server",
     "deleteConfirm": "Are you sure you want to delete \"{{name}}\"? Changes take effect after reload.",

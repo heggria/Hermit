@@ -44,6 +44,6 @@ def register(ctx: PluginContext) -> None:
             action_class="network_read",
             idempotent=True,
             risk_hint="low",
-            requires_receipt=False,
+            requires_receipt=True,
         )
     )

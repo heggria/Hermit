@@ -173,6 +173,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         policy_profile: str = "default",
         parent_task_id: str | None = None,
         program_id: str | None = None,
+        team_id: str | None = None,
         requested_by: str | None = None,
         task_contract_ref: str | None = None,
         continuation_anchor: dict[str, Any] | None = None,
@@ -194,10 +195,11 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 """
                 INSERT INTO tasks (
                     task_id, conversation_id, title, goal, status, priority, owner_principal_id,
-                    policy_profile, source_channel, parent_task_id, program_id, task_contract_ref,
+                    policy_profile, source_channel, parent_task_id, program_id, team_id,
+                    task_contract_ref,
                     requested_by_principal_id, acceptance_criteria_json,
                     complexity_band, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -211,6 +213,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     source_channel,
                     normalized_parent_task_id,
                     sqlite_optional_text(program_id),
+                    sqlite_optional_text(team_id),
                     normalized_task_contract_ref,
                     sqlite_optional_text(requested_by_principal_id),
                     json.dumps(acceptance_criteria or [], ensure_ascii=False),
@@ -241,6 +244,7 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     "source_channel": source_channel,
                     "parent_task_id": normalized_parent_task_id,
                     "program_id": sqlite_optional_text(program_id),
+                    "team_id": sqlite_optional_text(team_id),
                     "task_contract_ref": normalized_task_contract_ref,
                     "requested_by_principal_id": sqlite_optional_text(requested_by_principal_id),
                     "continuation_anchor": sqlite_dict(continuation_anchor),

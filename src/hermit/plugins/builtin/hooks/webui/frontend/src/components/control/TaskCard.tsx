@@ -9,6 +9,7 @@ import {
 } from "@/api/hooks";
 import { formatTimeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { cleanMarkdown } from "@/lib/markdown";
 import { Archive, Loader2, RotateCcw, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -56,10 +57,10 @@ export function TaskCard({
 }: TaskCardProps) {
   const { t } = useTranslation();
 
-  const { data: stepsData } = useTaskSteps(task.task_id);
-  const { data: receiptsData } = useTaskReceipts(task.task_id);
+  const { data: stepsData } = useTaskSteps(task.task_id, false);
+  const { data: receiptsData } = useTaskReceipts(task.task_id, false);
   const { data: approvalsData } = useApprovals("pending", 50);
-  const { data: outputData } = useTaskOutput(task.task_id);
+  const { data: outputData } = useTaskOutput(task.task_id, false);
 
   const cancelMutation = useCancelTask();
 
@@ -234,9 +235,9 @@ export function TaskCard({
           {/* Response text */}
           {outputData?.response_text && (
             <div className="mt-2 ml-4 rounded-lg bg-muted/40 px-3 py-2">
-              <div className="line-clamp-3 text-xs text-foreground/70 prose prose-xs dark:prose-invert max-w-none prose-headings:text-xs prose-headings:font-semibold prose-headings:my-0.5 prose-p:my-0.5 prose-ul:my-0.5 prose-ol:my-0.5 prose-li:my-0 prose-code:text-[10px] prose-code:before:content-none prose-code:after:content-none">
+              <div className="line-clamp-3 text-xs text-foreground/70 prose prose-xs dark:prose-invert max-w-none prose-headings:text-xs prose-headings:font-semibold prose-headings:my-0.5 prose-p:my-0.5 prose-ul:my-0.5 prose-ol:my-0.5 prose-li:my-0">
                 <Markdown remarkPlugins={[remarkGfm]}>
-                  {outputData.response_text}
+                  {cleanMarkdown(outputData.response_text)}
                 </Markdown>
               </div>
             </div>

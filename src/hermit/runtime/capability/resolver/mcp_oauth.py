@@ -9,6 +9,7 @@ Supports the MCP 2025-03-26 OAuth specification:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import time
@@ -225,6 +226,20 @@ class McpOAuthManager:
     # Metadata discovery
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _run_async(coro):
+        """Run an async coroutine from sync code."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result(timeout=30)
+        return asyncio.run(coro)
+
     def _discover_metadata(self, server_url: str) -> OAuthMetadata | None:
         """Discover OAuth Authorization Server Metadata (RFC 8414)."""
         urls = build_oauth_authorization_server_metadata_discovery_urls(
@@ -236,7 +251,7 @@ class McpOAuthManager:
                 try:
                     request = create_oauth_metadata_request(url)
                     resp = client.send(request)
-                    success, metadata = handle_auth_metadata_response(resp)
+                    success, metadata = self._run_async(handle_auth_metadata_response(resp))
                     if success and metadata is not None:
                         return metadata
                 except Exception:
@@ -287,7 +302,7 @@ class McpOAuthManager:
             request = create_client_registration_request(metadata, client_metadata, auth_base)
             with httpx.Client(timeout=15) as client:
                 resp = client.send(request)
-            info = handle_registration_response(resp)
+            info = self._run_async(handle_registration_response(resp))
             result: dict[str, Any] = {"client_id": info.client_id}
             if info.client_secret:
                 result["client_secret"] = info.client_secret

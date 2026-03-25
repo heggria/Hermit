@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as _json
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,31 @@ from hermit.kernel.policy import PolicyDecision
 from hermit.kernel.policy.models.models import ActionRequest
 from hermit.kernel.policy.permits.authorization_plans import AuthorizationPlanService
 from hermit.runtime.capability.registry.tools import ToolRegistry
+
+_PREVIEW_MAX = 200
+
+
+def _extract_result_preview(raw_result: Any, *, max_length: int = _PREVIEW_MAX) -> str:
+    """Extract a human-readable preview from a tool's raw result."""
+    if raw_result is None:
+        return ""
+    if isinstance(raw_result, dict):
+        # Prefer stdout for command results.
+        stdout = raw_result.get("stdout", "")
+        if stdout and isinstance(stdout, str):
+            return stdout.strip()[:max_length]
+        # Fall back to the full dict serialization.
+        try:
+            text = _json.dumps(raw_result, ensure_ascii=False, default=str)
+        except Exception:
+            text = str(raw_result)
+        return text[:max_length]
+    if isinstance(raw_result, str):
+        return raw_result.strip()[:max_length]
+    try:
+        return str(raw_result)[:max_length]
+    except Exception:
+        return ""
 
 
 class AuthorizationHandler:
@@ -65,16 +91,22 @@ class AuthorizationHandler:
         *,
         tool_name: str,
         approval_mode: str,
+        raw_result: Any = None,
     ) -> str:
         if approval_mode == "mutable_workspace":
-            return t(
+            base = t(
                 "kernel.executor.result.success",
                 default="{tool_name} completed under mutable workspace lease.",
                 tool_name=tool_name,
             )
-        if approval_mode == "once":
-            return t("kernel.executor.result.once", tool_name=tool_name)
-        return t("kernel.executor.result.success", tool_name=tool_name)
+        elif approval_mode == "once":
+            base = t("kernel.executor.result.once", tool_name=tool_name)
+        else:
+            base = t("kernel.executor.result.success", tool_name=tool_name)
+        preview = _extract_result_preview(raw_result)
+        if preview:
+            return f"{base}: {preview}"
+        return base
 
     def prepare_rollback_plan(
         self,

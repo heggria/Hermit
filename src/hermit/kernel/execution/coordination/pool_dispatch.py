@@ -193,6 +193,70 @@ def _default_pool_config() -> WorkerPoolConfig:
     )
 
 
+# ── team-aware pool config builder ─────────────────────────────────────────
+
+
+def build_team_pool_config(
+    team: Any,
+    *,
+    base_config: WorkerPoolConfig | None = None,
+) -> WorkerPoolConfig:
+    """Build a :class:`WorkerPoolConfig` from a team's ``role_assembly``.
+
+    The role_assembly's count values become the ``max_active`` slots for each
+    matching :class:`WorkerRole`.  Roles not present in the team get zero slots.
+
+    If *base_config* is provided it is used as the template and only the slot
+    limits are overridden; otherwise :func:`_default_pool_config` is used.
+    """
+    _TEAM_ROLE_MAP: dict[str, WorkerRole] = {
+        "researcher": WorkerRole.researcher,
+        "planner": WorkerRole.planner,
+        "executor": WorkerRole.executor,
+        "coder": WorkerRole.executor,
+        "reviewer": WorkerRole.reviewer,
+        "verifier": WorkerRole.verifier,
+        "tester": WorkerRole.tester,
+        "benchmarker": WorkerRole.benchmarker,
+        "spec": WorkerRole.spec,
+        "reconciler": WorkerRole.reconciler,
+    }
+
+    base = base_config or _default_pool_config()
+    team_slots: dict[WorkerRole, WorkerSlotConfig] = {}
+
+    role_assembly: dict[str, Any] = getattr(team, "role_assembly", {}) or {}
+    for _role_name, slot_spec in role_assembly.items():
+        role_type = getattr(slot_spec, "role", _role_name)
+        worker_role = _TEAM_ROLE_MAP.get(role_type) or _TEAM_ROLE_MAP.get(_role_name)
+        if worker_role is None:
+            continue
+
+        count = getattr(slot_spec, "count", 1)
+        base_slot = base.slots.get(worker_role)
+        if base_slot is not None:
+            team_slots[worker_role] = WorkerSlotConfig(
+                role=worker_role,
+                max_active=count,
+                accepted_step_kinds=list(base_slot.accepted_step_kinds),
+                output_artifact_kinds=list(base_slot.output_artifact_kinds),
+            )
+        else:
+            team_slots[worker_role] = WorkerSlotConfig(
+                role=worker_role,
+                max_active=count,
+            )
+
+    team_id = getattr(team, "team_id", "team")
+    return WorkerPoolConfig(
+        pool_id=f"team-{team_id[:8]}",
+        team_id=team_id,
+        slots=team_slots,
+        conflict_limits=dict(base.conflict_limits),
+        max_physical_threads=base.max_physical_threads,
+    )
+
+
 # ── pool-aware dispatch service ─────────────────────────────────────────────
 
 

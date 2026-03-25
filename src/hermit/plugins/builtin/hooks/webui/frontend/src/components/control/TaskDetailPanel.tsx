@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
+import { cleanMarkdown } from "@/lib/markdown";
 import { getStatusStyle } from "@/lib/status-styles";
 import { useTaskOutput } from "@/api/hooks";
 import { TaskCardExpanded } from "@/components/control/TaskCardExpanded";
@@ -21,11 +22,15 @@ function getStatusDot(status: string) {
 
 interface TaskDetailPanelProps {
   readonly task: TaskRecord;
+  readonly programId?: string;
   readonly onClose: () => void;
 }
 
-export function TaskDetailPanel({ task, onClose }: TaskDetailPanelProps) {
-  const { data: outputData } = useTaskOutput(task.task_id);
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+export function TaskDetailPanel({ task, programId, onClose }: TaskDetailPanelProps) {
+  const isActive = !TERMINAL_STATUSES.has(task.status);
+  const { data: outputData } = useTaskOutput(task.task_id, isActive);
   const dot = getStatusDot(task.status);
 
   return (
@@ -74,9 +79,9 @@ export function TaskDetailPanel({ task, onClose }: TaskDetailPanelProps) {
         {/* Response text -- LLM reply */}
         {outputData?.response_text && (
           <div className="mt-3 rounded-xl bg-muted/50 p-3">
-            <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-foreground prose-headings:text-foreground prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1.5 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:before:content-none prose-code:after:content-none prose-pre:bg-muted prose-pre:rounded-lg prose-a:text-primary">
+            <div className="prose prose-sm dark:prose-invert max-w-none text-sm prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1.5 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5">
               <Markdown remarkPlugins={[remarkGfm]}>
-                {outputData.response_text}
+                {cleanMarkdown(outputData.response_text)}
               </Markdown>
             </div>
           </div>
@@ -84,7 +89,7 @@ export function TaskDetailPanel({ task, onClose }: TaskDetailPanelProps) {
       </div>
 
       {/* Fixed bottom: DrawerChat */}
-      <DrawerChat task={task} />
+      <DrawerChat task={task} programId={programId} />
     </div>
   );
 }

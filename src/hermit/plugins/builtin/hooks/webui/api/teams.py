@@ -33,7 +33,7 @@ class RoleSlotInput(BaseModel):
 
 
 class TeamCreateRequest(BaseModel):
-    program_id: str
+    program_id: str | None = None
     title: str
     role_assembly: dict[str, RoleSlotInput] | None = None
     workspace_id: str | None = None
@@ -142,21 +142,33 @@ def create_team(body: TeamCreateRequest) -> dict[str, Any]:
     """Create a new team under a program."""
     store = get_store()
 
-    # Validate program exists
-    program = store.get_program(body.program_id)
-    if program is None:
-        raise HTTPException(status_code=404, detail="Program not found")
+    # Resolve program: use provided, or fall back to first available, or auto-create
+    program_id = body.program_id
+    if program_id:
+        program = store.get_program(program_id)
+        if program is None:
+            raise HTTPException(status_code=404, detail="Program not found")
+    else:
+        programs = store.list_programs()
+        if programs:
+            program_id = programs[0].program_id
+        else:
+            program = store.create_program(
+                title="Default",
+                goal="Default program for standalone teams",
+            )
+            program_id = program.program_id
 
     title = body.title.strip()
     if not title:
         raise HTTPException(status_code=422, detail="Title must not be empty")
 
-    workspace_id = body.workspace_id or f"ws-{body.program_id}"
+    workspace_id = body.workspace_id or f"ws-{program_id}"
     role_assembly = _role_input_to_store(body.role_assembly)
 
     try:
         team = store.create_team(
-            program_id=body.program_id,
+            program_id=program_id,
             title=title,
             workspace_id=workspace_id,
             role_assembly=role_assembly,

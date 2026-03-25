@@ -34,3 +34,12 @@ def get_store() -> Any:
     if server is None:
         raise HTTPException(status_code=503, detail="WebUI server not initialized")
     return server._get_store()
+
+
+def get_server() -> Any:
+    """Return the raw WebUI server instance."""
+    with _lock:
+        server = _server_ref
+    if server is None:
+        raise HTTPException(status_code=503, detail="WebUI server not initialized")
+    return server

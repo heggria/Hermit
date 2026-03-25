@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Server, Plug, Wrench, Plus, LogIn } from 'lucide-react';
+import { Server, Plug, Wrench, Plus, LogIn, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ItemActionButtons } from '@/components/ui/ItemActionButtons';
@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/layout/EmptyState';
 import { CardGridSkeleton } from '@/components/ui/skeletons';
 import { DataContainer } from '@/components/ui/DataContainer';
 import { DeleteConfirmDialog } from '@/components/ui/DeleteConfirmDialog';
-import { useMcpServers, useDeleteMcpServer, useStartMcpOAuth } from '@/api/hooks';
+import { useMcpServers, useDeleteMcpServer, useStartMcpOAuth, useReloadMcpServers } from '@/api/hooks';
 import { McpServerFormDialog } from '@/components/mcp-servers/McpServerFormDialog';
 import { RecommendedServers } from '@/components/mcp-servers/RecommendedServers';
 import { ApiKeyDialog } from '@/components/mcp-servers/ApiKeyDialog';
@@ -30,6 +30,7 @@ export default function McpServers() {
   const { data: servers, isLoading } = useMcpServers();
   const deleteMutation = useDeleteMcpServer();
   const oauthStart = useStartMcpOAuth();
+  const reloadMutation = useReloadMcpServers();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServerInfo | undefined>(
@@ -77,16 +78,8 @@ export default function McpServers() {
 
   const handleLogin = useCallback(
     (server: McpServerInfo) => {
-      // API key flow: show dialog to enter token
-      if (
-        server.auth_type === 'api_key' ||
-        (server.has_empty_env_keys?.length ?? 0) > 0
-      ) {
-        setApiKeyTarget(server);
-        return;
-      }
-      // OAuth flow: start and open in new window
-      if (server.auth_type === 'oauth') {
+      // OAuth flow takes priority for HTTP servers
+      if (server.auth_type === 'oauth' && !server.has_oauth_token) {
         oauthStart.mutate(
           { name: server.name, server_url: server.url ?? undefined },
           {
@@ -95,6 +88,15 @@ export default function McpServers() {
             },
           },
         );
+        return;
+      }
+      // API key flow: show dialog to enter token
+      if (
+        server.auth_type === 'api_key' ||
+        (server.has_empty_env_keys?.length ?? 0) > 0
+      ) {
+        setApiKeyTarget(server);
+        return;
       }
     },
     [oauthStart],
@@ -110,6 +112,17 @@ export default function McpServers() {
           icon: <Plus className="size-4" />,
           onClick: handleCreate,
         }}
+        extra={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => reloadMutation.mutate()}
+            disabled={reloadMutation.isPending}
+          >
+            <RefreshCw className={`size-4 ${reloadMutation.isPending ? 'animate-spin' : ''}`} />
+            {t('mcpServers.reload')}
+          </Button>
+        }
       />
 
       <DataContainer

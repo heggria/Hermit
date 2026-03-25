@@ -112,7 +112,7 @@ class _Store:
         self.resolved: list[tuple[str, dict[str, object]]] = []
         self.appended_history: list[object] = []
         self.schedule_history: list[object] = []
-        self.step_attempt = SimpleNamespace(context={"execution_mode": "run"})
+        self.step_attempt = SimpleNamespace(context={"execution_mode": "run"}, task_id=None)
 
     def get_approval(self, approval_id: str):
         return self.approvals.get(approval_id)
@@ -361,7 +361,7 @@ def test_runner_process_claimed_attempt_emits_notify_and_scheduler_artifacts(
     tmp_path: Path,
 ) -> None:
     runner, agent, session_manager, pm, controller, store = _make_runner(tmp_path)
-    store.step_attempt = SimpleNamespace(context={"execution_mode": "run"})
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "run"}, task_id=None)
 
     result = runner.process_claimed_attempt("attempt-1")
 
@@ -388,7 +388,7 @@ def test_runner_process_claimed_attempt_emits_notify_and_scheduler_artifacts(
 def test_runner_process_claimed_attempt_resume_and_error_paths() -> None:
     runner, agent, _session_manager, pm, controller, store = _make_runner()
 
-    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"})
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"}, task_id=None)
     agent.resume_result = AgentResult(
         text="waiting",
         turns=1,
@@ -403,7 +403,7 @@ def test_runner_process_claimed_attempt_resume_and_error_paths() -> None:
     assert controller.suspended == [("attempt-2", "awaiting_input")]
     assert pm.post_run == []
 
-    store.step_attempt = SimpleNamespace(context={"execution_mode": "run"})
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "run"}, task_id=None)
     agent.run_result = RuntimeError("boom")
     errored = runner.process_claimed_attempt("attempt-3")
 
@@ -418,7 +418,7 @@ def test_runner_process_claimed_attempt_emits_dispatch_result_for_kernel_managed
 ) -> None:
     runner, agent, _session_manager, pm, controller, store = _make_runner(tmp_path)
 
-    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"})
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"}, task_id=None)
     agent.resume_result = AgentResult(
         text="[Capability Denied] Workspace lease no longer covers this write.",
         turns=1,

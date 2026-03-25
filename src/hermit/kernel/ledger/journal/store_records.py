@@ -62,6 +62,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             source_channel=str(row["source_channel"]),
             parent_task_id=row["parent_task_id"],
             program_id=row["program_id"] if "program_id" in keys else None,
+            team_id=row["team_id"] if "team_id" in keys else None,
             task_contract_ref=row["task_contract_ref"],
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),

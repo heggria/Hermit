@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 from uuid import uuid4
@@ -311,7 +312,7 @@ def list_program_approvals(
 
 
 @router.post("/programs/{program_id}/tasks")
-def submit_program_task(program_id: str, body: ProgramTaskSubmitRequest) -> dict[str, Any]:
+async def submit_program_task(program_id: str, body: ProgramTaskSubmitRequest) -> dict[str, Any]:
     """Submit a task under this program."""
     _get_program_or_404(program_id)
     runner = get_runner()
@@ -323,7 +324,7 @@ def submit_program_task(program_id: str, body: ProgramTaskSubmitRequest) -> dict
 
     policy_profile = body.policy_profile or "autonomous"
 
-    try:
+    def _enqueue() -> str | None:
         ingress_meta: dict[str, Any] = {
             "source": "webui",
             "entry_prompt": description,
@@ -333,36 +334,68 @@ def submit_program_task(program_id: str, body: ProgramTaskSubmitRequest) -> dict
         if body.team_id:
             ingress_meta["team_id"] = body.team_id
 
-        ctx = runner.task_controller.enqueue_task(
-            conversation_id=session_id,
-            goal=description,
-            source_channel="webui",
-            kind="respond",
-            policy_profile=policy_profile,
-            workspace_root=str(getattr(runner.agent, "workspace_root", "") or ""),
-            parent_task_id=None,
-            requested_by="webui",
-            ingress_metadata=ingress_meta,
-            source_ref="webui",
-        )
-        task_id = getattr(ctx, "task_id", None) if ctx else None
-
-        # Associate the task with the program (and optionally team)
-        if task_id:
+        if body.team_id:
+            # Team-aware path: decompose into DAG based on team topology.
             store = get_store()
-            conn = store._get_conn()
-            with conn:
-                conn.execute(
-                    "UPDATE tasks SET program_id = ? WHERE task_id = ?",
-                    (program_id, task_id),
-                )
-                if body.team_id:
+            team = store.get_team(body.team_id)
+            if team is None:
+                raise HTTPException(status_code=404, detail="Team not found")
+
+            from hermit.kernel.task.services.team_decomposer import decompose_team_to_steps
+
+            step_nodes = decompose_team_to_steps(team=team, goal=description)
+            ctx, _dag, _key_map, _root_ctxs = runner.task_controller.start_dag_task(
+                conversation_id=session_id,
+                goal=description,
+                source_channel="webui",
+                nodes=step_nodes,
+                policy_profile=policy_profile,
+                workspace_root=str(getattr(runner.agent, "workspace_root", "") or ""),
+                requested_by="webui",
+                ingress_metadata=ingress_meta,
+                team_id=body.team_id,
+            )
+            tid = getattr(ctx, "task_id", None) if ctx else None
+
+            # Associate the task with the program.
+            if tid:
+                store_conn = store._get_conn()
+                with store_conn:
+                    store_conn.execute(
+                        "UPDATE tasks SET program_id = ? WHERE task_id = ?",
+                        (program_id, tid),
+                    )
+        else:
+            # Original non-team path: single "respond" step.
+            ctx = runner.task_controller.enqueue_task(
+                conversation_id=session_id,
+                goal=description,
+                source_channel="webui",
+                kind="respond",
+                policy_profile=policy_profile,
+                workspace_root=str(getattr(runner.agent, "workspace_root", "") or ""),
+                parent_task_id=None,
+                requested_by="webui",
+                ingress_metadata=ingress_meta,
+                source_ref="webui",
+            )
+            tid = getattr(ctx, "task_id", None) if ctx else None
+
+            # Associate the task with the program.
+            if tid:
+                store = get_store()
+                conn = store._get_conn()
+                with conn:
                     conn.execute(
-                        "UPDATE tasks SET team_id = ? WHERE task_id = ?",
-                        (body.team_id, task_id),
+                        "UPDATE tasks SET program_id = ? WHERE task_id = ?",
+                        (program_id, tid),
                     )
 
         runner.wake_dispatcher()
+        return tid
+
+    try:
+        task_id = await asyncio.to_thread(_enqueue)
     except Exception as exc:
         _log.exception("webui_program_task_submit_error", error=str(exc))  # type: ignore[call-arg]
         raise HTTPException(status_code=500, detail=f"Failed to submit task: {exc}") from exc

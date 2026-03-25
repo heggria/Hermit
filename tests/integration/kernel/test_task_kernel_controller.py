@@ -172,9 +172,9 @@ def test_kernel_dispatch_recovery_requeues_async_running_attempts(tmp_path: Path
     assert async_attempt.context["reentry_boundary"] == "policy_reentry"
     assert async_task is not None and async_task.status == "queued"
     # Sync (non-async) attempts that are found in-flight during recovery are
-    # failed with 'worker_interrupted_sync_orphaned', since the dispatch service
-    # does not own their lifecycle.
-    assert sync_attempt is not None and sync_attempt.status == "failed"
+    # cancelled with 'worker_interrupted_sync_orphaned', since the dispatch service
+    # does not own their lifecycle (changed from 'failed' in commit 51a49d7).
+    assert sync_attempt is not None and sync_attempt.status == "cancelled"
     assert sync_attempt.status_reason == "worker_interrupted_sync_orphaned"
 
 

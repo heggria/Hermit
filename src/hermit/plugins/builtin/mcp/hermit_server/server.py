@@ -178,7 +178,12 @@ class HermitMcpServer:
                 "- hermit_spec_queue: Manage the spec backlog queue (list/add/remove/reprioritize).\n"
                 "- hermit_iteration_status: Get status of iterations including findings and spec.\n"
                 "- hermit_benchmark_results: Retrieve benchmark results for iterations or specs.\n"
-                "- hermit_lessons_learned: Query lessons learned from past iterations."
+                "- hermit_lessons_learned: Query lessons learned from past iterations.\n\n"
+                "Team management tools:\n"
+                "- hermit_list_roles: List available role definitions for team assembly.\n"
+                "- hermit_create_team: Create a team with role assembly in one call. "
+                "Accepts {role_name: count} dict.\n"
+                "- hermit_list_teams: List existing teams with status filter."
             ),
         )
         self._register_tools()
@@ -221,6 +226,7 @@ class HermitMcpServer:
         priority: str,
         policy_profile: str,
         workspace_root: str = "",
+        team_id: str | None = None,
     ) -> tuple[str | None, str]:
         """Submit one task via task controller directly. Returns (task_id, session_id).
 
@@ -242,13 +248,41 @@ class HermitMcpServer:
         }
         if policy_profile:
             metadata["policy_profile"] = policy_profile
+        if team_id:
+            metadata["team_id"] = team_id
+
+        resolved_ws = workspace_root or str(getattr(runner.agent, "workspace_root", "") or "")
+
+        if team_id:
+            # Team-aware path: decompose into DAG based on team topology.
+            store = self._get_store()
+            team = store.get_team(team_id)
+            if team is not None:
+                from hermit.kernel.task.services.team_decomposer import decompose_team_to_steps
+
+                step_nodes = decompose_team_to_steps(team=team, goal=description)
+                ctx, _dag, _key_map, _root_ctxs = runner.task_controller.start_dag_task(
+                    conversation_id=session_id,
+                    goal=description,
+                    source_channel="mcp-supervisor",
+                    nodes=step_nodes,
+                    policy_profile=policy_profile or "autonomous",
+                    workspace_root=resolved_ws,
+                    requested_by="supervisor",
+                    ingress_metadata=metadata,
+                    team_id=team_id,
+                )
+                runner.wake_dispatcher()
+                task_id = getattr(ctx, "task_id", None) if ctx else None
+                return task_id, session_id
+
         ctx = runner.task_controller.enqueue_task(
             conversation_id=session_id,
             goal=description,
             source_channel="mcp-supervisor",
             kind="respond",
             policy_profile=policy_profile or "autonomous",
-            workspace_root=workspace_root or str(getattr(runner.agent, "workspace_root", "") or ""),
+            workspace_root=resolved_ws,
             parent_task_id=None,
             requested_by="supervisor",
             ingress_metadata=metadata,
@@ -324,6 +358,7 @@ class HermitMcpServer:
             policy_profile: str = "autonomous",
             await_completion: int = 0,
             workspace_root: str = "",
+            team_id: str = "",
         ) -> dict[str, Any]:
             """Submit one or more tasks to the Hermit kernel for governed execution.
 
@@ -336,11 +371,13 @@ class HermitMcpServer:
                 description: What the task should accomplish (single mode).
                 tasks: List of task dicts for batch mode. Each must contain:
                     - description (str): What the task should accomplish.
-                    Optional: priority (str), policy_profile (str).
+                    Optional: priority (str), policy_profile (str), team_id (str).
                 priority: Default priority — "low", "normal", or "high".
                 policy_profile: Default policy profile (default "autonomous").
                 await_completion: If > 0, wait this many seconds for results.
                     Default 0 (fire-and-forget).
+                workspace_root: Workspace root directory.
+                team_id: Team ID to use for team-aware DAG decomposition.
             """
             has_tasks = tasks is not None and len(tasks) > 0
 
@@ -371,8 +408,9 @@ class HermitMcpServer:
                         t_priority = task_def.get("priority", priority)
                         t_policy = task_def.get("policy_profile", policy_profile)
                         t_workspace = task_def.get("workspace_root", workspace_root)
+                        t_team = task_def.get("team_id", team_id) or None
                         tid, sid = self._submit_single(
-                            runner, desc, t_priority, t_policy, t_workspace
+                            runner, desc, t_priority, t_policy, t_workspace, team_id=t_team
                         )
                         if tid:
                             task_ids.append(tid)
@@ -423,6 +461,7 @@ class HermitMcpServer:
                 priority,
                 policy_profile,
                 workspace_root,
+                team_id=team_id or None,
             )
 
             if await_completion > 0 and task_id is not None:
@@ -1560,6 +1599,177 @@ class HermitMcpServer:
                         }
                     )
                 return {"lessons": out_lessons, "count": len(out_lessons)}
+            except Exception as exc:
+                return {"error": str(exc)}
+
+        # --------------------------------------------------------------
+        # Team management tools
+        # --------------------------------------------------------------
+
+        @self._mcp.tool()
+        def hermit_list_roles(  # pyright: ignore[reportUnusedFunction]
+            include_builtin: bool = True,
+        ) -> dict[str, Any]:
+            """List available role definitions for team assembly.
+
+            Returns all role definitions including name, description,
+            associated MCP servers, and skills.
+
+            Args:
+                include_builtin: Include builtin roles. Default True.
+            """
+            store = self._get_store()
+            try:
+                roles = store.list_role_definitions(include_builtin=include_builtin)
+                return {
+                    "roles": [
+                        {
+                            "role_id": r.role_id,
+                            "name": r.name,
+                            "description": r.description,
+                            "mcp_servers": r.mcp_servers,
+                            "skills": r.skills,
+                            "is_builtin": r.is_builtin,
+                        }
+                        for r in roles
+                    ],
+                    "count": len(roles),
+                }
+            except Exception as exc:
+                return {"error": str(exc)}
+
+        @self._mcp.tool()
+        def hermit_create_team(  # pyright: ignore[reportUnusedFunction]
+            title: str,
+            roles: dict[str, int] | None = None,
+            program_id: str = "",
+        ) -> dict[str, Any]:
+            """Create a team with a role assembly in one call.
+
+            Accepts a simplified roles dict mapping role names to worker counts.
+            Validates that each role name exists in the role definitions registry.
+
+            Args:
+                title: Team name (required, non-empty).
+                roles: Role assembly as {role_name: count}. Example:
+                    {"planner": 1, "executor": 3, "reviewer": 1}.
+                    If omitted, defaults to {"executor": 1}.
+                program_id: Parent program ID. If empty, uses the first
+                    available program or auto-creates a default one.
+            """
+            store = self._get_store()
+
+            title = title.strip()
+            if not title:
+                return {"error": "Title must not be empty."}
+
+            # Resolve roles — validate against role definitions
+            effective_roles = roles or {"executor": 1}
+            known_roles = {r.name for r in store.list_role_definitions()}
+            unknown = set(effective_roles.keys()) - known_roles
+            if unknown:
+                return {
+                    "error": f"Unknown role(s): {', '.join(sorted(unknown))}. "
+                    f"Available: {', '.join(sorted(known_roles))}",
+                }
+
+            # Build role_assembly in store format
+            role_assembly: dict[str, dict[str, Any]] = {
+                name: {"role": name, "count": max(1, count), "config": {}}
+                for name, count in effective_roles.items()
+            }
+
+            # Resolve program
+            pid = program_id.strip()
+            if pid:
+                program = store.get_program(pid)
+                if program is None:
+                    return {"error": f"Program not found: {pid}"}
+            else:
+                programs = store.list_programs()
+                if programs:
+                    pid = programs[0].program_id
+                else:
+                    program = store.create_program(
+                        title="Default",
+                        goal="Default program for standalone teams",
+                    )
+                    pid = program.program_id
+
+            try:
+                team = store.create_team(
+                    program_id=pid,
+                    title=title,
+                    workspace_id=f"ws-{pid}",
+                    role_assembly=role_assembly,
+                )
+                # Build response summary
+                assembly = team.role_assembly
+                role_summary = ", ".join(f"{spec.role}×{spec.count}" for spec in assembly.values())
+                total_workers = sum(spec.count for spec in assembly.values())
+                return {
+                    "team_id": team.team_id,
+                    "title": team.title,
+                    "status": team.status,
+                    "program_id": team.program_id,
+                    "roles": role_summary,
+                    "total_workers": total_workers,
+                    "role_assembly": {
+                        k: {"role": v.role, "count": v.count} for k, v in assembly.items()
+                    },
+                }
+            except Exception as exc:
+                return {"error": f"Failed to create team: {exc}"}
+
+        @self._mcp.tool()
+        def hermit_list_teams(  # pyright: ignore[reportUnusedFunction]
+            status: str = "",
+            limit: int = 50,
+        ) -> dict[str, Any]:
+            """List existing teams with their role assemblies.
+
+            Args:
+                status: Filter by team status (active, paused, blocked,
+                    completed, failed, archived, disbanded). Empty = all.
+                limit: Max teams to return. Default 50.
+            """
+            store = self._get_store()
+            try:
+                programs = store.list_programs(limit=1000)
+                all_teams: list[Any] = []
+                for prog in programs:
+                    batch = store.list_teams_by_program(
+                        program_id=prog.program_id,
+                        limit=limit - len(all_teams),
+                    )
+                    all_teams.extend(batch)
+                    if len(all_teams) >= limit:
+                        break
+                all_teams = all_teams[:limit]
+
+                # Apply status filter
+                if status:
+                    all_teams = [t for t in all_teams if t.status == status]
+
+                teams_out: list[dict[str, Any]] = []
+                for t in all_teams:
+                    assembly = t.role_assembly
+                    role_summary = ", ".join(
+                        f"{spec.role}×{spec.count}" for spec in assembly.values()
+                    )
+                    total_workers = sum(spec.count for spec in assembly.values())
+                    teams_out.append(
+                        {
+                            "team_id": t.team_id,
+                            "title": t.title,
+                            "status": t.status,
+                            "roles": role_summary,
+                            "total_workers": total_workers,
+                            "created_at": t.created_at,
+                        }
+                    )
+
+                return {"teams": teams_out, "count": len(teams_out)}
             except Exception as exc:
                 return {"error": str(exc)}
 

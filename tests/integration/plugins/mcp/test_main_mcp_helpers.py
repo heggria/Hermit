@@ -287,6 +287,7 @@ def test_mcp_client_helpers_and_call_paths(monkeypatch: pytest.MonkeyPatch) -> N
         parse_mcp_tool_name("plain-tool")
 
     mgr = object.__new__(McpClientManager)
+    mgr._connections_lock = __import__("threading").Lock()
     mgr._connections = {
         "server": _ServerConnection(
             spec=McpServerSpec(
@@ -333,7 +334,9 @@ def test_mcp_client_helpers_and_call_paths(monkeypatch: pytest.MonkeyPatch) -> N
     mgr._lifecycle_future = SimpleNamespace(
         result=lambda timeout=15: (_ for _ in ()).throw(RuntimeError("close boom"))
     )
-    mgr._thread = SimpleNamespace(join=lambda timeout=5: loop_calls.append("join"))
+    mgr._thread = SimpleNamespace(
+        join=lambda timeout=5: loop_calls.append("join"), is_alive=lambda: False
+    )
     mgr.close_all_sync()
     assert loop_calls == ["call", "shutdown", "call", "stop", "join"]
     assert mgr._connections == {}
@@ -342,7 +345,9 @@ def test_mcp_client_helpers_and_call_paths(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.asyncio
 async def test_mcp_call_tool_and_connect_one_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     mgr = object.__new__(McpClientManager)
+    mgr._connections_lock = __import__("threading").Lock()
     mgr._connections = {}
+    mgr._oauth_base_dir = None
 
     assert (
         await mgr._call_tool("missing", "tool", {}) == "Error: MCP server 'missing' not connected"

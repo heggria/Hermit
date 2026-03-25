@@ -187,7 +187,7 @@ def _network_read_registry() -> ToolRegistry:
             readonly=True,
             action_class="network_read",
             risk_hint="low",
-            requires_receipt=False,
+            requires_receipt=True,
         )
     )
     return registry

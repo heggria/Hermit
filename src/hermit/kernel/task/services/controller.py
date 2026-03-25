@@ -220,6 +220,7 @@ class TaskController:
         requested_by: str | None = None,
         ingress_metadata: dict[str, Any] | None = None,
         acceptance_criteria: list[str] | None = None,
+        team_id: str | None = None,
     ) -> tuple[TaskExecutionContext, Any, dict[str, str], list[TaskExecutionContext]]:
         """Create a task with a DAG of steps.
 
@@ -240,6 +241,7 @@ class TaskController:
             policy_profile=policy_profile,
             requested_by=requested_by,
             acceptance_criteria=acceptance_criteria,
+            team_id=team_id,
         )
         builder = StepDAGBuilder(self.store)
         dag, key_to_step_id = builder.build_and_materialize(
@@ -291,6 +293,7 @@ class TaskController:
         requested_by: str | None = None,
         ingress_metadata: dict[str, Any] | None = None,
         source_ref: str | None = None,
+        team_id: str | None = None,
     ) -> TaskExecutionContext:
         self.store.ensure_conversation(
             conversation_id,
@@ -316,6 +319,7 @@ class TaskController:
             policy_profile=policy_profile,
             requested_by=requested_by,
             continuation_anchor=dict(metadata.get("continuation_anchor", {}) or {}) or None,
+            team_id=team_id,
         )
         step = self.store.create_step(task_id=task.task_id, kind=kind, status="ready")
         attempt_context = {

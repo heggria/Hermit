@@ -240,6 +240,7 @@ export default function ProjectTasks() {
         {selectedTask ? (
           <TaskDetailPanel
             task={selectedTask}
+            programId={programId}
             onClose={() => setSelectedTaskId(null)}
           />
         ) : (

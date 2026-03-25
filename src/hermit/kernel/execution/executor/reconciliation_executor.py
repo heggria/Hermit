@@ -117,6 +117,7 @@ class ReconciliationExecutor:
         result_code_hint: str,
         authorized_effect_summary: str,
         resume_execution: bool = False,
+        defer_completion: bool = False,
     ) -> tuple[ReconciliationRecord | None, ReconcileOutcome | None]:
         contract_ref, _evidence_case_ref, _authorization_plan_ref = contract_refs(
             self.store, attempt_ctx
@@ -174,17 +175,25 @@ class ReconciliationExecutor:
             )
             return reconciliation, outcome
         if result_class == "satisfied":
-            self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="succeeded")
-            self.store.update_step(attempt_ctx.step_id, status="succeeded")
-            if not self.store.has_non_terminal_steps(attempt_ctx.task_id):
-                self.store.update_task_status(attempt_ctx.task_id, "completed")
-                self.learn_task_pattern(attempt_ctx.task_id)
+            if defer_completion:
+                # Runner owns the lifecycle — don't finalize step/task here.
+                # The runner will call finalize_result() after the LLM
+                # conversation loop ends, carrying the final result_text.
+                set_attempt_phase(
+                    self.store, attempt_ctx, "reconciled", reason="reconciliation_satisfied"
+                )
             else:
-                # DAG task still has pending steps — keep it running, not completed.
-                self.store.update_task_status(attempt_ctx.task_id, "running")
-            set_attempt_phase(
-                self.store, attempt_ctx, "reconciled", reason="reconciliation_satisfied"
-            )
+                self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="succeeded")
+                self.store.update_step(attempt_ctx.step_id, status="succeeded")
+                if not self.store.has_non_terminal_steps(attempt_ctx.task_id):
+                    self.store.update_task_status(attempt_ctx.task_id, "completed")
+                    self.learn_task_pattern(attempt_ctx.task_id)
+                else:
+                    # DAG task still has pending steps — keep it running, not completed.
+                    self.store.update_task_status(attempt_ctx.task_id, "running")
+                set_attempt_phase(
+                    self.store, attempt_ctx, "reconciled", reason="reconciliation_satisfied"
+                )
             return reconciliation, outcome
         if result_class in {"partial", "satisfied_with_downgrade"}:
             self.store.update_step_attempt(attempt_ctx.step_attempt_id, status="reconciling")

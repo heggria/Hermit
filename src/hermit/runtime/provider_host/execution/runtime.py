@@ -485,9 +485,43 @@ class AgentRuntime:
             messages.append({"role": "assistant", "content": response_blocks})
 
             if response.stop_reason != "tool_use":
+                text = extract_text(response_blocks)
+                if not text and tool_calls > 0:
+                    # LLM finished tool execution but produced no text summary.
+                    # Request one final response with tools disabled.
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": self._t(
+                                "prompt.runtime.summarize_results",
+                                default=(
+                                    "Please provide a brief summary of what you did"
+                                    " and the results."
+                                ),
+                            ),
+                        }
+                    )
+                    try:
+                        summary_resp = self.provider.generate(
+                            self._request(
+                                messages,
+                                disable_tools=True,
+                                readonly_only=False,
+                                stream=False,
+                            )
+                        )
+                        usage.input_tokens += summary_resp.usage.input_tokens
+                        usage.output_tokens += summary_resp.usage.output_tokens
+                        usage.cache_read_tokens += summary_resp.usage.cache_read_tokens
+                        usage.cache_creation_tokens += summary_resp.usage.cache_creation_tokens
+                        summary_blocks = [normalize_block(b) for b in summary_resp.content]
+                        messages.append({"role": "assistant", "content": summary_blocks})
+                        text = extract_text(summary_blocks)
+                    except Exception:
+                        log.warning("summary_request_failed", exc_info=True)
                 return self._usage_to_result(
                     usage,
-                    text=extract_text(response_blocks),
+                    text=text,
                     turns=turn,
                     tool_calls=tool_calls,
                     thinking=extract_thinking(response_blocks),

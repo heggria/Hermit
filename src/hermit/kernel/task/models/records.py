@@ -18,6 +18,7 @@ class TaskRecord:
     source_channel: str
     parent_task_id: str | None = None
     program_id: str | None = None
+    team_id: str | None = None
     task_contract_ref: str | None = None
     created_at: float = 0.0
     updated_at: float = 0.0

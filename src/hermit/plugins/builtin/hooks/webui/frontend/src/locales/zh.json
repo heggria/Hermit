@@ -202,12 +202,31 @@
     }
   },
   "approvals": {
-    "title": "待审批",
+    "title": "审批管理",
+    "subtitle": "审核和管理治理审批请求。",
     "loading": "加载审批中...",
     "loadError": "加载审批失败：{{message}}",
     "noApprovals": "暂无待审批项，一切正常。",
+    "noResults": "没有匹配的审批项。",
+    "noResultsHint": "尝试调整筛选条件或搜索关键词。",
+    "pendingCount": "{{count}} 项待审",
+    "searchPlaceholder": "搜索工具或任务...",
+    "filterAll": "全部",
+    "filterPending": "待审批",
+    "filterApproved": "已批准",
+    "filterDenied": "已拒绝",
     "approve": "批准",
     "deny": "拒绝",
+    "stats": {
+      "pending": "待审批",
+      "pendingDesc": "等待决策",
+      "approved": "已批准",
+      "approvedDesc": "已授权的操作",
+      "denied": "已拒绝",
+      "deniedDesc": "已驳回的操作",
+      "recent": "近 24 小时",
+      "recentDesc": "最近处理的审批"
+    },
     "denyDialog": {
       "title": "拒绝审批",
       "description": "请提供拒绝该操作的原因，此信息将记录在治理账本中。",
@@ -267,6 +286,7 @@
   },
   "memory": {
     "title": "记忆",
+    "subtitle": "通过任务执行获得的证据治理知识",
     "searchPlaceholder": "搜索记忆...",
     "filterAll": "全部",
     "filterActive": "有效",
@@ -276,14 +296,33 @@
     "noMemories": "未找到记忆。",
     "noResults": "未找到记忆。",
     "confidence": "置信度",
+    "stats": {
+      "total": "总计",
+      "totalDesc": "条记忆",
+      "avgConfidence": "平均置信度",
+      "avgConfidenceDesc": "所有记录",
+      "evidenceBacked": "证据支撑",
+      "evidenceBackedDesc": "包含证据引用",
+      "recentPromotions": "近期",
+      "recentPromotionsDesc": "24 小时内新增"
+    },
     "card": {
       "confidence": "置信度",
       "evidence": "{{count}} 条证据",
-      "evidences": "{{count}} 条证据"
+      "evidences": "{{count}} 条证据",
+      "importance": "重要性"
+    },
+    "category": {
+      "contract_template": "合约模板",
+      "execution_pattern": "执行模式",
+      "policy_learning": "策略学习",
+      "risk_assessment": "风险评估",
+      "unknown": "通用"
     }
   },
   "signals": {
     "title": "证据信号",
+    "subtitle": "从代码健康、测试和安全扫描中自动检测的证据",
     "actionable": "{{count}} 条可操作",
     "filterAll": "全部",
     "filterPending": "待处理",
@@ -293,14 +332,35 @@
     "loadError": "加载信号失败",
     "noSignals": "未找到信号。",
     "noResults": "未找到信号。",
+    "noResultsHint": "当巡查检测到代码健康、测试、安全或覆盖率问题时，证据信号将出现在这里。",
     "goal": "目标",
     "act": "执行",
     "suppress": "抑制",
+    "confidence": "{{value}}%",
+    "stats": {
+      "total": "总计",
+      "totalDesc": "个信号",
+      "pending": "待处理",
+      "pendingDesc": "等待操作",
+      "highRisk": "高风险",
+      "highRiskDesc": "高或严重级别",
+      "recent": "近期",
+      "recentDesc": "24 小时内检测"
+    },
+    "source": {
+      "test_failure": "测试失败",
+      "todo_scan": "待办标记",
+      "lint_violation": "代码规范",
+      "security_vuln": "安全漏洞",
+      "coverage_drop": "覆盖率",
+      "unknown": "其他"
+    },
     "card": {
       "confidence": "{{percent}}% 置信度",
       "goal": "目标：",
       "act": "执行",
-      "suppress": "抑制"
+      "suppress": "抑制",
+      "expired": "已过期"
     }
   },
   "metrics": {
@@ -854,6 +914,7 @@
     "toolCount": "{{count}} 个工具",
     "toolCount_plural": "{{count}} 个工具",
     "create": "添加 MCP 服务器",
+    "reload": "重新加载",
     "builtinBadge": "内置",
     "deleteTitle": "删除 MCP 服务器",
     "deleteConfirm": "确定要删除 \"{{name}}\" 吗？更改在重载后生效。",

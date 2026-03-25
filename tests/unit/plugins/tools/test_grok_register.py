@@ -25,7 +25,7 @@ def test_grok_search_is_readonly_and_low_risk() -> None:
     assert tool.action_class == "network_read"
     assert tool.idempotent is True
     assert tool.risk_hint == "low"
-    assert tool.requires_receipt is False
+    assert tool.requires_receipt is True
 
 
 def test_grok_search_schema_requires_query() -> None:

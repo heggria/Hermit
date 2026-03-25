@@ -52,9 +52,9 @@ class ToolSpec:
                 f"Tool '{self.name}' has unsupported risk_hint '{self.risk_hint}'."
             )
         if self.readonly:
-            if self.requires_receipt is not False:
+            if self.requires_receipt is None:
                 raise ToolGovernanceError(
-                    f"Readonly tool '{self.name}' must declare requires_receipt=False."
+                    f"Readonly tool '{self.name}' must declare requires_receipt explicitly."
                 )
             return
         if self.risk_hint is None:

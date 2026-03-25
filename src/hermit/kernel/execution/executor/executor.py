@@ -1739,7 +1739,9 @@ class ToolExecutor:
                 result_code="succeeded",
                 idempotency_key=action_request.idempotency_key,
                 result_summary=self._auth_handler.successful_result_summary(
-                    tool_name=tool_name, approval_mode=approval_mode
+                    tool_name=tool_name,
+                    approval_mode=approval_mode,
+                    raw_result=raw_result,
                 ),
                 rollback_supported=rollback_plan["supported"],
                 rollback_strategy=rollback_plan["strategy"],
@@ -1769,6 +1771,7 @@ class ToolExecutor:
                 witness_ref=witness_ref,
                 result_code_hint="succeeded",
                 authorized_effect_summary=auth_summary,
+                defer_completion=True,
             )
             execution_status = ReconciliationExecutor.reconciliation_execution_status(
                 reconciliation

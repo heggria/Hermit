@@ -7,6 +7,7 @@ import type {
   StepRecord,
   ApprovalRecord,
   ReceiptRecord,
+  ToolCallRecord,
   MemoryRecord,
   EvidenceSignal,
   GovernanceMetrics,
@@ -35,11 +36,13 @@ const keys = {
     steps: (taskId: string) => ['tasks', taskId, 'steps'] as const,
     events: (taskId: string) => ['tasks', taskId, 'events'] as const,
     receipts: (taskId: string) => ['tasks', taskId, 'receipts'] as const,
+    toolCalls: (taskId: string) => ['tasks', taskId, 'tool-calls'] as const,
     proof: (taskId: string) => ['tasks', taskId, 'proof'] as const,
   },
   approvals: {
     all: ['approvals'] as const,
     list: (status?: string, limit?: number) => ['approvals', { status, limit }] as const,
+    stats: ['approvals', 'stats'] as const,
   },
   metrics: {
     governance: (hours?: number) => ['metrics', 'governance', { hours }] as const,
@@ -106,7 +109,7 @@ export function useTaskList(status?: string, limit = 20) {
         `/api/tasks?${params.toString()}`,
       );
     },
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
   });
 }
 
@@ -118,11 +121,11 @@ export function useTask(taskId: string) {
         `/api/tasks/${taskId}`,
       ),
     enabled: !!taskId,
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
   });
 }
 
-export function useTaskSteps(taskId: string) {
+export function useTaskSteps(taskId: string, poll = true) {
   return useQuery({
     queryKey: keys.tasks.steps(taskId),
     queryFn: () =>
@@ -130,7 +133,8 @@ export function useTaskSteps(taskId: string) {
         `/api/tasks/${taskId}/steps`,
       ),
     enabled: !!taskId,
-    refetchInterval: 2_000,
+    refetchInterval: poll ? 5_000 : false,
+    staleTime: poll ? undefined : 30_000,
   });
 }
 
@@ -142,11 +146,11 @@ export function useTaskEvents(taskId: string) {
         `/api/tasks/${taskId}/events`,
       ),
     enabled: !!taskId,
-    refetchInterval: 10_000,
+    refetchInterval: 15_000,
   });
 }
 
-export function useTaskReceipts(taskId: string) {
+export function useTaskReceipts(taskId: string, poll = true) {
   return useQuery({
     queryKey: keys.tasks.receipts(taskId),
     queryFn: () =>
@@ -154,7 +158,21 @@ export function useTaskReceipts(taskId: string) {
         `/api/tasks/${taskId}/receipts`,
       ),
     enabled: !!taskId,
-    refetchInterval: 3_000,
+    refetchInterval: poll ? 10_000 : false,
+    staleTime: poll ? undefined : 30_000,
+  });
+}
+
+export function useToolCalls(taskId: string, poll = true) {
+  return useQuery({
+    queryKey: keys.tasks.toolCalls(taskId),
+    queryFn: () =>
+      api<{ task_id: string; tool_calls: ToolCallRecord[]; total: number }>(
+        `/api/tasks/${taskId}/tool-calls`,
+      ),
+    enabled: !!taskId,
+    refetchInterval: poll ? 5_000 : false,
+    staleTime: poll ? undefined : 30_000,
   });
 }
 
@@ -182,7 +200,7 @@ export function useSubmitTask() {
 }
 
 // Task output
-export function useTaskOutput(taskId: string) {
+export function useTaskOutput(taskId: string, poll = true) {
   return useQuery({
     queryKey: ['tasks', taskId, 'output'] as const,
     queryFn: () =>
@@ -204,7 +222,8 @@ export function useTaskOutput(taskId: string) {
         total_actions: number;
       }>(`/api/tasks/${taskId}/output`),
     enabled: !!taskId,
-    refetchInterval: 5_000,
+    refetchInterval: poll ? 10_000 : false,
+    staleTime: poll ? undefined : 30_000,
   });
 }
 
@@ -265,7 +284,23 @@ export function useApprovals(status?: string, limit = 50) {
         `/api/approvals?${params.toString()}`,
       );
     },
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
+  });
+}
+
+export interface ApprovalStats {
+  total: number;
+  pending: number;
+  approved: number;
+  denied: number;
+  recent_24h: number;
+}
+
+export function useApprovalStats() {
+  return useQuery({
+    queryKey: keys.approvals.stats,
+    queryFn: () => api<ApprovalStats>('/api/approvals/stats'),
+    refetchInterval: 10_000,
   });
 }
 
@@ -342,6 +377,25 @@ export function useMemory(memoryId: string) {
   });
 }
 
+export interface MemoryStats {
+  total: number;
+  by_status: Record<string, number>;
+  by_category: Record<string, number>;
+  avg_confidence: number;
+  high_confidence_count: number;
+  low_confidence_count: number;
+  evidence_backed_count: number;
+  recent_promotions: number;
+}
+
+export function useMemoryStats() {
+  return useQuery({
+    queryKey: ['memory', 'stats'] as const,
+    queryFn: () => api<MemoryStats>('/api/memory/stats'),
+    refetchInterval: 30_000,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Evidence Signals
 // ---------------------------------------------------------------------------
@@ -367,7 +421,27 @@ export function useSignalAction() {
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.signals.all });
+      queryClient.invalidateQueries({ queryKey: ['signals', 'stats'] });
     },
+  });
+}
+
+export interface SignalStats {
+  total: number;
+  pending_count: number;
+  high_risk_count: number;
+  avg_confidence: number;
+  recent_count: number;
+  by_disposition: Record<string, number>;
+  by_risk: Record<string, number>;
+  by_source: Record<string, number>;
+}
+
+export function useSignalStats() {
+  return useQuery({
+    queryKey: ['signals', 'stats'] as const,
+    queryFn: () => api<SignalStats>('/api/signals/stats'),
+    refetchInterval: 15_000,
   });
 }
 
@@ -537,7 +611,7 @@ export function useProgramTasks(programId: string, status?: string, limit = 50) 
       );
     },
     enabled: !!programId,
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
   });
 }
 
@@ -576,7 +650,7 @@ export function useProgramApprovals(programId: string, status?: string) {
       );
     },
     enabled: !!programId,
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
   });
 }
 
@@ -640,7 +714,7 @@ export function useCreateTeam() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: {
-      program_id: string;
+      program_id?: string;
       title: string;
       role_assembly?: Record<string, unknown>;
     }) =>
@@ -877,6 +951,17 @@ export function useUpdateMcpServer() {
       if (data.needs_reload) {
         await api('/api/mcp-servers/reload', { method: 'POST' }).catch(() => {});
       }
+      queryClient.invalidateQueries({ queryKey: keys.config.mcpServers });
+    },
+  });
+}
+
+export function useReloadMcpServers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<{ status: string }>('/api/mcp-servers/reload', { method: 'POST' }),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.config.mcpServers });
     },
   });

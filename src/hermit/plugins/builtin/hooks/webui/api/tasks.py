@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -106,9 +107,40 @@ def _extract_action_label(store: Any, action_request_ref: str | None) -> str | N
         target = tool_input.get("target")
         if target:
             return target
+        # search tools → query string
+        query = tool_input.get("query")
+        if query:
+            return str(query)[:_ACTION_LABEL_MAX]
     except Exception:
         return None
     return None
+
+
+def _synthesize_from_receipt_artifacts(store: Any, receipts: list[Any]) -> str:
+    """Build a response from tool output artifacts when no LLM text is available."""
+    parts: list[str] = []
+    for r in receipts:
+        output_refs_raw = getattr(r, "output_refs_json", "[]") or "[]"
+        try:
+            output_refs = (
+                json.loads(output_refs_raw)
+                if isinstance(output_refs_raw, str)
+                else (output_refs_raw if isinstance(output_refs_raw, list) else [])
+            )
+        except Exception:
+            continue
+        for ref in output_refs:
+            try:
+                art = store.get_artifact(ref)
+                if art is None or art.kind != "tool_output":
+                    continue
+                payload = json.loads(Path(art.uri).read_text(encoding="utf-8"))
+                stdout = payload.get("stdout", "")
+                if stdout and isinstance(stdout, str) and stdout.strip():
+                    parts.append(stdout.strip())
+            except Exception:
+                continue
+    return "\n\n".join(parts) if parts else ""
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +251,71 @@ def list_receipts(task_id: str) -> dict[str, Any]:
     }
 
 
+@router.get("/tasks/{task_id}/tool-calls")
+def list_tool_calls(task_id: str) -> dict[str, Any]:
+    """Get all tool calls for a task from action.requested events.
+
+    This complements ``/receipts`` — receipts only exist for governed
+    (mutable) actions, whereas action.requested events are emitted for
+    *every* tool invocation including read-only ones.
+    """
+    store = get_store()
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    action_events = store.list_events(task_id=task_id, event_type="action.requested", limit=200)
+    # Build a receipt lookup by action_request_ref for result enrichment
+    receipts = store.list_receipts(task_id=task_id)
+    receipt_by_action_ref: dict[str, Any] = {}
+    for r in receipts:
+        ref = getattr(r, "action_request_ref", None)
+        if ref:
+            receipt_by_action_ref[ref] = r
+
+    tool_calls: list[dict[str, Any]] = []
+    for ev in action_events:
+        payload = (
+            ev.get("payload", {}) if isinstance(ev, dict) else (getattr(ev, "payload", {}) or {})
+        )
+        if not isinstance(payload, dict):
+            try:
+                payload = json.loads(payload) if isinstance(payload, str) else {}
+            except Exception:
+                payload = {}
+        tool_name = payload.get("tool_name", "")
+        action_class = payload.get("action_class", "")
+        artifact_ref = payload.get("artifact_ref", "")
+        occurred_at = (
+            ev.get("occurred_at") if isinstance(ev, dict) else getattr(ev, "occurred_at", None)
+        )
+        step_id = ev.get("step_id", "") if isinstance(ev, dict) else getattr(ev, "step_id", "")
+
+        entry: dict[str, Any] = {
+            "tool_name": tool_name,
+            "action_class": action_class,
+            "step_id": step_id,
+            "occurred_at": occurred_at,
+            "has_receipt": artifact_ref in receipt_by_action_ref,
+        }
+        # Try to extract a label from the action artifact
+        label = _extract_action_label(store, artifact_ref or None)
+        if label is not None:
+            entry["action_label"] = label
+        # Enrich with receipt result if available
+        receipt = receipt_by_action_ref.get(artifact_ref)
+        if receipt is not None:
+            entry["result_code"] = getattr(receipt, "result_code", None)
+            entry["rollback_supported"] = getattr(receipt, "rollback_supported", False)
+        tool_calls.append(entry)
+
+    return {
+        "task_id": task_id,
+        "tool_calls": tool_calls,
+        "total": len(tool_calls),
+    }
+
+
 @router.get("/tasks/{task_id}/proof")
 def get_proof(task_id: str) -> dict[str, Any]:
     """Get proof summary for a task."""
@@ -247,7 +344,7 @@ def get_case(task_id: str) -> dict[str, Any]:
 
 
 @router.post("/tasks")
-def submit_task(body: TaskSubmitRequest) -> dict[str, Any]:
+async def submit_task(body: TaskSubmitRequest) -> dict[str, Any]:
     """Submit a new task for execution."""
     runner = get_runner()
 
@@ -258,7 +355,7 @@ def submit_task(body: TaskSubmitRequest) -> dict[str, Any]:
 
     policy_profile = body.policy_profile or "autonomous"
 
-    try:
+    def _enqueue() -> Any:
         ctx = runner.task_controller.enqueue_task(
             conversation_id=session_id,
             goal=description,
@@ -277,6 +374,10 @@ def submit_task(body: TaskSubmitRequest) -> dict[str, Any]:
             source_ref="webui",
         )
         runner.wake_dispatcher()
+        return ctx
+
+    try:
+        ctx = await asyncio.to_thread(_enqueue)
     except Exception as exc:
         _log.exception("webui_task_submit_error", error=str(exc))  # type: ignore[call-arg]
         raise HTTPException(status_code=500, detail=f"Failed to submit task: {exc}") from exc
@@ -450,6 +551,10 @@ def get_task_output(task_id: str) -> dict[str, Any]:
         summaries = [s["result_summary"] for s in receipt_summaries if s.get("result_summary")]
         if summaries:
             response_text = summaries[-1]
+
+    # 7. Fallback: synthesize from tool output artifacts
+    if not response_text:
+        response_text = _synthesize_from_receipt_artifacts(store, receipts)
 
     return {
         "task_id": task_id,

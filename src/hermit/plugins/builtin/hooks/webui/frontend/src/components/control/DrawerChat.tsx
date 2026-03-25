@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Check, Loader2, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { useSteerTask, useSubmitTask } from "@/api/hooks";
+import { useSteerTask, useSubmitTask, useSubmitProgramTask } from "@/api/hooks";
 import type { TaskRecord } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -20,10 +20,11 @@ const LINE_HEIGHT_PX = 24;
 
 interface DrawerChatProps {
   readonly task: TaskRecord;
+  readonly programId?: string;
   readonly onNewTask?: () => void;
 }
 
-export function DrawerChat({ task, onNewTask }: DrawerChatProps) {
+export function DrawerChat({ task, programId, onNewTask }: DrawerChatProps) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
   const [flash, setFlash] = useState<"success" | "error" | null>(null);
@@ -32,9 +33,13 @@ export function DrawerChat({ task, onNewTask }: DrawerChatProps) {
 
   const steerMutation = useSteerTask();
   const submitMutation = useSubmitTask();
+  const submitProgramMutation = useSubmitProgramTask();
 
   const isTerminal = TERMINAL_STATUSES.has(task.status);
-  const isPending = steerMutation.isPending || submitMutation.isPending;
+  const isPending =
+    steerMutation.isPending ||
+    submitMutation.isPending ||
+    submitProgramMutation.isPending;
 
   const showFlash = useCallback((type: "success" | "error", message?: string) => {
     setFlash(type);
@@ -60,20 +65,31 @@ export function DrawerChat({ task, onNewTask }: DrawerChatProps) {
     if (isTerminal) {
       // Continue mode: create a new follow-up task
       const description = `[${t("controlCenter.drawer.followUpPrefix")}: ${task.title}] ${trimmed}`;
-      submitMutation.mutate(
-        { description, policy_profile: task.policy_profile ?? "autonomous" },
-        {
-          onSuccess: () => {
-            setInput("");
-            if (textareaRef.current) textareaRef.current.style.height = "auto";
-            showFlash("success");
-            onNewTask?.();
-          },
-          onError: (err) => {
-            showFlash("error", err instanceof Error ? err.message : String(err));
-          },
+      const policyProfile = task.policy_profile ?? "autonomous";
+
+      const callbacks = {
+        onSuccess: () => {
+          setInput("");
+          if (textareaRef.current) textareaRef.current.style.height = "auto";
+          showFlash("success");
+          onNewTask?.();
         },
-      );
+        onError: (err: Error) => {
+          showFlash("error", err instanceof Error ? err.message : String(err));
+        },
+      };
+
+      if (programId) {
+        submitProgramMutation.mutate(
+          { programId, description, policy_profile: policyProfile },
+          callbacks,
+        );
+      } else {
+        submitMutation.mutate(
+          { description, policy_profile: policyProfile },
+          callbacks,
+        );
+      }
     } else {
       // Steer mode: send directive to running task
       steerMutation.mutate(
@@ -95,8 +111,10 @@ export function DrawerChat({ task, onNewTask }: DrawerChatProps) {
     isPending,
     isTerminal,
     task,
+    programId,
     steerMutation,
     submitMutation,
+    submitProgramMutation,
     onNewTask,
     showFlash,
     t,

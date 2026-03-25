@@ -3,12 +3,66 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 
 from fastapi import APIRouter, HTTPException, Query
 
 from hermit.plugins.builtin.hooks.webui.api.deps import get_store
 
 router = APIRouter()
+
+
+@router.get("/signals/stats")
+async def signal_stats() -> dict:
+    """Aggregate statistics across all evidence signals."""
+    store = get_store()
+    try:
+        records = store.list_signals(limit=5000)
+    except Exception:
+        records = []
+
+    total = len(records)
+    now = time.time()
+    cutoff_24h = now - 86400.0
+
+    by_disposition: Counter[str] = Counter()
+    by_risk: Counter[str] = Counter()
+    by_source: Counter[str] = Counter()
+    confidence_sum = 0.0
+    high_risk_count = 0
+    recent_count = 0
+
+    for rec in records:
+        disposition = getattr(rec, "disposition", "unknown") or "unknown"
+        by_disposition[disposition] += 1
+
+        risk = getattr(rec, "risk_level", "unknown") or "unknown"
+        by_risk[risk] += 1
+        if risk in ("high", "critical"):
+            high_risk_count += 1
+
+        source = getattr(rec, "source_kind", "unknown") or "unknown"
+        by_source[source] += 1
+
+        confidence_sum += float(getattr(rec, "confidence", 0.5) or 0.5)
+
+        created_at = getattr(rec, "created_at", None)
+        if created_at is not None and float(created_at) >= cutoff_24h:
+            recent_count += 1
+
+    avg_confidence = round(confidence_sum / total, 4) if total > 0 else 0.0
+    pending_count = by_disposition.get("pending", 0)
+
+    return {
+        "total": total,
+        "pending_count": pending_count,
+        "high_risk_count": high_risk_count,
+        "avg_confidence": avg_confidence,
+        "recent_count": recent_count,
+        "by_disposition": dict(by_disposition),
+        "by_risk": dict(by_risk),
+        "by_source": dict(by_source),
+    }
 
 
 @router.get("/signals")

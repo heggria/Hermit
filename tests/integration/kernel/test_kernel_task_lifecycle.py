@@ -524,7 +524,7 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
     # async attempt → requeued as ready
     async_update = updates_by_id["attempt-running"]
     assert async_update["status"] == "ready"
-    assert async_update["status_reason"] == "worker_interrupted_requeued"
+    assert async_update["waiting_reason"] == "worker_interrupted_requeued"
     assert async_update["context"]["recovered_after_interrupt"] is True
     assert async_update["context"]["reentry_required"] is True
     assert async_update["context"]["reentry_boundary"] == "policy_reentry"
@@ -533,7 +533,7 @@ def test_kernel_dispatch_service_recovers_async_attempts_and_runs_loop(monkeypat
     # sync attempt → cancelled as orphaned
     sync_update = updates_by_id["attempt-sync"]
     assert sync_update["status"] == "cancelled"
-    assert sync_update["status_reason"] == "worker_interrupted_sync_orphaned"
+    assert sync_update["waiting_reason"] == "worker_interrupted_sync_orphaned"
     assert sync_update["context"]["recovery_action"] == "cancelled_orphaned_sync"
 
     step_updates_by_id = {sid: kwargs for sid, kwargs in failed_step_updates}

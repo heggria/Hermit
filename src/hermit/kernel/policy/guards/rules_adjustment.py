@@ -153,11 +153,14 @@ def evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
         ]
 
     if request.action_class in {"network_read", "delegate_reasoning", "ephemeral_ui_mutation"}:
+        # Respect the tool's requires_receipt flag for network_read actions;
+        # delegate_reasoning and ephemeral_ui_mutation never need receipts.
+        need_receipt = request.requires_receipt if request.action_class == "network_read" else False
         return [
             RuleOutcome(
                 verdict="allow",
                 reasons=[PolicyReason("autonomous_passthrough", "Autonomous safe action.")],
-                obligations=PolicyObligations(require_receipt=False),
+                obligations=PolicyObligations(require_receipt=need_receipt),
                 risk_level="low",
             )
         ]

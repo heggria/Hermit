@@ -8,6 +8,7 @@ Instructions for Codex and other agentic tooling working in the Hermit repositor
 - README Excalidraw assets skill: [`.agents/skills/hermit-readme-excalidraw-assets/SKILL.md`](.agents/skills/hermit-readme-excalidraw-assets/SKILL.md)
 - Self-iteration skill: [`.agents/skills/hermit-iterate/SKILL.md`](.agents/skills/hermit-iterate/SKILL.md)
 - Hermit delegation skill: [`.agents/skills/hermit-delegate/SKILL.md`](.agents/skills/hermit-delegate/SKILL.md)
+- Team creation skill: [`.agents/skills/hermit-create-team/SKILL.md`](.agents/skills/hermit-create-team/SKILL.md)
 
 Use the delegation skill when:
 
@@ -33,6 +34,12 @@ Use the self-iteration skill when:
 
 - the user provides a spec file and asks to iterate, or says "iterate on specs/xxx.md"
 - running a spec-driven self-iteration workflow (spec → Hermit execution → proof → PR)
+
+Use the team creation skill when:
+
+- the user wants to create a team with multiple roles quickly
+- the user describes a team composition (e.g. "3 executors + 1 planner")
+- the user says "create team", "build a team", "set up a team"
 
 ## Project Overview
 

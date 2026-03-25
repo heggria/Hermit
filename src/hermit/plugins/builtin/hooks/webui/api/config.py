@@ -165,6 +165,11 @@ def _enrich_auth_status(
             info["auth_type"] = auth_meta.get("type")
             info["auth_token_url"] = auth_meta.get("token_url")
             info["auth_env_key"] = auth_meta.get("env_key")
+        elif info.get("transport") == "http" and entry.get("url"):
+            # HTTP MCP servers without explicit _auth default to OAuth.
+            info["auth_type"] = "oauth"
+            info["auth_token_url"] = None
+            info["auth_env_key"] = None
         else:
             info["auth_type"] = None
             info["auth_token_url"] = None

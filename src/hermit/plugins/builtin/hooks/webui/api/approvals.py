@@ -86,6 +86,28 @@ def _resolve(approval_id: str, *, action: str, reason: str = "") -> dict[str, An
 # ------------------------------------------------------------------
 
 
+@router.get("/approvals/stats")
+async def approval_stats() -> dict[str, Any]:
+    """Return aggregate approval statistics."""
+    store = get_store()
+    all_approvals = store.list_approvals(limit=500)
+    pending = sum(1 for a in all_approvals if a.status == "pending")
+    approved = sum(1 for a in all_approvals if a.status == "approved")
+    denied = sum(1 for a in all_approvals if a.status == "denied")
+    # Recent: resolved in the last 24 hours
+    import time as _time
+
+    cutoff = _time.time() - 86400
+    recent = sum(1 for a in all_approvals if a.resolved_at is not None and a.resolved_at >= cutoff)
+    return {
+        "total": len(all_approvals),
+        "pending": pending,
+        "approved": approved,
+        "denied": denied,
+        "recent_24h": recent,
+    }
+
+
 @router.get("/approvals")
 async def list_approvals(
     status: str | None = Query(None, description="Filter by status (e.g. 'pending')"),
