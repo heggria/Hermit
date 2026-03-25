@@ -97,7 +97,8 @@
       "followUp": "后续任务",
       "steerSuccess": "引导消息已发送",
       "followUpSuccess": "后续任务已创建",
-      "followUpPrefix": "基于"
+      "followUpPrefix": "基于",
+      "error": "操作失败"
     }
   },
   "dashboard": {
@@ -787,7 +788,8 @@
       "add": "添加",
       "adding": "添加中...",
       "progress": "{{completed}}/{{total}} 已完成",
-      "empty": "暂无里程碑。",
+      "empty": "暂无里程碑",
+      "emptyHint": "添加里程碑来追踪团队的关键进展节点",
       "pending": "待定",
       "active": "进行中",
       "completed": "已完成",

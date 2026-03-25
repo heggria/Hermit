@@ -97,7 +97,8 @@
       "followUp": "Follow-up task",
       "steerSuccess": "Steering message sent",
       "followUpSuccess": "Follow-up task created",
-      "followUpPrefix": "Follow-up from"
+      "followUpPrefix": "Follow-up from",
+      "error": "Something went wrong"
     }
   },
   "dashboard": {
@@ -787,7 +788,8 @@
       "add": "Add",
       "adding": "Adding...",
       "progress": "{{completed}}/{{total}} completed",
-      "empty": "No milestones yet.",
+      "empty": "No milestones yet",
+      "emptyHint": "Add milestones to track key progress checkpoints",
       "pending": "Pending",
       "active": "Active",
       "completed": "Completed",

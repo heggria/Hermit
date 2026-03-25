@@ -35,17 +35,22 @@ const Config = lazy(() => import('@/pages/Config'));
 function HermitLogo({ className }: { readonly className?: string }) {
   return (
     <svg
-      viewBox="0 0 32 32"
+      viewBox="0 0 1024 1024"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      <rect width="32" height="32" rx="7" fill="currentColor" />
-      <path
-        d="M16 6.5L8 10.5v6c0 5.6 3.4 10.8 8 12.5 4.6-1.7 8-6.9 8-12.5v-6L16 6.5z"
-        fill="white"
-        fillOpacity={0.93}
-      />
+      <rect width="1024" height="1024" rx="228" fill="currentColor" />
+      <g transform="translate(-81 -83) scale(1.15)" fill="none">
+        <g transform="translate(-70 -42)">
+          <path d="M726 300C799 350 846 433 846 526C846 676 725 798 575 798C437 798 325 686 325 548C325 428 410 328 526 306" stroke="white" strokeWidth="106" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M366 676C410 736 481 771 556 771H602" stroke="white" strokeWidth="96" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M448 517L415 447" stroke="white" strokeWidth="58" strokeLinecap="round"/>
+          <path d="M525 507L529 433" stroke="white" strokeWidth="58" strokeLinecap="round"/>
+          <circle cx="406" cy="430" r="34" fill="white"/>
+          <circle cx="530" cy="419" r="34" fill="white"/>
+        </g>
+      </g>
     </svg>
   );
 }

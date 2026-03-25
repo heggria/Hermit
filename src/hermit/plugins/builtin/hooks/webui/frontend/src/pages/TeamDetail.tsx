@@ -16,8 +16,6 @@ import { NodeDetailPanel } from '@/components/teams/NodeDetailPanel';
 import {
   Sheet,
   SheetContent,
-  SheetHeader,
-  SheetTitle,
 } from '@/components/ui/sheet';
 import { DeleteConfirmDialog } from '@/components/ui/DeleteConfirmDialog';
 import type { RoleSlotSpec } from '@/types';
@@ -317,13 +315,12 @@ export default function TeamDetail() {
 
       {/* Milestones sheet */}
       <Sheet open={milestonesOpen} onOpenChange={setMilestonesOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-sm overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>{t('teams.detail.milestones')}</SheetTitle>
-          </SheetHeader>
-          <div className="py-4">
-            <MilestoneList teamId={team.team_id} milestones={milestones} />
-          </div>
+        <SheetContent side="right" className="w-full sm:max-w-sm p-0" showCloseButton={false}>
+          <MilestoneList
+            teamId={team.team_id}
+            milestones={milestones}
+            onClose={() => setMilestonesOpen(false)}
+          />
         </SheetContent>
       </Sheet>
 

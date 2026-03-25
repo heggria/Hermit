@@ -33,17 +33,22 @@ export function WelcomeDialog() {
           {/* Logo */}
           <div className="mx-auto mb-3 flex size-14 items-center justify-center rounded-2xl bg-primary/10">
             <svg
-              viewBox="0 0 32 32"
+              viewBox="0 0 1024 1024"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
               className="size-8 text-primary"
             >
-              <rect width="32" height="32" rx="8" fill="currentColor" />
-              <path
-                d="M16 6C10.477 6 6 10.477 6 16s4.477 10 10 10 10-4.477 10-10S21.523 6 16 6zm0 3a7 7 0 0 1 6.93 6H16.5a.5.5 0 0 0-.5.5v5.45A7.001 7.001 0 0 1 16 9zm3 12.45V15.5a.5.5 0 0 0-.5-.5H22.9A7.003 7.003 0 0 1 19 21.45z"
-                fill="white"
-                fillOpacity={0.95}
-              />
+              <rect width="1024" height="1024" rx="228" fill="currentColor" />
+              <g transform="translate(-81 -83) scale(1.15)" fill="none">
+                <g transform="translate(-70 -42)">
+                  <path d="M726 300C799 350 846 433 846 526C846 676 725 798 575 798C437 798 325 686 325 548C325 428 410 328 526 306" stroke="white" strokeWidth="106" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M366 676C410 736 481 771 556 771H602" stroke="white" strokeWidth="96" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M448 517L415 447" stroke="white" strokeWidth="58" strokeLinecap="round"/>
+                  <path d="M525 507L529 433" stroke="white" strokeWidth="58" strokeLinecap="round"/>
+                  <circle cx="406" cy="430" r="34" fill="white"/>
+                  <circle cx="530" cy="419" r="34" fill="white"/>
+                </g>
+              </g>
             </svg>
           </div>
           <DialogTitle className="text-lg">
