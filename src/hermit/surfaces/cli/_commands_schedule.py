@@ -95,6 +95,17 @@ def schedule_add(
     schedule_type = "cron" if cron else "once" if once else "interval"
     once_at: float | None = None
 
+    name_stripped = name.strip().replace("\n", " ").replace("\r", "")
+    if not name_stripped:
+        typer.echo(t("cli.schedule.add.error.empty_name", "Error: name cannot be empty."))
+        raise typer.Exit(1)
+    prompt_stripped = prompt.strip()
+    if not prompt_stripped:
+        typer.echo(t("cli.schedule.add.error.empty_prompt", "Error: prompt cannot be empty."))
+        raise typer.Exit(1)
+    name = name_stripped
+    prompt = prompt_stripped
+
     if cron:
         try:
             from croniter import croniter
@@ -195,17 +206,33 @@ def schedule_enable(
 ) -> None:
     """Enable a scheduled task."""
     store = get_schedule_store()
-    if store.update_schedule(job_id, enabled=True):
-        typer.echo(t("cli.schedule.enable.done", "Enabled task '{job_id}'.", job_id=job_id))
-        return
-    typer.echo(
-        t(
-            "cli.schedule.common.job_not_found",
-            "Error: no task with id '{job_id}' found.",
-            job_id=job_id,
+    job = store.get_schedule(job_id)
+    if job is None:
+        typer.echo(
+            t(
+                "cli.schedule.common.job_not_found",
+                "Error: no task with id '{job_id}' found.",
+                job_id=job_id,
+            )
         )
-    )
-    raise typer.Exit(1)
+        raise typer.Exit(1)
+
+    # Recalculate next_run_at to avoid stale catch-up execution
+    next_run: float | None = None
+    if job.cron_expr:
+        try:
+            from croniter import croniter
+
+            next_run = croniter(job.cron_expr, time.time()).get_next(float)
+        except Exception:
+            next_run = time.time() + 60
+    elif job.interval_seconds:
+        next_run = time.time() + job.interval_seconds
+    elif job.once_at and job.once_at > time.time():
+        next_run = job.once_at
+
+    store.update_schedule(job_id, enabled=True, next_run_at=next_run)
+    typer.echo(t("cli.schedule.enable.done", "Enabled task '{job_id}'.", job_id=job_id))
 
 
 @schedule_app.command("disable")
@@ -217,7 +244,7 @@ def schedule_disable(
 ) -> None:
     """Disable a scheduled task."""
     store = get_schedule_store()
-    if store.update_schedule(job_id, enabled=False):
+    if store.update_schedule(job_id, enabled=False, next_run_at=None):
         typer.echo(t("cli.schedule.disable.done", "Disabled task '{job_id}'.", job_id=job_id))
         return
     typer.echo(

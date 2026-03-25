@@ -11,6 +11,10 @@ class ArtifactStore:
         self.root_dir = root_dir
         self.root_dir.mkdir(parents=True, exist_ok=True)
 
+    # ------------------------------------------------------------------ #
+    # Write helpers                                                        #
+    # ------------------------------------------------------------------ #
+
     def store_text(self, text: str, *, extension: str = "txt") -> tuple[str, str]:
         return self.store_bytes(text.encode("utf-8"), extension=extension)
 
@@ -29,5 +33,39 @@ class ArtifactStore:
             path.write_bytes(data)
         return str(path), content_hash
 
+    # ------------------------------------------------------------------ #
+    # Read helpers                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _resolve_safe(self, uri: str) -> Path:
+        """Resolve *uri* to an absolute path and verify it stays within the
+        store root.  Raises ``ValueError`` on path-traversal and
+        ``FileNotFoundError`` when the artifact does not exist.
+        """
+        resolved = Path(uri).resolve()
+        resolved_root = self.root_dir.resolve()
+        if resolved_root not in resolved.parents and resolved != resolved_root:
+            raise ValueError(f"Artifact path escapes store root: {uri}")
+        if not resolved.exists():
+            raise FileNotFoundError(
+                f"Artifact not found in store (uri={uri!r}, resolved={resolved})"
+            )
+        return resolved
+
     def read_text(self, uri: str) -> str:
-        return Path(uri).read_text(encoding="utf-8")
+        """Read a previously stored text artifact by its URI.
+
+        Raises:
+            ValueError: if the path escapes the store root.
+            FileNotFoundError: if the artifact does not exist in the store.
+        """
+        return self._resolve_safe(uri).read_text(encoding="utf-8")
+
+    def read_bytes(self, uri: str) -> bytes:
+        """Read a previously stored binary artifact by its URI.
+
+        Raises:
+            ValueError: if the path escapes the store root.
+            FileNotFoundError: if the artifact does not exist in the store.
+        """
+        return self._resolve_safe(uri).read_bytes()

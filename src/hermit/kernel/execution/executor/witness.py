@@ -5,11 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.execution.suspension.git_worktree import GitWorktreeInspector
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy.models.models import ActionRequest
+
+log = structlog.get_logger()
 
 
 class WitnessCapture:
@@ -104,7 +108,15 @@ class WitnessCapture:
         artifact = self.store.get_artifact(witness_ref)
         if artifact is None:
             return False
-        stored = json.loads(self.artifact_store.read_text(artifact.uri))
+        try:
+            stored = json.loads(self.artifact_store.read_text(artifact.uri))
+        except (OSError, json.JSONDecodeError):
+            log.warning(
+                "witness_validation_read_failed",
+                witness_ref=witness_ref,
+                step_attempt_id=attempt_ctx.step_attempt_id,
+            )
+            return False
         current = self.payload(action_request, attempt_ctx)
         valid = stored == current
         self.store.append_event(
@@ -113,7 +125,7 @@ class WitnessCapture:
             entity_id=attempt_ctx.step_attempt_id,
             task_id=attempt_ctx.task_id,
             step_id=attempt_ctx.step_id,
-            actor="kernel",
+            actor=getattr(attempt_ctx, "actor_principal_id", "principal_user"),
             payload={
                 "state_witness_ref": witness_ref,
                 "tool_name": action_request.tool_name,

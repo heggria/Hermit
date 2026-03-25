@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from hermit.kernel.artifacts.models.artifacts import ArtifactStore
-from hermit.kernel.execution.executor.executor import ToolExecutor
-from hermit.kernel.ledger.journal.store import KernelStore
-from hermit.kernel.policy import PolicyEngine
-from hermit.kernel.policy.approvals.approvals import ApprovalService
-from hermit.kernel.task.services.controller import TaskController
-from hermit.kernel.verification.receipts.receipts import ReceiptService
-from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec
+if TYPE_CHECKING:
+    from hermit.kernel.artifacts.models.artifacts import ArtifactStore
+    from hermit.kernel.execution.executor.executor import ToolExecutor
+    from hermit.kernel.ledger.journal.store import KernelStore
+    from hermit.kernel.task.services.controller import TaskController
+    from hermit.runtime.capability.registry.tools import ToolRegistry
 
 
 def _full_registry(root: Path) -> ToolRegistry:
     """Build a registry with read, write, and bash tools for e2e testing."""
+    from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec
+
     registry = ToolRegistry()
 
     registry.register(
@@ -78,6 +78,15 @@ def e2e_runtime(
     """Full kernel runtime with read/write/bash tools for e2e scenarios."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+
+    from hermit.kernel.artifacts.models.artifacts import ArtifactStore
+    from hermit.kernel.execution.executor.executor import ToolExecutor
+    from hermit.kernel.ledger.journal.store import KernelStore
+    from hermit.kernel.policy import PolicyEngine
+    from hermit.kernel.policy.approvals.approvals import ApprovalService
+    from hermit.kernel.task.services.controller import TaskController
+    from hermit.kernel.verification.receipts.receipts import ReceiptService
+
     store = KernelStore(tmp_path / "kernel" / "state.db")
     artifacts = ArtifactStore(tmp_path / "kernel" / "artifacts")
     controller = TaskController(store)

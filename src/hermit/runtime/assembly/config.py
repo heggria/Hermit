@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_catch_up: bool = True
     scheduler_feishu_chat_id: str | None = None
-    kernel_dispatch_worker_count: int = 4
+    kernel_dispatch_worker_count: int = 8
     webhook_enabled: bool = True
     webhook_host: str | None = None
     webhook_port: int | None = None
@@ -165,6 +165,10 @@ class Settings(BaseSettings):
     progress_summary_model: str | None = None
     progress_summary_max_tokens: int = 160
     progress_summary_keepalive_seconds: float = 15.0
+    mcp_server_enabled: bool = False
+    mcp_server_host: str = "127.0.0.1"
+    mcp_server_port: int = 8322
+    max_session_messages: int = 100
 
     @model_validator(mode="before")
     @classmethod

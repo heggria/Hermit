@@ -33,6 +33,19 @@ log = structlog.get_logger()
 MCP_TOOL_PREFIX = "mcp__"
 MCP_TOOL_SEP = "__"
 
+# Lazy import to avoid circular deps
+_OAuthManager = None
+
+
+def _get_oauth_manager() -> Any:
+    """Get a lazily-imported McpOAuthManager class."""
+    global _OAuthManager
+    if _OAuthManager is None:
+        from hermit.runtime.capability.resolver.mcp_oauth import McpOAuthManager
+
+        _OAuthManager = McpOAuthManager
+    return _OAuthManager
+
 
 def _sanitize_http_headers(headers: dict[str, Any] | None) -> dict[str, str]:
     """Drop invalid or empty HTTP headers before constructing the client."""
@@ -84,8 +97,10 @@ class McpClientManager:
     and exited in the same asyncio Task.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, oauth_base_dir: Any | None = None) -> None:
         self._connections: dict[str, _ServerConnection] = {}
+        self._connections_lock = threading.Lock()
+        self._oauth_base_dir = oauth_base_dir
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever,
@@ -118,12 +133,15 @@ class McpClientManager:
             # asyncio.Event must be created inside the target loop
             self._shutdown_event = asyncio.Event()
             try:
+                connected = 0
                 async with AsyncExitStack() as stack:
                     for spec in specs:
                         try:
                             await self._connect_one(spec, stack)
+                            connected += 1
                         except Exception:
                             log.exception("mcp_connect_error", server=spec.name)
+                    log.info("mcp_connect_summary", connected=connected, total=len(specs))
                     # Unblock connect_all_sync — connections are ready
                     ready.set()
                     # Hold all context managers open until shutdown is signalled
@@ -139,7 +157,9 @@ class McpClientManager:
     def get_tool_specs(self) -> list[ToolSpec]:
         """Return ToolSpec instances for all discovered MCP tools."""
         specs: list[ToolSpec] = []
-        for server_name, conn in self._connections.items():
+        with self._connections_lock:
+            connections_snapshot = list(self._connections.items())
+        for server_name, conn in connections_snapshot:
             for tool in conn.tools:
                 full_name = mcp_tool_name(server_name, tool["name"])
                 governance = self._tool_governance(conn.spec, tool["name"])
@@ -179,7 +199,8 @@ class McpClientManager:
     def close_all_sync(self) -> None:
         """Disconnect all servers and shut down the background loop."""
         if not self._loop.is_running():
-            self._connections.clear()
+            with self._connections_lock:
+                self._connections.clear()
             return
 
         # Signal the lifecycle coroutine to exit its AsyncExitStack (same task)
@@ -192,9 +213,12 @@ class McpClientManager:
             except Exception:
                 log.exception("mcp_close_error")
 
-        self._connections.clear()
+        with self._connections_lock:
+            self._connections.clear()
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
+        if self._thread.is_alive():
+            log.warning("mcp_event_loop_thread_did_not_stop")
 
     # ── async internals (run on background loop) ───────────────────
 
@@ -217,6 +241,11 @@ class McpClientManager:
             import httpx
 
             headers = _sanitize_http_headers(spec.headers)
+            # Inject stored OAuth token if no Authorization header is present
+            if "authorization" not in {k.lower() for k in headers}:
+                oauth_token = self._get_oauth_token(spec.name)
+                if oauth_token:
+                    headers["Authorization"] = f"Bearer {oauth_token}"
             http_client = await stack.enter_async_context(httpx.AsyncClient(headers=headers))
             transport = await stack.enter_async_context(
                 streamable_http_client(spec.url, http_client=http_client)
@@ -245,13 +274,26 @@ class McpClientManager:
             str(tool["name"]) for tool in raw_tools if tool["name"] not in spec.tool_governance
         ]
         if missing_governance:
-            raise ValueError(
-                f"MCP server '{spec.name}' is missing governance metadata for tools: "
-                f"{', '.join(sorted(missing_governance))}"
-            )
+            if spec.tool_governance:
+                # Explicit governance was provided but incomplete — this is an error.
+                raise ValueError(
+                    f"MCP server '{spec.name}' is missing governance metadata for tools: "
+                    f"{', '.join(sorted(missing_governance))}"
+                )
+            # No governance config at all (typical for user-installed third-party servers).
+            # Auto-assign sensible defaults so they can connect without manual config.
+            for tool_name in missing_governance:
+                spec.tool_governance[tool_name] = McpToolGovernance(
+                    action_class="tool_use",
+                    risk_hint="medium",
+                    requires_receipt=True,
+                    readonly=False,
+                    supports_preview=False,
+                )
 
         conn = _ServerConnection(spec=spec, session=session, tools=raw_tools)
-        self._connections[spec.name] = conn
+        with self._connections_lock:
+            self._connections[spec.name] = conn
         log.info(
             "mcp_server_connected",
             server=spec.name,
@@ -265,7 +307,8 @@ class McpClientManager:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> Any:
-        conn = self._connections.get(server_name)
+        with self._connections_lock:
+            conn = self._connections.get(server_name)
         if conn is None or conn.session is None:
             return f"Error: MCP server '{server_name}' not connected"
         try:
@@ -299,3 +342,14 @@ class McpClientManager:
         if governance is None:
             raise ValueError(f"MCP tool governance missing for {spec.name}/{tool_name}")
         return governance
+
+    def _get_oauth_token(self, server_name: str) -> str | None:
+        """Look up a stored OAuth token for *server_name*."""
+        if self._oauth_base_dir is None:
+            return None
+        try:
+            mgr_cls = _get_oauth_manager()
+            manager = mgr_cls(self._oauth_base_dir)
+            return manager.get_stored_token(server_name)
+        except Exception:
+            return None

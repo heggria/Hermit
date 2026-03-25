@@ -43,6 +43,12 @@ class ReconcileService:
     ) -> ReconcileOutcome:
         observed = dict(observables or {})
         witness_payload = dict(witness or {})
+        if action_type == "execute_command_readonly":
+            return ReconcileOutcome(
+                result_code="reconciled_applied",
+                summary="Read-only command executed; no side effects expected.",
+                observed_refs=[],
+            )
         if action_type in {"write_local", "patch_file"}:
             outcome = self._reconcile_local_write(
                 tool_input=tool_input, workspace_root=workspace_root
@@ -101,10 +107,32 @@ class ReconcileService:
                 summary=f"Observed local write target is missing for {path}.",
                 observed_refs=[str(candidate)],
             )
+        # For patch_file actions the tool_input does not carry the final
+        # expected content — only a diff/patch.  Skip the content-match
+        # check and treat file existence as sufficient evidence.
+        action_type = str(tool_input.get("action_type", "")).strip()
+        if action_type == "patch_file":
+            return ReconcileOutcome(
+                result_code="reconciled_observed",
+                summary=f"Observed patch target exists at {path}; content match skipped for patch actions.",
+                observed_refs=[str(candidate)],
+            )
         try:
             actual = candidate.read_text(encoding="utf-8")
-        except OSError:
-            actual = None
+        except OSError as exc:
+            # File exists but is unreadable (e.g. permission denied).
+            # Returning reconciled_not_applied here would be misleading;
+            # surface the I/O error explicitly so callers can react.
+            log.warning(
+                "reconcile.local_write.read_error",
+                path=str(candidate),
+                error=str(exc),
+            )
+            return ReconcileOutcome(
+                result_code="reconcile_error",
+                summary=f"I/O error reading {path} during reconciliation: {exc}",
+                observed_refs=[str(candidate)],
+            )
         if actual == content:
             return ReconcileOutcome(
                 result_code="reconciled_applied",
@@ -143,12 +171,22 @@ class ReconcileService:
                 summary=f"Observed repository state change after {action_type}.",
                 observed_refs=[str(Path(workspace_root).resolve())] if workspace_root else [],
             )
-        if git_changed is False and (
-            action_type == "vcs_mutation" or str(observables.get("vcs_operation", "")).strip()
-        ):
+        if git_changed is False:
+            if action_type == "vcs_mutation" or str(observables.get("vcs_operation", "")).strip():
+                return ReconcileOutcome(
+                    result_code="reconciled_not_applied",
+                    summary=f"Observed repository state did not change after {action_type}.",
+                    observed_refs=[str(Path(workspace_root).resolve())] if workspace_root else [],
+                )
+            # Git witness explicitly confirms no repository mutations for a
+            # non-vcs action — infer the command completed without observable
+            # filesystem side effects rather than falling through to still_unknown.
             return ReconcileOutcome(
-                result_code="reconciled_not_applied",
-                summary=f"Observed repository state did not change after {action_type}.",
+                result_code="reconciled_inferred",
+                summary=(
+                    f"Git witness confirms no repository state change after {action_type}; "
+                    "inferring command completed without observable mutations."
+                ),
                 observed_refs=[str(Path(workspace_root).resolve())] if workspace_root else [],
             )
 
@@ -158,6 +196,28 @@ class ReconcileService:
                 summary="Observed command target paths remain unchanged after dispatch.",
                 observed_refs=[str(path) for path in observables.get("target_paths", [])],
             )
+
+        # Fallback: no target_paths, no git witness, and no vcs_operation —
+        # the reconciliation layer simply has nothing to check.  Return an
+        # inferred-success so the caller can combine it with the execution
+        # hint instead of falling through to ``still_unknown``.
+        # Also applies when a git witness exists but git is currently
+        # unavailable (git_changed=None) for a non-vcs action type — the
+        # absence of target-path changes is still a positive signal.
+        has_target_paths = bool(observables.get("target_paths"))
+        has_git_witness = bool(witness.get("git"))
+        has_vcs_op = bool(str(observables.get("vcs_operation", "")).strip())
+        git_inconclusive = git_changed is None and has_git_witness and not has_vcs_op
+        if not has_target_paths and not has_vcs_op and (not has_git_witness or git_inconclusive):
+            return ReconcileOutcome(
+                result_code="reconciled_inferred",
+                summary=(
+                    f"No observable side-effect targets for {action_type}; "
+                    "inferring success from execution result."
+                ),
+                observed_refs=[],
+            )
+
         return None
 
     def _reconcile_remote_write(self, *, tool_input: dict[str, Any]) -> ReconcileOutcome | None:
@@ -172,7 +232,7 @@ class ReconcileService:
         request = urllib.request.Request(probe_url, method="HEAD")
         try:
             with urllib.request.urlopen(
-                request, timeout=get_runtime_budget().provider_read_timeout
+                request, timeout=get_runtime_budget().reconciliation_probe_timeout
             ) as response:
                 status = getattr(response, "status", 200)
         except urllib.error.HTTPError as exc:

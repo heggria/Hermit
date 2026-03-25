@@ -229,12 +229,14 @@ def test_match_procedures_skips_inactive(tmp_path: Path) -> None:
 
 
 def test_reinforce_missing_procedure_noop(tmp_path: Path) -> None:
-    """reinforce does nothing when procedure_id doesn't exist (line 105)."""
+    """reinforce is a no-op when procedure_id doesn't exist — no record is created."""
     store = KernelStore(tmp_path / "state.db")
     try:
         svc = ProceduralMemoryService()
-        # Should not raise
         svc.reinforce("nonexistent-proc-id", success=True, store=store)
+        # Guard exited early: no procedure record should have been inserted
+        procs = svc.match_procedures("", store)
+        assert len(procs) == 0, "reinforce must not create a new procedure record"
     finally:
         store.close()
 

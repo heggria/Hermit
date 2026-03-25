@@ -294,7 +294,7 @@ class FeishuAdapter:
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._ws_exited = threading.Event()
         self._ws_error: BaseException | None = None
-        self._approval_copy = ApprovalCopyService()
+        self._approval_copy = ApprovalCopyService(locale=getattr(settings, "locale", None))
 
     def _locale(self) -> str:
         return resolve_locale(getattr(self._settings, "locale", None))
@@ -1011,7 +1011,7 @@ class FeishuAdapter:
         task = store.get_task(task_id)
         if task is None:
             return False
-        if task.status in _TERMINAL_TASK_STATUSES:
+        if task.status not in _TERMINAL_TASK_STATUSES:
             return False
         mapping = self._task_topic_mapping(task.conversation_id, task_id)
         root_message_id = message_id or str(mapping.get("root_message_id", "") or "")

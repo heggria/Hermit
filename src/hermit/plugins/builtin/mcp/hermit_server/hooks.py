@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from hermit.runtime.capability.contracts.base import HookEvent, PluginContext
@@ -10,6 +11,7 @@ from hermit.runtime.capability.contracts.base import HookEvent, PluginContext
 _log = logging.getLogger(__name__)
 
 _server: Any = None
+_server_lock = threading.Lock()
 
 
 def _on_serve_start(
@@ -21,26 +23,28 @@ def _on_serve_start(
         _log.info("mcp_server_disabled")
         return
 
-    if reload_mode and _server is not None:
-        _server.swap_runner(runner)
-        _log.info("mcp_server_runner_hot_swapped")
-        return
+    with _server_lock:
+        if reload_mode and _server is not None:
+            _server.swap_runner(runner)
+            _log.info("mcp_server_runner_hot_swapped")
+            return
 
-    from hermit.plugins.builtin.mcp.hermit_server.server import HermitMcpServer
+        from hermit.plugins.builtin.mcp.hermit_server.server import HermitMcpServer
 
-    host = str(getattr(settings, "mcp_server_host", "127.0.0.1"))
-    port = int(getattr(settings, "mcp_server_port", 8322))
-    _server = HermitMcpServer(host=host, port=port)
-    _server.start(runner)
+        host = str(getattr(settings, "mcp_server_host", "127.0.0.1"))
+        port = int(getattr(settings, "mcp_server_port", 8322))
+        _server = HermitMcpServer(host=host, port=port)
+        _server.start(runner)
 
 
 def _on_serve_stop(*, reload_mode: bool = False, **kw: Any) -> None:
     global _server
     if reload_mode:
         return
-    if _server is not None:
-        _server.stop()
-        _server = None
+    with _server_lock:
+        if _server is not None:
+            _server.stop()
+            _server = None
 
 
 def register(ctx: PluginContext) -> None:

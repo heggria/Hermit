@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any, TypeGuard, cast
 import structlog
 
 from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.kernel.authority.grants import CapabilityGrantError
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.errors import KernelError
 from hermit.kernel.execution.executor.executor import ToolExecutionResult, ToolExecutor
 from hermit.runtime.capability.registry.tools import ToolRegistry, serialize_tool_result
 from hermit.runtime.provider_host.shared.contracts import Provider, ProviderRequest, UsageMetrics
@@ -24,12 +26,15 @@ log = structlog.get_logger()
 
 if TYPE_CHECKING:
     from hermit.kernel import ArtifactStore, KernelStore, TaskController
+    from hermit.kernel.context.injection.provider_input import ProviderInputCompiler
+    from hermit.kernel.execution.competition.deliberation_integration import DeliberationIntegration
 
 StreamCallback = Callable[[str, str], None]
 ToolCallback = Callable[[str, dict[str, Any], Any], None]
 ToolStartCallback = Callable[[str, dict[str, Any]], None]
 
 _TOOL_RESULT_BLOCK_TYPES = {"text", "image"}
+_CONTEXT_TOO_LONG_MARKERS = ("prompt is too long", "context window", "maximum context length")
 
 
 def _message_list() -> list[dict[str, Any]]:
@@ -122,6 +127,8 @@ class AgentRuntime:
         self.kernel_store: KernelStore | None = None
         self.artifact_store: ArtifactStore | None = None
         self.task_controller: TaskController | None = None
+        self.deliberation: DeliberationIntegration | None = None
+        self.provider_input_compiler: ProviderInputCompiler | None = None
 
     def clone(
         self,
@@ -193,7 +200,7 @@ class AgentRuntime:
         return ProviderRequest(
             model=self.model,
             max_tokens=self.max_tokens,
-            messages=normalize_messages(messages),
+            messages=messages,
             system_prompt=self.system_prompt,
             tools=tools,
             thinking_budget=thinking_budget,
@@ -303,6 +310,17 @@ class AgentRuntime:
             self.tool_executor, "clear_blocked_state"
         )
         clearer(step_attempt_id)
+        if self.provider_input_compiler is not None:
+            try:
+                if self.provider_input_compiler.check_context_staleness(
+                    task_context.step_attempt_id,
+                ):
+                    log.warning(
+                        "context_stale_on_resume",
+                        step_attempt_id=task_context.step_attempt_id,
+                    )
+            except Exception:
+                log.debug("context_staleness_check_failed_on_resume", exc_info=True)
         return self._run_from_messages(
             messages,
             start_turn=next_turn,
@@ -314,6 +332,37 @@ class AgentRuntime:
             usage=usage,
             tool_calls=tool_calls,
         )
+
+    @staticmethod
+    def _is_context_too_long(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return any(marker in msg for marker in _CONTEXT_TOO_LONG_MARKERS)
+
+    def _trim_messages_for_retry(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        half_limit = max(self.tool_output_limit // 2, 256)
+        trimmed = []
+        for msg in messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                trimmed.append(msg)
+                continue
+            new_blocks = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    inner = block.get("content", "")
+                    if isinstance(inner, str) and len(inner) > half_limit:
+                        block = {**block, "content": truncate_middle_text(inner, half_limit)}
+                new_blocks.append(block)
+            trimmed.append({**msg, "content": new_blocks})
+        if len(trimmed) > 6:
+            kept_head = []
+            kept_tail = trimmed[-4:]
+            for m in trimmed[:-4]:
+                if m.get("role") == "system":
+                    kept_head.append(m)
+                    break
+            trimmed = kept_head + kept_tail
+        return trimmed
 
     def _run_from_messages(
         self,
@@ -331,6 +380,23 @@ class AgentRuntime:
         usage = usage or UsageMetrics()
 
         for turn in range(start_turn, self.max_turns + 1):
+            if (
+                turn > start_turn
+                and task_context is not None
+                and self.provider_input_compiler is not None
+            ):
+                try:
+                    if self.provider_input_compiler.check_context_staleness(
+                        task_context.step_attempt_id,
+                    ):
+                        log.warning(
+                            "context_stale_mid_execution",
+                            step_attempt_id=task_context.step_attempt_id,
+                            turn=turn,
+                        )
+                except Exception:
+                    log.debug("context_staleness_check_failed", exc_info=True)
+
             messages = self._apply_appended_notes(messages, task_context)
             try:
                 response = self.provider.generate(
@@ -342,20 +408,60 @@ class AgentRuntime:
                     )
                 )
             except Exception as exc:
-                log.error(
-                    "provider_call_error", provider=self.provider.name, turn=turn, error=str(exc)
-                )
-                return self._usage_to_result(
-                    usage,
-                    text=f"[API Error] {exc}",
-                    turns=turn,
-                    tool_calls=tool_calls,
-                    messages=messages,
-                    task_id=task_context.task_id if task_context else None,
-                    step_id=task_context.step_id if task_context else None,
-                    step_attempt_id=task_context.step_attempt_id if task_context else None,
-                    execution_status="failed",
-                )
+                if self._is_context_too_long(exc):
+                    log.warning(
+                        "context_too_long_retry",
+                        provider=self.provider.name,
+                        turn=turn,
+                        error=str(exc),
+                    )
+                    try:
+                        trimmed = self._trim_messages_for_retry(messages)
+                        response = self.provider.generate(
+                            self._request(
+                                trimmed,
+                                disable_tools=disable_tools,
+                                readonly_only=readonly_only,
+                                stream=False,
+                            )
+                        )
+                        messages = trimmed
+                    except Exception as retry_exc:
+                        log.error(
+                            "context_too_long_retry_failed",
+                            provider=self.provider.name,
+                            turn=turn,
+                            error=str(retry_exc),
+                        )
+                        return self._usage_to_result(
+                            usage,
+                            text=f"[API Error] {exc}",
+                            turns=turn,
+                            tool_calls=tool_calls,
+                            messages=messages,
+                            task_id=task_context.task_id if task_context else None,
+                            step_id=task_context.step_id if task_context else None,
+                            step_attempt_id=task_context.step_attempt_id if task_context else None,
+                            execution_status="failed",
+                        )
+                else:
+                    log.error(
+                        "provider_call_error",
+                        provider=self.provider.name,
+                        turn=turn,
+                        error=str(exc),
+                    )
+                    return self._usage_to_result(
+                        usage,
+                        text=f"[API Error] {exc}",
+                        turns=turn,
+                        tool_calls=tool_calls,
+                        messages=messages,
+                        task_id=task_context.task_id if task_context else None,
+                        step_id=task_context.step_id if task_context else None,
+                        step_attempt_id=task_context.step_attempt_id if task_context else None,
+                        execution_status="failed",
+                    )
 
             usage.input_tokens += response.usage.input_tokens
             usage.output_tokens += response.usage.output_tokens
@@ -379,9 +485,43 @@ class AgentRuntime:
             messages.append({"role": "assistant", "content": response_blocks})
 
             if response.stop_reason != "tool_use":
+                text = extract_text(response_blocks)
+                if not text and tool_calls > 0:
+                    # LLM finished tool execution but produced no text summary.
+                    # Request one final response with tools disabled.
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": self._t(
+                                "prompt.runtime.summarize_results",
+                                default=(
+                                    "Please provide a brief summary of what you did"
+                                    " and the results."
+                                ),
+                            ),
+                        }
+                    )
+                    try:
+                        summary_resp = self.provider.generate(
+                            self._request(
+                                messages,
+                                disable_tools=True,
+                                readonly_only=False,
+                                stream=False,
+                            )
+                        )
+                        usage.input_tokens += summary_resp.usage.input_tokens
+                        usage.output_tokens += summary_resp.usage.output_tokens
+                        usage.cache_read_tokens += summary_resp.usage.cache_read_tokens
+                        usage.cache_creation_tokens += summary_resp.usage.cache_creation_tokens
+                        summary_blocks = [normalize_block(b) for b in summary_resp.content]
+                        messages.append({"role": "assistant", "content": summary_blocks})
+                        text = extract_text(summary_blocks)
+                    except Exception:
+                        log.warning("summary_request_failed", exc_info=True)
                 return self._usage_to_result(
                     usage,
-                    text=extract_text(response_blocks),
+                    text=text,
                     turns=turn,
                     tool_calls=tool_calls,
                     thinking=extract_thinking(response_blocks),
@@ -508,7 +648,50 @@ class AgentRuntime:
                 available_tools = [tool.name for tool in self.registry.list_tools()]
                 serialized = f"Error: Unknown tool '{tool_name}'. Available: {available_tools}"
                 exec_result = ToolExecutionResult(model_content=serialized, raw_result=serialized)
+            except CapabilityGrantError as exc:
+                log.warning(
+                    "capability_grant_error",
+                    tool=tool_name,
+                    error_code=exc.code,
+                    error=str(exc),
+                    task_id=task_context.task_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
+                )
+                serialized = f"[Capability Denied] {exc}"
+                exec_result = ToolExecutionResult(
+                    model_content=serialized,
+                    raw_result={"error": str(exc), "error_code": exc.code},
+                    denied=True,
+                    result_code="dispatch_denied",
+                    execution_status="dispatch_denied",
+                )
+            except KernelError as exc:
+                log.warning(
+                    "kernel_governance_error",
+                    tool=tool_name,
+                    error_code=exc.code,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    task_id=task_context.task_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
+                )
+                serialized = f"[Governance Error] {type(exc).__name__}: {exc}"
+                exec_result = ToolExecutionResult(
+                    model_content=serialized,
+                    raw_result={"error": str(exc), "error_code": exc.code},
+                    denied=True,
+                    result_code="governance_error",
+                    execution_status="governance_error",
+                )
             except Exception as exc:
+                log.error(
+                    "tool_execution_error",
+                    tool=tool_name,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    task_id=task_context.task_id if task_context else None,
+                    step_attempt_id=task_context.step_attempt_id if task_context else None,
+                )
                 serialized = f"Error executing {tool_name}: {type(exc).__name__}: {exc}"
                 exec_result = ToolExecutionResult(model_content=serialized, raw_result=serialized)
 
@@ -721,6 +904,18 @@ class AgentRuntime:
                             usage.cache_read_tokens += event.usage.cache_read_tokens
                             usage.cache_creation_tokens += event.usage.cache_creation_tokens
             except Exception as exc:
+                if self._is_context_too_long(exc):
+                    log.warning(
+                        "stream_context_too_long_retry",
+                        provider=self.provider.name,
+                        turn=turn,
+                        error=str(exc),
+                    )
+                    try:
+                        messages = self._trim_messages_for_retry(messages)
+                        continue
+                    except Exception:
+                        pass
                 log.error("stream_error", provider=self.provider.name, turn=turn, error=str(exc))
                 return self._usage_to_result(
                     usage,
@@ -757,6 +952,7 @@ class AgentRuntime:
             tool_result_blocks: list[dict[str, Any]] = []
             for block in tool_use_blocks:
                 tool_name = str(block_value(block, "name"))
+                tool_input = dict(block_value(block, "input", {}) or {})
                 try:
                     if self.tool_executor is None:
                         raise RuntimeError(
@@ -765,13 +961,15 @@ class AgentRuntime:
                                 default="Task-scoped kernel executor is required for streaming tool execution.",
                             )
                         )
-                    raise RuntimeError(
-                        self._t(
-                            "kernel.runtime.error.tool_execution_missing_context",
-                            default="Tool '{tool_name}' requires task-scoped governed execution; task context is missing.",
-                            tool_name=tool_name,
-                        )
+                    exec_result = self._execute_tool(
+                        task_context=None,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
                     )
+                    serialized = exec_result.model_content
+                except KeyError:
+                    available_tools = [tool.name for tool in self.registry.list_tools()]
+                    serialized = f"Error: Unknown tool '{tool_name}'. Available: {available_tools}"
                 except Exception as exc:
                     serialized = self._t(
                         "kernel.runtime.error.serialized_tool_execution",

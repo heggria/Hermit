@@ -296,3 +296,56 @@ def test_build_capability_card_dataclass(handler: A2AHandler) -> None:
 def test_send_result_empty_url() -> None:
     resp = A2ATaskResponse(task_id="t1", status="completed")
     assert A2AHandler.send_result("", resp) is False
+
+
+# ---------------------------------------------------------------------------
+# Test: GET task_status HMAC verification uses empty body (b"")
+# ---------------------------------------------------------------------------
+
+
+def test_task_status_hmac_required_when_control_secret_set() -> None:
+    """GET /a2a/tasks/{task_id}/status must verify HMAC over b'' when control_secret is set."""
+    import hashlib
+    import hmac as hmac_mod
+    import threading
+
+    from hermit.plugins.builtin.hooks.webhook.a2a_hooks import _register_a2a_routes
+
+    app = FastAPI()
+    handler = A2AHandler(agent_id="status-sig-test")
+
+    fake_task = SimpleNamespace(task_id="t-42", status="completed")
+    fake_store = MagicMock()
+    fake_store.get_task.return_value = fake_task
+
+    server = SimpleNamespace(
+        _app=app,
+        _config=SimpleNamespace(control_secret="my-secret"),
+        _runner=None,
+        _runner_lock=threading.Lock(),
+        _kernel_store=MagicMock(return_value=fake_store),
+    )
+    _register_a2a_routes(server, handler)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # Without signature header → 401
+    resp = client.get("/a2a/tasks/t-42/status")
+    assert resp.status_code == 401, f"Expected 401, got {resp.status_code}"
+
+    # With correct HMAC over b"" → 200
+    sig = hmac_mod.new(b"my-secret", b"", hashlib.sha256).hexdigest()
+    with patch("hermit.kernel.verification.proofs.proofs.ProofService") as mock_ps:
+        mock_ps.return_value.build_proof_summary.return_value = {}
+        resp = client.get(
+            "/a2a/tasks/t-42/status",
+            headers={"X-Hermit-Signature-256": f"sha256={sig}"},
+        )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    assert resp.json()["task_id"] == "t-42"
+
+    # With wrong HMAC → 401
+    resp = client.get(
+        "/a2a/tasks/t-42/status",
+        headers={"X-Hermit-Signature-256": "sha256=deadbeef"},
+    )
+    assert resp.status_code == 401, f"Expected 401, got {resp.status_code}"

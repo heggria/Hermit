@@ -10,6 +10,7 @@ import pytest
 
 from hermit.plugins.builtin.tools.computer_use import actions
 from hermit.plugins.builtin.tools.web_tools import fetch, search
+from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 
 
 class _FakeResponse:
@@ -70,6 +71,7 @@ def test_fetch_helpers_cover_errors_and_text_extraction(monkeypatch) -> None:
         "urlopen",
         lambda req, timeout=15: _FakeResponse(b'{"ok": true}', content_type="application/json"),
     )
+    get_cache().clear()
     assert '{"ok": true}' in fetch.handle_fetch({"url": "https://example.com"})
 
     monkeypatch.setattr(
@@ -77,6 +79,7 @@ def test_fetch_helpers_cover_errors_and_text_extraction(monkeypatch) -> None:
         "urlopen",
         lambda req, timeout=15: _FakeResponse(b"plain text", content_type="text/plain"),
     )
+    get_cache().clear()
     assert "plain text" in fetch.handle_fetch({"url": "https://example.com"})
 
     monkeypatch.setattr(
@@ -84,6 +87,7 @@ def test_fetch_helpers_cover_errors_and_text_extraction(monkeypatch) -> None:
         "urlopen",
         lambda req, timeout=15: _FakeResponse(b"<html><script>only script</script></html>"),
     )
+    get_cache().clear()
     assert "could not extract text content" in fetch.handle_fetch({"url": "https://example.com"})
 
     assert fetch._detect_encoding("text/html; charset=gbk", b"") == "gbk"
@@ -91,6 +95,13 @@ def test_fetch_helpers_cover_errors_and_text_extraction(monkeypatch) -> None:
     assert (
         fetch._html_to_text("<div>hello<br>world</div><style>ignored</style>") == "hello\n\nworld"
     )
+    # Markdown link rendering: absolute href → [text](url), others → plain text
+    assert "](" in fetch._html_to_text('<a href="https://example.com">click</a>')
+    assert "](https://example.com)" in fetch._html_to_text(
+        '<a href="https://example.com">click</a>'
+    )
+    assert "](" not in fetch._html_to_text('<a href="/relative">link</a>')
+    assert "[" not in fetch._html_to_text('<a href="/relative">link</a>')
 
 
 def test_search_helpers_cover_results_parsing_and_errors(monkeypatch) -> None:
@@ -112,6 +123,9 @@ def test_search_helpers_cover_results_parsing_and_errors(monkeypatch) -> None:
         "_ddg_lite_search",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("network")),
     )
+    from hermit.plugins.builtin.tools.web_tools.cache import get_cache
+
+    get_cache().clear()
     assert "Search error: network" in search.handle_search({"query": "life"})
 
     monkeypatch.setattr(search, "_ddg_lite_search", lambda *args, **kwargs: "")

@@ -90,8 +90,8 @@ class TestPriorityScoreComputation:
 
         # Backdate created_at by 3 hours
         three_hours_ago = time.time() - 3 * 3600
-        with store._lock, store._conn:
-            store._conn.execute(
+        with store._get_conn():
+            store._get_conn().execute(
                 "UPDATE tasks SET created_at = ? WHERE task_id = ?",
                 (three_hours_ago, task_id),
             )
@@ -108,8 +108,8 @@ class TestPriorityScoreComputation:
 
         # Backdate created_at by 100 hours
         old = time.time() - 100 * 3600
-        with store._lock, store._conn:
-            store._conn.execute(
+        with store._get_conn():
+            store._get_conn().execute(
                 "UPDATE tasks SET created_at = ? WHERE task_id = ?",
                 (old, task_id),
             )

@@ -1,0 +1,434 @@
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:59:5 [reportUnknownParameterType] Return type, "dict[Unknown, Unknown]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:59:21 [reportUnknownParameterType] Type of parameter "raw" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:59:32 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:59:48 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:62:16 [reportUnknownVariableType] Return type, "dict[Unknown, Unknown]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:64:16 [reportUnknownVariableType] Return type, "dict[Unknown, Unknown]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:67:16 [reportUnknownVariableType] Return type, "dict[Unknown, Unknown]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:69:16 [reportUnknownVariableType] Return type, "dict[Unknown, Unknown]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:72:25 [reportUnknownParameterType] Type of parameter "meta" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:72:31 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:158:9 [reportUnknownParameterType] Return type, "list[dict[Unknown, Unknown]]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:158:75 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:165:20 [reportUnknownVariableType] Return type, "list[dict[Unknown, Unknown]]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:170:20 [reportUnknownVariableType] Return type, "list[dict[Unknown, Unknown]]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:172:20 [reportUnknownVariableType] Return type, "list[dict[Unknown, Unknown]]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:178:9 [reportUnknownVariableType] Type of "scored" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:178:35 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:180:13 [reportUnknownVariableType] Type of "summary" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:181:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:185:13 [reportUnknownVariableType] Type of "category" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:186:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:190:13 [reportUnknownVariableType] Type of "summary_keywords" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:190:39 [reportUnknownVariableType] Type of "w" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:190:44 [reportUnknownMemberType] Type of "lower" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:190:44 [reportUnknownMemberType] Type of "split" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:190:75 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:195:17 [reportUnknownMemberType] Type of "append" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:197:9 [reportUnknownMemberType] Type of "sort" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:197:32 [reportUnknownLambdaType] Type of parameter "x" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:198:16 [reportUnknownVariableType] Return type, "list[dict[Unknown, Unknown]]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:198:31 [reportUnknownVariableType] Type of "lesson" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:216:9 [reportUnknownParameterType] Return type, "dict[Unknown, Unknown]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:216:71 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:219:9 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:220:9 [reportUnknownVariableType] Type of "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:220:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:224:20 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:227:16 [reportUnknownVariableType] Return type, "dict[Unknown, Unknown]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:307:9 [reportUnknownParameterType] Return type, "list[dict[Unknown, Unknown]]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:307:46 [reportUnknownParameterType] Type of parameter "plan" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:307:57 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:307:72 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:320:13 [reportUnknownVariableType] Type of "entry" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:321:13 [reportUnknownVariableType] Type of "cmd" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:321:19 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:326:21 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:335:35 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:345:35 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:405:16 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:415:9 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:416:9 [reportUnknownVariableType] Type of "goal" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:416:16 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:417:9 [reportUnknownVariableType] Type of "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:417:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:423:9 [reportUnknownVariableType] Type of "approval_decision" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:423:29 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:424:52 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:432:13 [reportUnknownVariableType] Type of "spec_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:432:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:433:13 [reportUnknownVariableType] Type of "research_data" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:433:29 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:435:17 [reportUnknownMemberType] Type of "_run_decomposition" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:435:56 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:435:67 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:437:17 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:438:17 [reportUnknownVariableType] Type of "verification_plan" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:438:37 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:440:21 [reportUnknownVariableType] Type of "vb" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:440:26 [reportUnknownMemberType] Type of "_measure_verification_baseline" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:440:62 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:441:21 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:442:24 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:444:13 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:447:9 [reportUnknownVariableType] Type of "research_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:447:25 [reportUnknownMemberType] Type of "_run_research" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:447:59 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:450:9 [reportUnknownVariableType] Type of "spec_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:450:21 [reportUnknownMemberType] Type of "_run_spec_generation" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:451:28 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:461:27 [reportUnknownMemberType] Type of "_check_spec_approval" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:463:20 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:473:9 [reportUnknownMemberType] Type of "_run_decomposition" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:477:9 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:480:9 [reportUnknownVariableType] Type of "verification_plan" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:480:29 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:482:13 [reportUnknownVariableType] Type of "verification_baseline" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:482:37 [reportUnknownMemberType] Type of "_measure_verification_baseline" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:482:73 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:483:13 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:485:16 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:487:9 [reportUnknownParameterType] Return type, "dict[Unknown, Unknown]", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:491:9 [reportUnknownParameterType] Type of parameter "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:491:15 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:492:9 [reportUnknownParameterType] Type of parameter "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:492:19 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:493:10 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:495:9 [reportUnknownVariableType] Type of "raw_hints" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:495:21 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:499:17 [reportUnknownVariableType] Type of "parsed" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:501:34 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:501:41 [reportUnknownVariableType] Type of "h" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:506:9 [reportUnknownVariableType] Type of "prior_lessons" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:506:25 [reportUnknownMemberType] Type of "_query_relevant_lessons" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:507:13 [reportUnknownVariableType] Type of "lesson" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:508:13 [reportUnknownVariableType] Type of "summary" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:509:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:510:20 [reportUnnecessaryIsInstance] Unnecessary isinstance call; "dict[Unknown, Unknown]" is always an instance of "dict[Unknown, Unknown]"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:513:13 [reportUnknownVariableType] Type of "category" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:514:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:515:20 [reportUnnecessaryIsInstance] Unnecessary isinstance call; "dict[Unknown, Unknown]" is always an instance of "dict[Unknown, Unknown]"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:524:23 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:529:31 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:585:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:586:28 [reportUnnecessaryIsInstance] Unnecessary isinstance call; "dict[Unknown, Unknown]" is always an instance of "dict[Unknown, Unknown]"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:590:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:591:28 [reportUnnecessaryIsInstance] Unnecessary isinstance call; "dict[Unknown, Unknown]" is always an instance of "dict[Unknown, Unknown]"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:595:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:596:28 [reportUnnecessaryIsInstance] Unnecessary isinstance call; "dict[Unknown, Unknown]" is always an instance of "dict[Unknown, Unknown]"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:600:21 [reportUnknownVariableType] Type of "ls" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:603:9 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:606:9 [reportUnknownParameterType] Return type, "dict[Unknown, Unknown] | None", is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:610:9 [reportUnknownParameterType] Type of parameter "research_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:610:24 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:613:10 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:620:9 [reportUnknownVariableType] Type of "findings_raw" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:620:24 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:623:24 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:623:24 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:624:23 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:624:23 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:625:25 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:625:25 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:626:27 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:626:27 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:627:21 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:627:21 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:628:27 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:628:27 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:630:17 [reportUnknownVariableType] Type of "f" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:633:18 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:633:18 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:635:34 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:635:34 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:636:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:636:25 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:637:30 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:637:30 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:642:9 [reportUnknownVariableType] Type of "prior_lessons" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:642:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:643:13 [reportUnknownVariableType] Type of "ls" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:644:13 [reportUnknownVariableType] Type of "cat" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:644:19 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:645:13 [reportUnknownVariableType] Type of "summary" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:645:23 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:694:9 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:700:9 [reportUnknownParameterType] Type of parameter "spec_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:700:20 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:701:9 [reportUnknownParameterType] Type of parameter "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:701:15 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:713:9 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:714:9 [reportUnknownVariableType] Type of "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:714:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:717:9 [reportUnknownVariableType] Type of "risk_budget" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:717:23 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:718:9 [reportUnknownVariableType] Type of "risk_band" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:718:21 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:720:13 [reportUnknownVariableType] Type of "trust_zone" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:720:26 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:722:17 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:726:9 [reportUnknownVariableType] Type of "policy_profile" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:726:26 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:728:13 [reportUnknownVariableType] Type of "source" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:728:22 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:747:13 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:767:21 [reportUnknownVariableType] Type of "task_id" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:767:31 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:776:38 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:777:37 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:780:47 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:780:47 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:781:44 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:805:13 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:820:9 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:836:9 [reportUnknownParameterType] Type of parameter "spec_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:836:20 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:837:9 [reportUnknownParameterType] Type of parameter "research_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:837:24 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:846:9 [reportUnknownVariableType] Type of "prior_lessons" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:846:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:847:13 [reportUnknownVariableType] Type of "ls" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:848:13 [reportUnknownVariableType] Type of "lesson_id" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:848:25 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:858:61 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:858:68 [reportUnknownVariableType] Type of "f" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:862:53 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:862:60 [reportUnknownVariableType] Type of "f" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:866:9 [reportUnknownVariableType] Type of "file_plan_raw" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:866:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:869:9 [reportUnknownVariableType] Type of "existing_paths" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:869:27 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:869:49 [reportUnknownVariableType] Type of "e" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:870:9 [reportUnknownVariableType] Type of "boosted_entries" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:870:31 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:873:17 [reportUnknownMemberType] Type of "append" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:877:13 [reportUnknownVariableType] Type of "file_plan_raw" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:877:52 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:881:35 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:886:21 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:886:21 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:887:19 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:887:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:888:18 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:888:18 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:889:31 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:889:31 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:890:39 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:890:39 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:891:34 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:891:41 [reportUnknownVariableType] Type of "e" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:892:26 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:892:26 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:893:24 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:893:24 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:917:9 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:936:9 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:937:9 [reportUnknownVariableType] Type of "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:937:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:940:12 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:943:9 [reportUnknownVariableType] Type of "decomposition" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:943:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:944:9 [reportUnknownVariableType] Type of "steps" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:944:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:946:20 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:949:20 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:955:21 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:956:22 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:956:22 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:957:23 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:957:23 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:958:28 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:958:28 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:959:26 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:959:26 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:961:17 [reportUnknownVariableType] Type of "step" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:987:9 [reportUnknownVariableType] Type of "task" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:988:9 [reportUnknownVariableType] Type of "dag_task_id" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:988:23 [reportUnknownMemberType] Type of "task_id" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:988:47 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:988:68 [reportUnknownMemberType] Type of "task_id" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:998:9 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1005:25 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1020:9 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1021:9 [reportUnknownVariableType] Type of "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1021:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1022:9 [reportUnknownVariableType] Type of "decomposition" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1022:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1023:9 [reportUnknownVariableType] Type of "steps" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1023:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1024:9 [reportUnknownVariableType] Type of "spec_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1024:21 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1028:13 [reportUnknownVariableType] Type of "step" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1029:13 [reportUnknownVariableType] Type of "step_meta" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1029:25 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1030:13 [reportUnknownVariableType] Type of "path" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1030:20 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1032:38 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1035:30 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1035:30 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1038:19 [reportUnknownMemberType] Type of "_run_council_review" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1042:13 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1065:20 [reportUnknownMemberType] Type of "_run_post_accept" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1070:20 [reportUnknownMemberType] Type of "_start_revision_cycle" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1083:16 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1093:9 [reportUnknownParameterType] Type of parameter "spec_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1093:20 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1113:17 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1127:9 [reportUnknownParameterType] Type of parameter "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1127:19 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1130:9 [reportUnknownVariableType] Type of "impl_info" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1130:21 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1131:9 [reportUnknownVariableType] Type of "worktree_path" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1131:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1134:9 [reportUnknownVariableType] Type of "decomposition" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1134:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1135:9 [reportUnknownVariableType] Type of "steps" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1135:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1137:13 [reportUnknownVariableType] Type of "step" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1138:13 [reportUnknownVariableType] Type of "step_meta" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1138:25 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1139:13 [reportUnknownVariableType] Type of "path" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1139:20 [reportUnknownMemberType] Type of "get" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1141:38 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1150:13 [reportUnknownVariableType] Type of "spec_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1150:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1151:13 [reportUnknownVariableType] Type of "vp_raw" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1151:22 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1152:13 [reportUnknownVariableType] Type of "verification_plan" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1152:39 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1152:44 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1152:51 [reportUnknownVariableType] Type of "e" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1155:13 [reportUnknownVariableType] Type of "pre_impl_baseline" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1155:33 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1158:13 [reportUnknownVariableType] Type of "verification_baseline" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1158:37 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1165:21 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1166:39 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1167:38 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1169:43 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1202:13 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1232:13 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1247:32 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1247:32 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1257:28 [reportUnknownMemberType] Type of "_start_benchmark_repair" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1270:16 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1329:9 [reportUnknownParameterType] Type of parameter "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1329:19 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1336:28 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1336:28 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1346:9 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1347:9 [reportUnknownVariableType] Type of "meta" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1347:32 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1350:9 [reportUnknownMemberType] Type of "pop" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1385:20 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1397:16 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1404:9 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1405:9 [reportUnknownVariableType] Type of "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1405:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1406:9 [reportUnknownVariableType] Type of "benchmark_data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1406:26 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1407:29 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1407:29 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1421:19 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1423:25 [reportUnknownVariableType] Type of "k" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1423:28 [reportUnknownVariableType] Type of "v" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1423:33 [reportUnknownMemberType] Type of "items" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1460:21 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1481:25 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1540:9 [reportUnknownParameterType] Type of parameter "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1540:19 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1558:9 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1563:13 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1564:13 [reportUnknownVariableType] Type of "meta" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1564:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1568:24 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1573:16 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1590:17 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1591:17 [reportUnknownVariableType] Type of "goal" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1591:24 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1592:17 [reportUnknownVariableType] Type of "meta" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1592:40 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1593:17 [reportUnknownVariableType] Type of "cv" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1593:22 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1595:21 [reportUnknownVariableType] Type of "last_directive" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1595:38 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1647:9 [reportUnknownVariableType] Type of "data" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1648:9 [reportUnknownVariableType] Type of "spec_id" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1649:9 [reportUnknownVariableType] Type of "phase_str" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1649:21 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1659:9 [reportUnknownVariableType] Type of "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1659:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1660:9 [reportUnknownVariableType] Type of "impl_info" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1660:21 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1661:9 [reportUnknownVariableType] Type of "worktree_path" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1661:25 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1665:17 [reportUnknownMemberType] Type of "_update_metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1666:21 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1685:20 [reportUnknownMemberType] Type of "advance_phase" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1685:48 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1694:42 [reportArgumentType] Argument of type "str" cannot be assigned to parameter "repo_root" of type "Path" in function "__init__"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1695:27 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1706:13 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1778:45 [reportPrivateUsage] "_workspace_root" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1786:38 [reportArgumentType] Argument of type "str" cannot be assigned to parameter "repo_root" of type "Path" in function "__init__"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1802:35 [reportPrivateUsage] "_runner" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1805:37 [reportPrivateUsage] "_runner" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1835:43 [reportUnknownParameterType] Type of parameter "entry" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1835:50 [reportMissingTypeArgument] Expected type arguments for generic class "dict"
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1840:9 [reportUnknownVariableType] Type of "spec_id" is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1841:9 [reportUnknownVariableType] Type of "metadata" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1841:36 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1842:9 [reportUnknownVariableType] Type of "started_at" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1842:22 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1843:9 [reportUnknownVariableType] Type of "dag_task_id" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1843:23 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1852:39 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1857:56 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1857:65 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1864:52 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1864:61 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1876:45 [reportPrivateUsage] "_runner" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1893:32 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1895:13 [reportUnknownArgumentType] Argument type is unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1897:44 [reportPrivateUsage] "_max_retries" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1906:34 [reportPrivateUsage] "_store" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1908:46 [reportPrivateUsage] "_store" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1912:21 [reportUnknownVariableType] Type of "entry" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1913:24 [reportUnknownMemberType] Type of "_check_implementing_timeout" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1933:34 [reportPrivateUsage] "_store" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1939:44 [reportPrivateUsage] "_store" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1960:42 [reportPrivateUsage] "_store" is protected and used outside of the class in which it is declared
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1964:21 [reportUnknownVariableType] Type of "entry" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1965:21 [reportUnknownVariableType] Type of "impl_meta" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1965:49 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1966:28 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1967:25 [reportUnknownVariableType] Type of "spec_id" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:1973:52 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2064:13 [reportUnknownVariableType] Type of "signal_id" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2065:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2071:13 [reportUnknownVariableType] Type of "source_kind" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2072:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2079:13 [reportUnknownVariableType] Type of "suggested_goal" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2080:17 [reportUnknownMemberType] Type of "get" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2098:40 [reportUnknownMemberType] Type of "strip" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2098:40 [reportUnknownMemberType] Type of "lower" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2098:40 [reportUnknownMemberType] Type of "encode" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2098:40 [reportUnknownArgumentType] Argument type is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2121:17 [reportUnknownVariableType] Type of "risk_level" is partially unknown
+src/hermit/plugins/builtin/hooks/metaloop/orchestrator.py:2122:21 [reportUnknownMemberType] Type of "get" is partially unknown

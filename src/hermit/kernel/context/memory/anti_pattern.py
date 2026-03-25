@@ -73,7 +73,13 @@ class AntiPatternService:
         task_id: str = "",
         conversation_id: str | None = None,
     ) -> MemoryRecord | None:
-        """Invert a failing memory into a pitfall_warning, invalidating the original."""
+        """Invert a failing memory into a pitfall_warning, invalidating the original.
+
+        The operation is two-phase: first the original is invalidated, then the
+        pitfall record is created.  If the create step raises, we attempt to
+        restore the original to ``active`` so no data is silently lost.  Either
+        way the error is logged and ``None`` is returned on failure.
+        """
         original = store.get_memory_record(memory_id)
         if original is None or original.status != "active":
             return None
@@ -84,34 +90,61 @@ class AntiPatternService:
         )
         pitfall_text = f"PITFALL: {original.claim_text}"
 
-        # Invalidate original
-        store.update_memory_record(
-            memory_id,
-            status="invalidated",
-            invalidation_reason="inverted_to_pitfall",
-            invalidated_at=time.time(),
-        )
+        # Phase 1 – invalidate the original record.
+        try:
+            store.update_memory_record(
+                memory_id,
+                status="invalidated",
+                invalidation_reason="inverted_to_pitfall",
+                invalidated_at=time.time(),
+            )
+        except Exception:
+            log.exception(
+                "pitfall_inversion_failed_on_invalidate",
+                memory_id=memory_id,
+            )
+            return None
 
-        # Create pitfall warning
-        pitfall = store.create_memory_record(
-            task_id=task_id or original.task_id,
-            conversation_id=conversation_id or original.conversation_id,
-            category=original.category,
-            claim_text=pitfall_text,
-            structured_assertion={
-                "original_memory_id": memory_id,
-                "original_claim": original.claim_text,
-                "inverted_at": time.time(),
-                "pitfall_type": "failure_inversion",
-            },
-            scope_kind=original.scope_kind,
-            scope_ref=original.scope_ref,
-            promotion_reason="pitfall_inversion",
-            retention_class=original.retention_class,
-            memory_kind="pitfall_warning",
-            confidence=pitfall_confidence,
-            trust_tier="durable",
-        )
+        # Phase 2 – create the replacement pitfall record.
+        try:
+            pitfall = store.create_memory_record(
+                task_id=task_id or original.task_id,
+                conversation_id=conversation_id or original.conversation_id,
+                category=original.category,
+                claim_text=pitfall_text,
+                structured_assertion={
+                    "original_memory_id": memory_id,
+                    "original_claim": original.claim_text,
+                    "inverted_at": time.time(),
+                    "pitfall_type": "failure_inversion",
+                },
+                scope_kind=original.scope_kind,
+                scope_ref=original.scope_ref,
+                promotion_reason="pitfall_inversion",
+                retention_class="pitfall_warning",
+                memory_kind="pitfall_warning",
+                confidence=pitfall_confidence,
+                trust_tier="durable",
+            )
+        except Exception:
+            # Roll back: restore the original to active so it is not silently lost.
+            log.exception(
+                "pitfall_inversion_failed_on_create",
+                memory_id=memory_id,
+            )
+            try:
+                store.update_memory_record(
+                    memory_id,
+                    status="active",
+                    invalidation_reason=None,
+                    invalidated_at=None,
+                )
+            except Exception:
+                log.exception(
+                    "pitfall_inversion_rollback_failed",
+                    memory_id=memory_id,
+                )
+            return None
 
         log.info(
             "memory_inverted_to_pitfall",

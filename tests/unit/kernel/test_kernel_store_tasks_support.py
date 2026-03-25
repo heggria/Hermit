@@ -5,22 +5,22 @@ import sqlite3
 from pathlib import Path
 
 from hermit.kernel.ledger.journal.store import KernelStore
-from hermit.kernel.ledger.journal.store_support import _UNSET, _json_loads
+from hermit.kernel.ledger.journal.store_support import _UNSET, json_loads
 from hermit.kernel.verification.proofs.proofs import ProofService
 
 
 def test_store_support_json_loads_handles_empty_and_invalid() -> None:
-    assert _json_loads(None) == {}
-    assert _json_loads("") == {}
-    assert _json_loads("{bad") == {}
-    assert _json_loads('{"ok": true}') == {"ok": True}
+    assert json_loads(None) == {}
+    assert json_loads("") == {}
+    assert json_loads("{bad") == {}
+    assert json_loads('{"ok": true}') == {"ok": True}
     assert _UNSET is not None
 
 
 def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_events(
-    tmp_path: Path,
+    fast_store: KernelStore,
 ) -> None:
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
 
     conversation = store.ensure_conversation("conv-1", source_channel="chat", source_ref="thread-1")
     same_conversation = store.ensure_conversation("conv-1", source_channel="chat")
@@ -113,7 +113,7 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
         attempt.step_attempt_id,
         status="blocked",
         context={"phase": "review"},
-        waiting_reason="approval",
+        status_reason="approval",
         approval_id="approval-1",
         decision_id="decision-1",
         capability_grant_id="grant-1",
@@ -135,7 +135,7 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
     assert updated_attempt is not None
     assert updated_attempt.status == "blocked"
     assert updated_attempt.context == {"phase": "review"}
-    assert updated_attempt.waiting_reason == "approval"
+    assert updated_attempt.status_reason == "approval"
     assert updated_attempt.capability_grant_id == "grant-1"
     assert updated_attempt.context_pack_ref == "artifact_context_pack_v2"
     assert updated_attempt.working_state_ref == "artifact_working_state_v2"
@@ -153,7 +153,7 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
         attempt.step_attempt_id,
         status="running",
         context=updated_attempt.context,
-        waiting_reason=updated_attempt.waiting_reason,
+        status_reason=updated_attempt.status_reason,
         approval_id=updated_attempt.approval_id,
         decision_id=updated_attempt.decision_id,
         capability_grant_id=updated_attempt.capability_grant_id,
@@ -163,7 +163,7 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
     unchanged_attempt = store.get_step_attempt(attempt.step_attempt_id)
     assert unchanged_attempt is not None
     assert unchanged_attempt.context == {"phase": "review"}
-    assert unchanged_attempt.waiting_reason == "approval"
+    assert unchanged_attempt.status_reason == "approval"
     store.update_step_attempt("missing-attempt", status="ignored")
 
     custom_event_id = store.append_event(
@@ -199,9 +199,9 @@ def test_kernel_store_task_flow_covers_conversations_tasks_steps_attempts_and_ev
 
 
 def test_kernel_store_tolerates_foreign_object_sentinels_in_optional_task_fields(
-    tmp_path: Path,
+    fast_store: KernelStore,
 ) -> None:
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
     store.ensure_conversation("conv-sentinel", source_channel="scheduler")
 
     task = store.create_task(
@@ -220,9 +220,9 @@ def test_kernel_store_tolerates_foreign_object_sentinels_in_optional_task_fields
 
 
 def test_kernel_store_tolerates_foreign_object_sentinels_in_step_attempt_updates(
-    tmp_path: Path,
+    fast_store: KernelStore,
 ) -> None:
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
     store.ensure_conversation("conv-attempt-sentinel", source_channel="scheduler")
     task = store.create_task(
         conversation_id="conv-attempt-sentinel",
@@ -257,9 +257,9 @@ def test_kernel_store_tolerates_foreign_object_sentinels_in_step_attempt_updates
 
 
 def test_kernel_store_tolerates_foreign_object_sentinels_in_ingress_updates(
-    tmp_path: Path,
+    fast_store: KernelStore,
 ) -> None:
-    store = KernelStore(tmp_path / "state.db")
+    store = fast_store
     store.ensure_conversation("conv-ingress-sentinel", source_channel="scheduler")
     ingress = store.create_ingress(
         conversation_id="conv-ingress-sentinel",
@@ -302,8 +302,8 @@ def test_kernel_store_backfills_event_hash_chain_when_missing(tmp_path: Path) ->
     )
     step = store.create_step(task_id=task.task_id, kind="respond")
     store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
-    with store._lock, store._conn:  # type: ignore[attr-defined]
-        store._conn.execute(  # type: ignore[attr-defined]
+    with store._get_conn():
+        store._get_conn().execute(
             "UPDATE events SET event_hash = NULL, prev_event_hash = NULL, hash_chain_algo = NULL"
         )
     store.close()
@@ -323,8 +323,8 @@ def test_kernel_store_accepts_schema_version_5_for_additive_migration(tmp_path: 
     db_path = tmp_path / "state.db"
     store = KernelStore(db_path)
     try:
-        with store._lock, store._conn:  # type: ignore[attr-defined]
-            store._conn.execute(  # type: ignore[attr-defined]
+        with store._get_conn():
+            store._get_conn().execute(
                 "UPDATE kernel_meta SET value = '5' WHERE key = 'schema_version'"
             )
     finally:
@@ -332,19 +332,21 @@ def test_kernel_store_accepts_schema_version_5_for_additive_migration(tmp_path: 
 
     reopened = KernelStore(db_path)
     try:
-        assert reopened.schema_version() == "10"
+        assert reopened.schema_version() == "19"
         with sqlite3.connect(db_path) as conn:
             row = conn.execute(
                 "SELECT value FROM kernel_meta WHERE key = 'schema_version'"
             ).fetchone()
         assert row is not None
-        assert row[0] == "10"
+        assert row[0] == "19"
     finally:
         reopened.close()
 
 
-def test_kernel_store_round_trips_canonical_ledger_fields(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "state.db")
+def test_kernel_store_round_trips_canonical_ledger_fields(
+    fast_store: KernelStore, tmp_path: Path
+) -> None:
+    store = fast_store
     store.ensure_conversation("conv-canonical", source_channel="chat")
     task = store.create_task(
         conversation_id="conv-canonical",
@@ -473,8 +475,8 @@ def test_kernel_store_round_trips_canonical_ledger_fields(tmp_path: Path) -> Non
     assert fetched_receipt.signer_ref == "local-hmac"
 
 
-def test_proof_service_detects_tampered_event_chain(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "state.db")
+def test_proof_service_detects_tampered_event_chain(fast_store: KernelStore) -> None:
+    store = fast_store
     store.ensure_conversation("conv-tamper", source_channel="chat")
     task = store.create_task(
         conversation_id="conv-tamper",
@@ -488,8 +490,8 @@ def test_proof_service_detects_tampered_event_chain(tmp_path: Path) -> None:
     events = store.list_events(task_id=task.task_id, limit=20)
     assert events
     tampered_event_id = events[-1]["event_id"]
-    with store._lock, store._conn:  # type: ignore[attr-defined]
-        store._conn.execute(  # type: ignore[attr-defined]
+    with store._get_conn():
+        store._get_conn().execute(
             "UPDATE events SET payload_json = ? WHERE event_id = ?",
             ('{"tampered":true}', tampered_event_id),
         )
@@ -500,123 +502,277 @@ def test_proof_service_detects_tampered_event_chain(tmp_path: Path) -> None:
 
 def test_proof_service_exports_signed_bundles_and_inclusion_proofs(tmp_path: Path) -> None:
     store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-signed", source_channel="chat")
-    task = store.create_task(
-        conversation_id="conv-signed",
-        title="Signed Proof Task",
-        goal="Export signed proof bundle",
-        source_channel="chat",
-    )
-    step = store.create_step(task_id=task.task_id, kind="respond")
-    first_attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
-    second_attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
-    first_receipt = store.create_receipt(
-        task_id=task.task_id,
-        step_id=step.step_id,
-        step_attempt_id=first_attempt.step_attempt_id,
-        action_type="write_local",
-        input_refs=[],
-        environment_ref=None,
-        policy_result={"decision": "allow"},
-        approval_ref=None,
-        output_refs=[],
-        result_summary="first",
-        result_code="succeeded",
-    )
-    second_receipt = store.create_receipt(
-        task_id=task.task_id,
-        step_id=step.step_id,
-        step_attempt_id=second_attempt.step_attempt_id,
-        action_type="write_local",
-        input_refs=[],
-        environment_ref=None,
-        policy_result={"decision": "allow"},
-        approval_ref=None,
-        output_refs=[],
-        result_summary="second",
-        result_code="succeeded",
-    )
+    try:
+        store.ensure_conversation("conv-signed", source_channel="chat")
+        task = store.create_task(
+            conversation_id="conv-signed",
+            title="Signed Proof Task",
+            goal="Export signed proof bundle",
+            source_channel="chat",
+        )
+        step = store.create_step(task_id=task.task_id, kind="respond")
+        first_attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+        second_attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+        first_receipt = store.create_receipt(
+            task_id=task.task_id,
+            step_id=step.step_id,
+            step_attempt_id=first_attempt.step_attempt_id,
+            action_type="write_local",
+            input_refs=[],
+            environment_ref=None,
+            policy_result={"decision": "allow"},
+            approval_ref=None,
+            output_refs=[],
+            result_summary="first",
+            result_code="succeeded",
+        )
+        second_receipt = store.create_receipt(
+            task_id=task.task_id,
+            step_id=step.step_id,
+            step_attempt_id=second_attempt.step_attempt_id,
+            action_type="write_local",
+            input_refs=[],
+            environment_ref=None,
+            policy_result={"decision": "allow"},
+            approval_ref=None,
+            output_refs=[],
+            result_summary="second",
+            result_code="succeeded",
+        )
 
-    service = ProofService(store, signing_secret="proof-secret", signing_key_id="test-key")
-    export = service.export_task_proof(task.task_id)
+        service = ProofService(store, signing_secret="proof-secret", signing_key_id="test-key")
+        export = service.export_task_proof(task.task_id)
 
-    assert export["proof_mode"] == "signed_with_inclusion_proof"
-    assert export["receipt_merkle_root"]
-    assert export["signature"]["key_id"] == "test-key"
-    assert set(export["receipt_inclusion_proofs"]) == {
-        first_receipt.receipt_id,
-        second_receipt.receipt_id,
-    }
-    summary = service.build_proof_summary(task.task_id)
-    assert summary["proof_mode"] == "signed_with_inclusion_proof"
-    assert summary["proof_coverage"]["signature_coverage"]["signed_receipts"] == 2
-    assert summary["proof_coverage"]["inclusion_proof_coverage"]["proved_receipts"] == 2
-    refreshed_first = store.get_receipt(first_receipt.receipt_id)
-    refreshed_second = store.get_receipt(second_receipt.receipt_id)
-    assert (
-        refreshed_first is not None and refreshed_first.proof_mode == "signed_with_inclusion_proof"
-    )
-    assert (
-        refreshed_second is not None
-        and refreshed_second.proof_mode == "signed_with_inclusion_proof"
-    )
+        assert export["proof_mode"] == "signed_with_inclusion_proof"
+        assert export["receipt_merkle_root"]
+        assert export["signature"]["key_id"] == "test-key"
+        assert set(export["receipt_inclusion_proofs"]) == {
+            first_receipt.receipt_id,
+            second_receipt.receipt_id,
+        }
+        summary = service.build_proof_summary(task.task_id)
+        assert summary["proof_mode"] == "signed_with_inclusion_proof"
+        assert summary["proof_coverage"]["signature_coverage"]["signed_receipts"] == 2
+        assert summary["proof_coverage"]["inclusion_proof_coverage"]["proved_receipts"] == 2
+        refreshed_first = store.get_receipt(first_receipt.receipt_id)
+        refreshed_second = store.get_receipt(second_receipt.receipt_id)
+        assert (
+            refreshed_first is not None
+            and refreshed_first.proof_mode == "signed_with_inclusion_proof"
+        )
+        assert (
+            refreshed_second is not None
+            and refreshed_second.proof_mode == "signed_with_inclusion_proof"
+        )
+    finally:
+        store.close()
 
 
-def test_context_manifest_scopes_memory_refs_to_the_task_conversation(tmp_path: Path) -> None:
+def test_context_manifest_scopes_memory_refs_to_the_task_conversation(
+    tmp_path: Path,
+) -> None:
     store = KernelStore(tmp_path / "state.db")
-    store.ensure_conversation("conv-proof", source_channel="chat")
-    store.ensure_conversation("conv-other", source_channel="chat")
+    try:
+        store.ensure_conversation("conv-proof", source_channel="chat")
+        store.ensure_conversation("conv-other", source_channel="chat")
+        task = store.create_task(
+            conversation_id="conv-proof",
+            title="Scoped Proof Task",
+            goal="Export scoped manifest",
+            source_channel="chat",
+        )
+        step = store.create_step(task_id=task.task_id, kind="respond")
+        attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+        receipt = store.create_receipt(
+            task_id=task.task_id,
+            step_id=step.step_id,
+            step_attempt_id=attempt.step_attempt_id,
+            action_type="write_local",
+            input_refs=[],
+            environment_ref=None,
+            policy_result={"decision": "allow"},
+            approval_ref=None,
+            output_refs=[],
+            result_summary="done",
+            result_code="succeeded",
+        )
+        relevant_memory = store.create_memory_record(
+            task_id=task.task_id,
+            conversation_id="conv-proof",
+            category="fact",
+            content="Scoped memory",
+            status="active",
+        )
+        store.create_memory_record(
+            task_id="task_other",
+            conversation_id="conv-other",
+            category="fact",
+            content="Foreign memory",
+            status="active",
+        )
+        store.create_memory_record(
+            task_id=task.task_id,
+            conversation_id="conv-proof",
+            category="fact",
+            content="Expired memory",
+            status="active",
+            expires_at=1.0,
+        )
+
+        service = ProofService(store)
+        bundle_ref = service.ensure_receipt_bundle(receipt.receipt_id)
+
+        bundle_artifact = store.get_artifact(bundle_ref)
+        assert bundle_artifact is not None
+        bundle_payload = json.loads(Path(bundle_artifact.uri).read_text(encoding="utf-8"))
+        context_manifest = store.get_artifact(bundle_payload["context_manifest_ref"])
+        assert context_manifest is not None
+        manifest_payload = json.loads(Path(context_manifest.uri).read_text(encoding="utf-8"))
+        assert manifest_payload["memory_refs"] == [relevant_memory.memory_id]
+    finally:
+        store.close()
+
+
+def test_try_finalize_step_attempt_is_atomic_and_idempotent(
+    fast_store: KernelStore,
+) -> None:
+    """try_finalize_step_attempt() must behave as a CAS: the first caller wins,
+    and a second concurrent caller (or any subsequent call) returns False without
+    triggering a second status transition."""
+    store = fast_store
+
+    conv = store.ensure_conversation("conv-cas", source_channel="chat")
     task = store.create_task(
-        conversation_id="conv-proof",
-        title="Scoped Proof Task",
-        goal="Export scoped manifest",
+        conversation_id=conv.conversation_id,
+        title="CAS Test",
+        goal="Verify atomic finalize",
         source_channel="chat",
     )
     step = store.create_step(task_id=task.task_id, kind="respond")
     attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
-    receipt = store.create_receipt(
-        task_id=task.task_id,
-        step_id=step.step_id,
-        step_attempt_id=attempt.step_attempt_id,
-        action_type="write_local",
-        input_refs=[],
-        environment_ref=None,
-        policy_result={"decision": "allow"},
-        approval_ref=None,
-        output_refs=[],
-        result_summary="done",
-        result_code="succeeded",
+
+    finished_at = 1_700_000_000.0
+
+    # First call: attempt is 'running' → CAS should succeed
+    won = store.try_finalize_step_attempt(
+        attempt.step_attempt_id, status="succeeded", finished_at=finished_at
     )
-    relevant_memory = store.create_memory_record(
-        task_id=task.task_id,
-        conversation_id="conv-proof",
-        category="fact",
-        content="Scoped memory",
-        status="active",
+    assert won is True
+
+    # DB row must reflect the new status
+    updated = store.get_step_attempt(attempt.step_attempt_id)
+    assert updated is not None
+    assert updated.status == "succeeded"
+
+    # Second call: attempt is already terminal → CAS must return False (idempotent guard)
+    lost = store.try_finalize_step_attempt(
+        attempt.step_attempt_id, status="succeeded", finished_at=finished_at + 1
     )
-    store.create_memory_record(
-        task_id="task_other",
-        conversation_id="conv-other",
-        category="fact",
-        content="Foreign memory",
-        status="active",
-    )
-    store.create_memory_record(
-        task_id=task.task_id,
-        conversation_id="conv-proof",
-        category="fact",
-        content="Expired memory",
-        status="active",
-        expires_at=1.0,
+    assert lost is False
+
+    # Status must be unchanged after the losing call
+    still_updated = store.get_step_attempt(attempt.step_attempt_id)
+    assert still_updated is not None
+    assert still_updated.status == "succeeded"
+
+
+def test_try_finalize_step_attempt_rejects_all_terminal_statuses(
+    fast_store: KernelStore,
+) -> None:
+    """try_finalize_step_attempt() must return False for every terminal status
+    ('succeeded', 'completed', 'skipped', 'failed', 'superseded') so that
+    no terminal → terminal re-transition is possible."""
+    import time
+
+    store = fast_store
+    conv = store.ensure_conversation("conv-terminals", source_channel="chat")
+    task = store.create_task(
+        conversation_id=conv.conversation_id,
+        title="Terminal Guard Test",
+        goal="Reject re-finalization",
+        source_channel="chat",
     )
 
-    service = ProofService(store)
-    bundle_ref = service.ensure_receipt_bundle(receipt.receipt_id)
+    terminal_statuses = ("succeeded", "completed", "skipped", "failed", "superseded")
+    now = time.time()
 
-    bundle_artifact = store.get_artifact(bundle_ref)
-    assert bundle_artifact is not None
-    bundle_payload = json.loads(Path(bundle_artifact.uri).read_text(encoding="utf-8"))
-    context_manifest = store.get_artifact(bundle_payload["context_manifest_ref"])
-    assert context_manifest is not None
-    manifest_payload = json.loads(Path(context_manifest.uri).read_text(encoding="utf-8"))
-    assert manifest_payload["memory_refs"] == [relevant_memory.memory_id]
+    for terminal in terminal_statuses:
+        step = store.create_step(task_id=task.task_id, kind="respond")
+        attempt = store.create_step_attempt(task_id=task.task_id, step_id=step.step_id)
+
+        # Force-set the terminal status directly via try_finalize (for non-superseded)
+        # or try_supersede (for superseded).
+        if terminal == "superseded":
+            store.try_supersede_step_attempt(attempt.step_attempt_id, finished_at=now)
+        else:
+            won = store.try_finalize_step_attempt(
+                attempt.step_attempt_id, status=terminal, finished_at=now
+            )
+            assert won is True, f"First finalize for '{terminal}' should win"
+
+        # Second attempt must fail regardless of what terminal status we try to set
+        lost = store.try_finalize_step_attempt(
+            attempt.step_attempt_id, status="succeeded", finished_at=now + 1
+        )
+        assert lost is False, f"Re-finalization of '{terminal}' attempt must be rejected"
+
+
+def test_batch_get_artifacts_returns_matching_records_in_single_query(tmp_path: Path) -> None:
+    """batch_get_artifacts fetches multiple artifacts in one DB round-trip."""
+    store = KernelStore(tmp_path / "state.db")
+    try:
+        store.ensure_conversation("conv-batch", source_channel="chat")
+        task = store.create_task(
+            conversation_id="conv-batch",
+            title="Batch Artifact Task",
+            goal="batch_get_artifacts test",
+            source_channel="chat",
+        )
+
+        # Create three artifacts on disk
+        paths = []
+        for i in range(3):
+            p = tmp_path / f"artifact_{i}.txt"
+            p.write_text(f"content-{i}", encoding="utf-8")
+            paths.append(p)
+
+        a0 = store.create_artifact(
+            task_id=task.task_id,
+            step_id=None,
+            kind="text/plain",
+            uri=str(paths[0]),
+            content_hash="hash-0",
+            producer="test",
+        )
+        a1 = store.create_artifact(
+            task_id=task.task_id,
+            step_id=None,
+            kind="text/plain",
+            uri=str(paths[1]),
+            content_hash="hash-1",
+            producer="test",
+        )
+        a2 = store.create_artifact(
+            task_id=task.task_id,
+            step_id=None,
+            kind="text/plain",
+            uri=str(paths[2]),
+            content_hash="hash-2",
+            producer="test",
+        )
+
+        # Batch-fetch all three by ID
+        result = store.batch_get_artifacts([a0.artifact_id, a1.artifact_id, a2.artifact_id])
+        assert set(result.keys()) == {a0.artifact_id, a1.artifact_id, a2.artifact_id}
+        assert result[a0.artifact_id].uri == str(paths[0])
+        assert result[a1.artifact_id].uri == str(paths[1])
+        assert result[a2.artifact_id].uri == str(paths[2])
+
+        # Missing IDs are silently omitted
+        result_partial = store.batch_get_artifacts([a0.artifact_id, "nonexistent-id"])
+        assert set(result_partial.keys()) == {a0.artifact_id}
+
+        # Empty input returns empty dict
+        assert store.batch_get_artifacts([]) == {}
+    finally:
+        store.close()

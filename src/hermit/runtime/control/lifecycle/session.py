@@ -187,6 +187,24 @@ class SessionManager:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self._store = store or KernelStore(self.sessions_dir.parent / "kernel" / "state.db")
 
+    @staticmethod
+    def _infer_source_channel(session_id: str) -> str:
+        """Infer source_channel from session_id prefix conventions.
+
+        Mirrors ``TaskController.source_from_session`` so conversation records
+        are stored with the correct channel without requiring a TaskController
+        dependency.
+        """
+        if session_id.startswith("webhook-"):
+            return "webhook"
+        if session_id.startswith("schedule-"):
+            return "scheduler"
+        if session_id.startswith("cli"):
+            return "cli"
+        if ":" in session_id or session_id.startswith("oc_"):
+            return "feishu"
+        return "chat"
+
     def get_or_create(self, session_id: str) -> Session:
         if session_id in self._active:
             session = self._active[session_id]
@@ -202,7 +220,9 @@ class SessionManager:
         if session is not None:
             self._finalize(session)
 
-        self._store.ensure_conversation(session_id, source_channel="chat")
+        self._store.ensure_conversation(
+            session_id, source_channel=self._infer_source_channel(session_id)
+        )
         new_session = Session(session_id=session_id)
         self._active[session_id] = new_session
         return new_session
@@ -225,7 +245,9 @@ class SessionManager:
 
     def _persist(self, session: Session) -> None:
         session.messages = sanitize_session_messages(normalize_messages(session.messages))
-        self._store.ensure_conversation(session.session_id, source_channel="chat")
+        self._store.ensure_conversation(
+            session.session_id, source_channel=self._infer_source_channel(session.session_id)
+        )
         self._store.update_conversation_usage(
             session.session_id,
             input_tokens=session.total_input_tokens,
@@ -252,7 +274,3 @@ class SessionManager:
 
     def _finalize(self, session: Session) -> None:
         self._active.pop(session.session_id, None)
-
-    def _session_path(self, session_id: str) -> Path:
-        safe_name = session_id.replace("/", "_").replace("..", "_")
-        return self.sessions_dir / f"{safe_name}.json"

@@ -10,8 +10,8 @@ DEFAULT_CATEGORIES = [
     "project_convention",
     "tech_decision",
     "tooling_environment",
-    "other",
     "active_task",
+    "other",
 ]
 
 _LEGACY_CATEGORY_MAP: dict[str, str] = {
@@ -22,6 +22,7 @@ _LEGACY_CATEGORY_MAP: dict[str, str] = {
     "工具与环境": "tooling_environment",
     "其他": "other",
     "进行中的任务": "active_task",
+    "active_task": "active_task",
 }
 
 
@@ -39,10 +40,11 @@ class MemoryEntry:
     created_at: date = field(default_factory=date.today)
     updated_at: date | None = None
     confidence: float = 0.5
-    supersedes: list[str] = field(default_factory=list[str])
+    supersedes: list[str] = field(default_factory=list)
     scope_kind: str = ""
     scope_ref: str = ""
     retention_class: str = ""
+    entities: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.updated_at is None or self.updated_at < self.created_at:

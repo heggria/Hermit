@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -143,7 +144,6 @@ class RollbackService:
             )
             self.store.update_step(step.step_id, status="succeeded", output_ref=rollback_receipt_id)
             self.store.update_step_attempt(attempt.step_attempt_id, status="succeeded")
-            self.store.update_task_status(receipt.task_id, "completed")
             return {
                 "rollback_id": rollback.rollback_id,
                 "receipt_id": rollback_receipt_id,
@@ -152,6 +152,8 @@ class RollbackService:
             }
         except Exception as exc:
             summary = str(exc)
+            if workspace_lease_id is not None:
+                self.workspace_leases.release(workspace_lease_id)
             self.store.update_rollback(
                 rollback.rollback_id, status="failed", result_summary=summary
             )
@@ -162,7 +164,7 @@ class RollbackService:
             )
             self.store.update_step(step.step_id, status="failed")
             self.store.update_step_attempt(
-                attempt.step_attempt_id, status="failed", waiting_reason=summary
+                attempt.step_attempt_id, status="failed", status_reason=summary
             )
             return {"rollback_id": rollback.rollback_id, "status": "failed", "error": summary}
 
@@ -206,8 +208,18 @@ class RollbackService:
             prestate = self._prestate_payload(receipt)
             target_path = Path(str(prestate["path"]))
             if bool(prestate.get("existed")):
+                content = str(prestate.get("content", ""))
+                artifact = self.store.get_artifact(receipt.rollback_artifact_refs[0])
+                if artifact is not None and artifact.content_hash:
+                    raw = self.artifact_store.read_text(artifact.uri).encode("utf-8")
+                    actual_hash = hashlib.sha256(raw).hexdigest()
+                    if actual_hash != artifact.content_hash:
+                        raise RollbackError(
+                            "prestate_hash_mismatch",
+                            self._t("kernel.rollback.error.prestate_hash_mismatch"),
+                        )
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_text(str(prestate.get("content", "")), encoding="utf-8")
+                target_path.write_text(content, encoding="utf-8")
             elif target_path.exists():
                 target_path.unlink()
             return {
@@ -221,7 +233,7 @@ class RollbackService:
             head = str(prestate["head"])
             if bool(prestate.get("dirty")):
                 raise RollbackError("dirty_repo", self._t("kernel.rollback.error.dirty_repo"))
-            self._git_worktree().hard_reset(repo_path, head)
+            self.git_worktree.hard_reset(repo_path, head)
             return {"result_summary": self._t("kernel.rollback.result.git_reset", head=head)}
         if receipt.action_type == "memory_write" and strategy == "supersede_or_invalidate":
             targets = self._prestate_payload(receipt)
@@ -262,6 +274,3 @@ class RollbackService:
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
-
-    def _git_worktree(self) -> GitWorktreeInspector:
-        return getattr(self, "git_worktree", GitWorktreeInspector())

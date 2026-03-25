@@ -53,15 +53,8 @@ class TestPassCriterion:
         return 0.0
 
     def passed(self, workspace_root: Path, context: dict[str, Any]) -> bool:
-        result = subprocess.run(
-            ["uv", "run", "pytest", "-q", "--tb=no"],
-            cwd=workspace_root,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=300,
-        )
-        return result.returncode == 0
+        # Reuse score() to avoid running the subprocess twice.
+        return self.score(workspace_root, context) >= 1.0
 
 
 class LintCleanCriterion:
@@ -87,15 +80,8 @@ class LintCleanCriterion:
         return max(0.0, 1.0 - violation_count * 0.05)
 
     def passed(self, workspace_root: Path, context: dict[str, Any]) -> bool:
-        result = subprocess.run(
-            ["uv", "run", "ruff", "check", "."],
-            cwd=workspace_root,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
-        return result.returncode == 0
+        # Reuse score() to avoid running the subprocess twice.
+        return self.score(workspace_root, context) >= 1.0
 
 
 class TypeCheckCriterion:
@@ -122,15 +108,9 @@ class TypeCheckCriterion:
         return max(0.0, 1.0 - error_count * 0.02)
 
     def passed(self, workspace_root: Path, context: dict[str, Any]) -> bool:
-        result = subprocess.run(
-            ["uv", "run", "pyright"],
-            cwd=workspace_root,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=180,
-        )
-        return result.returncode == 0
+        # Reuse score() to avoid running the subprocess twice.
+        # A score of 1.0 means pyright exited cleanly (returncode == 0).
+        return self.score(workspace_root, context) >= 1.0
 
 
 BUILTIN_CRITERIA: dict[str, type[EvaluationCriterion]] = {

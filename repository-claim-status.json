@@ -1,0 +1,179 @@
+{
+  "rows": [
+    {
+      "id": "ingress_task_first",
+      "label": "Every ingress is task-first and durable",
+      "profiles": [
+        "core",
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "event_backed_truth",
+      "label": "Durable truth is event-backed and append-only",
+      "profiles": [
+        "core",
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "no_tool_bypass",
+      "label": "No direct model-to-tool execution bypass",
+      "profiles": [
+        "core",
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "scoped_authority",
+      "label": "Effectful execution uses scoped authority and approval packets",
+      "profiles": [
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "receipts",
+      "label": "Important actions emit receipts",
+      "profiles": [
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "uncertain_outcome",
+      "label": "Uncertain outcomes re-enter via observation or reconciliation",
+      "profiles": [
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "durable_reentry",
+      "label": "Input drift / witness drift / approval drift use durable re-entry",
+      "profiles": [
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "artifact_context",
+      "label": "Artifact-native context is the default runtime path",
+      "profiles": [
+        "core",
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "memory_evidence",
+      "label": "Memory writes are evidence-bound and kernel-backed",
+      "profiles": [
+        "core",
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "proof_export",
+      "label": "Verifiable profile exposes proof coverage and exportable bundles",
+      "profiles": [
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "signed_proofs",
+      "label": "Strong signed proofs and inclusion proofs are available when signing is configured",
+      "profiles": [],
+      "conditional": true,
+      "status": "conditional",
+      "evaluation": "conditional_capability"
+    },
+    {
+      "id": "reconciliation_coverage",
+      "label": "All consequential action types produce durable reconciliation records",
+      "profiles": [
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "proof_chain_complete",
+      "label": "Proof export reconstructs full contract/evidence/authority/receipt/reconciliation chains",
+      "profiles": [
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    },
+    {
+      "id": "retry_stale_guard",
+      "label": "Contract-sensitive retries invalidate stale contract, approval, evidence, and witness state",
+      "profiles": [
+        "governed",
+        "verifiable"
+      ],
+      "status": "implemented",
+      "evaluation": "semantic_probe"
+    }
+  ],
+  "profiles": {
+    "core": {
+      "claimable": true,
+      "label": "Hermit Kernel v0.3 Core",
+      "blockers": []
+    },
+    "governed": {
+      "claimable": true,
+      "label": "Hermit Kernel v0.3 Core + Governed",
+      "blockers": []
+    },
+    "verifiable": {
+      "claimable": true,
+      "label": "Hermit Kernel v0.3 Core + Governed + Verifiable",
+      "blockers": []
+    }
+  },
+  "claimable_profiles": [
+    "Hermit Kernel v0.3 Core",
+    "Hermit Kernel v0.3 Core + Governed",
+    "Hermit Kernel v0.3 Core + Governed + Verifiable"
+  ],
+  "blockers": [],
+  "conditional_capabilities": {
+    "signing_configured": false,
+    "strong_signed_proofs_available": false,
+    "baseline_verifiable_available": true
+  },
+  "cache": {
+    "schema_version": "repository-claims-v1",
+    "generated_at": 1774088721.280731,
+    "include_expensive_probes": true,
+    "status": "fresh"
+  }
+}

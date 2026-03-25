@@ -107,7 +107,7 @@ class GitNoteAnchor(AnchorMethod):
         if self._repo_path is not None:
             cmd.extend(["-C", str(self._repo_path)])
         cmd.extend(args)
-        return subprocess.run(cmd, capture_output=True, text=True, check=False)
+        return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
 
     def anchor(self, task_id: str, proof_hash: str) -> ProofAnchor:
         anchored_at = time.time()

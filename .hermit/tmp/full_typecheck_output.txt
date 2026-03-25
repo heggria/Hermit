@@ -1,0 +1,16 @@
+F401 [*] `time` imported but unused
+ --> src/hermit/kernel/execution/competition/deliberation_service.py:3:8
+  |
+1 | from __future__ import annotations
+2 |
+3 | import time
+  |        ^^^^
+4 | import uuid
+5 | from typing import TYPE_CHECKING
+  |
+help: Remove unused import: `time`
+
+Found 1 error.
+[*] 1 fixable with the `--fix` option.
+make[1]: *** [lint] Error 1
+make: *** [check] Error 2

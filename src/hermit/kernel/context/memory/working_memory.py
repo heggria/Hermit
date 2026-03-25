@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
@@ -13,6 +13,9 @@ log = structlog.get_logger()
 _DEFAULT_MAX_TOKENS = 4000
 _CHARS_PER_TOKEN_ESTIMATE = 4
 
+# Valid priority levels for a WorkingMemoryItem, in descending priority order.
+MemoryPriority = Literal["pitfall", "procedural", "static", "retrieved"]
+
 
 @dataclass
 class WorkingMemoryItem:
@@ -21,7 +24,7 @@ class WorkingMemoryItem:
     memory_id: str
     claim_text: str
     category: str
-    priority: str  # pitfall | procedural | static | retrieved
+    priority: MemoryPriority
     estimated_tokens: int
 
 
@@ -137,8 +140,9 @@ class WorkingMemoryManager:
         return pack
 
     @staticmethod
-    def _make_item(memory: MemoryRecord, priority: str) -> WorkingMemoryItem:
-        tokens = max(1, len(memory.claim_text) // _CHARS_PER_TOKEN_ESTIMATE)
+    def _make_item(memory: MemoryRecord, priority: MemoryPriority) -> WorkingMemoryItem:
+        # Delegate to _estimate_tokens so token counting stays in one place.
+        tokens = WorkingMemoryManager._estimate_tokens(memory.claim_text)
         return WorkingMemoryItem(
             memory_id=memory.memory_id,
             claim_text=memory.claim_text,
@@ -149,7 +153,7 @@ class WorkingMemoryManager:
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
-        return max(1, len(text) // _CHARS_PER_TOKEN_ESTIMATE)
+        return max(1, -(-len(text) // _CHARS_PER_TOKEN_ESTIMATE))
 
 
 __all__ = ["WorkingMemoryManager", "WorkingMemoryPack"]

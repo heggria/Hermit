@@ -76,6 +76,7 @@ def test_build_session_id_channel():
     assert sid == "slack:C200:U42"
 
 
+@pytest.mark.asyncio
 async def test_start_raises_without_tokens():
     settings = SimpleNamespace(slack_bot_token=None, slack_app_token=None)
     adapter = SlackAdapter(settings=settings)
@@ -84,6 +85,7 @@ async def test_start_raises_without_tokens():
         await adapter.start(runner)
 
 
+@pytest.mark.asyncio
 async def test_stop_clears_state():
     import hermit.plugins.builtin.adapters.slack.adapter as adapter_mod
 

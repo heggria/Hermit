@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from hermit.surfaces.cli.main import app
+from hermit.surfaces.cli.main import app, t
 
 
 @app.command("overnight")
@@ -22,7 +22,7 @@ def overnight_report(
     settings = get_settings()
     db_path = Path(settings.base_dir) / "kernel" / "state.db"
     if not db_path.exists():
-        typer.echo("No kernel database found.")
+        typer.echo(t("cli.overnight.no_db", "No kernel database found."))
         raise typer.Exit(1)
     store = KernelStore(db_path)
     try:

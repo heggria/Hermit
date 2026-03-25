@@ -1,0 +1,27 @@
+[plugin]
+name = "research"
+version = "0.1.0"
+description = "Auto-research pipeline — codebase, web, doc, and git history strategies"
+builtin = true
+
+[entry]
+hooks = "hooks:register"
+tools = "tools:register"
+
+[variables.research_enabled]
+setting = "research_enabled"
+env = ["HERMIT_RESEARCH_ENABLED"]
+default = true
+description = "Enable the research pipeline"
+
+[variables.research_web_enabled]
+setting = "research_web_enabled"
+env = ["HERMIT_RESEARCH_WEB_ENABLED"]
+default = true
+description = "Enable web search strategy in research pipeline"
+
+[variables.research_max_findings]
+setting = "research_max_findings"
+env = ["HERMIT_RESEARCH_MAX_FINDINGS"]
+default = 20
+description = "Maximum number of findings per research run"

@@ -296,7 +296,10 @@ def scroll(payload: dict[str, Any]) -> dict[str, Any]:
     x = _require_int(payload, "x")
     y = _require_int(payload, "y")
     direction = str(payload.get("direction", "down")).strip().lower()
-    amount = int(payload.get("amount", 3))
+    try:
+        amount = int(payload.get("amount", 3))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("amount must be an integer") from exc
     if amount <= 0:
         raise RuntimeError("amount must be > 0")
 

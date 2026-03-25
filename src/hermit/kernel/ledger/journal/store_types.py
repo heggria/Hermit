@@ -7,6 +7,7 @@ from typing import Any
 from hermit.kernel.authority.grants.models import CapabilityGrantRecord
 from hermit.kernel.authority.identity.models import PrincipalRecord
 from hermit.kernel.authority.workspaces.models import WorkspaceLeaseRecord
+from hermit.kernel.task.models.delegation import DelegationRecord, DelegationScope
 from hermit.kernel.task.models.records import (
     ApprovalRecord,
     ArtifactRecord,
@@ -29,14 +30,25 @@ from hermit.plugins.builtin.hooks.scheduler.models import ScheduledJob
 
 
 class KernelStoreTypingBase:
-    _lock: Any
-    _conn: sqlite3.Connection
+    def _get_conn(self) -> sqlite3.Connection: ...
+
+    def _batch_execute(self, sql: str, params: tuple[Any, ...] = ()) -> None: ...
 
     def _id(self, prefix: str) -> str: ...
 
     def _row(self, query: str, params: Iterable[Any] = ()) -> sqlite3.Row | None: ...
 
     def _rows(self, query: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]: ...
+
+    def ensure_schema(self, ddl: str) -> None: ...
+
+    def execute_raw(
+        self,
+        sql: str,
+        params: Any = (),
+        *,
+        write: bool = False,
+    ) -> list[sqlite3.Row]: ...
 
     def _append_event_tx(
         self,
@@ -105,7 +117,13 @@ class KernelStoreTypingBase:
 
     def get_step(self, step_id: str) -> StepRecord | None: ...
 
+    def get_step_by_node_key(self, task_id: str, node_key: str) -> StepRecord | None: ...
+
     def get_step_attempt(self, step_attempt_id: str) -> StepAttemptRecord | None: ...
+
+    def batch_get_step_attempts(
+        self, step_attempt_ids: list[str]
+    ) -> dict[str, StepAttemptRecord]: ...
 
     def get_ingress(self, ingress_id: str) -> IngressRecord | None: ...
 
@@ -116,6 +134,10 @@ class KernelStoreTypingBase:
     def get_decision(self, decision_id: str) -> DecisionRecord | None: ...
 
     def get_capability_grant(self, grant_id: str) -> CapabilityGrantRecord | None: ...
+
+    def list_capability_grants_by_parent(
+        self, *, parent_grant_ref: str
+    ) -> list[CapabilityGrantRecord]: ...
 
     def get_workspace_lease(self, lease_id: str) -> WorkspaceLeaseRecord | None: ...
 
@@ -138,16 +160,61 @@ class KernelStoreTypingBase:
     def get_reconciliation(self, reconciliation_id: str) -> ReconciliationRecord | None: ...
 
     def list_approvals(
-        self, *, task_id: str | None = None, status: str | None = None, limit: int = 100
+        self,
+        *,
+        conversation_id: str | None = None,
+        task_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
     ) -> list[ApprovalRecord]: ...
 
     def list_events(
         self,
         *,
         task_id: str | None = None,
+        event_type: str | None = None,
         after_event_seq: int | None = None,
-        limit: int = 200,
+        limit: int = 100,
     ) -> list[dict[str, Any]]: ...
+
+    def list_events_for_tasks(
+        self,
+        task_ids: list[str],
+        *,
+        limit_per_task: int = 500,
+    ) -> dict[str, list[dict[str, Any]]]: ...
+
+    def get_last_event_per_task(
+        self,
+        task_ids: list[str],
+    ) -> dict[str, dict[str, Any]]: ...
+
+    def list_artifacts_for_tasks(
+        self,
+        task_ids: list[str],
+        *,
+        limit_per_task: int = 50,
+    ) -> dict[str, list[Any]]: ...
+
+    def batch_get_artifacts(self, artifact_ids: list[str]) -> dict[str, Any]: ...
+
+    def list_stale_tasks(self, threshold_seconds: float, limit: int = 50) -> list[TaskRecord]: ...
+
+    def count_tasks_by_status(self) -> dict[str, int]: ...
+
+    def count_completed_in_window(self, window_seconds: float) -> int: ...
+
+    def list_recent_failures(self, window_seconds: float, limit: int = 200) -> list[TaskRecord]: ...
+
+    def count_steps_by_status(self, task_id: str) -> dict[str, int]: ...
+
+    def list_steps(self, *, task_id: str | None = None, limit: int = 200) -> list[StepRecord]: ...
+
+    def get_key_to_step_id(self, task_id: str) -> dict[str, str]: ...
+
+    def list_child_tasks(
+        self, *, parent_task_id: str, limit: int | None = None
+    ) -> list[TaskRecord]: ...
 
     def list_open_tasks_for_conversation(
         self, *, conversation_id: str, limit: int = 50
@@ -155,4 +222,34 @@ class KernelStoreTypingBase:
 
     def set_conversation_focus(
         self, conversation_id: str, *, task_id: str | None, reason: str = ""
+    ) -> None: ...
+
+    def create_delegation(
+        self,
+        *,
+        delegation_id: str,
+        parent_task_id: str,
+        child_task_id: str,
+        delegated_principal_id: str,
+        scope: DelegationScope,
+        delegation_grant_ref: str | None = None,
+        created_at: float | None = None,
+    ) -> DelegationRecord: ...
+
+    def get_delegation_record(self, delegation_id: str) -> DelegationRecord | None: ...
+
+    def find_delegation_by_pair(
+        self, parent_task_id: str, child_task_id: str
+    ) -> DelegationRecord | None: ...
+
+    def find_delegation_by_child(self, child_task_id: str) -> DelegationRecord | None: ...
+
+    def list_delegations_for_parent(self, parent_task_id: str) -> list[DelegationRecord]: ...
+
+    def update_delegation_status(
+        self,
+        delegation_id: str,
+        *,
+        status: str,
+        recall_reason: str | None = None,
     ) -> None: ...

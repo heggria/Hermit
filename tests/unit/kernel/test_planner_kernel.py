@@ -60,7 +60,32 @@ def test_planning_service_persists_plan_artifact_and_events(tmp_path) -> None:
     assert "plan.selected" in events
 
 
-def test_confirmed_plan_records_decision_and_projection(tmp_path) -> None:
+def test_confirmed_plan_records_decision_and_projection(tmp_path, monkeypatch) -> None:
+    # Mock repository_claim_status to avoid running expensive semantic probes
+    # (each probe creates temp SQLite databases and full kernel stacks).
+    monkeypatch.setattr(
+        "hermit.kernel.artifacts.lineage.claims.repository_claim_status",
+        lambda **kwargs: {
+            "rows": [],
+            "profiles": {},
+            "claimable_profiles": [],
+            "blockers": [],
+            "conditional_capabilities": {},
+            "cache": {"status": "mock"},
+        },
+    )
+    monkeypatch.setattr(
+        "hermit.kernel.artifacts.lineage.claims.read_repository_claim_status_cache",
+        lambda **kwargs: {
+            "rows": [],
+            "profiles": {},
+            "claimable_profiles": [],
+            "blockers": [],
+            "conditional_capabilities": {},
+            "cache": {"status": "mock", "schema_version": "repository-claims-v1"},
+        },
+    )
+
     store = KernelStore(tmp_path / "kernel" / "state.db")
     artifacts = ArtifactStore(tmp_path / "kernel" / "artifacts")
     controller = TaskController(store)

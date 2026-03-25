@@ -187,3 +187,131 @@ def test_recall_fails_on_nonexistent_delegation(
             child_task_id="task_nonexistent",
             reason="does_not_exist",
         )
+
+
+def test_parent_failure_cascades_cancel_to_running_children(
+    store: KernelStore, service: TaskDelegationService, parent_task
+) -> None:
+    """When a parent task fails, running children should be explicitly cancelled
+    via TaskController.cancel_task().  At the raw store level we verify that
+    the status updates work correctly for this scenario."""
+    child1_id = service.delegate(
+        parent_task_id=parent_task.task_id,
+        child_goal="Running child",
+        delegated_principal_id="subagent_one",
+    )
+    child2_id = service.delegate(
+        parent_task_id=parent_task.task_id,
+        child_goal="Another running child",
+        delegated_principal_id="subagent_two",
+    )
+    # Complete one child before parent fails
+    store.update_task_status(child1_id, "completed")
+
+    # Fail the parent
+    store.update_task_status(parent_task.task_id, "failed")
+
+    # Explicitly cancel running children (mirrors TaskController.cancel_task cascade)
+    child2 = store.get_task(child2_id)
+    assert child2 is not None
+    if child2.status not in ("completed", "failed", "cancelled"):
+        store.update_task_status(
+            child2_id,
+            "cancelled",
+            payload={
+                "reason": "parent_failed",
+                "cascaded_from": parent_task.task_id,
+            },
+        )
+
+    # Completed child should remain completed
+    child1 = store.get_task(child1_id)
+    assert child1 is not None
+    assert child1.status == "completed"
+
+    # Cancelled child should be cancelled
+    child2 = store.get_task(child2_id)
+    assert child2 is not None
+    assert child2.status == "cancelled"
+
+    # Verify cascade event was recorded
+    events = store.list_events(task_id=child2_id)
+    cancel_events = [e for e in events if e["event_type"] == "task.cancelled"]
+    assert len(cancel_events) == 1
+    assert cancel_events[0]["payload"]["reason"] == "parent_failed"
+    assert cancel_events[0]["payload"]["cascaded_from"] == parent_task.task_id
+
+
+def test_parent_cancellation_cascades_to_children(
+    store: KernelStore, service: TaskDelegationService, parent_task
+) -> None:
+    """When a parent task is cancelled, running children should also be cancelled.
+
+    At the raw store level the cascade must be performed explicitly
+    (TaskController.cancel_task handles this in production).
+    """
+    child_id = service.delegate(
+        parent_task_id=parent_task.task_id,
+        child_goal="Will be cascade-cancelled",
+        delegated_principal_id="subagent_gamma",
+    )
+    store.update_task_status(parent_task.task_id, "cancelled")
+
+    # Explicitly cascade cancellation to running children
+    child = store.get_task(child_id)
+    assert child is not None
+    if child.status not in ("completed", "failed", "cancelled"):
+        store.update_task_status(child_id, "cancelled")
+
+    child = store.get_task(child_id)
+    assert child is not None
+    assert child.status == "cancelled"
+
+
+def test_cascade_handles_nested_grandchildren(
+    store: KernelStore, service: TaskDelegationService, parent_task
+) -> None:
+    """Cascade should propagate through grandchildren recursively.
+
+    At the raw store level the cascade must be performed explicitly
+    (TaskController.cancel_task handles this in production).
+    """
+    child_id = service.delegate(
+        parent_task_id=parent_task.task_id,
+        child_goal="Child",
+        delegated_principal_id="subagent_child",
+    )
+    # Create grandchild by manually setting parent_task_id
+    grandchild = store.create_task(
+        conversation_id="conv-1",
+        title="Grandchild task",
+        goal="Grandchild work",
+        source_channel="chat",
+        status="running",
+        owner="subagent_grandchild",
+        priority="normal",
+        policy_profile="memory",
+        parent_task_id=child_id,
+    )
+
+    # Fail the root parent
+    store.update_task_status(parent_task.task_id, "failed")
+
+    # Explicitly cascade cancellation (depth-first: grandchild first, then child)
+    gc = store.get_task(grandchild.task_id)
+    if gc is not None and gc.status not in ("completed", "failed", "cancelled"):
+        store.update_task_status(grandchild.task_id, "cancelled")
+
+    child = store.get_task(child_id)
+    if child is not None and child.status not in ("completed", "failed", "cancelled"):
+        store.update_task_status(child_id, "cancelled")
+
+    # Child should be cancelled
+    child = store.get_task(child_id)
+    assert child is not None
+    assert child.status == "cancelled"
+
+    # Grandchild should also be cancelled
+    gc = store.get_task(grandchild.task_id)
+    assert gc is not None
+    assert gc.status == "cancelled"

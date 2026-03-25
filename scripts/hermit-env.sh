@@ -56,6 +56,20 @@ case "${ENV_NAME}" in
     ;;
 esac
 
+# Sync the venv once to ensure all dependencies are installed, then run with
+# --no-sync so that the exec'd process does not rebuild or modify the venv
+# (which would race with other uv processes sharing the same .venv).
+"${UV_BIN}" sync --project "${ROOT_DIR}" --python 3.13 --group dev --extra macos >/dev/null 2>&1 || true
+
 export PYTHONUNBUFFERED=1
 
-exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 python -m hermit.surfaces.cli.main "$@"
+# Export env-specific .env variables so that values read via os.environ.get
+# (e.g. HERMIT_POOL_SCALE, HERMIT_LLM_CONCURRENCY) are available to the process.
+if [[ -f "${HERMIT_BASE_DIR}/.env" ]]; then
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    export "$key=$value"
+  done < "${HERMIT_BASE_DIR}/.env"
+fi
+
+exec "${UV_BIN}" run --project "${ROOT_DIR}" --python 3.13 --no-sync python -m hermit.surfaces.cli "$@"

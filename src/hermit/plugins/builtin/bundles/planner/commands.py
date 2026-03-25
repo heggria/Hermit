@@ -4,23 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from hermit.infra.system.i18n import resolve_locale, tr
 from hermit.runtime.capability.contracts.base import CommandSpec
-
-
-def _locale_for_runner(runner: Any = None) -> str:
-    settings = getattr(getattr(runner, "pm", None), "settings", None)
-    return resolve_locale(getattr(settings, "locale", None))
-
-
-def _t(  # pyright: ignore[reportUnusedFunction]
-    message_key: str,
-    *,
-    runner: Any = None,
-    default: str | None = None,
-    **kwargs: object,
-) -> str:
-    return tr(message_key, locale=_locale_for_runner(runner), default=default, **kwargs)
 
 
 def _cmd_plan(runner: Any, session_id: str, text: str) -> Any:

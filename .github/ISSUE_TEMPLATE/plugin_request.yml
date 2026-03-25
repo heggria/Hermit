@@ -1,0 +1,153 @@
+name: Plugin Request
+description: Request a new plugin (adapter, hook, tool, or MCP integration) for Hermit.
+title: "[Plugin] "
+labels:
+  - plugin
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to propose a new Hermit plugin. Hermit's plugin system
+        supports adapters, hooks, tools, MCP servers, bundles, and subagents.
+        See `src/hermit/plugins/builtin/` for existing examples.
+
+  - type: dropdown
+    id: plugin-type
+    attributes:
+      label: Plugin Type
+      description: What kind of plugin are you requesting?
+      options:
+        - "Adapter — messaging platform integration (e.g., Discord, Teams)"
+        - "Hook — lifecycle event handler (e.g., post-run analysis, alerting)"
+        - "Tool — new tool capability for the agent (e.g., database query, API client)"
+        - "MCP — Model Context Protocol server integration"
+        - "Bundle — command bundle (slash commands)"
+        - "Subagent — specialized delegated agent"
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-name
+    attributes:
+      label: Suggested Plugin Name
+      description: A short, descriptive name for the plugin.
+      placeholder: "e.g., discord-adapter, jira-tool, datadog-hook"
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: |
+        Describe the scenario or workflow this plugin would enable. Who benefits
+        and how?
+      placeholder: |
+        As a [role], I want to [action], so that [outcome].
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: |
+        Describe how the plugin should work. Include example interactions,
+        commands, configuration, or tool schemas.
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration
+      description: |
+        What configuration would this plugin require? List expected
+        `plugin.toml` variables, environment variables, or API keys.
+      placeholder: |
+        ```toml
+        [plugin.variables]
+        api_key = { required = true, env = "SERVICE_API_KEY" }
+        ```
+    validations:
+      required: false
+
+  - type: dropdown
+    id: hook-events
+    attributes:
+      label: Hook Events (if applicable)
+      description: |
+        If this is a hook plugin, which lifecycle events should it respond to?
+        Select all that apply or choose "Not applicable".
+      multiple: true
+      options:
+        - "Not applicable"
+        - "SYSTEM_PROMPT"
+        - "REGISTER_TOOLS"
+        - "SESSION_START"
+        - "SESSION_END"
+        - "PRE_RUN"
+        - "POST_RUN"
+        - "SERVE_START"
+        - "SERVE_STOP"
+        - "DISPATCH_RESULT"
+        - "SUBTASK_SPAWN"
+        - "SUBTASK_COMPLETE"
+    validations:
+      required: false
+
+  - type: textarea
+    id: external-dependencies
+    attributes:
+      label: External Dependencies
+      description: |
+        List any external services, APIs, or Python packages this plugin
+        would depend on.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: governance
+    attributes:
+      label: Governance Requirements
+      description: |
+        Does this plugin require special policy or approval handling?
+      options:
+        - "None — standard governed execution"
+        - "Read-only — no mutations"
+        - "Elevated — requires explicit approval for certain actions"
+        - "Custom policy rules needed"
+        - "Unsure"
+    validations:
+      required: false
+
+  - type: textarea
+    id: existing-solutions
+    attributes:
+      label: Existing Solutions
+      description: |
+        Are there existing plugins, MCP servers, or external tools that
+        partially solve this? Link to any relevant repositories or docs.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, mockups, API documentation links, or
+        references that would help.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues for duplicate plugin requests.
+          required: true
+        - label: I have checked `src/hermit/plugins/builtin/` for existing plugins that may already cover this use case.
+          required: true

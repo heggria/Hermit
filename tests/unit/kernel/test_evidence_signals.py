@@ -307,12 +307,18 @@ class TestSteeringStore:
 
 class TestSteeringProtocolNotFound:
     def test_apply_nonexistent(self, store: KernelStore) -> None:
+        """apply() must silently return when the directive does not exist."""
         proto = SteeringProtocol(store)
         proto.apply("nonexistent-id")
+        # Guard must have exited early: no signal record was touched
+        assert store.get_signal("nonexistent-id") is None
 
     def test_reject_nonexistent(self, store: KernelStore) -> None:
+        """reject() must silently return when the directive does not exist."""
         proto = SteeringProtocol(store)
         proto.reject("nonexistent-id")
+        # Guard must have exited early: no signal record was touched
+        assert store.get_signal("nonexistent-id") is None
 
     def test_supersede(self, store: KernelStore) -> None:
         proto = SteeringProtocol(store)
@@ -335,6 +341,7 @@ class TestSteeringProtocolNotFound:
 
 class TestSteeringMarkInputDirtyException:
     def test_mark_input_dirty_swallows_exception(self, store: KernelStore) -> None:
+        """acknowledge() must not raise even when the task referenced by directive doesn't exist."""
         proto = SteeringProtocol(store)
         d = SteeringDirective(
             task_id="task-1",
@@ -343,5 +350,8 @@ class TestSteeringMarkInputDirtyException:
         )
         proto.issue(d)
         # Acknowledge should try to mark input dirty but task doesn't exist
-        # Should not raise
         proto.acknowledge(d.directive_id)
+        # Disposition must be updated despite the missing task
+        signals = store.list_steerings_for_task("task-1", disposition="acknowledged")
+        assert len(signals) == 1
+        assert signals[0].directive_id == d.directive_id

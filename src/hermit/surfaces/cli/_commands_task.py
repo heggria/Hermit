@@ -30,10 +30,16 @@ def task_list(
         20,
         help=cli_t("cli.task.list.limit", "Maximum number of tasks to show."),
     ),
+    status: str | None = typer.Option(
+        None,
+        help=cli_t("cli.task.list.status", "Filter by task status."),
+    ),
 ) -> None:
     """List recent tasks from the kernel ledger."""
+    if limit < 0:
+        limit = 20
     store = get_kernel_store()
-    tasks = store.list_tasks(limit=limit)
+    tasks = store.list_tasks(status=status, limit=limit)
     if not tasks:
         typer.echo(t("cli.task.list.empty", "No tasks found."))
         return
@@ -286,9 +292,12 @@ def task_explain(
 ) -> None:
     """Explain why a task executed, under what authority, and what changed."""
     store = get_kernel_store()
-    typer.echo(
-        json.dumps(SupervisionService(store).build_task_case(task_id), ensure_ascii=False, indent=2)
-    )
+    try:
+        case = SupervisionService(store).build_task_case(task_id)
+    except KeyError as exc:
+        typer.echo(str(exc).strip("'\""))
+        raise typer.Exit(1)
+    typer.echo(json.dumps(case, ensure_ascii=False, indent=2))
 
 
 @task_app.command("case")
@@ -297,9 +306,12 @@ def task_case(
 ) -> None:
     """Show unified operator case view for one task."""
     store = get_kernel_store()
-    typer.echo(
-        json.dumps(SupervisionService(store).build_task_case(task_id), ensure_ascii=False, indent=2)
-    )
+    try:
+        case = SupervisionService(store).build_task_case(task_id)
+    except KeyError as exc:
+        typer.echo(str(exc).strip("'\""))
+        raise typer.Exit(1)
+    typer.echo(json.dumps(case, ensure_ascii=False, indent=2))
 
 
 @task_app.command("proof")
@@ -308,7 +320,11 @@ def task_proof(
 ) -> None:
     """Show proof summary for one task."""
     store = get_kernel_store()
-    summary = ProofService(store).build_proof_summary(task_id)
+    try:
+        summary = ProofService(store).build_proof_summary(task_id)
+    except KeyError as exc:
+        typer.echo(str(exc).strip("'\""))
+        raise typer.Exit(1)
     typer.echo(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
@@ -325,7 +341,11 @@ def task_proof_export(
 ) -> None:
     """Export one task's proof bundle."""
     store = get_kernel_store()
-    bundle = ProofService(store).export_task_proof(task_id)
+    try:
+        bundle = ProofService(store).export_task_proof(task_id)
+    except KeyError as exc:
+        typer.echo(str(exc).strip("'\""))
+        raise typer.Exit(1)
     payload = json.dumps(bundle, ensure_ascii=False, indent=2)
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -345,7 +365,11 @@ def task_claims(
     if not task_id:
         typer.echo(json.dumps(repository_claim_status(), ensure_ascii=False, indent=2))
         return
-    proof = ProofService(store).build_proof_summary(task_id)
+    try:
+        proof = ProofService(store).build_proof_summary(task_id)
+    except KeyError as exc:
+        typer.echo(str(exc).strip("'\""))
+        raise typer.Exit(1)
     typer.echo(
         json.dumps(
             task_claim_status(store, task_id, proof_summary=proof),
@@ -363,7 +387,11 @@ def task_rollback(
 ) -> None:
     """Execute a supported rollback for one receipt."""
     store = get_kernel_store()
-    payload = RollbackService(store).execute(receipt_id)
+    try:
+        payload = RollbackService(store).execute(receipt_id)
+    except KeyError as exc:
+        typer.echo(str(exc).strip("'\""))
+        raise typer.Exit(1)
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 

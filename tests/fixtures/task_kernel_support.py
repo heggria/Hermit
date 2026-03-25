@@ -125,6 +125,7 @@ def _write_registry(root: Path) -> ToolRegistry:
 
     def write_file(payload: dict[str, Any]) -> str:
         path = root / str(payload["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(payload["content"]), encoding="utf-8")
         return "ok"
 
@@ -186,7 +187,7 @@ def _network_read_registry() -> ToolRegistry:
             readonly=True,
             action_class="network_read",
             risk_hint="low",
-            requires_receipt=False,
+            requires_receipt=True,
         )
     )
     return registry
@@ -331,7 +332,7 @@ class _RunnerPluginManager:
         self.ended: list[str] = []
         self.post_run: list[str] = []
 
-    def on_session_start(self, session_id: str) -> None:
+    def on_session_start(self, session_id: str, *, runner: object = None) -> None:
         self.started.append(session_id)
 
     def on_session_end(self, session_id: str, _messages: list[dict[str, Any]]) -> None:

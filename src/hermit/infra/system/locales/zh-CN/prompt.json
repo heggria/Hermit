@@ -18,7 +18,10 @@
   "prompt.context.self_configuration.line_3": "- 处理代码类任务时，先查看代码库，并在合适时直接做出具体修改。",
   "prompt.context.self_configuration.line_4": "- 面向用户的回复要保持简洁、准确，并体现协作式语气。",
   "prompt.context.self_configuration.line_5": "- 如果你的改动需要运行中的本地服务生效，汇报完成前记得重启对应开发环境。",
+  "prompt.context.workspace_boundary.line_1": "- 绝对不要将文件写入 /tmp/、/private/tmp/ 或工作区目录之外的任何路径。所有文件操作必须在 <hermit_runtime> 中显示的工作区根目录内进行。",
+  "prompt.context.workspace_boundary.line_2": "- 需要临时或草稿文件时，使用工作区内的 .hermit/tmp/ 子目录（如不存在则创建）。写入工作区外的路径将被治理层阻止。",
   "prompt.runtime.max_turns_exceeded": "[系统提示] 你已使用了最大允许的工具调用轮次。请根据目前收集到的信息，直接给出你的最终回答。不要再调用任何工具。",
+  "prompt.runtime.summarize_results": "请简要总结你做了什么以及结果。",
   "prompt.runtime.final_summary_failed": "已达到最大轮次限制（{max_turns}），且最终总结请求失败：{error}。请简要说明已经完成的内容，以及当前还剩哪些阻塞点。",
   "prompt.available_skills.read_skill.description": "把某个 skill 的完整说明加载进当前上下文。当任务明确匹配目录里的 skill 描述时使用。",
   "prompt.available_skills.read_skill.name": "要加载到当前上下文中的 skill 名称。",
@@ -29,7 +32,7 @@
   "prompt.delegation.task": "要委派给子 agent 的任务内容。",
   "prompt.delegation.unavailable": "[子 agent '{name}' 当前不可用：agent runner 尚未配置]",
   "prompt.scheduler.execution": "下面是一条已经创建好的定时任务。不要询问澄清问题，不要索要 chat_id、open_id 或其他投递元数据，不要再次创建定时任务。请直接写出要发送给用户的提醒内容。\n\n定时任务原始提示词：\n{task_prompt}",
-  "prompt.memory.extraction": "你是通用记忆提取助手。从对话中全面提取所有值得长期记忆的信息，不限于技术内容。只输出合法 JSON：\n{\n  \"used_keywords\": [\"关键词1\"],\n  \"new_memories\": [\n    {\"category\": \"分类名\", \"content\": \"简洁描述\"}\n  ]\n}\n\n## 分类说明\n- user_preference：沟通习惯、语言偏好、工作风格、审美倾向、常用工具、个人习惯\n- project_convention：项目结构、命名规范、分支策略、部署流程、团队分工、协作规则\n- tech_decision：技术选型及理由、架构设计、踩过的坑、性能优化、Bug 修复方案\n- tooling_environment：开发环境配置、工具链、API 地址、代理设置、服务端口、安装步骤\n- other：人物关系、日程习惯、知识见解、任何不属于以上分类但值得记住的信息\n- active_task：明确的待办事项、未完成工作、后续计划\n\n## 提取范围（尽量全面）\n- 用户明确表达的偏好、要求、纠正\n- 做出的决策及其理由\n- 发现的问题及解决方案\n- 项目结构、约定、流程的新增或变更\n- 具体配置（文件路径、命令、端口、参数名）\n- 人物及其职责、项目所属关系\n- 反复出现的模式或问题\n- 用户提到的日程、计划、习惯\n- 学到的经验教训\n\n## 质量要求\n- used_keywords：从 <existing_memories> 中找到本次对话涉及的关键词（人名、项目名、技术名词等）\n- content 必须简洁自包含，脱离上下文也能理解\n- 保留具体细节（路径、命令、参数名），避免泛泛而谈\n- 一条记忆只记一件事，不要合并不相关的信息\n- 已有记忆中已存在的信息不要重复提取\n- 纯粹的闲聊寒暄不需要记忆\n- 如无值得记忆的信息，返回空数组",
+  "prompt.memory.extraction": "你是通用记忆提取助手。仅提取值得长期记忆的信息，不要记录临时性的代码阅读笔记。只输出合法 JSON：\n{\n  \"used_keywords\": [\"关键词1\"],\n  \"new_memories\": [\n    {\"category\": \"分类名\", \"content\": \"简洁描述\", \"importance\": 7}\n  ]\n}\n\n## 分类说明\n- user_preference：沟通习惯、语言偏好、工作风格、审美倾向、常用工具、个人习惯。【优先提取】主动寻找用户偏好信号——\"我喜欢\"、\"我不要\"、\"总是\"、\"从不\"、\"别再\"、\"继续这样做\" 都是强信号。\n- project_convention：项目结构、命名规范、分支策略、部署流程、团队分工、协作规则\n- tech_decision：技术选型及其理由（如\"选择 X 而非 Y，因为 Z\"）。不是代码阅读笔记。\n- tooling_environment：开发环境配置、工具链、API 地址、代理设置、服务端口、安装步骤\n- other：人物关系、日程习惯、知识见解、任何不属于以上分类但值得记住的信息\n- active_task：仅限用户明确说的待办事项（\"之后要做 X\"）。不包括当前正在执行的工作。\n\n## 不要提取（关键）\n- 临时性代码阅读笔记：函数名、行号、正在浏览的文件内容\n- 工具调用细节：读了哪些文件、grep 结果、执行的 shell 命令\n- 正在进行的实现步骤：助手当前正在做或刚做的事\n- 没有附带决策或偏好的原始文件路径或目录列表\n- 仅在本次对话上下文中有意义的信息\n\n## 提取范围\n- 用户明确表达的偏好、要求、纠正\n- 做出的决策及其理由（\"选了 X 因为 Y\"）\n- 发现的问题及解决方案\n- 项目结构、约定、流程的新增或变更\n- 可复用的配置（不是一次性命令）\n- 人物及其职责、项目所属关系\n- 反复出现的模式或问题\n- 跨会话适用的经验教训\n\n## importance 评分（1-10，每条记忆必填）\n- 9-10：用户明确陈述的偏好、纠正或应始终遵循的规则\n- 7-8：可复用的决策、约定或经验教训\n- 5-6：可能在未来会话中有帮助的上下文\n- 3-4：边际有用的会话特定细节\n- 1-2：临时观察，不太可能再有用\n\n## 质量要求\n- used_keywords：从 <existing_memories> 中找到本次对话涉及的关键词（人名、项目名、技术名词等）\n- content 必须简洁自包含，脱离上下文也能理解\n- 仅当路径、命令、参数名是决策或约定的一部分时才保留\n- 一条记忆只记一件事，不要合并不相关的信息\n- 已有记忆中已存在的信息不要重复提取\n- 纯粹的闲聊寒暄不需要记忆\n- 如无值得记忆的信息，返回空数组\n- importance < 5 的记忆将被丢弃——只提取真正对长期有价值的信息",
   "prompt.image_memory.vision": "你是图片语义提取助手。请阅读图片并只返回合法 JSON：\n{\n  \"summary\": \"1-2 句中文摘要\",\n  \"tags\": [\"标签1\", \"标签2\"],\n  \"ocr_text\": \"图中可读文字，没有则返回空字符串\"\n}\n\n要求：\n- summary 简洁、具体、可脱离上下文理解\n- tags 控制在 3-8 个，优先具体对象/场景/用途",
   "prompt.image_memory.analyze": "请分析这张图片并返回 JSON。"
 }

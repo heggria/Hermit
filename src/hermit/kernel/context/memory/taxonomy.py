@@ -46,8 +46,15 @@ def classify_memory_type(record: MemoryRecord) -> MemoryType:
     return MemoryType.SEMANTIC
 
 
-def _is_procedural_text(text: str) -> bool:
-    """Heuristic detection of procedural/how-to content."""
+def _is_procedural_text(text: str | None) -> bool:
+    """Heuristic detection of procedural/how-to content.
+
+    Returns False immediately when *text* is None so callers never need
+    to guard the value before passing it in.
+    """
+    if text is None:
+        return False
+
     lower = text.lower()
     markers = [
         "to do this",

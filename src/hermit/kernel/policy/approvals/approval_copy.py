@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import atexit
 import concurrent.futures
 import datetime
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
+import structlog
+
 from hermit.infra.system.i18n import resolve_locale, tr
+
+log = structlog.get_logger()
 
 Formatter = Callable[[dict[str, Any]], dict[str, str] | str | None]
 
@@ -41,10 +46,24 @@ class ApprovalCopyService:
     ) -> None:
         self._formatter = formatter
         self._formatter_timeout_ms = formatter_timeout_ms
-        self._locale = resolve_locale(locale) if locale else None
+        # Resolve once at construction time so _t() never re-reads the environment.
+        self._locale = resolve_locale(locale)
+        # A single shared executor avoids spawning a new thread per call.
+        # Only allocated when a formatter is actually provided.
+        self._executor: concurrent.futures.ThreadPoolExecutor | None = (
+            concurrent.futures.ThreadPoolExecutor(max_workers=1) if formatter is not None else None
+        )
+        if self._executor is not None:
+            atexit.register(self.close)
+
+    def close(self) -> None:
+        """Shut down the background executor cleanly."""
+        if self._executor is not None:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor = None
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-        return tr(message_key, locale=resolve_locale(self._locale), default=default, **kwargs)
+        return tr(message_key, locale=self._locale, default=default, **kwargs)
 
     def build_canonical_copy(
         self, requested_action: dict[str, Any], approval_id: str | None = None
@@ -104,16 +123,20 @@ class ApprovalCopyService:
         )
 
     def _format_with_optional_formatter(self, facts: dict[str, Any]) -> ApprovalCopy | None:
-        if self._formatter is None:
+        if self._formatter is None or self._executor is None:
             return None
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            future = executor.submit(self._formatter, facts)
+            future = self._executor.submit(self._formatter, facts)
             payload = future.result(timeout=max(0.001, self._formatter_timeout_ms / 1000))
-        except Exception:
-            executor.shutdown(wait=False, cancel_futures=True)
+        except concurrent.futures.TimeoutError:
+            log.debug(
+                "approval_copy.formatter_timeout",
+                timeout_ms=self._formatter_timeout_ms,
+            )
             return None
-        executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            log.debug("approval_copy.formatter_error", exc_info=True)
+            return None
         if isinstance(payload, dict):
             return self._copy_from_mapping(payload)
         if isinstance(payload, str):

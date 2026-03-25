@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import resolve_locale
 from hermit.runtime.capability.contracts.base import (
     AdapterProtocol,
     AdapterSpec,
@@ -20,6 +20,9 @@ from hermit.runtime.capability.contracts.hooks import HooksEngine
 from hermit.runtime.capability.contracts.rules import load_rules_text
 from hermit.runtime.capability.contracts.skills import SkillDefinition, load_skills
 from hermit.runtime.capability.loader.loader import discover_plugins, load_plugin_entries
+from hermit.runtime.capability.registry.skill_loader import SkillLoader
+from hermit.runtime.capability.registry.subagent_executor import SubagentExecutor
+from hermit.runtime.capability.registry.system_prompt_builder import SystemPromptBuilder
 from hermit.runtime.capability.registry.tools import ToolRegistry, ToolSpec, localize_tool_spec
 
 log = structlog.get_logger()
@@ -47,12 +50,15 @@ class PluginManager:
         self._all_mcp: list[McpServerSpec] = []
         self._all_commands: list[CommandSpec] = []
         self._mcp_manager: Any = None
-        self._runtime: Any = None
         self._registry: ToolRegistry | None = None
-        self._model: str = ""
-        self._max_tokens: int = 2048
-        self._tool_output_limit: int = 4000
-        self._on_tool_call: Any = None
+
+        # Extracted delegates -- created with only the fields needed for tool
+        # building.  Runtime dependencies are injected later via
+        # configure_subagent_runtime() once the AgentRuntime is available.
+        self._subagent_executor = SubagentExecutor(
+            hooks=self.hooks,
+            settings=settings,
+        )
 
     def discover_and_load(self, *search_dirs: Path) -> None:
         manifests = discover_plugins(*search_dirs)
@@ -106,117 +112,60 @@ class PluginManager:
                 log.warning("duplicate_tool", name=tool.name)
 
         for spec in self._all_subagents:
-            tool = self._build_delegation_tool(spec)
+            tool = self._subagent_executor.build_delegation_tool(spec)
             try:
                 registry.register(tool)
             except ValueError:
                 log.warning("duplicate_delegation_tool", name=tool.name)
 
-        if self._all_skills:
-            skill_names = [s.name for s in self._all_skills]
-            registry.register(
-                localize_tool_spec(
-                    ToolSpec(
-                        name="read_skill",
-                        description=(
-                            "Load a skill's full instructions into context. "
-                            "Use when a task matches a skill's description from the catalog."
-                        ),
-                        description_key="prompt.available_skills.read_skill.description",
-                        input_schema={
-                            "type": "object",
-                            "properties": {
-                                "name": {
-                                    "type": "string",
-                                    "description_key": "prompt.available_skills.read_skill.name",
-                                    "enum": skill_names,
-                                },
-                            },
-                            "required": ["name"],
-                        },
-                        handler=self._read_skill_handler,
-                        readonly=True,
-                        action_class="read_local",
-                        idempotent=True,
-                        risk_hint="low",
-                        requires_receipt=False,
-                        result_is_internal_context=True,
-                    ),
-                    locale=locale,
-                )
-            )
+        skill_loader = SkillLoader(all_skills=self._all_skills, settings=self.settings)
+        skill_loader.register_skill_tool(registry)
 
         self.hooks.fire(HookEvent.REGISTER_TOOLS, registry=registry)
+
+    def _read_skill_handler(self, payload: dict[str, Any]) -> str:
+        """Backward-compatible delegate to SkillLoader."""
+        loader = SkillLoader(all_skills=self._all_skills, settings=self.settings)
+        return loader._read_skill_handler(payload)
 
     @property
     def all_commands(self) -> list[CommandSpec]:
         return list(self._all_commands)
 
-    def _read_skill_handler(self, payload: dict[str, Any]) -> str:
-        name = str(payload.get("name", ""))
-        locale = resolve_locale(getattr(self.settings, "locale", None))
-        for skill in self._all_skills:
-            if skill.name == name:
-                return f'<skill_content name="{name}">\n{skill.content}\n</skill_content>'
-        available = ", ".join(s.name for s in self._all_skills)
-        return tr(
-            "prompt.available_skills.read_skill.not_found",
-            locale=locale,
-            default=f"Skill '{name}' not found. Available: {available}",
-            name=name,
-            available=available,
-        )
-
     def configure_subagent_runtime(
         self, runtime: AgentRuntime, on_tool_call: ToolCallback | None = None
     ) -> None:
-        self._runtime = runtime
-        self._model = runtime.model
-        self._max_tokens = runtime.max_tokens
-        self._tool_output_limit = runtime.tool_output_limit
-        self._on_tool_call = on_tool_call
+        self._subagent_executor.configure_runtime(
+            runtime=runtime,
+            registry=self._registry,
+            on_tool_call=on_tool_call,
+        )
+
+    @property
+    def _prompt_builder(self) -> SystemPromptBuilder:
+        """Return a cached SystemPromptBuilder, lazily created once."""
+        builder = getattr(self, "_cached_prompt_builder", None)
+        if builder is None:
+            builder = SystemPromptBuilder(
+                all_skills=self._all_skills,
+                all_rules_parts=self._all_rules_parts,
+                hooks=self.hooks,
+                settings=self.settings,
+            )
+            self._cached_prompt_builder = builder
+        return builder
 
     def build_system_prompt(
         self,
         base_prompt: str,
         preloaded_skills: list[str] | None = None,
     ) -> str:
-        locale = resolve_locale(getattr(self.settings, "locale", None))
-        parts: list[str] = [base_prompt]
+        return self._prompt_builder.build_system_prompt(
+            base_prompt, preloaded_skills=preloaded_skills
+        )
 
-        if self._all_rules_parts:
-            combined = "\n\n".join(self._all_rules_parts)
-            parts.append(f"<rules_context>\n{combined}\n</rules_context>")
-
-        preloaded = set(preloaded_skills or [])
-        catalog_skills = [s for s in self._all_skills if s.name not in preloaded]
-
-        for skill in self._all_skills:
-            if skill.name in preloaded:
-                parts.append(
-                    f'<skill_content name="{skill.name}">\n{skill.content}\n</skill_content>'
-                )
-
-        if catalog_skills:
-            lines = [
-                "<available_skills>",
-                tr("prompt.available_skills.intro", locale=locale),
-                tr("prompt.available_skills.guidance", locale=locale),
-                "",
-            ]
-            for skill in catalog_skills:
-                lines.append(f'  <skill name="{skill.name}">{skill.description}</skill>')
-            lines.append("</available_skills>")
-            parts.append("\n".join(lines))
-
-        for fragment in self.hooks.fire(HookEvent.SYSTEM_PROMPT):
-            if fragment:
-                parts.append(str(fragment))
-
-        return "\n\n".join(p for p in parts if p)
-
-    def on_session_start(self, session_id: str) -> None:
-        self.hooks.fire(HookEvent.SESSION_START, session_id=session_id)
+    def on_session_start(self, session_id: str, *, runner: Any = None) -> None:
+        self.hooks.fire(HookEvent.SESSION_START, session_id=session_id, runner=runner)
 
     def on_session_end(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         self.hooks.fire(HookEvent.SESSION_END, session_id=session_id, messages=messages)
@@ -226,6 +175,19 @@ class PluginManager:
         for spec in self._all_commands:
             runner.add_command(spec.name, spec.handler, spec.help_text, spec.cli_only)
 
+    # Allowed keys that PRE_RUN hook dict results may contain (besides "prompt").
+    # Unknown keys are logged as warnings and dropped to prevent hooks from
+    # injecting arbitrary control signals into the runner.
+    _ALLOWED_RUN_OPTS = frozenset(
+        {
+            "prompt",
+            "disable_tools",
+            "planning_mode",
+            "readonly_only",
+            "policy_profile",
+        }
+    )
+
     def on_pre_run(self, prompt: str, **kwargs: Any) -> tuple[str, dict[str, Any]]:
         """Fire PRE_RUN hooks.
 
@@ -233,6 +195,9 @@ class PluginManager:
         - str: replaces the prompt (backward compatible)
         - dict: {"prompt": "...", ...} to replace prompt AND pass control
           signals (e.g. disable_tools=True) to the runner.
+
+        Dict return values are validated against ``_ALLOWED_RUN_OPTS``.
+        Unknown keys are logged and dropped.
         """
         run_opts: dict[str, Any] = {}
         results = self.hooks.fire(HookEvent.PRE_RUN, prompt=prompt, **kwargs)
@@ -244,8 +209,21 @@ class PluginManager:
                 prompt_value = result_map.get("prompt")
                 if prompt_value is not None:
                     prompt = str(prompt_value)
+
+                unknown_keys = set(result_map.keys()) - self._ALLOWED_RUN_OPTS
+                if unknown_keys:
+                    log.warning(
+                        "pre_run_hook_unknown_keys",
+                        unknown_keys=sorted(unknown_keys),
+                        allowed_keys=sorted(self._ALLOWED_RUN_OPTS - {"prompt"}),
+                    )
+
                 run_opts.update(
-                    {key: value for key, value in result_map.items() if key != "prompt"}
+                    {
+                        key: value
+                        for key, value in result_map.items()
+                        if key != "prompt" and key in self._ALLOWED_RUN_OPTS
+                    }
                 )
         return prompt, run_opts
 
@@ -267,192 +245,6 @@ class PluginManager:
     def manifests(self) -> list[PluginManifest]:
         return list(self._manifests)
 
-    def _build_delegation_tool(self, spec: SubagentSpec) -> ToolSpec:
-        locale = resolve_locale(getattr(self.settings, "locale", None))
-
-        def handler(payload: dict[str, Any]) -> str:
-            return self._run_subagent(spec, str(payload.get("task", "")))
-
-        if getattr(spec, "governed", False):
-            action_class = "delegate_execution"
-            readonly = False
-            risk_hint = "medium"
-            requires_receipt = True
-        else:
-            action_class = "delegate_reasoning"
-            readonly = True
-            risk_hint = "low"
-            requires_receipt = False
-
-        return localize_tool_spec(
-            ToolSpec(
-                name=f"delegate_{spec.name}",
-                description=tr(
-                    "prompt.delegation.description",
-                    locale=locale,
-                    default=f"Delegate a task to the {spec.name} subagent. {spec.description}",
-                    name=spec.name,
-                    description=spec.description,
-                ),
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description_key": "prompt.delegation.task",
-                        }
-                    },
-                    "required": ["task"],
-                },
-                handler=handler,
-                readonly=readonly,
-                action_class=action_class,
-                idempotent=True,
-                risk_hint=risk_hint,
-                requires_receipt=requires_receipt,
-            ),
-            locale=locale,
-        )
-
-    def _register_subagent_principal(self, spec: SubagentSpec) -> str | None:
-        """Register a principal for a governed subagent, returning the principal_id."""
-        if not spec.governed:
-            return None
-        store = getattr(self._runtime, "kernel_store", None)
-        if store is None:
-            return None
-        principal_id = f"principal_subagent_{spec.name}"
-        try:
-            store.ensure_principal(
-                principal_id=principal_id,
-                principal_type="subagent",
-                display_name=spec.name,
-                metadata={"parent_principal": "principal_user", "tools": spec.tools},
-            )
-        except Exception:
-            log.warning("subagent_principal_registration_failed", subagent=spec.name)
-            return None
-        return principal_id
-
-    def _emit_subagent_event(
-        self,
-        event_type: str,
-        spec: SubagentSpec,
-        principal_id: str,
-        payload: dict[str, Any] | None = None,
-    ) -> None:
-        """Emit a ledger event for subagent lifecycle."""
-        store = getattr(self._runtime, "kernel_store", None)
-        if store is None:
-            return
-        try:
-            store.append_event(
-                event_type=event_type,
-                entity_type="subagent",
-                entity_id=principal_id,
-                task_id=None,
-                actor=principal_id,
-                payload=payload or {},
-            )
-        except Exception:
-            log.warning(
-                "subagent_event_failed",
-                event_type=event_type,
-                subagent=spec.name,
-            )
-
-    def _run_subagent(self, spec: SubagentSpec, task: str) -> str:
-        if not self._runtime or not self._registry:
-            locale = resolve_locale(getattr(self.settings, "locale", None))
-            return tr(
-                "prompt.delegation.unavailable",
-                locale=locale,
-                default=f"[Subagent '{spec.name}' unavailable: agent runner not configured]",
-                name=spec.name,
-            )
-
-        import sys
-
-        DIM = "\033[2m"
-        MAGENTA = "\033[35m"
-        GREEN = "\033[32m"
-        RED = "\033[31m"
-        RESET = "\033[0m"
-
-        principal_id = self._register_subagent_principal(spec)
-
-        sub_registry = ToolRegistry()
-        available: list[str] = []
-        for tool_name in spec.tools:
-            try:
-                sub_registry.register(self._registry.get(tool_name))
-                available.append(tool_name)
-            except KeyError:
-                log.warning("subagent_tool_not_found", subagent=spec.name, tool=tool_name)
-
-        sub_agent = self._runtime.clone(
-            registry=sub_registry,
-            model=spec.model or self._model,
-            max_turns=15,
-            system_prompt=spec.system_prompt,
-        )
-
-        task_preview = task[:80] + ("..." if len(task) > 80 else "")
-        tools_str = ", ".join(available)
-        sys.stderr.write(
-            f"\n{MAGENTA}  ┌─ subagent:{spec.name} "
-            f"{DIM}[tools: {tools_str}]{RESET}\n"
-            f"{MAGENTA}  │{RESET} {DIM}{task_preview}{RESET}\n"
-        )
-        sys.stderr.flush()
-
-        if principal_id:
-            self._emit_subagent_event(
-                "subagent_spawned",
-                spec,
-                principal_id,
-                {"task_preview": task_preview, "tools": available},
-            )
-
-        def _sub_tool_call(name: str, inputs: dict[str, Any], result: object) -> None:
-            compact = ", ".join(f"{k}={repr(v)[:50]}" for k, v in inputs.items())
-            text = result if isinstance(result, str) else str(result)
-            preview = text[:150].replace("\n", " ")
-            if len(text) > 150:
-                preview += "..."
-            sys.stderr.write(f"{MAGENTA}  │{RESET}   ▸ {name}({compact})\n")
-            sys.stderr.write(f"{MAGENTA}  │{RESET}   {DIM}→ {preview}{RESET}\n")
-            sys.stderr.flush()
-
-        callback: ToolCallback = self._on_tool_call or _sub_tool_call
-
-        try:
-            result = sub_agent.run(task, on_tool_call=callback, readonly_only=True)
-            sys.stderr.write(
-                f"{MAGENTA}  └─{RESET} {GREEN}done{RESET} "
-                f"{DIM}({result.turns} turns, {result.tool_calls} tool calls){RESET}\n\n"
-            )
-            sys.stderr.flush()
-            if principal_id:
-                self._emit_subagent_event(
-                    "subagent_completed",
-                    spec,
-                    principal_id,
-                    {"turns": result.turns, "tool_calls": result.tool_calls},
-                )
-            return result.text
-        except Exception as exc:
-            sys.stderr.write(f"{MAGENTA}  └─{RESET} {RED}error: {exc}{RESET}\n\n")
-            sys.stderr.flush()
-            if principal_id:
-                self._emit_subagent_event(
-                    "subagent_failed",
-                    spec,
-                    principal_id,
-                    {"error": str(exc)},
-                )
-            return f"[Subagent '{spec.name}' error: {exc}]"
-
     # ── MCP lifecycle ──────────────────────────────────────────────
 
     @property
@@ -465,7 +257,8 @@ class PluginManager:
             return
         from hermit.runtime.capability.resolver.mcp_client import McpClientManager
 
-        self._mcp_manager = McpClientManager()
+        base_dir = getattr(self.settings, "base_dir", None) if self.settings else None
+        self._mcp_manager = McpClientManager(oauth_base_dir=base_dir)
         try:
             self._mcp_manager.connect_all_sync(self._all_mcp)
         except Exception:
@@ -481,3 +274,89 @@ class PluginManager:
         if self._mcp_manager is not None:
             self._mcp_manager.close_all_sync()
             self._mcp_manager = None
+
+    def reload_user_mcp_servers(self) -> None:
+        """Re-read user mcp.json and reconnect all MCP servers.
+
+        Stops the existing MCP manager, re-reads ``mcp.json`` to pick up
+        added/removed servers, then reconnects everything (built-in specs
+        are preserved).
+        """
+        if self._registry is None:
+            return
+
+        from hermit.runtime.capability.resolver.mcp_client import (
+            MCP_TOOL_PREFIX,
+            McpClientManager,
+        )
+
+        # 1. Unregister all existing MCP tools from the registry
+        mcp_tools = [n for n in list(self._registry._tools) if n.startswith(MCP_TOOL_PREFIX)]
+        for name in mcp_tools:
+            self._registry.unregister(name)
+
+        # 2. Stop existing connections
+        self.stop_mcp_servers()
+
+        # 3. Separate builtin MCP specs from user (mcp_loader) specs
+        builtin_specs = [s for s in self._all_mcp if not self._is_user_mcp_spec(s)]
+
+        # 4. Re-read user mcp.json
+        user_specs = self._load_user_mcp_specs()
+
+        # 5. Merge
+        self._all_mcp = builtin_specs + user_specs
+
+        # 6. Reconnect
+        if self._all_mcp:
+            base_dir = getattr(self.settings, "base_dir", None) if self.settings else None
+            self._mcp_manager = McpClientManager(oauth_base_dir=base_dir)
+            try:
+                self._mcp_manager.connect_all_sync(self._all_mcp)
+            except Exception:
+                log.exception("mcp_reload_error")
+            for tool in self._mcp_manager.get_tool_specs():
+                try:
+                    self._registry.register(tool)
+                except ValueError:
+                    log.warning("mcp_duplicate_tool", name=tool.name)
+
+        log.info(
+            "mcp_servers_reloaded",
+            builtin=len(builtin_specs),
+            user=len(user_specs),
+            total=len(self._all_mcp),
+        )
+
+    def _is_user_mcp_spec(self, spec: McpServerSpec) -> bool:
+        """Check if a spec was loaded from user mcp.json (vs builtin plugin)."""
+        if self.settings is None:
+            return False
+        import json
+
+        mcp_path = self.settings.base_dir / "mcp.json"
+        if not mcp_path.is_file():
+            return False
+        try:
+            with open(mcp_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return spec.name in data.get("mcpServers", {})
+        except (json.JSONDecodeError, OSError):
+            return False
+
+    def _load_user_mcp_specs(self) -> list[McpServerSpec]:
+        """Load MCP server specs from user mcp.json."""
+        if self.settings is None:
+            return []
+        from hermit.plugins.builtin.mcp.mcp_loader.mcp import _load_mcp_json, _parse_server_entry
+
+        specs: list[McpServerSpec] = []
+        mcp_path = self.settings.base_dir / "mcp.json"
+        data = _load_mcp_json(mcp_path)
+        for name, entry in data.get("mcpServers", {}).items():
+            if not isinstance(entry, dict):
+                continue
+            spec = _parse_server_entry(name, entry)
+            if spec:
+                specs.append(spec)
+        return specs

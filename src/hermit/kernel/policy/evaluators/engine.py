@@ -8,7 +8,7 @@ from hermit.kernel.policy.guards.fingerprint import build_action_fingerprint
 from hermit.kernel.policy.guards.merge import merge_outcomes
 from hermit.kernel.policy.guards.rules import evaluate_rules
 from hermit.kernel.policy.guards.tool_spec_adapter import build_action_request, infer_action_class
-from hermit.kernel.policy.models.models import ActionRequest, PolicyDecision
+from hermit.kernel.policy.models.models import ActionRequest, PolicyDecision, PolicyObligations
 from hermit.runtime.capability.registry.tools import ToolSpec
 
 
@@ -32,16 +32,42 @@ class PolicyEngine:
         *,
         attempt_ctx: TaskExecutionContext | None = None,
     ) -> PolicyDecision:
+        # Resolve the ActionRequest from either a raw ToolSpec+payload or a pre-built request.
         if isinstance(tool_or_request, ActionRequest):
             request = derive_request(tool_or_request)
         else:
             request = self.build_action_request(
                 tool_or_request, payload or {}, attempt_ctx=attempt_ctx
             )
-        outcomes = evaluate_rules(request)
-        decision = merge_outcomes(
-            outcomes, action_class=request.action_class, default_risk=request.risk_hint
-        )
+
+        try:
+            outcomes = evaluate_rules(request)
+            decision = merge_outcomes(
+                outcomes, action_class=request.action_class, default_risk=request.risk_hint
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Policy evaluation failed for tool '{request.tool_name}' "
+                f"(action_class={request.action_class!r}): {exc}"
+            ) from exc
+
+        decision.rule_outcomes = [outcome.to_dict() for outcome in outcomes]
+
+        # Autonomous mode: auto-approve everything — skip all approval gates.
+        if (
+            request.context.get("policy_profile") == "autonomous"
+            and decision.obligations.require_approval
+        ):
+            decision.verdict = "allow_with_receipt"
+            decision.obligations = PolicyObligations(
+                require_receipt=decision.obligations.require_receipt,
+                require_approval=False,
+                require_evidence=decision.obligations.require_evidence,
+                require_preview=False,
+                approval_risk_level=None,
+            )
+            decision.approval_packet = None
+
         if decision.approval_packet is not None:
             packet = dict(decision.approval_packet)
             packet.setdefault("title", f"Approve action via {request.tool_name}")
@@ -65,4 +91,5 @@ class PolicyEngine:
                 ),
             )
             decision.approval_packet = packet
+
         return decision

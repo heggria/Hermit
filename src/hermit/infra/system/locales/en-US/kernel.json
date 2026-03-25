@@ -38,6 +38,7 @@
   "kernel.rollback.error.strategy_not_executable": "Rollback strategy is not executable: {strategy}",
   "kernel.rollback.error.prestate_missing": "Rollback prestate is missing.",
   "kernel.rollback.error.artifact_missing": "Rollback artifact could not be loaded.",
+  "kernel.rollback.error.prestate_hash_mismatch": "Prestate artifact hash does not match the stored content hash.",
   "kernel.approval.blocked_message": "{summary}{detail_block}\n\nApproval ID: `{approval_id}`. The current step will resume after you confirm.",
   "kernel.approval.model_prompt": "{summary} (approval ID: {approval_id}). Use `/task approve {approval_id}`, `/task approve-always-directory {approval_id}`, or reply with \"approve once {approval_id}\" / \"always allow this directory {approval_id}\".",
   "kernel.approval.template.push.title": "Confirm Push to Remote",

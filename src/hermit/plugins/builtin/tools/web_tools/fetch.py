@@ -8,25 +8,31 @@ import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import t
+from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
 
 _MAX_CONTENT_LENGTH = 50_000
 
 
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
-
-
 def handle_fetch(payload: dict[str, Any]) -> str:
     url = str(payload.get("url", "")).strip()
     if not url:
-        return _t("tools.web.fetch.error.empty_url")
+        return t("tools.web.fetch.error.empty_url")
 
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
     max_length = min(int(payload.get("max_length", 20000)), _MAX_CONTENT_LENGTH)
+
+    # --- Cache look-up ---
+    cache_params = {"url": url, "max_length": max_length}
+    cache = get_cache()
+    cache_key = cache.make_key("web_fetch", cache_params)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    # ---------------------
 
     try:
         req = urllib.request.Request(
@@ -47,11 +53,11 @@ def handle_fetch(payload: dict[str, Any]) -> str:
             content_type = resp.headers.get("Content-Type", "")
             raw = resp.read(200_000)
     except urllib.error.HTTPError as exc:
-        return _t("tools.web.fetch.error.http", code=exc.code, reason=exc.reason)
+        return t("tools.web.fetch.error.http", code=exc.code, reason=exc.reason)
     except urllib.error.URLError as exc:
-        return _t("tools.web.fetch.error.url", reason=exc.reason)
+        return t("tools.web.fetch.error.url", reason=exc.reason)
     except Exception as exc:
-        return _t("tools.web.fetch.error.fetch", error=exc)
+        return t("tools.web.fetch.error.fetch", error=exc)
 
     encoding = _detect_encoding(content_type, raw)
     try:
@@ -65,16 +71,18 @@ def handle_fetch(payload: dict[str, Any]) -> str:
         text = _html_to_text(html)
 
     if not text.strip():
-        return _t("tools.web.fetch.no_content", url=url)
+        return t("tools.web.fetch.no_content", url=url)
 
     if len(text) > max_length:
-        text = text[:max_length] + _t(
+        text = text[:max_length] + t(
             "tools.web.fetch.truncated",
             max_length=max_length,
             full_length=len(text),
         )
 
-    return _t("tools.web.fetch.content.title", url=url, text=text)
+    result = t("tools.web.fetch.content.title", url=url, text=text)
+    cache.set(cache_key, result)
+    return result
 
 
 def _detect_encoding(content_type: str, raw: bytes) -> str:
@@ -143,6 +151,7 @@ class _ReadableTextExtractor(HTMLParser):
         self._parts: list[str] = []
         self._skip_depth = 0
         self._tag_stack: list[str] = []
+        self._href_stack: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
@@ -160,9 +169,12 @@ class _ReadableTextExtractor(HTMLParser):
         if tag == "br" and not self._skip_depth:
             self._parts.append("\n")
         if tag == "a" and not self._skip_depth:
-            href = dict(attrs).get("href", "")
+            href = dict(attrs).get("href", "") or ""
             if href and href.startswith(("http://", "https://")):
                 self._parts.append("[")
+                self._href_stack.append(href)
+            else:
+                self._href_stack.append("")
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -174,6 +186,10 @@ class _ReadableTextExtractor(HTMLParser):
 
         if tag in self._BLOCK_TAGS and not self._skip_depth:
             self._parts.append("\n")
+        if tag == "a" and self._href_stack:
+            href = self._href_stack.pop()
+            if href and not self._skip_depth:
+                self._parts.append(f"]({href})")
 
     def handle_data(self, data: str) -> None:
         if self._skip_depth:

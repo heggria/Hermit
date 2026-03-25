@@ -13,25 +13,25 @@ class Deadline:
 
     @classmethod
     def start(cls, *, soft_seconds: float, hard_seconds: float) -> Deadline:
-        now = time.time()
+        now = time.monotonic()
         soft = max(float(soft_seconds), 0.0)
         hard = max(float(hard_seconds), soft)
         return cls(started_at=now, soft_at=now + soft, hard_at=now + hard)
 
     def soft_remaining(self, *, now: float | None = None) -> float:
-        current = time.time() if now is None else now
+        current = time.monotonic() if now is None else now
         return max(0.0, self.soft_at - current)
 
     def hard_remaining(self, *, now: float | None = None) -> float:
-        current = time.time() if now is None else now
+        current = time.monotonic() if now is None else now
         return max(0.0, self.hard_at - current)
 
     def soft_exceeded(self, *, now: float | None = None) -> bool:
-        current = time.time() if now is None else now
+        current = time.monotonic() if now is None else now
         return current >= self.soft_at
 
     def hard_exceeded(self, *, now: float | None = None) -> bool:
-        current = time.time() if now is None else now
+        current = time.monotonic() if now is None else now
         return current >= self.hard_at
 
 
@@ -39,12 +39,13 @@ class Deadline:
 class ExecutionBudget:
     ingress_ack_deadline: float = 5.0
     provider_connect_timeout: float = 5.0
-    provider_read_timeout: float = 120.0
-    provider_stream_idle_timeout: float = 600.0
+    provider_read_timeout: float = 15.0
+    provider_stream_idle_timeout: float = 15.0
     tool_soft_deadline: float = 30.0
     tool_hard_deadline: float = 600.0
     observation_window: float = 600.0
     observation_poll_interval: float = 5.0
+    reconciliation_probe_timeout: float = 5.0
 
     def tool_deadline(self) -> Deadline:
         return Deadline.start(

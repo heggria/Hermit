@@ -142,6 +142,49 @@ class AuthorizationPlanService:
             },
         )
 
+    def revalidate(
+        self,
+        authorization_plan_id: str,
+        current_policy_version: str,
+    ) -> bool:
+        """Re-evaluate revalidation rules on an existing authorization plan.
+
+        If ``check_policy_version`` is ``True`` in the plan's revalidation
+        rules, the method compares the *current_policy_version* against the
+        step attempt's stored ``policy_version``.  A mismatch means the
+        policy has changed since the plan was created, so the plan is
+        invalidated.
+
+        Returns ``True`` if the plan was invalidated, ``False`` otherwise.
+        """
+        record = self.store.get_authorization_plan(authorization_plan_id)
+        if record is None:
+            return False
+
+        rules = record.revalidation_rules or {}
+        if not rules.get("check_policy_version", False):
+            return False
+
+        # Retrieve the step attempt to compare stored policy_version.
+        attempt = self.store.get_step_attempt(record.step_attempt_id)
+        if attempt is None:
+            return False
+
+        stored_version = attempt.policy_version or ""
+        if stored_version == current_policy_version:
+            return False
+
+        # Policy version has drifted — invalidate the plan.
+        self.invalidate(
+            authorization_plan_id,
+            gaps=["policy_version_changed"],
+            summary=(
+                f"Policy version changed from '{stored_version}' to "
+                f"'{current_policy_version}' — revalidation required."
+            ),
+        )
+        return True
+
     def _store_artifact(
         self,
         authorization_plan_id: str,

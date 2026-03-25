@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 import time
 from collections.abc import Callable
@@ -19,14 +20,17 @@ _TASK_STATE_TTL_SECONDS = 7 * 24 * 60 * 60
 _VOLATILE_FACT_TTL_SECONDS = 24 * 60 * 60
 
 
+@functools.cache
 def _signal_tokens(key: str) -> tuple[str, ...]:
     return tuple(tr_list_all_locales(key))
 
 
-def _claim_stop_tokens() -> set[str]:
-    return set(tr_list_all_locales("kernel.nlp.claim_stop_tokens"))
+@functools.cache
+def _claim_stop_tokens() -> frozenset[str]:
+    return frozenset(tr_list_all_locales("kernel.nlp.claim_stop_tokens"))
 
 
+@functools.cache
 def _subject_hint_patterns() -> tuple[tuple[str, str], ...]:
     raw = tr_list_all_locales("kernel.nlp.subject_hint_patterns")
     result: list[tuple[str, str]] = []
@@ -92,15 +96,19 @@ _CATEGORY_POLICIES: dict[str, MemoryCategoryPolicy] = {
     "tooling_environment": MemoryCategoryPolicy(
         "tooling_environment", "workspace", static_injection=True, retrieval_allowed=True
     ),
+    "tech_decision": MemoryCategoryPolicy(
+        "volatile_fact",
+        "conversation",
+        static_injection=False,
+        retrieval_allowed=True,
+        ttl_seconds=3 * 24 * 60 * 60,  # 3 days — decisions decay but slower than noise
+    ),
     "active_task": MemoryCategoryPolicy(
         "task_state",
         "conversation",
         static_injection=False,
         retrieval_allowed=True,
         ttl_seconds=_TASK_STATE_TTL_SECONDS,
-    ),
-    "tech_decision": MemoryCategoryPolicy(
-        "volatile_fact", "conversation", static_injection=False, retrieval_allowed=True
     ),
     "other": MemoryCategoryPolicy(
         "volatile_fact",
@@ -246,14 +254,14 @@ class MemoryGovernanceService:
         cat = normalize_category(category)
         if signals.stable_preference:
             return "user_preference"
-        if signals.task_state and not signals.project_convention:
-            return "active_task"
         if signals.tooling_environment and not signals.project_convention:
             return "tooling_environment"
         if signals.tooling_environment and cat in {"other", "tooling_environment", "tech_decision"}:
             return "tooling_environment"
         if signals.project_convention:
             return "project_convention"
+        if signals.task_state:
+            return "active_task"
         return cat
 
     def filter_static_categories(
@@ -281,6 +289,10 @@ class MemoryGovernanceService:
     def retrieval_reason(
         self, memory: MemoryRecord, *, context: TaskExecutionContext
     ) -> str | None:
+        # Enforce retrieval_allowed from classification policy.
+        policy = self.policy_for(memory.category)
+        if not policy.retrieval_allowed:
+            return None
         if memory.retention_class in {"invalidated", "revoked"}:
             return None
         if memory.retention_class == "sensitive_fact":
@@ -431,8 +443,14 @@ class MemoryGovernanceService:
         if scope_kind == "workspace":
             return str(Path(workspace_root).resolve()) if workspace_root else "workspace:default"
         if scope_kind == "entity":
-            return conversation_id or "entity:unknown"
-        return conversation_id or "conversation:unknown"
+            if not conversation_id:
+                return "entity:unknown"
+            return conversation_id
+        if scope_kind == "conversation":
+            if not conversation_id:
+                return "conversation:ephemeral"
+            return conversation_id
+        raise ValueError(f"unrecognized scope_kind: {scope_kind!r}")
 
     def _classification_explanation(
         self,
@@ -490,8 +508,9 @@ class MemoryGovernanceService:
     ) -> bool:
         if not self._subject_matches(left_subject, right_subject):
             return False
-        if left_subject and right_subject and left_subject == right_subject:
-            return True
+        # When both subjects are non-empty and equal, _subject_matches already confirmed
+        # the match above; fall through to shares_topic only when at least one subject is
+        # absent (ambiguous entity) so we can use claim-level similarity as a tiebreaker.
         return shares_topic(left_claim, right_claim)
 
 

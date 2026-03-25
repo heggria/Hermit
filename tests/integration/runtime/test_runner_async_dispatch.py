@@ -11,8 +11,10 @@ from hermit.runtime.control.runner import runner as runner_module
 from hermit.runtime.control.runner.runner import (
     AgentRunner,
     DispatchResult,
-    _result_preview,
+)
+from hermit.runtime.control.runner.utils import (
     _strip_internal_markup,
+    result_preview,
 )
 from hermit.runtime.provider_host.execution.runtime import AgentResult
 
@@ -58,7 +60,7 @@ class _PluginManager:
         self.post_run: list[str] = []
         self.ended: list[tuple[str, list[dict[str, object]]]] = []
 
-    def on_session_start(self, session_id: str) -> None:
+    def on_session_start(self, session_id: str, *, runner: object = None) -> None:
         self.started.append(session_id)
 
     def on_session_end(self, session_id: str, messages: list[dict[str, object]]) -> None:
@@ -110,7 +112,7 @@ class _Store:
         self.resolved: list[tuple[str, dict[str, object]]] = []
         self.appended_history: list[object] = []
         self.schedule_history: list[object] = []
-        self.step_attempt = SimpleNamespace(context={"execution_mode": "run"})
+        self.step_attempt = SimpleNamespace(context={"execution_mode": "run"}, task_id=None)
 
     def get_approval(self, approval_id: str):
         return self.approvals.get(approval_id)
@@ -120,6 +122,9 @@ class _Store:
 
     def get_step_attempt(self, _step_attempt_id: str):
         return self.step_attempt
+
+    def get_task(self, task_id: str):
+        return None
 
     def append_schedule_history(self, record) -> None:
         self.appended_history.append(record)
@@ -216,6 +221,7 @@ def test_runner_uses_controller_auto_parent_sentinel() -> None:
 
 def test_runner_start_stop_background_services_and_wake(monkeypatch) -> None:
     runner, _agent, _session_manager, _pm, _controller, _store = _make_runner()
+    monkeypatch.setenv("HERMIT_DISPATCH_MODE", "flat")
 
     observation_calls: list[str] = []
     dispatch_calls: list[tuple[str, int | None]] = []
@@ -333,6 +339,7 @@ def test_runner_enqueue_approval_resume_handles_missing_deny_and_grant() -> None
                 "status": "denied",
                 "resolved_by": "user",
                 "resolution": {"status": "denied", "mode": "denied", "reason": "not-safe"},
+                "expected_status": "pending",
             },
         ),
         (
@@ -341,6 +348,7 @@ def test_runner_enqueue_approval_resume_handles_missing_deny_and_grant() -> None
                 "status": "granted",
                 "resolved_by": "user",
                 "resolution": {"status": "granted", "mode": "mutable_workspace"},
+                "expected_status": "pending",
             },
         ),
     ]
@@ -353,7 +361,7 @@ def test_runner_process_claimed_attempt_emits_notify_and_scheduler_artifacts(
     tmp_path: Path,
 ) -> None:
     runner, agent, session_manager, pm, controller, store = _make_runner(tmp_path)
-    store.step_attempt = SimpleNamespace(context={"execution_mode": "run"})
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "run"}, task_id=None)
 
     result = runner.process_claimed_attempt("attempt-1")
 
@@ -380,7 +388,7 @@ def test_runner_process_claimed_attempt_emits_notify_and_scheduler_artifacts(
 def test_runner_process_claimed_attempt_resume_and_error_paths() -> None:
     runner, agent, _session_manager, pm, controller, store = _make_runner()
 
-    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"})
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"}, task_id=None)
     agent.resume_result = AgentResult(
         text="waiting",
         turns=1,
@@ -395,7 +403,7 @@ def test_runner_process_claimed_attempt_resume_and_error_paths() -> None:
     assert controller.suspended == [("attempt-2", "awaiting_input")]
     assert pm.post_run == []
 
-    store.step_attempt = SimpleNamespace(context={"execution_mode": "run"})
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "run"}, task_id=None)
     agent.run_result = RuntimeError("boom")
     errored = runner.process_claimed_attempt("attempt-3")
 
@@ -410,7 +418,7 @@ def test_runner_process_claimed_attempt_emits_dispatch_result_for_kernel_managed
 ) -> None:
     runner, agent, _session_manager, pm, controller, store = _make_runner(tmp_path)
 
-    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"})
+    store.step_attempt = SimpleNamespace(context={"execution_mode": "resume"}, task_id=None)
     agent.resume_result = AgentResult(
         text="[Capability Denied] Workspace lease no longer covers this write.",
         turns=1,
@@ -747,8 +755,8 @@ def test_runner_helper_functions_and_constructor_guard() -> None:
         )
         == "Hello"
     )
-    assert _result_preview("") == ""
-    assert _result_preview("word " * 100, limit=12).endswith("…")
+    assert result_preview("") == ""
+    assert result_preview("word " * 100, limit=12).endswith("…")
 
     with pytest.raises(ValueError):
         AgentRunner(_Agent(), _SessionManager(), _PluginManager(), task_controller=None)

@@ -88,11 +88,11 @@ def setup() -> None:
             default="claude-3-7-sonnet-latest",
         )
         lines += [
-            f"HERMIT_AUTH_TOKEN={auth_token}",
-            f"HERMIT_BASE_URL={base_url}",
+            f"HERMIT_CLAUDE_AUTH_TOKEN={auth_token}",
+            f"HERMIT_CLAUDE_BASE_URL={base_url}",
         ]
         if custom_headers:
-            lines.append(f"HERMIT_CUSTOM_HEADERS={custom_headers}")
+            lines.append(f"HERMIT_CLAUDE_HEADERS={custom_headers}")
         lines.append(f"HERMIT_MODEL={model}")
     else:
         api_key = typer.prompt(
@@ -196,12 +196,22 @@ def profiles_resolve(name: str | None = None) -> None:
     """Resolve one profile as Hermit would read it from config.toml."""
     settings = get_settings()
     resolved = resolve_profile(settings.base_dir, name)
+    _SENSITIVE_KEYS = {
+        "claude_api_key",
+        "claude_auth_token",
+        "feishu_app_secret",
+        "openai_api_key",
+    }
+    safe_values = {
+        k: ("***" if k in _SENSITIVE_KEYS and v else v) for k, v in resolved.values.items()
+    }
     payload = {
         "requested_profile": name,
         "resolved_profile": resolved.name,
         "config_file": str(resolved.source_path),
         "config_file_exists": resolved.source_path.exists(),
-        "values": resolved.values,
+        "exists": resolved.exists,
+        "values": safe_values,
     }
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -221,7 +231,7 @@ def init(base_dir: Path | None = None) -> None:
     """Initialize the local Hermit workspace."""
     settings = get_settings()
     if base_dir is not None:
-        settings.base_dir = base_dir
+        settings = settings.model_copy(update={"base_dir": base_dir})
     ensure_workspace(settings)
     typer.echo(
         t(
@@ -278,6 +288,42 @@ def build_runner(
     return runner, pm
 
 
+def _finalize_oneshot_session(
+    runner: AgentRunner,
+    result: object | None,
+) -> None:
+    """Clean up CLI oneshot session: close session and cancel orphaned tasks.
+
+    In oneshot mode the session has no interactive approval handler, so any
+    task that is still non-terminal (running, blocked, queued) when the
+    session ends must be cancelled — otherwise it stays in that state
+    forever in the ledger and confuses subsequent ``hermit task list``
+    output.
+
+    The ``result`` parameter is the :class:`AgentResult` returned by
+    ``runner.handle()``, or ``None`` when the call was interrupted.
+    """
+    session_id = "cli-oneshot"
+    # Always close the session so hooks fire.
+    try:
+        runner.close_session(session_id)
+    except Exception:
+        pass
+
+    # Cancel any non-terminal tasks left by this session.
+    store = runner._get_store()
+    if store is None:
+        return
+    _TERMINAL = {"completed", "failed", "cancelled", "skipped"}
+    try:
+        tasks = store.list_tasks(conversation_id=session_id, limit=50)
+        for task in tasks:
+            if task.status not in _TERMINAL:
+                runner.task_controller.cancel_task(task.task_id)
+    except Exception:
+        pass
+
+
 @app.command()
 def run(
     prompt: str,
@@ -297,13 +343,14 @@ def run(
     if policy != "default":
         run_opts["policy_profile"] = policy
     with caffeinate(settings):
+        result = None
         try:
             result = runner.handle(
                 "cli-oneshot", prompt, on_tool_call=on_tool_call, run_opts=run_opts
             )
-            runner.close_session("cli-oneshot")
             print_result(result)
         finally:
+            _finalize_oneshot_session(runner, result)
             stop_runner_background_services(runner)
             pm.stop_mcp_servers()
 

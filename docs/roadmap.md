@@ -1,173 +1,130 @@
 ---
-description: "Hermit roadmap: kernel profile conformance, governance coverage, receipt and proof expansion, rollback semantics, and artifact-native context."
+description: "Hermit roadmap: from governed agent kernel to production-grade agent OS."
 ---
 
 # Roadmap
 
-Hermit is best understood today as a **beta local-first governed agent kernel**.
+Hermit is a **kernel-first governed agent runtime** — a system where every agent action flows through durable task records, policy evaluation, scoped authority grants, receipted execution, and hash-chained proof bundles. No shortcuts. No ungoverned side effects.
 
-It is not starting from zero. The repository already contains real kernel objects, governance paths, proof primitives, and rollback support for selected actions. But the whole system is still converging on the `v0.1` kernel spec.
+Every operating system evolves through the same arc: single-user → multi-user → networked → distributed. Hermit follows the same trajectory for AI tasks.
 
-This roadmap separates five things clearly:
+This roadmap describes where Hermit has been, where it is going, and why each step is a natural consequence of the kernel philosophy.
 
-- what Hermit already ships
-- what is claimable today
-- what is partially implemented or compatibility-only
-- what the `v0.1` spec defines as target behavior
-- what remains experimental or open
+## Current: v0.3 (Released)
 
-For a chapter-by-chapter breakdown, see [kernel-spec-v0.1-section-checklist.md](./kernel-spec-v0.1-section-checklist.md).
+v0.3 marks the transition from a governed execution kernel to an adaptive **Task OS** — a system that does not just run governed tasks, but coordinates, competes, deliberates, and improves itself under the same governance guarantees.
 
-## Current Status Snapshot
+v0.3 is Hermit's "multi-user moment" — programs, teams, worker pools, and competitive scheduling bring multi-tenant task management to the AI Task OS.
 
-### Safe current-state claims
+### What shipped
 
-- Repository-level `Core`, `Governed`, and baseline `Verifiable` kernel profiles are claimable through the conformance matrix and `task claim-status`.
-- Hermit already ships a local kernel ledger with first-class task-related records.
-- Hermit already has governed execution primitives such as policy evaluation, approvals, decisions, capability grants, and workspace leases.
-- Hermit already issues receipts and exposes proof summaries and proof export.
-- Hermit already supports rollback for supported receipt classes.
-- Hermit already has context compilation and memory governance primitives.
+**Self-iteration pipeline.** Hermit can now improve its own codebase through a fully governed pipeline: spec parsing, workspace isolation, branch creation, execution, proof export, and pull request generation. Every mutation is authorized by the policy engine, granted scoped capabilities, receipted, and verifiable. The kernel eats its own dogfood.
 
-### Careful current-state claims
+**MCP supervisor extensions.** The Hermit MCP server exposes kernel tools via Streamable HTTP, enabling supervisor agents (Claude Code, Codex, or any MCP client) to submit tasks, manage approvals, monitor execution, and export proofs. Hermit becomes a governed execution backend for any agent system.
 
-- Task-level strongest verifiable readiness still depends on proof bundle completeness, signing, and inclusion coverage for the specific task being exported.
-- These claims apply to the kernel contract, not to every compatibility surface or legacy runtime affordance.
-- Not every runtime surface should be described as fully aligned with the target kernel spec.
-- Public APIs and module layout should still be treated as unstable while the runtime keeps converging on the kernel model.
+**Task OS kernel evolution.** The kernel is now topology-adaptive and verification-driven. Execution contracts, evidence cases, and authorization plans form a complete governance loop. Approval parking, workspace-aware execution, and fork-join concurrency with governed delegation are all first-class primitives.
 
-## Status Matrix
+**Competition and deliberation framework.** Multiple candidate solutions can be evaluated competitively, with deliberation protocols that select winners based on evidence quality and verification results — not just first-to-finish.
 
-| Area | Current state | Direction |
-| --- | --- | --- |
-| Task-first execution | claimable at the kernel contract level | close remaining adapter and runtime gaps |
-| Event-backed truth | claimable in the kernel ledger | deepen projection and replay semantics without over-claiming repo-wide event sourcing |
-| Governed execution | claimable at the kernel contract level | extend coverage and tighten invariants |
-| Receipts and proofs | claimable at baseline, task-specific strength still varies with proof coverage | broaden coverage and operator ergonomics |
-| Rollback | supported for selected receipts | expand safe rollback classes |
-| Artifact-native context | claimable in the kernel path | make it more central across all paths |
-| Evidence-bound memory | claimable in the kernel path | tighten promotion, invalidation, and inspection |
-| Public API stability | boundary defined | public vs internal modules classified; stability guarantees apply from Beta (see [status-and-compatibility.md](./status-and-compatibility.md#public-api-stability)) |
+**Benchmark verification.** A benchmark registry with profile-based routing enables verification-driven quality gates. Tasks can declare benchmark profiles; the kernel routes them to appropriate verification suites and gates progression on results.
 
-## Near-Term Milestones
+**5,800+ tests, 93% coverage.** The kernel is not just designed to be correct — it is tested to be correct. Unit, integration, and end-to-end tests cover task lifecycle, governance paths, receipt issuance, proof chain completeness, reconciliation, rollback, memory governance, and self-iteration.
 
-### Milestone 1: Spec `0.1` Surface Closure
+### Foundation carried forward from v0.2
 
-Focus:
+- 12/12 v0.2 Core exit criteria satisfied
+- TrustLoop-Bench: all 15 tests passing, all 7 governance metric thresholds met
+- Beta status with defined public API stability guarantees
+- Full contract loop: ExecutionContract → EvidenceCase → AuthorizationPlan → Receipt → Reconciliation
+- Hash-chained proof bundles with tiered export (summary / standard / full)
+- Evidence-bound memory with contradiction detection and invalidation
 
-- preserve the now-claimable kernel profiles with machine-checkable docs and tests
-- close ambiguous gaps between runtime surfaces and kernel paths
-- reduce legacy naming and compatibility drift where it obscures kernel semantics
+## Next: v0.4
 
-### Milestone 2: Governed Execution Hardening
+v0.4 extends the kernel from a single-node runtime to a coordination-capable system — still local-first, still governed, but ready for real-world multi-agent workflows.
 
-Focus:
+v0.4 extends the kernel across boundaries — distributed execution, cross-repo proof federation, and multi-node coordination bring Hermit from a single-machine OS to a networked one.
 
-- broaden policy coverage for consequential actions
-- strengthen approval and witness drift semantics
-- improve scoped authority handling
+### Distributed kernel (multi-node)
 
-### Milestone 3: Receipt And Proof Coverage
+The kernel ledger and proof chain are designed to be portable. v0.4 introduces node-to-node task delegation with full governance preservation: a task delegated to a remote kernel carries its authorization plan, receives receipts from the remote executor, and reconciles back to the originating ledger. No trust assumptions are added — the proof chain spans nodes.
 
-Focus:
+### Enhanced proof anchoring — external transparency logs and cross-repo federation
 
-- increase receipt coverage across important action classes
-- improve proof bundle completeness
-- make operator inspection and proof export more usable
+Git-native proof anchoring (via `GitNoteAnchor`) already ships in v0.3. v0.4 extends anchoring beyond the local repository: proof hashes are submitted to external transparency logs, enabling independent third-party verification. Blockchain anchoring provides tamper-evident timestamps for high-stakes governance decisions. Cross-repo proof federation allows proof chains that span multiple repositories to be verified as a single coherent bundle, supporting monorepo-to-polyrepo migration without breaking audit trails.
 
-### Milestone 4: Recovery And Context
+### Advanced team coordination — cross-team dependencies and role-based arbitration
 
-Focus:
+Basic team coordination primitives (TeamRecord, role-bound worker pools, shared workspace leases) already ship in v0.3. v0.4 adds cross-team dependency resolution: when teams depend on each other's outputs, the kernel tracks inter-team data flow and enforces governance at team boundaries. Role-based slot arbitration lets operators define capacity constraints per role, and the kernel schedules work accordingly. Team-level governance policies allow different approval thresholds, trust baselines, and capability scopes per team — a security-sensitive team can require stricter governance without affecting the rest of the organization.
 
-- improve rollback coverage where safe
-- deepen observation and resolution semantics
-- strengthen artifact-native context and carry-forward behavior
+### Program orchestration — conditional branching, proof aggregation, and workflow templates
 
-## v0.2 Core Exit Criteria Status
+Programs and workflows are already first-class kernel objects in v0.3 (ProgramRecord, MilestoneRecord, ProgramManager, ProgramToolService store program definitions in the ledger alongside task records). v0.4 adds conditional branching: program steps can branch based on runtime evidence, benchmark results, or approval decisions. Program-level proof aggregation rolls up individual task proofs into a single bundle that covers the entire workflow execution. Workflow templates let operators define reusable program skeletons with parameterized governance profiles, making it practical to standardize recurring multi-step workflows across teams.
 
-12 of 12 v0.2 Core exit criteria are now `implemented`:
+### Advanced benchmark routing
 
-1. Consequential execution synthesizes an `ExecutionContractRecord` before dispatch
-2. Contract admission records an `EvidenceCaseRecord` and `AuthorizationPlanRecord`
-3. Receipt issuance carries contract / authorization linkage and requires reconciliation
-4. Reconciliation writes a durable `ReconciliationRecord` and closes the contract loop
-5. Witness drift supersedes prior attempts instead of silently reusing stale approval state
-6. Durable memory promotion is reconciliation-gated
-7. Projection / proof surfaces expose contract-loop entities
-8. Idempotent reconciliation prevents duplicate reconciliation records for the same receipt
-9. Contract expiry and policy version drift trigger durable re-entry before execution
-10. Violated reconciliation invalidates memories learned from the same reconciliation ref
-11. TrustLoop-Bench meaningful performance demonstration — all 15 tests pass, all 7 metric thresholds met (see below)
-12. Learned contract templates for recurring governed action patterns
+Benchmark profiles become composable and context-aware. The routing service learns from execution history which verification suites catch real issues for specific task families, and adjusts routing accordingly. Benchmark results feed back into trust scoring, creating a virtuous cycle: better verification produces better trust signals, which produce better policy decisions.
 
-## TrustLoop-Bench Performance Thresholds
+## Future: v1.0
 
-TrustLoop-Bench (`tests/integration/kernel/test_trustloop_bench.py`) is the formal benchmark for v0.2 exit criterion #12. It covers **5 task families** across **15 tests** and asserts **7 kernel governance metrics**.
+v1.0 is the production-grade governed agent OS. Every design decision from v0.1 through v0.4 converges here: a system that enterprises can deploy, operators can trust, and auditors can verify.
 
-### Task Families
+v1.0 is the "enterprise distribution" — like Red Hat Enterprise Linux for the AI Task OS. Production-grade, compliance-certified, with a thriving plugin ecosystem.
 
-| Family | Description | Tests |
-| --- | --- | --- |
-| TF1: Approval Drift Patch | Write, approve, external mutation, re-execute, drift detection | 1 |
-| TF2: Bounded-Authority Ops | Read-only passes, unclassified mutation blocked by policy | 1 |
-| TF3: Crash + Unknown Outcome | Execute, reconcile with unknown_outcome, verify uncertain | 1 |
-| TF4: Contradictory Memory | Execute, reconcile, promote belief, violate, invalidate | 1 |
-| TF5: Rollback-Qualified Publish | Write with rollback, verify receipt and prestate snapshot | 2 (TF5 + TF5b) |
+### Production-grade governed agent OS
 
-Additional tests cover reconciliation result class coverage (3 tests), evidence case lifecycle (2 tests), authorization plan invalidation (1 test), knowledge blocking reasons (2 tests), and aggregate metric computation (1 test).
+The kernel graduates from beta to stable. Public APIs are frozen with semantic versioning guarantees. The ledger schema supports online migration. Performance characteristics are documented and benchmarked. The system is ready for workloads where failure has real consequences.
 
-### Metric Pass Thresholds
+### Enterprise deployment patterns
 
-These are the formal thresholds that the kernel must meet. All are asserted in `test_trustloop_bench_aggregate_metrics`.
+Reference architectures for common enterprise scenarios: CI/CD pipeline agents with approval gates, document processing workflows with audit trails, code review agents with rollback capability, and infrastructure management agents with scoped authority. Each pattern ships with governance profiles, benchmark suites, and proof export configurations tuned for the use case.
 
-| # | Metric | Threshold | Rationale |
-| --- | --- | --- | --- |
-| M1 | Contract Satisfaction Rate | >= 50% | Contracts satisfied / contracts total. Baseline floor; production targets will be higher. |
-| M2 | Unauthorized Effect Rate | == 0% | Unauthorized effects / total effects. Zero tolerance for ungoverned side effects. |
-| M3 | Stale Authorization Execution Rate | == 0% | Stale auth executions / total auth executions. No execution on expired or drifted authority. |
-| M4 | Belief Calibration Under Contradiction | >= 80% | Beliefs recalibrated / beliefs contradicted. Memory must respond to contradicting evidence. |
-| M5 | Rollback Success Rate | >= 80% | Rollbacks succeeded / rollbacks attempted. Rollback must be reliable where supported. |
-| M6 | Mean Recovery Depth | <= 3.0 | Average steps to recover from crash or unknown outcome. Bounded recovery cost. |
-| M7 | Operator Burden Per Successful Task | <= 3.0 | Operator interactions / successful tasks. Governance must not overwhelm operators. |
+### Multi-tenant workspace isolation
 
-### Current Results
+Multiple teams sharing a Hermit deployment get cryptographic workspace isolation. Each tenant's tasks, artifacts, receipts, and proofs are partitioned with enforced boundaries. Cross-tenant delegation is possible but requires explicit authorization plans — the same governed execution model, applied to organizational boundaries.
 
-All 15 TrustLoop-Bench tests pass. All 7 metric thresholds are met. Criterion #12 is satisfied.
+### Compliance certification support
 
-## Contribution Priorities
+Proof bundles and governance records are already structured for auditability. v1.0 adds export formats and reporting tools aligned with common compliance frameworks. An auditor can take a proof export, verify the hash chain, and confirm that every consequential action was authorized, receipted, and reconciled — without understanding the kernel internals.
 
-The highest-leverage contributions right now are:
+### Ecosystem of community plugins
 
-- task lifecycle correctness
-- governance correctness
-- receipt and proof coverage
-- rollback safety
-- context and memory discipline
-- docs that sharply separate current implementation from target architecture
+The plugin system (adapters, hooks, tools, MCP servers, subagents, and bundles) is already extensible. v1.0 publishes a stable plugin SDK, a community registry, and governance profiles for third-party plugins. Community-contributed plugins inherit the same receipt and proof guarantees as builtin plugins — no second-class citizens.
 
-## Beta Gate Checklist
+## Design Principles
 
-Hermit will transition from Alpha to Beta when **all** of the following gates are satisfied. Each gate must be verified before the classifier in `pyproject.toml` is updated.
+These principles are not aspirational. They are enforced in code today and guide every design decision going forward.
 
-| # | Gate | Status | Notes |
-| --- | --- | --- | --- |
-| G1 | v0.2 Core exit criteria 12/12 completed | 12/12 — DONE | All 12 criteria implemented |
-| G2 | All memory governance tests passing | All passing — DONE | Verified through `test_memory_engine` and integration suites |
-| G3 | CI has no known flaky tests | Fixed — DONE | Sandbox observation and approval copy timing issues resolved |
-| G4 | Public API scope defined | Defined — DONE | See [status-and-compatibility.md — Public API Stability](./status-and-compatibility.md#public-api-stability) |
-| G5 | `status-and-compatibility.md` updated with API boundary | Updated — DONE | Public vs internal module classification added; Beta status noted |
-| G6 | `pyproject.toml` classifier updated to Beta | Ready to update | All other gates satisfied |
+**Governed by default.** Every consequential action flows through policy evaluation, approval, and scoped authority grants. The kernel refuses ambiguous execution rather than permitting ungoverned side effects. This is not a safety layer bolted onto a permissive system — it is the execution model.
 
-**Transition rule:** When all six gates reach `done` / `passing`, update the classifier from `Development Status :: 3 - Alpha` to `Development Status :: 4 - Beta` and tag the release.
+**Evidence over assertion.** Memory promotion requires evidence references. Trust scores derive from execution history. Benchmark results gate task progression. The kernel does not take claims at face value — it requires receipts.
 
-## What The Roadmap Is Not
+**Receipts are non-negotiable.** Every governed action produces a receipt with HMAC-SHA256 signing and contract linkage. Receipts are not logging. They are durable, hash-chained records that form the basis of proof bundles, rollback decisions, and trust evaluation.
 
-The roadmap is not a promise that Hermit is trying to become:
+**Local-first, distribute-ready.** The kernel runs on a single machine with a SQLite ledger. No cloud dependency, no network requirement for core governance. But the proof chain and task model are designed to span nodes — distribution adds topology, not trust assumptions.
 
-- a giant multi-tenant cloud platform
-- a no-tradeoff autonomous agent system
-- a surface-level tool catalog race
+**Operator trust, not blind autonomy.** Hermit is not trying to remove humans from the loop. It is trying to make the loop inspectable, recoverable, and provable. Operators approve consequential actions, inspect proof bundles, and recover from failures. The kernel's job is to make that possible without overwhelming them.
 
-Hermit's goal is narrower and stronger:
+**Fail closed.** When governance metadata is ambiguous, the kernel stops. When a contract expires, execution halts and re-entry is required. When reconciliation detects a violation, affected memories are invalidated. The system prefers refusing work to producing ungoverned results.
 
-to become a local-first governed kernel for durable agent work that operators can inspect, approve, and recover.
+**The OS is the platform** — Hermit is not a tool you use; it's a platform you build on. Every design decision optimizes for being infrastructure, not an application.
+
+## See Also
+
+- [Release notes for v0.3](./release-notes-v0.3.md) — detailed changelog for the current release
+- [Use cases](./use-cases.md) — practical scenarios and deployment patterns
+- [MCP integration](./mcp-integration.md) — how supervisor agents interact with the Hermit kernel
+- [FAQ](./faq.md) — frequently asked questions
+
+## Contributing
+
+The highest-leverage contributions strengthen kernel semantics:
+
+- **Task lifecycle correctness** — the path from task creation to proof export
+- **Governance coverage** — policy evaluation, approval flow, scoped authority
+- **Receipt and proof expansion** — broader receipt classes, deeper proof chains
+- **Rollback safety** — more action types with safe, tested rollback strategies
+- **Benchmark and verification** — new benchmark profiles, verification suites
+- **Plugin ecosystem** — adapters, hooks, and tools that demonstrate the governed execution model
+
+Start with the [architecture overview](./architecture.md), read the [getting started guide](./getting-started.md), and run `make check` to verify your environment. The test suite is the best documentation of kernel behavior — when in doubt, read the tests.

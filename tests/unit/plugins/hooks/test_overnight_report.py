@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 from hermit.kernel.ledger.journal.store import KernelStore
@@ -15,10 +14,6 @@ from hermit.runtime.capability.contracts.base import HookEvent, PluginContext
 from hermit.runtime.capability.contracts.hooks import HooksEngine
 
 
-def _make_store() -> KernelStore:
-    return KernelStore(Path(":memory:"))
-
-
 def _insert_task(
     store: KernelStore,
     task_id: str,
@@ -27,8 +22,8 @@ def _insert_task(
     updated_at: float | None = None,
 ) -> None:
     now = updated_at or time.time()
-    with store._lock, store._conn:
-        store._conn.execute(
+    with store._get_conn():
+        store._get_conn().execute(
             """
             INSERT INTO tasks (
                 task_id, conversation_id, title, goal, status, priority,
@@ -46,8 +41,8 @@ def _insert_receipt(
     created_at: float | None = None,
 ) -> None:
     now = created_at or time.time()
-    with store._lock, store._conn:
-        store._conn.execute(
+    with store._get_conn():
+        store._get_conn().execute(
             """
             INSERT INTO receipts (
                 receipt_id, task_id, step_id, step_attempt_id, action_type,
@@ -67,8 +62,8 @@ def _insert_approval(
     requested_at: float | None = None,
 ) -> None:
     now = requested_at or time.time()
-    with store._lock, store._conn:
-        store._conn.execute(
+    with store._get_conn():
+        store._get_conn().execute(
             """
             INSERT INTO approvals (
                 approval_id, task_id, step_id, step_attempt_id, status,
@@ -97,9 +92,8 @@ class TestOvernightSummaryDefaults:
 
 
 class TestOvernightReportServiceEmptyStore:
-    def test_generate_empty_store(self) -> None:
-        store = _make_store()
-        service = OvernightReportService(store)
+    def test_generate_empty_store(self, kernel_store: KernelStore) -> None:
+        service = OvernightReportService(kernel_store)
         summary = service.generate(lookback_hours=12)
         assert summary.tasks_completed == []
         assert summary.tasks_failed == []
@@ -108,20 +102,18 @@ class TestOvernightReportServiceEmptyStore:
         assert summary.approvals_pending == []
         assert summary.generated_at > 0
         assert summary.lookback_hours == 12
-        store.close()
 
 
 class TestOvernightReportServiceWithData:
-    def test_generate_picks_up_recent_tasks(self) -> None:
-        store = _make_store()
+    def test_generate_picks_up_recent_tasks(self, kernel_store: KernelStore) -> None:
         now = time.time()
-        _insert_task(store, "t-1", "completed", "Deploy v2", updated_at=now - 100)
-        _insert_task(store, "t-2", "failed", "Broken build", updated_at=now - 200)
-        _insert_task(store, "t-3", "blocked", "Awaiting approval", updated_at=now - 300)
+        _insert_task(kernel_store, "t-1", "completed", "Deploy v2", updated_at=now - 100)
+        _insert_task(kernel_store, "t-2", "failed", "Broken build", updated_at=now - 200)
+        _insert_task(kernel_store, "t-3", "blocked", "Awaiting approval", updated_at=now - 300)
         # old task outside window
-        _insert_task(store, "t-old", "completed", "Ancient task", updated_at=now - 50000)
+        _insert_task(kernel_store, "t-old", "completed", "Ancient task", updated_at=now - 50000)
 
-        service = OvernightReportService(store)
+        service = OvernightReportService(kernel_store)
         summary = service.generate(lookback_hours=12)
 
         assert len(summary.tasks_completed) == 1
@@ -130,34 +122,29 @@ class TestOvernightReportServiceWithData:
         assert summary.tasks_failed[0]["task_id"] == "t-2"
         assert len(summary.tasks_blocked) == 1
         assert summary.tasks_blocked[0]["task_id"] == "t-3"
-        store.close()
 
-    def test_generate_counts_receipts(self) -> None:
-        store = _make_store()
+    def test_generate_counts_receipts(self, kernel_store: KernelStore) -> None:
         now = time.time()
-        _insert_receipt(store, "r-1", created_at=now - 100)
-        _insert_receipt(store, "r-2", created_at=now - 200)
-        _insert_receipt(store, "r-old", created_at=now - 50000)
+        _insert_receipt(kernel_store, "r-1", created_at=now - 100)
+        _insert_receipt(kernel_store, "r-2", created_at=now - 200)
+        _insert_receipt(kernel_store, "r-old", created_at=now - 50000)
 
-        service = OvernightReportService(store)
+        service = OvernightReportService(kernel_store)
         summary = service.generate(lookback_hours=12)
         assert summary.total_governed_actions == 2
-        store.close()
 
-    def test_generate_lists_pending_approvals(self) -> None:
-        store = _make_store()
-        _insert_approval(store, "a-1", status="pending")
-        _insert_approval(store, "a-2", status="approved")
+    def test_generate_lists_pending_approvals(self, kernel_store: KernelStore) -> None:
+        _insert_approval(kernel_store, "a-1", status="pending")
+        _insert_approval(kernel_store, "a-2", status="approved")
 
-        service = OvernightReportService(store)
+        service = OvernightReportService(kernel_store)
         summary = service.generate(lookback_hours=12)
         assert len(summary.approvals_pending) == 1
         assert summary.approvals_pending[0]["approval_id"] == "a-1"
-        store.close()
 
 
 class TestFormatMarkdown:
-    def test_format_markdown_output(self) -> None:
+    def test_format_markdown_output(self, kernel_store: KernelStore) -> None:
         summary = OvernightSummary(
             tasks_completed=[{"task_id": "t-1", "title": "Deploy"}],
             tasks_failed=[{"task_id": "t-2", "title": "Build"}],
@@ -169,8 +156,7 @@ class TestFormatMarkdown:
             lookback_hours=12,
             generated_at=time.time(),
         )
-        store = _make_store()
-        service = OvernightReportService(store)
+        service = OvernightReportService(kernel_store)
         md = service.format_markdown(summary)
         assert "# Overnight Report" in md
         assert "**Lookback**: 12h" in md
@@ -183,11 +169,10 @@ class TestFormatMarkdown:
         assert "Pending approvals: 1" in md
         assert "Signals emitted: 3" in md
         assert "Signals acted: 1" in md
-        store.close()
 
 
 class TestFormatDashboardJson:
-    def test_format_dashboard_json_output(self) -> None:
+    def test_format_dashboard_json_output(self, kernel_store: KernelStore) -> None:
         summary = OvernightSummary(
             tasks_completed=[{"task_id": "t-1"}],
             tasks_failed=[],
@@ -199,8 +184,7 @@ class TestFormatDashboardJson:
             lookback_hours=8,
             generated_at=1234567890.0,
         )
-        store = _make_store()
-        service = OvernightReportService(store)
+        service = OvernightReportService(kernel_store)
         result = service.format_dashboard_json(summary)
         assert result["tasks_completed"] == 1
         assert result["tasks_failed"] == 0
@@ -211,7 +195,6 @@ class TestFormatDashboardJson:
         assert result["signals_acted"] == 2
         assert result["lookback_hours"] == 8
         assert result["generated_at"] == 1234567890.0
-        store.close()
 
 
 class TestOvernightHooks:

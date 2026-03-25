@@ -40,9 +40,27 @@ def _resolve_plugin_variables(manifest: PluginManifest, settings: Any) -> dict[s
         if value in (None, "") and spec.default is not None:
             value = spec.default
         if value in (None, "") and spec.required:
-            log.warning("plugin_variable_missing", plugin=manifest.name, variable=name)
+            log.error(
+                "plugin_variable_required_missing",
+                plugin=manifest.name,
+                variable=name,
+                env_vars=spec.env,
+            )
         resolved[name] = value
     return resolved
+
+
+def has_missing_required_variables(manifest: PluginManifest, resolved: dict[str, Any]) -> list[str]:
+    """Return names of required variables that are still None or empty.
+
+    Callers (e.g. loader) can use this to decide whether to skip entry
+    registration for a plugin whose required configuration is incomplete.
+    """
+    missing: list[str] = []
+    for name, spec in manifest.variables.items():
+        if spec.required and resolved.get(name) in (None, ""):
+            missing.append(name)
+    return missing
 
 
 def _resolve_templates(value: Any, plugin_vars: dict[str, Any]) -> Any:

@@ -22,12 +22,15 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from hermit.infra.locking.lock import FileGuard
 from hermit.infra.storage.atomic import atomic_write
+
+logger = logging.getLogger(__name__)
 
 
 class JsonStore:
@@ -59,14 +62,35 @@ class JsonStore:
     def read(self) -> dict[str, Any]:
         """Return the current file contents as a dict.
 
-        Returns ``default`` if the file does not exist or contains invalid
-        JSON, rather than raising.
+        Returns ``default`` if the file does not exist yet.
+
+        Raises:
+            OSError: If the file exists but cannot be read (e.g. permission
+                denied).  Only ``FileNotFoundError`` is silently treated as
+                "use default"; all other I/O errors are re-raised so callers
+                can detect misconfigured paths or permission problems early.
+            json.JSONDecodeError: If the file exists but contains invalid
+                JSON.  A warning is logged and the default is returned so
+                that a truncated write during a previous crash does not
+                permanently break the store, but the corruption is visible
+                in logs.
         """
-        if not self.path.exists():
-            return dict(self._default)
         try:
-            return json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            raw = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return dict(self._default)
+        # Other OSError subtypes (PermissionError, etc.) are intentionally
+        # re-raised so callers notice misconfigured or inaccessible paths.
+
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "JsonStore: corrupt JSON in %s (%s); returning default. "
+                "Consider inspecting or deleting the file.",
+                self.path,
+                exc,
+            )
             return dict(self._default)
 
     def write(self, data: dict[str, Any]) -> None:
@@ -74,7 +98,15 @@ class JsonStore:
 
         This is safe for a single writer; for concurrent read-modify-write
         use ``update()`` instead.
+
+        Raises:
+            TypeError: If *data* is not a ``dict``.  Prevents accidentally
+                writing a non-dict value (e.g. a list or ``None``) that would
+                silently corrupt the store and cause ``read()`` to fall back
+                to the default on the next access.
         """
+        if not isinstance(data, dict):
+            raise TypeError(f"JsonStore.write() expects a dict, got {type(data).__name__!r}")
         atomic_write(self.path, json.dumps(data, ensure_ascii=False, indent=2))
 
     @contextlib.contextmanager

@@ -12,7 +12,8 @@ from hermit.infra.system.i18n import tr, tr_list_all_locales
 from hermit.plugins.builtin.hooks.image_memory.engine import ImageMemoryEngine
 from hermit.runtime.capability.contracts.base import HookEvent, PluginContext
 from hermit.runtime.capability.registry.tools import ToolSpec
-from hermit.runtime.provider_host.execution.services import VisionAnalysisService, build_provider
+from hermit.runtime.provider_host.execution.services import build_provider
+from hermit.runtime.provider_host.execution.vision_services import VisionAnalysisService
 
 log = structlog.get_logger()
 

@@ -48,8 +48,14 @@ class ConfidenceDecayService:
         now: float | None = None,
     ) -> float:
         """Compute effective confidence using half-life decay."""
-        now = now or time.time()
-        base = memory.confidence
+        # Use explicit None check so that now=0.0 (epoch) is not silently
+        # replaced by the current time via a falsy `or` evaluation.
+        if now is None:
+            now = time.time()
+
+        # Clamp base confidence to [0.0, 1.0] so downstream arithmetic is
+        # always well-defined even if the record carries an out-of-range value.
+        base = max(0.0, min(1.0, memory.confidence or 0.0))
         half_life = self._half_life_for(memory)
 
         # Use last_accessed_at from structured_assertion, or last_validated_at, or created_at
@@ -77,7 +83,8 @@ class ConfidenceDecayService:
         now: float | None = None,
     ) -> None:
         """Update last_accessed_at to reset the decay clock when a memory is referenced."""
-        now = now or time.time()
+        if now is None:
+            now = time.time()
         record = store.get_memory_record(memory_id)
         if record is None or record.status != "active":
             return
@@ -98,7 +105,8 @@ class ConfidenceDecayService:
         low_confidence_threshold: float = 0.1,
     ) -> ConfidenceReport:
         """Batch recompute effective confidence for all active memories."""
-        now = now or time.time()
+        if now is None:
+            now = time.time()
         records = store.list_memory_records(status="active", limit=5000)
 
         report = ConfidenceReport(recomputed_at=now, total_evaluated=len(records))

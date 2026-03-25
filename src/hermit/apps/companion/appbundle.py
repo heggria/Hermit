@@ -12,6 +12,7 @@ from pathlib import Path
 
 from hermit import __version__
 from hermit.apps.companion.control import hermit_base_dir
+from hermit.infra.paths import project_root as _project_root
 from hermit.infra.system.i18n import tr
 
 APP_NAME = "Hermit"
@@ -69,13 +70,6 @@ def _bundle_python_target() -> Path:
     return Path(sys.executable).resolve()
 
 
-def _project_root() -> Path | None:
-    candidate = Path(__file__).resolve().parents[2]
-    if (candidate / "pyproject.toml").exists():
-        return candidate
-    return None
-
-
 def _icon_source() -> Path | None:
     project_root = _project_root()
     if project_root is None:
@@ -95,11 +89,11 @@ def _install_bundle_icon(resources_dir: Path) -> str | None:
 
     icon_name = "HermitMenu"
     iconset_dir = resources_dir / f"{icon_name}.iconset"
-    if iconset_dir.exists():
-        shutil.rmtree(iconset_dir)
-    iconset_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        if iconset_dir.exists():
+            shutil.rmtree(iconset_dir)
+        iconset_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="hermit-icon-") as temp_dir:
             temp_path = Path(temp_dir)
             raster_png = temp_path / "hermit-icon.png"
@@ -247,7 +241,7 @@ def install_app_bundle(
         exec_line = (
             f'source "{helper_path}"\n'
             'UV_BIN="$(resolve_uv_bin)"\n'
-            f'exec "${{UV_BIN}}" run --project "{project_root}" --python 3.13 '
+            f'exec "${{UV_BIN}}" run --project "{project_root}" --python 3.13 --no-sync '
             f'python -m hermit.apps.companion.menubar --adapter "{adapter}"'
         )
     else:
@@ -273,9 +267,16 @@ def install_app_bundle(
 
 
 def open_app_bundle(target: Path | None = None) -> None:
-    subprocess.Popen(
-        ["open", str(app_path(target))], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+    bundle = app_path(target)
+    if not bundle.exists():
+        raise RuntimeError(
+            _t(
+                "companion.appbundle.open.bundle_missing",
+                "App bundle not found: {bundle}",
+                bundle=bundle,
+            )
+        )
+    subprocess.Popen(["open", str(bundle)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _run_osascript(script: str) -> str:

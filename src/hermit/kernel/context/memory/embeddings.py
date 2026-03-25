@@ -91,18 +91,18 @@ class EmbeddingService:
         embedding = self.embed(text)
         blob = _encode_embedding(embedding)
         now = time.time()
-        with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
-            store._conn.execute(  # pyright: ignore[reportPrivateUsage]
-                """
-                INSERT INTO memory_embeddings (memory_id, embedding, model_name, created_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(memory_id) DO UPDATE SET
-                    embedding = excluded.embedding,
-                    model_name = excluded.model_name,
-                    created_at = excluded.created_at
-                """,
-                (memory_id, blob, self._model_name, now),
-            )
+        store.execute_raw(
+            """
+            INSERT INTO memory_embeddings (memory_id, embedding, model_name, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(memory_id) DO UPDATE SET
+                embedding = excluded.embedding,
+                model_name = excluded.model_name,
+                created_at = excluded.created_at
+            """,
+            (memory_id, blob, self._model_name, now),
+            write=True,
+        )
 
     def search(
         self,
@@ -114,10 +114,7 @@ class EmbeddingService:
         """Search indexed memories by embedding similarity."""
         query_vec = self.embed(query)
 
-        with store._lock:  # pyright: ignore[reportPrivateUsage]
-            rows = store._conn.execute(  # pyright: ignore[reportPrivateUsage]
-                "SELECT memory_id, embedding FROM memory_embeddings"
-            ).fetchall()
+        rows = store.execute_raw("SELECT memory_id, embedding FROM memory_embeddings")
 
         scored: list[tuple[str, float]] = []
         for row in rows:
@@ -164,18 +161,19 @@ def _decode_embedding(blob: bytes) -> list[float]:
 
 
 def ensure_embedding_schema(store: KernelStore) -> None:
-    """Create the memory_embeddings table if it doesn't exist."""
-    with store._lock, store._conn:  # pyright: ignore[reportPrivateUsage]
-        store._conn.execute(  # pyright: ignore[reportPrivateUsage]
-            """
-            CREATE TABLE IF NOT EXISTS memory_embeddings (
-                memory_id TEXT PRIMARY KEY,
-                embedding BLOB NOT NULL,
-                model_name TEXT NOT NULL,
-                created_at REAL NOT NULL
-            )
-            """
-        )
+    """Create the memory_embeddings table and supporting indexes if they don't exist."""
+    store.ensure_schema(
+        """
+        CREATE TABLE IF NOT EXISTS memory_embeddings (
+            memory_id TEXT PRIMARY KEY,
+            embedding BLOB NOT NULL,
+            model_name TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_embeddings_memory_id
+            ON memory_embeddings(memory_id);
+        """
+    )
 
 
 __all__ = ["EmbeddingService", "ensure_embedding_schema"]

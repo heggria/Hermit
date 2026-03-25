@@ -49,7 +49,7 @@ def _stringify_tool_output(content: Any) -> str:
 
 
 def _tool_result_image_parts(content: Any, *, codex_oauth: bool) -> list[dict[str, Any]]:
-    image_part = _codex_oauth_image_part_from_block if codex_oauth else _image_part_from_block
+    image_part = _image_part_from_block
     if isinstance(content, dict) and str(cast(dict[str, Any], content).get("type", "")) == "image":
         return [image_part(cast(dict[str, Any], content))]
     if not isinstance(content, list):
@@ -168,26 +168,6 @@ def _image_part_from_block(block: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f"Unsupported image source type: {source_type or 'unknown'}")
 
 
-def _codex_oauth_image_part_from_block(block: dict[str, Any]) -> dict[str, Any]:
-    source_raw = block.get("source", {})
-    if not isinstance(source_raw, dict):
-        raise ValueError("Invalid image block: missing source")
-    source = cast(dict[str, Any], source_raw)
-    source_type = str(source.get("type", ""))
-    if source_type == "url":
-        url = str(source.get("url", "")).strip()
-        if not url:
-            raise ValueError("Invalid image block: empty image URL")
-        return {"type": "input_image", "image_url": url}
-    if source_type == "base64":
-        media_type = str(source.get("media_type", "")).strip() or "application/octet-stream"
-        data = str(source.get("data", "")).strip()
-        if not data:
-            raise ValueError("Invalid image block: empty base64 image data")
-        return {"type": "input_image", "image_url": f"data:{media_type};base64,{data}"}
-    raise ValueError(f"Unsupported image source type: {source_type or 'unknown'}")
-
-
 def _message_content_parts(content: Any, *, codex_oauth: bool = False) -> list[dict[str, Any]]:
     if isinstance(content, str):
         return [{"type": "input_text", "text": content}]
@@ -205,11 +185,7 @@ def _message_content_parts(content: Any, *, codex_oauth: bool = False) -> list[d
             if text:
                 parts.append({"type": "input_text", "text": text})
         elif block_type == "image":
-            parts.append(
-                _codex_oauth_image_part_from_block(block)
-                if codex_oauth
-                else _image_part_from_block(block)
-            )
+            parts.append(_image_part_from_block(block))
         elif block_type == "thinking":
             continue
     return parts
@@ -295,14 +271,7 @@ def _normalize_openai_schema(schema: Any) -> Any:
     return schema
 
 
-def _tool_schema(tool: ToolSpec, *, codex_oauth: bool = False) -> dict[str, Any]:
-    if codex_oauth:
-        return {
-            "type": "function",
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": _normalize_openai_schema(tool.input_schema),
-        }
+def _tool_schema(tool: ToolSpec) -> dict[str, Any]:
     return {
         "type": "function",
         "name": tool.name,
@@ -677,7 +646,7 @@ class CodexOAuthProvider(Provider):
             "stream": True,
         }
         if request.tools:
-            payload["tools"] = [_tool_schema(tool, codex_oauth=True) for tool in request.tools]
+            payload["tools"] = [_tool_schema(tool) for tool in request.tools]
             payload["tool_choice"] = "auto"
         return payload
 

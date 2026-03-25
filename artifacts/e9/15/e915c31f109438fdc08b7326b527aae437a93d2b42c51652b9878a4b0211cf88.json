@@ -1,0 +1,35 @@
+{
+  "action_request_ref": "artifact_96d46618773a",
+  "action_type": "write_local",
+  "approval_ref": null,
+  "authorization_plan_ref": "auth_plan_8be0ae8aa957",
+  "capability_grant_ref": "grant_4d03b0bbacff",
+  "contract_ref": "contract_07894685ed93",
+  "decision_ref": "decision_0bf46da7e398",
+  "environment_ref": "artifact_5ddc99ecb60f",
+  "evidence_case_ref": "evidence_case_1c50edc9f0e7",
+  "evidence_refs": [
+    "artifact_96d46618773a",
+    "artifact_3854372aade0",
+    "artifact_67f621e48d02",
+    "artifact_325a40a9ab81",
+    "contract_07894685ed93",
+    "evidence_case_1c50edc9f0e7",
+    "auth_plan_8be0ae8aa957"
+  ],
+  "input_refs": [
+    "artifact_6493c775f1c0"
+  ],
+  "memory_refs": [],
+  "output_refs": [
+    "artifact_9c272c347367"
+  ],
+  "policy_ref": "artifact_3854372aade0",
+  "reconciliation_ref": null,
+  "schema": "context.manifest/v1",
+  "step_attempt_id": "attempt_4a9345ecda05",
+  "step_id": "step_5a9b2a733d7c",
+  "task_id": "task_968dfe1a6c1e",
+  "witness_ref": "artifact_325a40a9ab81",
+  "workspace_lease_ref": "lease_9a667bf5f22b"
+}

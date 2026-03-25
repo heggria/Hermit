@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, cast
 
+import structlog
+
 from hermit.runtime.control.lifecycle.budgets import ExecutionBudget, get_runtime_budget
 
+log = structlog.get_logger()
+
 _OBSERVATION_ENVELOPE_KEY = "_hermit_observation"
+
+# Maximum number of observing step attempts to poll per tick.  Configurable
+# via the ``HERMIT_OBSERVATION_LIMIT`` environment variable.
+_OBSERVATION_LIMIT = int(os.environ.get("HERMIT_OBSERVATION_LIMIT", "1000"))
 
 
 @dataclass
@@ -216,6 +225,47 @@ class ObservationPollResult:
     should_resume: bool = False
 
 
+@dataclass
+class SubtaskJoinObservation:
+    child_step_ids: list[str]
+    join_strategy: str = "all_required"
+    parent_step_id: str = ""
+    parent_attempt_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "subtask_join",
+            "child_step_ids": self.child_step_ids,
+            "join_strategy": self.join_strategy,
+            "parent_step_id": self.parent_step_id,
+            "parent_attempt_id": self.parent_attempt_id,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> SubtaskJoinObservation:
+        raw_ids = d.get("child_step_ids", [])
+        return cls(
+            child_step_ids=raw_ids if isinstance(raw_ids, list) else [],
+            join_strategy=str(d.get("join_strategy", "all_required")),
+            parent_step_id=str(d.get("parent_step_id", "")),
+            parent_attempt_id=str(d.get("parent_attempt_id", "")),
+        )
+
+
+def normalize_subtask_join_observation(value: Any) -> SubtaskJoinObservation | None:
+    if isinstance(value, SubtaskJoinObservation):
+        return value
+    if not isinstance(value, dict):
+        return None
+    d: dict[str, Any] = cast(dict[str, Any], value)
+    if d.get("kind") != "subtask_join":
+        return None
+    raw_ids = d.get("child_step_ids", [])
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return None
+    return SubtaskJoinObservation.from_dict(d)
+
+
 class ObservationService:
     def __init__(self, runner: Any, *, budget: ExecutionBudget | None = None) -> None:
         self._runner = runner
@@ -246,6 +296,7 @@ class ObservationService:
             try:
                 self._tick()
             except Exception:
+                log.debug("observation_poll_error", exc_info=True)
                 continue
 
     def _tick(self) -> None:
@@ -254,7 +305,7 @@ class ObservationService:
         tool_executor = getattr(agent, "tool_executor", None)
         if controller is None or tool_executor is None:
             return
-        attempts = controller.store.list_step_attempts(status="observing", limit=200)
+        attempts = controller.store.list_step_attempts(status="observing", limit=_OBSERVATION_LIMIT)
         now = time.time()
         for attempt in attempts:
             with self._lock:

@@ -71,7 +71,7 @@ class ExecutionContractService:
             if tmpl_budget.get("requires_witness", False):
                 request_requires_witness = True
 
-        drift_budget = {
+        drift_budget: dict[str, Any] = {
             "resource_scopes": request_scopes,
             "outside_workspace": request_outside_workspace,
             "requires_witness": request_requires_witness,
@@ -84,6 +84,25 @@ class ExecutionContractService:
             if isinstance(action_request.context.get("policy_suggestion"), dict)
             else None
         )
+        # ------------------------------------------------------------------
+
+        # -- Derive task_family from action_class --------------------------
+        task_family = self._infer_task_family(action_request.action_class)
+        verification_requirements = self.enrich_verification_requirements(
+            task_family=task_family,
+            risk_level=policy.risk_level,
+        )
+        # Freeze after admission: never weaken previously-admitted requirements
+        previous_contracts = self.store.list_execution_contracts(
+            step_attempt_id=attempt_ctx.step_attempt_id,
+        )
+        for prev in previous_contracts:
+            if prev.verification_requirements:
+                verification_requirements = self._merge_strictest(
+                    prev.verification_requirements,
+                    verification_requirements,
+                )
+                break  # only the most recent previous contract matters
         # ------------------------------------------------------------------
 
         contract = self.store.create_execution_contract(
@@ -118,6 +137,8 @@ class ExecutionContractService:
             state_witness_ref=witness_ref,
             rollback_expectation=action_contract.rollback_strategy,
             selected_template_ref=selected_template_ref,
+            task_family=task_family,
+            verification_requirements=verification_requirements,
         )
         if selected_template_ref:
             self.store.update_step_attempt(
@@ -161,12 +182,25 @@ class ExecutionContractService:
             payload={
                 "contract_id": contract.contract_id,
                 "objective": contract.objective,
+                "scope": {
+                    "resource_scopes": list(drift_budget.get("resource_scopes", [])),
+                    "outside_workspace": drift_budget.get("outside_workspace", False),
+                },
+                "constraints": {
+                    "risk_level": contract.risk_budget.get("risk_level", "low"),
+                    "approval_required": contract.risk_budget.get("approval_required", False),
+                    "requires_witness": drift_budget.get("requires_witness", False),
+                },
+                "acceptance": contract.success_criteria,
+                "verification_requirements": contract.verification_requirements,
+                "rollback_hint": contract.rollback_expectation,
                 "expected_effects": contract.expected_effects,
                 "required_receipt_classes": contract.required_receipt_classes,
                 "risk_budget": contract.risk_budget,
                 "drift_budget": contract.drift_budget,
                 "reversibility_class": contract.reversibility_class,
                 "operator_summary": contract.operator_summary,
+                "task_family": contract.task_family,
             },
             attempt_ctx=attempt_ctx,
         )
@@ -274,11 +308,24 @@ class ExecutionContractService:
             return "compensatable"
         return "limited"
 
+    # Contracts awaiting human review (approval gate or witness-required) need
+    # more time for the operator to respond; routine contracts should expire
+    # quickly so stale actions cannot be replayed.
+    _TTL_SECONDS_ROUTINE: int = 5 * 60  # 5 min – low-risk, self-contained
+    _TTL_SECONDS_REVIEWED: int = 30 * 60  # 30 min – approval / witness gate
+
     @staticmethod
     def _expiry_at(*, policy: PolicyDecision, witness_ref: str | None) -> float:
-        ttl_seconds = 15 * 60
+        """Return the Unix timestamp at which the contract expires.
+
+        Contracts that require human approval or have an attached witness are
+        held open longer so the operator has adequate time to respond.
+        Routine (unapproved) contracts expire sooner to prevent stale replay.
+        """
         if policy.obligations.require_approval or witness_ref:
-            ttl_seconds = 5 * 60
+            ttl_seconds = ExecutionContractService._TTL_SECONDS_REVIEWED
+        else:
+            ttl_seconds = ExecutionContractService._TTL_SECONDS_ROUTINE
         return time.time() + ttl_seconds
 
     @staticmethod
@@ -292,3 +339,124 @@ class ExecutionContractService:
             f"{action_request.tool_name} intends {', '.join(expected_effects)}; "
             f"risk={policy.risk_level}; approval_required={policy.obligations.require_approval}"
         )
+
+    # -- Verification requirements enrichment (v0.3 spec) ----------------
+
+    _GOVERNANCE_MUTATION_CLASSES = frozenset(
+        {
+            "write_local",
+            "write_remote",
+            "execute_local",
+            "execute_remote",
+            "delete_local",
+            "delete_remote",
+        }
+    )
+
+    _SURFACE_INTEGRATION_CLASSES = frozenset(
+        {
+            "network_request",
+            "read_remote",
+        }
+    )
+
+    @staticmethod
+    def _infer_task_family(action_class: str) -> str | None:
+        """Infer the task family from the action class.
+
+        Returns a TaskFamily value string or None when no mapping applies.
+        """
+        if action_class in ExecutionContractService._GOVERNANCE_MUTATION_CLASSES:
+            return "governance_mutation"
+        if action_class in ExecutionContractService._SURFACE_INTEGRATION_CLASSES:
+            return "surface_integration"
+        return None
+
+    @staticmethod
+    def enrich_verification_requirements(
+        *,
+        task_family: str | None = None,
+        risk_level: str = "low",
+    ) -> dict[str, Any]:
+        """Generate verification_requirements dict based on task_family and risk.
+
+        High/critical risk -> governance_bench required, performance_bench required
+        Medium risk -> governance_bench optional, performance_bench optional
+        Low risk -> all forbidden (minimal verification overhead)
+        """
+        high_risk = risk_level in {"high", "critical"}
+        medium_risk = risk_level == "medium"
+
+        if high_risk:
+            governance_bench = "required"
+            performance_bench = "required"
+            rollback_check = "required"
+            reconciliation_mode = "strict"
+        elif medium_risk:
+            governance_bench = "optional"
+            performance_bench = "optional"
+            rollback_check = "optional"
+            reconciliation_mode = "standard"
+        else:
+            governance_bench = "forbidden"
+            performance_bench = "forbidden"
+            rollback_check = "forbidden"
+            reconciliation_mode = "light"
+
+        # Determine benchmark_profile from task_family
+        benchmark_profile: str = "none"
+        if task_family == "governance_mutation":
+            benchmark_profile = "trustloop_governance"
+        elif task_family == "runtime_perf":
+            benchmark_profile = "runtime_perf"
+        elif task_family == "surface_integration":
+            benchmark_profile = "integration_regression"
+        elif task_family == "learning_template":
+            benchmark_profile = "template_quality"
+
+        return {
+            "functional": "required",
+            "governance_bench": governance_bench,
+            "performance_bench": performance_bench,
+            "rollback_check": rollback_check,
+            "reconciliation_mode": reconciliation_mode,
+            "benchmark_profile": benchmark_profile,
+            "thresholds_ref": None,
+        }
+
+    # -- Strictness merging for verification_requirements freeze ----------
+
+    _LANE_STRICTNESS_ORDER = ("forbidden", "optional", "required")
+    _RECONCILIATION_STRICTNESS_ORDER = ("light", "standard", "strict")
+
+    @staticmethod
+    def _merge_strictest(
+        previous: dict[str, Any],
+        current: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Merge two verification_requirements dicts, keeping the stricter value per field.
+
+        For lane fields (functional, governance_bench, performance_bench, rollback_check):
+            "required" > "optional" > "forbidden"
+        For reconciliation_mode:
+            "strict" > "standard" > "light"
+        Other fields are taken from *current* (no ordering defined).
+        """
+        lane_order = ExecutionContractService._LANE_STRICTNESS_ORDER
+        recon_order = ExecutionContractService._RECONCILIATION_STRICTNESS_ORDER
+        merged = dict(current)
+
+        for lane in ("functional", "governance_bench", "performance_bench", "rollback_check"):
+            prev_val = previous.get(lane, "forbidden")
+            cur_val = current.get(lane, "forbidden")
+            prev_idx = lane_order.index(prev_val) if prev_val in lane_order else 0
+            cur_idx = lane_order.index(cur_val) if cur_val in lane_order else 0
+            merged[lane] = lane_order[max(prev_idx, cur_idx)]
+
+        prev_recon = previous.get("reconciliation_mode", "light")
+        cur_recon = current.get("reconciliation_mode", "light")
+        prev_r_idx = recon_order.index(prev_recon) if prev_recon in recon_order else 0
+        cur_r_idx = recon_order.index(cur_recon) if cur_recon in recon_order else 0
+        merged["reconciliation_mode"] = recon_order[max(prev_r_idx, cur_r_idx)]
+
+        return merged

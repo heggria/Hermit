@@ -4,7 +4,7 @@ import json
 import time
 from typing import Any, cast
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import t
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.errors import SnapshotError
@@ -46,10 +46,6 @@ _RUNTIME_SNAPSHOT_V3_ALLOWED_KEYS = {
 }
 
 
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
-
-
 class RuntimeSnapshotManager:
     """Manages runtime snapshot envelope creation, validation, and resume message storage."""
 
@@ -67,7 +63,7 @@ class RuntimeSnapshotManager:
         if unknown:
             raise SnapshotError(
                 "unsupported_keys",
-                _t(
+                t(
                     "kernel.executor.error.unsupported_working_state_keys",
                     default="Unsupported working-state keys: {keys}",
                     keys=sorted(unknown),
@@ -83,7 +79,7 @@ class RuntimeSnapshotManager:
         if len(encoded) > _RUNTIME_SNAPSHOT_MAX_BYTES:
             raise SnapshotError(
                 "too_large",
-                _t(
+                t(
                     "kernel.executor.error.snapshot_too_large",
                     default="Runtime snapshot exceeds working-state size limit",
                 ),
@@ -95,7 +91,7 @@ class RuntimeSnapshotManager:
         if schema_version not in {1, 2, _RUNTIME_SNAPSHOT_SCHEMA_VERSION}:
             raise SnapshotError(
                 "unsupported_schema",
-                _t(
+                t(
                     "kernel.executor.error.unsupported_snapshot_schema",
                     default="Unsupported runtime snapshot schema version",
                 ),
@@ -103,7 +99,7 @@ class RuntimeSnapshotManager:
         if str(envelope.get("kind", "")) != _RUNTIME_SNAPSHOT_KEY:
             raise SnapshotError(
                 "invalid_kind",
-                _t(
+                t(
                     "kernel.executor.error.invalid_snapshot_kind",
                     default="Invalid runtime snapshot kind",
                 ),
@@ -112,7 +108,7 @@ class RuntimeSnapshotManager:
         if expires_at and expires_at < time.time():
             raise SnapshotError(
                 "expired",
-                _t(
+                t(
                     "kernel.executor.error.snapshot_expired",
                     default="Runtime snapshot expired",
                 ),
@@ -129,7 +125,7 @@ class RuntimeSnapshotManager:
         if unknown:
             raise SnapshotError(
                 "unsupported_keys",
-                _t(
+                t(
                     "kernel.executor.error.snapshot_contains_unsupported_keys",
                     default="Runtime snapshot contains unsupported keys: {keys}",
                     keys=sorted(unknown),
@@ -139,7 +135,7 @@ class RuntimeSnapshotManager:
         if len(encoded) > _RUNTIME_SNAPSHOT_MAX_BYTES:
             raise SnapshotError(
                 "too_large",
-                _t(
+                t(
                     "kernel.executor.error.snapshot_too_large",
                     default="Runtime snapshot exceeds working-state size limit",
                 ),
@@ -165,7 +161,7 @@ class RuntimeSnapshotManager:
         if artifact is None:
             raise SnapshotError(
                 "unknown_artifact",
-                _t(
+                t(
                     "kernel.executor.error.unknown_resume_messages_artifact",
                     default="Unknown resume messages artifact: {resume_messages_ref}",
                     resume_messages_ref=resume_messages_ref,
@@ -175,7 +171,7 @@ class RuntimeSnapshotManager:
         if not isinstance(payload, list):
             raise SnapshotError(
                 "invalid_format",
-                _t(
+                t(
                     "kernel.executor.error.resume_messages_not_list",
                     default="Runtime resume messages artifact is not a list",
                 ),

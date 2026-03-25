@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Project documentation
+  - name: Documentation
     url: https://heggria.github.io/Hermit/
     about: Check the docs site and repository guides before opening an issue.
-  - name: Discussions
+  - name: Questions & Discussion
     url: https://github.com/heggria/Hermit/discussions
-    about: Ask questions, share ideas, and start product or architecture discussions.
+    about: Ask questions, share ideas, or start architecture discussions. Please do not open issues for general questions.
+  - name: Security Vulnerabilities
+    url: https://github.com/heggria/Hermit/security/advisories/new
+    about: Report security vulnerabilities privately. Do NOT open a public issue for security concerns.

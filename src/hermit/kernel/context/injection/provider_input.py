@@ -7,6 +7,16 @@ from typing import Any, cast
 
 from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.compiler.compiler import ContextCompiler
+from hermit.kernel.context.memory.anti_pattern import AntiPatternService
+from hermit.kernel.context.memory.confidence import ConfidenceDecayService
+from hermit.kernel.context.memory.decay import MemoryDecayService
+from hermit.kernel.context.memory.embeddings import EmbeddingService
+from hermit.kernel.context.memory.episodic import EpisodicMemoryService
+from hermit.kernel.context.memory.lineage import MemoryLineageService
+from hermit.kernel.context.memory.memory_quality import MemoryQualityService
+from hermit.kernel.context.memory.procedural import ProceduralMemoryService
+from hermit.kernel.context.memory.reranker import CrossEncoderReranker
+from hermit.kernel.context.memory.retrieval import HybridRetrievalService
 from hermit.kernel.context.models.context import (
     CompiledProviderInput,
     TaskExecutionContext,
@@ -48,7 +58,37 @@ class ProviderInputCompiler:
     def __init__(self, store: KernelStore, artifact_store: ArtifactStore | None = None) -> None:
         self.store = store
         self.artifact_store = artifact_store
-        self.context_compiler = ContextCompiler(artifact_store=artifact_store)
+
+        # Full memory service wiring
+        quality_service = MemoryQualityService()
+        embedding_service = EmbeddingService()
+        confidence_service = ConfidenceDecayService()
+        lineage_service = MemoryLineageService()
+        reranker = CrossEncoderReranker()
+
+        retrieval_service = HybridRetrievalService(
+            quality_service=quality_service,
+            embedding_service=embedding_service,
+            confidence_service=confidence_service,
+            lineage_service=lineage_service,
+            reranker=reranker,
+        )
+
+        # Episodic and procedural services for context enrichment
+        episodic_service = EpisodicMemoryService()
+        procedural_service = ProceduralMemoryService()
+        anti_pattern_service = AntiPatternService(lineage_service=lineage_service)
+        decay_service = MemoryDecayService()
+
+        self.context_compiler = ContextCompiler(
+            artifact_store=artifact_store,
+            retrieval_service=retrieval_service,
+            store=store,
+            episodic_service=episodic_service,
+            procedural_service=procedural_service,
+            anti_pattern_service=anti_pattern_service,
+            decay_service=decay_service,
+        )
         self.task_projections = ProjectionService(store)
         self.conversation_projections = ConversationProjectionService(store, artifact_store)
         self.planning = PlanningService(store, artifact_store)
@@ -158,6 +198,8 @@ class ProviderInputCompiler:
             str(task_projection.get("topic", {}).get("summary", "") or ""), 200
         )
 
+        blackboard_entries = self._query_blackboard_entries(task_context.task_id)
+
         pack = self.context_compiler.compile(
             context=task_context,
             working_state=WorkingStateSnapshot(
@@ -203,6 +245,7 @@ class ProviderInputCompiler:
             focus_summary=self._focus_summary(task_context, projection_payload),
             bound_ingress_deltas=self._bound_ingress_deltas(task_context),
             session_projection_ref=projection_payload.get("artifact_ref"),
+            blackboard_entries=blackboard_entries,
         )
         context_pack_ref = self._store_context_pack(task_context=task_context, pack=pack)
         working_state_ref = self._store_working_state(
@@ -360,6 +403,25 @@ class ProviderInputCompiler:
             if len(refs) >= 10:
                 break
         return refs
+
+    def _query_blackboard_entries(self, task_id: str) -> list[dict[str, Any]]:
+        """Query active blackboard entries for a task, with graceful fallback."""
+        if not hasattr(self.store, "query_blackboard_entries"):
+            return []
+        try:
+            entries = self.store.query_blackboard_entries(task_id=task_id, status="active")
+            return [
+                {
+                    "entry_id": e.entry_id,
+                    "entry_type": e.entry_type,
+                    "content": dict(e.content) if e.content else {},
+                    "confidence": e.confidence,
+                    "step_id": e.step_id,
+                }
+                for e in entries
+            ]
+        except Exception:
+            return []
 
     def _store_ingress_artifact(
         self,
@@ -587,6 +649,40 @@ class ProviderInputCompiler:
                 }
             )
         return items
+
+    def check_context_staleness(self, step_attempt_id: str) -> bool:
+        """Check whether the compiled context for a step attempt is stale.
+
+        Staleness is detected when new steerings, notes, or ingresses have
+        arrived since the last compilation.  When stale, sets ``input_dirty``
+        to ``True`` on the step attempt context and returns ``True``.
+        """
+        attempt = self.store.get_step_attempt(step_attempt_id)
+        if attempt is None:
+            return False
+        context = dict(attempt.context or {})
+
+        # Already marked dirty by an external signal (steering, controller).
+        if context.get("input_dirty"):
+            return True
+
+        # Detect new bound ingresses since last compile.
+        latest_bound = str(context.get("latest_bound_ingress_id", "") or "").strip()
+        last_compiled = str(context.get("last_compiled_ingress_id", "") or "").strip()
+        if latest_bound and latest_bound != last_compiled:
+            context["input_dirty"] = True
+            self.store.update_step_attempt(step_attempt_id, context=context)
+            return True
+
+        # Detect new notes since last compile.
+        latest_note_seq = context.get("latest_note_event_seq")
+        last_compiled_note_seq = context.get("last_compiled_note_event_seq")
+        if latest_note_seq is not None and latest_note_seq != last_compiled_note_seq:
+            context["input_dirty"] = True
+            self.store.update_step_attempt(step_attempt_id, context=context)
+            return True
+
+        return False
 
     def _render_continuation_guidance(self, guidance: dict[str, Any]) -> str:
         if not guidance or not guidance.get("has_anchor"):

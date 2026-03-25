@@ -11,6 +11,11 @@ from hermit.kernel.task.projections.projections import ProjectionService
 from hermit.kernel.task.services.controller import TaskController
 
 
+def _mem_store() -> KernelStore:
+    """Create an in-memory KernelStore for fast unit tests."""
+    return KernelStore(Path(":memory:"))
+
+
 def _make_task(store: KernelStore, conversation_id: str = "chat-1") -> TaskExecutionContext:
     store.ensure_conversation(conversation_id, source_channel="chat")
     task = store.create_task(
@@ -33,7 +38,7 @@ def _make_task(store: KernelStore, conversation_id: str = "chat-1") -> TaskExecu
 
 
 def test_normalize_ingress_artifactizes_code_blocks(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "kernel" / "state.db")
+    store = _mem_store()
     compiler = ProviderInputCompiler(store, ArtifactStore(tmp_path / "artifacts"))
     ctx = _make_task(store)
 
@@ -51,7 +56,7 @@ def test_normalize_ingress_artifactizes_code_blocks(tmp_path: Path) -> None:
 
 
 def test_compile_builds_context_pack_and_projection_refs(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "kernel" / "state.db")
+    store = _mem_store()
     compiler = ProviderInputCompiler(store, ArtifactStore(tmp_path / "artifacts"))
     ctx = _make_task(store)
     store.set_conversation_focus(ctx.conversation_id, task_id=ctx.task_id, reason="manual_focus")
@@ -123,7 +128,7 @@ def test_compile_builds_context_pack_and_projection_refs(tmp_path: Path) -> None
 
 
 def test_compile_carries_forward_terminal_outcome_into_context_pack(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "kernel" / "state.db")
+    store = _mem_store()
     artifacts = ArtifactStore(tmp_path / "artifacts")
     compiler = ProviderInputCompiler(store, artifacts)
     controller = TaskController(store)
@@ -184,7 +189,7 @@ def test_compile_carries_forward_terminal_outcome_into_context_pack(tmp_path: Pa
 def test_compile_adds_anchor_correction_guidance_for_short_corrective_request(
     tmp_path: Path,
 ) -> None:
-    store = KernelStore(tmp_path / "kernel" / "state.db")
+    store = _mem_store()
     artifacts = ArtifactStore(tmp_path / "artifacts")
     compiler = ProviderInputCompiler(store, artifacts)
     controller = TaskController(store)
@@ -232,7 +237,7 @@ def test_compile_adds_anchor_correction_guidance_for_short_corrective_request(
 
 
 def test_compile_allows_explicit_and_strong_topic_shift_with_anchor(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "kernel" / "state.db")
+    store = _mem_store()
     artifacts = ArtifactStore(tmp_path / "artifacts")
     compiler = ProviderInputCompiler(store, artifacts)
     controller = TaskController(store)
@@ -296,7 +301,7 @@ def test_compile_allows_explicit_and_strong_topic_shift_with_anchor(tmp_path: Pa
 
 
 def test_normalize_ingress_uses_user_text_not_injected_memory(tmp_path: Path) -> None:
-    store = KernelStore(tmp_path / "kernel" / "state.db")
+    store = _mem_store()
     compiler = ProviderInputCompiler(store, ArtifactStore(tmp_path / "artifacts"))
     ctx = _make_task(store)
 

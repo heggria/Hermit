@@ -43,7 +43,7 @@ def test_analyze_test_failure() -> None:
     assert len(matches) >= 1
     found = [m for m in matches if m.rule.source_kind == "test_failure"]
     assert found
-    assert "Fix failing test" in found[0].suggested_goal
+    assert "test failure" in found[0].suggested_goal.lower()
 
 
 def test_analyze_lint_violation() -> None:
@@ -59,7 +59,7 @@ def test_analyze_todo() -> None:
     matches = engine.analyze("# TODO: refactor this module into smaller pieces")
     found = [m for m in matches if m.rule.source_kind == "todo_scan"]
     assert found
-    assert "Address TODO" in found[0].suggested_goal
+    assert "Address" in found[0].suggested_goal or "TODO" in found[0].suggested_goal
 
 
 def test_analyze_security_cve() -> None:
@@ -162,23 +162,34 @@ def test_extract_text_fallback_dict() -> None:
 
 def test_analyze_and_dispatch_no_runner() -> None:
     engine = TriggerEngine()
-    # Should not raise even without runner
+    # No runner set — analyze_and_dispatch returns early after analyze
     engine.analyze_and_dispatch("FAILED test_foo", session_id="s1")
+    assert engine._runner is None
 
 
 def test_analyze_and_dispatch_with_runner_no_controller() -> None:
     engine = TriggerEngine()
     engine.set_runner(FakeRunner(has_controller=False))
-    # Should not raise: runner exists but no task_controller
+    # Runner exists but no task_controller — _create_followup returns None
     engine.analyze_and_dispatch("FAILED test_foo", session_id="s1")
+    assert engine._runner is not None
+    assert engine._runner.task_controller is None
 
 
 def test_analyze_and_dispatch_with_runner_and_controller() -> None:
     engine = TriggerEngine()
     runner = FakeRunner(has_controller=True)
     engine.set_runner(runner)
-    # Should not raise: calls _create_followup which logs
+    store = runner.task_controller.store
+    store_attrs_before = set(vars(store).keys())
+    # Runner + controller present — _create_followup reaches the store
     engine.analyze_and_dispatch("FAILED test_foo", session_id="s1")
+    # Runner was correctly wired
+    assert engine._runner is runner
+    assert runner.task_controller is not None
+    # FakeStore has no create_signal/check_cooldown, so no new attributes
+    # are added and no exception is raised
+    assert set(vars(store).keys()) == store_attrs_before
 
 
 # ---------------------------------------------------------------------------

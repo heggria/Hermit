@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 
-from hermit.infra.system.i18n import resolve_locale, tr
+from hermit.infra.system.i18n import t
+from hermit.plugins.builtin.tools.web_tools.cache import get_cache
 from hermit.runtime.control.lifecycle.budgets import get_runtime_budget
+
+
+def _get_proxy_opener() -> urllib.request.OpenerDirector | None:
+    """Build a proxy-aware opener if HERMIT_WEB_PROXY is set."""
+    proxy = os.environ.get("HERMIT_WEB_PROXY", "")
+    if not proxy:
+        return None
+    handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+    return urllib.request.build_opener(handler)
+
 
 # DDG date-filter codes
 _TIME_FILTER_MAP = {
@@ -21,19 +33,30 @@ _TIME_FILTER_MAP = {
 }
 
 
-def _t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:
-    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
-
-
 def handle_search(payload: dict[str, Any]) -> str:
     query = str(payload.get("query", "")).strip()
     if not query:
-        return _t("tools.web.search.error.empty_query")
+        return t("tools.web.search.error.empty_query")
 
     max_results = min(int(payload.get("max_results", 8)), 20)
     region = str(payload.get("region", "wt-wt"))
     time_filter = str(payload.get("time_filter", "")).strip().lower()
     search_type = str(payload.get("search_type", "web")).strip().lower()
+
+    # --- Cache look-up ---
+    cache_params = {
+        "query": query,
+        "max_results": max_results,
+        "region": region,
+        "time_filter": time_filter,
+        "search_type": search_type,
+    }
+    cache = get_cache()
+    cache_key = cache.make_key("web_search", cache_params)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    # ---------------------
 
     parts: list[str] = []
 
@@ -54,12 +77,14 @@ def handle_search(payload: dict[str, Any]) -> str:
         if results:
             parts.append(results)
     except Exception as exc:
-        parts.append(_t("tools.web.search.error.search", error=exc))
+        parts.append(t("tools.web.search.error.search", error=exc))
 
     if not parts:
-        return _t("tools.web.search.no_results", query=query)
+        return t("tools.web.search.no_results", query=query)
 
-    return "\n\n".join(parts)
+    result = "\n\n".join(parts)
+    cache.set(cache_key, result)
+    return result
 
 
 def _ddg_lite_search(
@@ -86,8 +111,15 @@ def _ddg_lite_search(
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         },
     )
-    with urllib.request.urlopen(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
-        html = resp.read().decode("utf-8")
+    opener = _get_proxy_opener()
+    if opener:
+        with opener.open(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
+            html = resp.read().decode("utf-8")
+    else:
+        with urllib.request.urlopen(
+            req, timeout=get_runtime_budget().provider_read_timeout
+        ) as resp:
+            html = resp.read().decode("utf-8")
 
     parser = _DDGLiteParser()
     parser.feed(html)
@@ -96,7 +128,7 @@ def _ddg_lite_search(
     if not results:
         return ""
 
-    lines = [_t("tools.web.search.results.title")]
+    lines = [t("tools.web.search.results.title")]
     for i, r in enumerate(results, 1):
         title = r.get("title", "(no title)")
         snippet = r.get("snippet", "")
@@ -166,10 +198,15 @@ def _ddg_instant_answer(query: str) -> str:
         )
         url = f"https://api.duckduckgo.com/?{params}"
         req = urllib.request.Request(url, headers={"User-Agent": "Hermit/0.1"})
-        with urllib.request.urlopen(
-            req, timeout=get_runtime_budget().provider_read_timeout
-        ) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        opener = _get_proxy_opener()
+        if opener:
+            with opener.open(req, timeout=get_runtime_budget().provider_read_timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        else:
+            with urllib.request.urlopen(
+                req, timeout=get_runtime_budget().provider_read_timeout
+            ) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return ""
 
@@ -178,15 +215,15 @@ def _ddg_instant_answer(query: str) -> str:
     if data.get("AbstractText"):
         source = data.get("AbstractSource", "")
         source_url = data.get("AbstractURL", "")
-        parts.append(_t("tools.web.search.instant.summary", source=source))
+        parts.append(t("tools.web.search.instant.summary", source=source))
         parts.append(data["AbstractText"])
         if source_url:
-            parts.append(_t("tools.web.search.instant.source", url=source_url))
+            parts.append(t("tools.web.search.instant.source", url=source_url))
 
     if data.get("Answer"):
-        parts.append(_t("tools.web.search.instant.answer", answer=data["Answer"]))
+        parts.append(t("tools.web.search.instant.answer", answer=data["Answer"]))
 
     if data.get("Definition"):
-        parts.append(_t("tools.web.search.instant.definition", definition=data["Definition"]))
+        parts.append(t("tools.web.search.instant.definition", definition=data["Definition"]))
 
     return "\n\n".join(parts) if parts else ""

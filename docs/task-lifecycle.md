@@ -88,15 +88,74 @@ This is one of Hermit's most important differentiators. Recoverable work does no
 - workspace lease linkage
 - state witness references
 
-That gives the system better semantics for pause, resume, supersession, and retry.
+That gives the system better semantics for pause, resume, supersession, and rollback than a flat "running / done" model.
 
-## 5. Governance Boundary
+### StepAttemptState Enum
 
-When a step attempt reaches consequential execution, the kernel can route it through:
+The formal state machine for step attempts is defined by the `StepAttemptState` enum in `src/hermit/kernel/task/state/enums.py`. The states are grouped by lifecycle phase:
 
-- policy evaluation
-- decision recording
-- approval handling
+**Initial / active states:**
+
+| State | Description |
+|---|---|
+| `ready` | Attempt created, ready to begin execution |
+| `waiting` | Blocked on an external condition (see `WaitingKind` below) |
+| `running` | Actively executing |
+
+**Governance pipeline states** (the attempt passes through these during policy evaluation and authorization):
+
+| State | Description |
+|---|---|
+| `dispatching` | Being routed to the appropriate executor |
+| `contracting` | Building a governance contract for the action |
+| `preflighting` | Running pre-execution checks |
+| `policy_pending` | Awaiting policy engine evaluation |
+| `awaiting_approval` | Policy requires operator approval before proceeding |
+| `awaiting_plan_confirmation` | Plan mode: waiting for operator to confirm the proposed plan |
+| `verification_blocked` | Blocked on a verification gate |
+| `receipt_pending` | Execution completed, waiting for receipt issuance |
+
+**Post-execution states:**
+
+| State | Description |
+|---|---|
+| `observing` | Monitoring an ongoing or uncertain outcome |
+| `reconciling` | Reconciling results against expectations |
+
+**Terminal states** (defined in `TERMINAL_ATTEMPT_STATES`):
+
+| State | Description |
+|---|---|
+| `succeeded` | Attempt completed successfully |
+| `completed` | Attempt finished (general completion) |
+| `skipped` | Attempt was skipped (e.g. superseded before starting) |
+| `failed` | Attempt failed |
+| `superseded` | Replaced by a newer attempt on the same step |
+
+### WaitingKind Enum
+
+When a step attempt enters the `waiting` state, the `WaitingKind` enum describes the specific reason:
+
+| Kind | Description |
+|---|---|
+| `awaiting_approval` | Waiting for operator approval |
+| `awaiting_plan_confirmation` | Waiting for operator to confirm a plan |
+| `dependency_failed` | A dependency step failed; this attempt cannot proceed |
+| `input_changed_reenter_policy` | Input changed after policy evaluation; must re-enter policy |
+| `reentry_resumed` | Previously waiting, now resumed for re-entry |
+| `observing` | Waiting while observing an ongoing outcome |
+
+### Source reference
+
+Both enums are defined in `src/hermit/kernel/task/state/enums.py` alongside the related frozen sets `TERMINAL_ATTEMPT_STATES` and `ACTIVE_TASK_STATES`.
+
+## 5. Policy, Decision, And Approval
+
+Before execution happens, the kernel evaluates:
+
+- policy rules based on task profile, action type, and constraints
+- decision records for the authorization result
+- approval handling when the policy requires operator sign-off
 - workspace lease issuance
 - scoped capability grant issuance
 
@@ -141,14 +200,24 @@ This is part of the lifecycle, not just a debugging afterthought.
 
 ## Task Status Thinking
 
-The exact state machine is defined more formally in the kernel spec, but the practical current-state progression includes statuses such as:
+The formal task state machine is defined by the `TaskState` enum in `src/hermit/kernel/task/state/enums.py`:
 
-- queued
-- running
-- blocked
-- failed
-- completed
-- cancelled
+| State | Description |
+|---|---|
+| `queued` | Task created, waiting to be picked up |
+| `running` | Task is actively executing |
+| `blocked` | Task is blocked on an external condition |
+| `planning_ready` | Task is ready for plan-mode execution |
+| `paused` | Task has been paused by the operator |
+| `completed` | Task finished successfully |
+| `failed` | Task failed |
+| `cancelled` | Task was cancelled |
+| `budget_exceeded` | Task exceeded its budget allocation |
+| `needs_attention` | Task requires operator attention |
+
+Terminal states (defined in `TERMINAL_TASK_STATES`): `completed`, `failed`, `cancelled`.
+
+Active states (defined in `ACTIVE_TASK_STATES`): `queued`, `running`, `blocked`, `planning_ready`.
 
 The important idea is not the label list. It is that status is durable and tied to real kernel objects.
 

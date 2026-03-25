@@ -19,8 +19,8 @@ class DecisionLineage:
     """Trace of all memories that influenced a decision."""
 
     decision_id: str
-    influencing_memories: list[str] = field(default_factory=lambda: list[str]())
-    context_pack_ids: list[str] = field(default_factory=lambda: list[str]())
+    influencing_memories: list[str] = field(default_factory=list)
+    context_pack_ids: list[str] = field(default_factory=list)
     link_count: int = 0
 
 
@@ -29,7 +29,7 @@ class MemoryImpact:
     """Trace of all decisions influenced by a memory."""
 
     memory_id: str
-    influenced_decisions: list[str] = field(default_factory=lambda: list[str]())
+    influenced_decisions: list[str] = field(default_factory=list)
     total_decisions: int = 0
     success_count: int = 0
     failure_count: int = 0

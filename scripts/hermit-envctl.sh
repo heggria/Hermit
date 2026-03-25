@@ -67,12 +67,34 @@ format_pid_state() {
 matching_pids() {
   local marker="$1"
   ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v marker="${marker}" '
-    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, marker) {print $1}
+    index($0, "HERMIT_BASE_DIR=" base) && index($0, marker) {print $1}
+  '
+}
+
+# Fallback: find service processes by PID file or by command pattern when
+# HERMIT_BASE_DIR is not in the environment (e.g. uv-tool-installed binary).
+_fallback_service_pids() {
+  local pid
+  pid="$(read_pid_file "${BASE_DIR}/serve-${ADAPTER}.pid")"
+  if pid_is_live "${pid}"; then
+    printf '%s\n' "${pid}"
+    return
+  fi
+  # Match installed binary: "hermit serve --adapter <adapter>"
+  # Also match dev checkout: "-m hermit.surfaces.cli serve --adapter <adapter>"
+  ps -ax -o pid=,command= | awk -v adapter="${ADAPTER}" '
+    /hermit.*serve.*--adapter / && index($0, adapter) {print $1}
   '
 }
 
 service_pids() {
-  matching_pids "-m hermit.surfaces.cli.main serve --adapter ${ADAPTER}"
+  local pids
+  pids="$(matching_pids "-m hermit.surfaces.cli serve --adapter ${ADAPTER}")"
+  if [[ -n "${pids}" ]]; then
+    printf '%s\n' "${pids}"
+    return
+  fi
+  _fallback_service_pids
 }
 
 menubar_pids() {
@@ -119,7 +141,7 @@ clear_runtime_pid_files() {
 }
 
 ensure_macos_deps() {
-  "${UV_BIN}" sync --group dev --extra macos >/dev/null
+  "${UV_BIN}" sync --project "${ROOT_DIR}" --python 3.13 --group dev --extra macos >/dev/null
 }
 
 ensure_menu_app() {
@@ -134,15 +156,25 @@ start_service() {
     return
   fi
   mkdir -p "${BASE_DIR}/logs"
-  nohup /bin/zsh -lc "cd '${ROOT_DIR}' && scripts/hermit-env.sh ${ENV_NAME} serve --adapter ${ADAPTER}" \
-    > "${BASE_DIR}/logs/${ENV_NAME}-restart-service.out" 2>&1 &
+  if [[ "${ENV_NAME}" == "prod" ]]; then
+    # prod uses the uv-tool-installed hermit binary
+    local hermit_bin
+    hermit_bin="$(command -v hermit 2>/dev/null || echo "${HOME}/.local/bin/hermit")"
+    nohup env HERMIT_BASE_DIR="${BASE_DIR}" "${hermit_bin}" serve --adapter "${ADAPTER}" \
+      > "${BASE_DIR}/logs/${ENV_NAME}-restart-service.out" 2>&1 &
+  else
+    # dev/test use the repo checkout via hermit-env.sh
+    nohup /bin/zsh -lc "cd '${ROOT_DIR}' && scripts/hermit-env.sh ${ENV_NAME} serve --adapter ${ADAPTER}" \
+      > "${BASE_DIR}/logs/${ENV_NAME}-restart-service.out" 2>&1 &
+  fi
 }
 
 start_menubar() {
   if [[ -n "$(menubar_pids)" ]]; then
     return
   fi
-  ensure_macos_deps
+  # ensure_macos_deps is called once before start_service; skip here to avoid
+  # concurrent uv sync races with the background service process.
   ensure_menu_app
   open -na "${APP_PATH}"
 }
@@ -170,9 +202,13 @@ print_status() {
   echo "WATCH_PID_FILE=${watch_pid_state}"
   echo ""
   echo "[service]"
-  ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v adapter="${ADAPTER}" '
-    index($0, "HERMIT_BASE_DIR=" base " ") && index($0, "-m hermit.surfaces.cli.main serve --adapter " adapter) {print}
-  '
+  local svc_pids
+  svc_pids="$(service_pids)"
+  if [[ -n "${svc_pids}" ]]; then
+    for p in ${svc_pids}; do
+      ps -p "${p}" -o pid=,start=,stat=,command= 2>/dev/null
+    done
+  fi
   echo ""
   echo "[menubar]"
   ps eww -ax -o pid=,command= | awk -v base="${BASE_DIR}" -v adapter="${ADAPTER}" '
@@ -192,6 +228,10 @@ case "${ACTION}" in
       print_status
       exit 0
     fi
+    # Sync deps (including macos extras) BEFORE starting the service so that
+    # ``uv run`` inside hermit-env.sh does not recreate / corrupt the venv
+    # while ensure_macos_deps is running concurrently.
+    ensure_macos_deps
     start_service
     sleep 3
     start_menubar
@@ -203,6 +243,7 @@ case "${ACTION}" in
     kill_pids "$(service_pids)"
     kill_pids "$(menubar_pids)"
     clear_runtime_pid_files
+    ensure_macos_deps
     start_service
     sleep 3
     start_menubar

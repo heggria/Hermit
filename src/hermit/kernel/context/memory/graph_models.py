@@ -30,7 +30,7 @@ class GraphEdge:
         str  # same_entity | related_topic | causal | temporal_sequence | contradicts | elaborates
     )
     weight: float = 1.0
-    metadata: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = 0.0
 
 

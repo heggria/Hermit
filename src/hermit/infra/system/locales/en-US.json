@@ -27,6 +27,7 @@
   "menubar.action.open_config": "Open Config",
   "menubar.action.open_settings": "Open Settings",
   "menubar.action.open_readme": "Open README",
+  "menubar.action.open_webui": "Open WebUI",
   "menubar.action.open_wiki": "Open Wiki",
   "menubar.action.open_logs": "Open Logs",
   "menubar.action.open_home": "Open Hermit Home",

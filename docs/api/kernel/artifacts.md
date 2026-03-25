@@ -1,6 +1,8 @@
 # Artifacts
 
-Artifact lineage, claims, and evidence cases.
+Artifact blackboard, lineage, claims, and evidence cases.
+
+::: hermit.kernel.artifacts.blackboard
 
 ::: hermit.kernel.artifacts.lineage.claims
 

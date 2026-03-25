@@ -217,8 +217,8 @@ def test_encode_candidates_and_downscale_image(monkeypatch) -> None:
         provider_images, "_save_jpeg", lambda image, quality: f"jpeg-{quality}".encode("ascii")
     )
 
-    png_candidates = provider_images._encode_candidates_with_pillow(object(), "image/png")
-    webp_candidates = provider_images._encode_candidates_with_pillow(object(), "image/webp")
+    png_candidates = list(provider_images._encode_candidates_with_pillow(object(), "image/png"))
+    webp_candidates = list(provider_images._encode_candidates_with_pillow(object(), "image/webp"))
 
     assert png_candidates[0] == ("image/png", b"png")
     assert png_candidates[-1][0] == "image/jpeg"

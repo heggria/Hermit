@@ -49,6 +49,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
         )
 
     def _task_from_row(self, row: sqlite3.Row) -> TaskRecord:
+        keys = row.keys() if hasattr(row, "keys") else []
         return TaskRecord(
             task_id=str(row["task_id"]),
             conversation_id=str(row["conversation_id"]),
@@ -60,25 +61,52 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             policy_profile=str(row["policy_profile"]),
             source_channel=str(row["source_channel"]),
             parent_task_id=row["parent_task_id"],
+            program_id=row["program_id"] if "program_id" in keys else None,
+            team_id=row["team_id"] if "team_id" in keys else None,
             task_contract_ref=row["task_contract_ref"],
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
             requested_by_principal_id=row["requested_by_principal_id"],
+            budget_tokens_used=int(row["budget_tokens_used"])
+            if "budget_tokens_used" in keys
+            else 0,
+            budget_tokens_limit=int(row["budget_tokens_limit"])
+            if "budget_tokens_limit" in keys and row["budget_tokens_limit"] is not None
+            else None,
+            acceptance_criteria=json_loads(row["acceptance_criteria_json"])
+            if "acceptance_criteria_json" in keys
+            else [],
+            complexity_band=str(row["complexity_band"])
+            if "complexity_band" in keys
+            else "moderate",
         )
 
     def _step_from_row(self, row: sqlite3.Row) -> StepRecord:
+        keys = row.keys() if hasattr(row, "keys") else []
         return StepRecord(
             step_id=str(row["step_id"]),
             task_id=str(row["task_id"]),
             kind=str(row["kind"]),
             status=str(row["status"]),
             attempt=int(row["attempt"]),
+            node_key=row["node_key"] if "node_key" in keys else None,
             input_ref=row["input_ref"],
             output_ref=row["output_ref"],
             title=row["title"],
             contract_ref=row["contract_ref"],
             depends_on=list(json_loads(row["depends_on_json"])),
+            join_strategy=str(row["join_strategy"]) if "join_strategy" in keys else "all_required",
+            input_bindings=dict(json_loads(row["input_bindings_json"]))
+            if "input_bindings_json" in keys
+            else {},
             max_attempts=int(row["max_attempts"] or 1),
+            verification_required=bool(row["verification_required"])
+            if "verification_required" in keys
+            else False,
+            verifies=list(json_loads(row["verifies_json"])) if "verifies_json" in keys else [],
+            supersedes=list(json_loads(row["supersedes_json"]))
+            if "supersedes_json" in keys
+            else [],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
             created_at=row["created_at"],
@@ -94,7 +122,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             status=str(row["status"]),
             context=json_loads(row["context_json"]),
             queue_priority=int(row["queue_priority"] or 0),
-            waiting_reason=row["waiting_reason"],
+            status_reason=row["waiting_reason"],
             approval_id=row["approval_id"],
             decision_id=row["decision_id"],
             capability_grant_id=row["capability_grant_id"],
@@ -121,6 +149,8 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             resume_from_ref=row["resume_from_ref"],
             superseded_by_step_attempt_id=row["superseded_by_step_attempt_id"],
             started_at=row["started_at"],
+            claimed_at=row["claimed_at"],
+            last_heartbeat_at=row["last_heartbeat_at"] if "last_heartbeat_at" in row else None,  # noqa: SIM401
             finished_at=row["finished_at"],
         )
 
@@ -254,6 +284,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             expires_at=row["expires_at"],
             consumed_at=row["consumed_at"],
             revoked_at=row["revoked_at"],
+            parent_grant_ref=row["parent_grant_ref"] if "parent_grant_ref" in row.keys() else None,  # noqa: SIM118
         )
 
     def _workspace_lease_from_row(self, row: sqlite3.Row) -> WorkspaceLeaseRecord:
@@ -344,6 +375,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
         )
 
     def _memory_record_from_row(self, row: sqlite3.Row) -> MemoryRecord:
+        keys = row.keys() if hasattr(row, "keys") else []
         return MemoryRecord(
             memory_id=str(row["memory_id"]),
             task_id=str(row["task_id"]),
@@ -357,6 +389,9 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             retention_class=str(row["retention_class"] or "volatile_fact"),
             status=str(row["status"]),
             confidence=float(row["confidence"]),
+            importance=int(row["importance"])
+            if "importance" in keys and row["importance"] is not None
+            else 5,
             trust_tier=str(row["trust_tier"]),
             evidence_refs=list(json_loads(row["evidence_refs_json"])),
             memory_kind=str(row["memory_kind"] or "durable_fact"),
@@ -371,8 +406,8 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             invalidation_reason=row["invalidation_reason"],
             invalidated_at=row["invalidated_at"],
             expires_at=row["expires_at"],
-            freshness_class=row["freshness_class"] if "freshness_class" in dict(row) else None,
-            last_accessed_at=row["last_accessed_at"] if "last_accessed_at" in dict(row) else None,
+            freshness_class=row["freshness_class"] if "freshness_class" in keys else None,
+            last_accessed_at=row["last_accessed_at"] if "last_accessed_at" in keys else None,
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
         )
@@ -420,6 +455,17 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             rollback_expectation=row["rollback_expectation"],
             selected_template_ref=row["selected_template_ref"],
             superseded_by_contract_id=row["superseded_by_contract_id"],
+            task_family=(
+                row["task_family"]
+                if "task_family" in row.keys()  # noqa: SIM118
+                else None
+            ),
+            verification_requirements=(
+                dict(json_loads(row["verification_requirements_json"] or "{}"))
+                if "verification_requirements_json" in row.keys()  # noqa: SIM118
+                and row["verification_requirements_json"]
+                else None
+            ),
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
         )

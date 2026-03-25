@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from hermit.runtime.capability.contracts.base import SubagentSpec
+from hermit.runtime.capability.contracts.hooks import HooksEngine
 from hermit.runtime.capability.registry.manager import PluginManager
+from hermit.runtime.capability.registry.subagent_executor import SubagentExecutor
 from hermit.runtime.capability.registry.tools import ToolRegistry
 
 
@@ -97,26 +99,40 @@ def _ungoverned_spec() -> SubagentSpec:
 # ── _register_subagent_principal tests ──
 
 
+def _executor_with_runtime(runtime: object = None) -> SubagentExecutor:
+    """Create a SubagentExecutor with optional runtime for testing.
+
+    Sets _runtime directly rather than calling configure_runtime(),
+    since these tests use lightweight SimpleNamespace mocks that
+    lack model/max_tokens/tool_output_limit attributes.
+    """
+    se = SubagentExecutor(
+        hooks=HooksEngine(),
+        settings=None,
+    )
+    if runtime is not None:
+        se._runtime = runtime
+    return se
+
+
 def test_register_principal_returns_none_for_ungoverned() -> None:
     """Ungoverned spec should return None without touching the store."""
-    pm = PluginManager()
-    assert pm._register_subagent_principal(_ungoverned_spec()) is None
+    se = _executor_with_runtime()
+    assert se.register_subagent_principal(_ungoverned_spec()) is None
 
 
 def test_register_principal_returns_none_without_store() -> None:
     """Governed spec without kernel_store returns None."""
-    pm = PluginManager()
-    pm._runtime = SimpleNamespace()  # no kernel_store attr
-    assert pm._register_subagent_principal(_governed_spec()) is None
+    se = _executor_with_runtime(runtime=SimpleNamespace())  # no kernel_store attr
+    assert se.register_subagent_principal(_governed_spec()) is None
 
 
 def test_register_principal_success(tmp_path: object) -> None:
     """Governed spec with a working kernel_store registers and returns principal_id."""
     store = MagicMock()
-    pm = PluginManager()
-    pm._runtime = SimpleNamespace(kernel_store=store)
+    se = _executor_with_runtime(runtime=SimpleNamespace(kernel_store=store))
 
-    result = pm._register_subagent_principal(_governed_spec())
+    result = se.register_subagent_principal(_governed_spec())
 
     assert result == "principal_subagent_gov_agent"
     store.ensure_principal.assert_called_once_with(
@@ -131,31 +147,33 @@ def test_register_principal_handles_store_error() -> None:
     """If ensure_principal raises, return None gracefully."""
     store = MagicMock()
     store.ensure_principal.side_effect = RuntimeError("db locked")
-    pm = PluginManager()
-    pm._runtime = SimpleNamespace(kernel_store=store)
+    se = _executor_with_runtime(runtime=SimpleNamespace(kernel_store=store))
 
-    assert pm._register_subagent_principal(_governed_spec()) is None
+    assert se.register_subagent_principal(_governed_spec()) is None
 
 
-# ── _emit_subagent_event tests ──
+# ── emit_subagent_event tests ──
 
 
 def test_emit_event_noop_without_store() -> None:
-    """No kernel_store → silent no-op."""
-    pm = PluginManager()
-    pm._runtime = SimpleNamespace()  # no kernel_store
-    # Should not raise
-    pm._emit_subagent_event("subagent_spawned", _governed_spec(), "pid_1")
+    """No kernel_store → silent no-op: function returns without attempting append_event."""
+    runtime = SimpleNamespace()  # no kernel_store attribute
+    se = _executor_with_runtime(runtime=runtime)
+
+    result = se.emit_subagent_event("subagent_spawned", _governed_spec(), "pid_1")
+
+    # Returns None (-> None declared) and never touches a non-existent store.
+    assert result is None
+    assert not hasattr(runtime, "kernel_store")
 
 
 def test_emit_event_calls_append_event() -> None:
     """Event emission calls store.append_event with correct args."""
     store = MagicMock()
-    pm = PluginManager()
-    pm._runtime = SimpleNamespace(kernel_store=store)
+    se = _executor_with_runtime(runtime=SimpleNamespace(kernel_store=store))
 
     spec = _governed_spec()
-    pm._emit_subagent_event("subagent_spawned", spec, "pid_1", {"key": "val"})
+    se.emit_subagent_event("subagent_spawned", spec, "pid_1", {"key": "val"})
 
     store.append_event.assert_called_once_with(
         event_type="subagent_spawned",
@@ -168,17 +186,19 @@ def test_emit_event_calls_append_event() -> None:
 
 
 def test_emit_event_handles_store_error() -> None:
-    """If append_event raises, log warning but don't propagate."""
+    """If append_event raises, the exception is swallowed and not propagated."""
     store = MagicMock()
     store.append_event.side_effect = RuntimeError("disk full")
-    pm = PluginManager()
-    pm._runtime = SimpleNamespace(kernel_store=store)
+    se = _executor_with_runtime(runtime=SimpleNamespace(kernel_store=store))
 
-    # Should not raise
-    pm._emit_subagent_event("subagent_failed", _governed_spec(), "pid_1")
+    result = se.emit_subagent_event("subagent_failed", _governed_spec(), "pid_1")
+
+    # The call was attempted (not silently skipped) and the error was swallowed.
+    store.append_event.assert_called_once()
+    assert result is None
 
 
-# ── _run_subagent governed lifecycle tests ──
+# ── run_subagent governed lifecycle tests ──
 
 
 def test_run_subagent_governed_emits_spawned_and_completed() -> None:
@@ -189,13 +209,17 @@ def test_run_subagent_governed_emits_spawned_and_completed() -> None:
     mock_runtime.kernel_store = store
     mock_runtime.clone.return_value.run.return_value = mock_result
 
-    pm = PluginManager()
-    pm._runtime = mock_runtime
-    pm._registry = ToolRegistry()
-    pm._model = "test-model"
+    se = SubagentExecutor(
+        hooks=HooksEngine(),
+        settings=None,
+    )
+    se.configure_runtime(
+        runtime=mock_runtime,
+        registry=ToolRegistry(),
+    )
 
     spec = _governed_spec()
-    result = pm._run_subagent(spec, "do something")
+    result = se.run_subagent(spec, "do something")
 
     assert result == "done"
     # Should have called append_event twice: spawned + completed
@@ -211,13 +235,17 @@ def test_run_subagent_governed_emits_spawned_and_failed_on_error() -> None:
     mock_runtime.kernel_store = store
     mock_runtime.clone.return_value.run.side_effect = RuntimeError("boom")
 
-    pm = PluginManager()
-    pm._runtime = mock_runtime
-    pm._registry = ToolRegistry()
-    pm._model = "test-model"
+    se = SubagentExecutor(
+        hooks=HooksEngine(),
+        settings=None,
+    )
+    se.configure_runtime(
+        runtime=mock_runtime,
+        registry=ToolRegistry(),
+    )
 
     spec = _governed_spec()
-    result = pm._run_subagent(spec, "do something")
+    result = se.run_subagent(spec, "do something")
 
     assert "error" in result.lower()
     assert store.append_event.call_count == 2
@@ -233,13 +261,17 @@ def test_run_subagent_ungoverned_no_events() -> None:
     mock_runtime.kernel_store = store
     mock_runtime.clone.return_value.run.return_value = mock_result
 
-    pm = PluginManager()
-    pm._runtime = mock_runtime
-    pm._registry = ToolRegistry()
-    pm._model = "test-model"
+    se = SubagentExecutor(
+        hooks=HooksEngine(),
+        settings=None,
+    )
+    se.configure_runtime(
+        runtime=mock_runtime,
+        registry=ToolRegistry(),
+    )
 
     spec = _ungoverned_spec()
-    result = pm._run_subagent(spec, "say hi")
+    result = se.run_subagent(spec, "say hi")
 
     assert result == "hi"
     store.append_event.assert_not_called()

@@ -99,7 +99,7 @@ class TestSupervisorFlow:
         self, server: HermitMcpServer, store: KernelStore, runner: SimpleNamespace
     ) -> None:
         """Submit a task via MCP and verify it was dispatched to the runner."""
-        result = _call(server, "hermit_submit_task", description="Fix the auth bug")
+        result = _call(server, "hermit_submit", description="Fix the auth bug")
         assert result["status"] == "accepted"
         assert len(runner.ingress_calls) == 1
         assert runner.ingress_calls[0]["text"] == "Fix the auth bug"
@@ -123,17 +123,17 @@ class TestSupervisorFlow:
         assert task.task_id in task_ids
 
         # Get task status
-        status_result = _call(server, "hermit_task_status", task_id=task.task_id)
-        assert status_result["task"]["title"] == "Integration test task"
-        assert status_result["is_blocked"] is False
+        status_result = _call(server, "hermit_task_status", task_ids=[task.task_id])
+        assert status_result["tasks"][0]["task"]["title"] == "Integration test task"
+        assert status_result["tasks"][0]["is_blocked"] is False
 
         # Cancel task
-        cancel_result = _call(server, "hermit_cancel_task", task_id=task.task_id)
-        assert cancel_result["status"] == "cancelled"
+        cancel_result = _call(server, "hermit_cancel_task", task_ids=[task.task_id])
+        assert cancel_result["results"][0]["status"] == "cancelled"
 
         # Verify cancelled
-        status_after = _call(server, "hermit_task_status", task_id=task.task_id)
-        assert status_after["task"]["status"] == "cancelled"
+        status_after = _call(server, "hermit_task_status", task_ids=[task.task_id])
+        assert status_after["tasks"][0]["task"]["status"] == "cancelled"
 
     def test_approval_flow_with_real_store(
         self,
@@ -164,14 +164,14 @@ class TestSupervisorFlow:
         assert approval.approval_id in approval_ids
 
         # Task status shows blocked
-        status = _call(server, "hermit_task_status", task_id=task.task_id)
-        assert status["is_blocked"] is True
+        status = _call(server, "hermit_task_status", task_ids=[task.task_id])
+        assert status["tasks"][0]["is_blocked"] is True
 
         # Approve it
         approve_result = _call(
-            server, "hermit_approve", approval_id=approval.approval_id, reason="Looks safe"
+            server, "hermit_approve", approval_ids=[approval.approval_id], reason="Looks safe"
         )
-        assert approve_result["status"] == "approved"
+        assert approve_result["results"][0]["status"] == "approved"
         assert len(runner.approval_calls) == 1
         assert runner.approval_calls[0]["action"] == "approve"
 
@@ -198,9 +198,9 @@ class TestSupervisorFlow:
         )
 
         deny_result = _call(
-            server, "hermit_deny", approval_id=approval.approval_id, reason="Too dangerous"
+            server, "hermit_deny", approval_ids=[approval.approval_id], reason="Too dangerous"
         )
-        assert deny_result["status"] == "denied"
+        assert deny_result["results"][0]["status"] == "denied"
         assert runner.approval_calls[0]["reason"] == "Too dangerous"
 
     def test_task_proof_with_real_store(
@@ -216,9 +216,10 @@ class TestSupervisorFlow:
             source_channel="test",
         )
 
-        proof_result = _call(server, "hermit_task_proof", task_id=task.task_id)
-        # ProofService returns a dict with proof data
-        assert "task_id" in proof_result or "error" not in proof_result
+        proof_result = _call(server, "hermit_task_proof", task_ids=[task.task_id])
+        # ProofService returns a batch dict with proofs list
+        assert proof_result["count"] == 1
+        assert "error" not in proof_result["proofs"][0] or "proof" in proof_result["proofs"][0]
 
     def test_list_tasks_with_status_filter(
         self,

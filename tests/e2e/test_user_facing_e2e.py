@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -37,6 +38,41 @@ from hermit.runtime.provider_host.shared.contracts import (
     UsageMetrics,
 )
 from hermit.surfaces.cli.main import app
+
+# ---------------------------------------------------------------------------
+# Performance: stub out expensive claim probes that create many temp
+# KernelStore instances during task projection rebuilds.
+# ---------------------------------------------------------------------------
+
+
+def _fast_semantic_probe_results(*, include_expensive_probes: bool = True):
+    """Return pre-computed 'implemented' status for every semantic probe row.
+
+    The real ``_semantic_probe_results`` creates 13+ temporary KernelStore
+    instances, each initialising a full SQLite schema, running verification
+    queries, then cleaning up temp directories.  That adds ~0.8s per call.
+    These E2E tests exercise the governed execution path, not the claim
+    verification probes themselves, so stubbing is safe.
+    """
+    from hermit.kernel.artifacts.lineage.claim_manifest import CLAIM_ROWS
+
+    result: dict[str, dict[str, Any]] = {}
+    for row in CLAIM_ROWS:
+        result[str(row["id"])] = {"status": "implemented", "evaluation": "semantic_probe"}
+    for extra in ("reconciliation_coverage", "proof_chain_complete", "retry_stale_guard"):
+        result[extra] = {"status": "implemented", "evaluation": "semantic_probe"}
+    return result
+
+
+@pytest.fixture(autouse=True)
+def _stub_expensive_claim_probes():
+    """Patch the expensive semantic probe pipeline for all tests in this module."""
+    with patch(
+        "hermit.kernel.artifacts.lineage.claims._semantic_probe_results",
+        side_effect=_fast_semantic_probe_results,
+    ):
+        yield
+
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -87,7 +123,7 @@ class _PluginManager:
         self.ended: list[str] = []
         self.post_run: list[str] = []
 
-    def on_session_start(self, session_id: str) -> None:
+    def on_session_start(self, session_id: str, *, runner: object = None) -> None:
         self.started.append(session_id)
 
     def on_session_end(self, session_id: str, _messages: list[dict[str, Any]]) -> None:
@@ -277,18 +313,74 @@ def test_user_one_shot_run_writes_file_and_responds(user_env: dict[str, Any]) ->
     tasks = store.list_tasks(limit=10)
     assert len(tasks) >= 1
 
-    # 5. Receipt was issued for governed write
+    # 5. Task is marked completed (not failed or running)
+    task_id = tasks[0].task_id
+    task = store.get_task(task_id)
+    assert task is not None
+    assert task.status == "completed", f"Expected task status 'completed', got '{task.status}'"
+
+    # 6. Receipt was issued for governed write
     task_id = tasks[0].task_id
     receipts = store.list_receipts(task_id=task_id, limit=10)
     assert len(receipts) == 1
     assert receipts[0].action_type == "write_local"
     assert receipts[0].result_code == "succeeded"
 
-    # 6. Proof chain is valid
+    # 7. Proof chain is valid
     chain = ProofService(store, user_env["artifacts"]).verify_task_chain(task_id)
     assert chain["valid"] is True
 
     runner.stop_background_services()
+
+
+# ---------------------------------------------------------------------------
+# 1b. Interrupted oneshot → orphaned task recovered as cancelled, not failed
+# ---------------------------------------------------------------------------
+
+
+def test_interrupted_oneshot_task_cancelled_not_failed(user_env: dict[str, Any]) -> None:
+    """If a CLI oneshot session is interrupted, the orphaned task should be
+    recovered as ``cancelled`` (not ``failed``) on next startup so that
+    ``hermit task list`` does not show misleading ``failed`` entries.
+    """
+    from hermit.kernel.execution.coordination.dispatch import KernelDispatchService
+
+    store: KernelStore = user_env["store"]
+    controller: TaskController = user_env["controller"]
+
+    # Simulate an interrupted oneshot: start a task but never finalize it.
+    ctx = controller.start_task(
+        conversation_id="cli-oneshot",
+        goal="read the version",
+        source_channel="cli",
+        kind="respond",
+        workspace_root=str(user_env["workspace"]),
+    )
+
+    # Task should be running.
+    task = store.get_task(ctx.task_id)
+    assert task is not None
+    assert task.status == "running"
+
+    # Directly invoke the recovery logic that runs at dispatch service startup.
+    # This simulates what happens when a new `hermit run` starts after an
+    # interrupted session left orphaned running attempts in the store.
+    svc = KernelDispatchService.__new__(KernelDispatchService)
+    svc.runner = SimpleNamespace(task_controller=controller)
+    svc.stop_event = __import__("threading").Event()
+    svc.wake_event = __import__("threading").Event()
+    svc.futures = {}
+    svc.lock = __import__("threading").Lock()
+    svc.kind_handlers = {}
+    svc.emitted_complete = set()
+    svc.recover_interrupted_attempts()
+
+    # After recovery the orphaned task should be cancelled, not failed.
+    recovered = store.get_task(ctx.task_id)
+    assert recovered is not None
+    assert recovered.status == "cancelled", (
+        f"Expected orphaned task to be 'cancelled', got '{recovered.status}'"
+    )
 
 
 # ---------------------------------------------------------------------------

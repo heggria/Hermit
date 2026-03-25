@@ -17,13 +17,13 @@ log = structlog.get_logger()
 
 @dataclass
 class OvernightSummary:
-    tasks_completed: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    tasks_failed: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    tasks_blocked: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    tasks_auto_generated: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    tasks_completed: list[dict[str, Any]] = field(default_factory=list)
+    tasks_failed: list[dict[str, Any]] = field(default_factory=list)
+    tasks_blocked: list[dict[str, Any]] = field(default_factory=list)
+    tasks_auto_generated: list[dict[str, Any]] = field(default_factory=list)
     total_governed_actions: int = 0
     boundary_violations_prevented: int = 0
-    approvals_pending: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    approvals_pending: list[dict[str, Any]] = field(default_factory=list)
     signals_emitted: int = 0
     signals_acted: int = 0
     lookback_hours: int = 12
@@ -35,16 +35,10 @@ class OvernightReportService:
         self._store = store
 
     def _query(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
-        lock = self._store._lock  # pyright: ignore[reportPrivateUsage]
-        conn = self._store._conn  # pyright: ignore[reportPrivateUsage]
-        with lock:
-            return conn.execute(sql, params).fetchall()
+        return self._store._rows(sql, params)
 
     def _query_one(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
-        lock = self._store._lock  # pyright: ignore[reportPrivateUsage]
-        conn = self._store._conn  # pyright: ignore[reportPrivateUsage]
-        with lock:
-            return conn.execute(sql, params).fetchone()
+        return self._store._row(sql, params)
 
     def generate(self, *, lookback_hours: int = 12) -> OvernightSummary:
         now = time.time()

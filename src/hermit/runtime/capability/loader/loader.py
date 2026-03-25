@@ -17,7 +17,10 @@ from hermit.runtime.capability.contracts.base import (
     PluginVariableSpec,
 )
 from hermit.runtime.capability.contracts.hooks import HooksEngine
-from hermit.runtime.capability.loader.config import resolve_plugin_context
+from hermit.runtime.capability.loader.config import (
+    has_missing_required_variables,
+    resolve_plugin_context,
+)
 
 log = structlog.get_logger()
 
@@ -117,6 +120,15 @@ def load_plugin_entries(
     ctx = PluginContext(hooks_engine, settings=settings)
     ctx.manifest = manifest
     ctx.plugin_vars, ctx.config = resolve_plugin_context(manifest, settings)
+
+    missing = has_missing_required_variables(manifest, ctx.plugin_vars)
+    if missing:
+        log.error(
+            "plugin_skipped_missing_required_vars",
+            plugin=manifest.name,
+            missing=missing,
+        )
+        return ctx
 
     for dimension, entry_spec in manifest.entry.items():
         if ":" not in entry_spec:

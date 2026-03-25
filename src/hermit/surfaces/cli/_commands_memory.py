@@ -413,6 +413,9 @@ def memory_status(
     typer.echo(t("cli.memory.status.label.by_retention", "By Retention:"))
     for key, value in sorted(by_retention.items()):
         typer.echo(f"  - {key}: {value}")
+    typer.echo(t("cli.memory.status.label.by_category", "By Category:"))
+    for key, value in sorted(by_category.items()):
+        typer.echo(f"  - {key}: {value}")
 
 
 @memory_app.command("rebuild")
@@ -474,7 +477,11 @@ def memory_export(
     store = get_kernel_store()
     target = output or settings.memory_file
     service = MemoryRecordService(store, mirror_path=target)
-    export_path = service.export_mirror(target)
+    try:
+        export_path = service.export_mirror(target)
+    except OSError as exc:
+        typer.echo(t("cli.memory.export.error", "Export failed: {error}", error=str(exc)))
+        raise typer.Exit(1)
     active_records = len(store.list_memory_records(status="active", limit=5000))
     payload = {
         "active_records": active_records,

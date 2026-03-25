@@ -6,6 +6,7 @@ from hermit.kernel.artifacts.models.artifacts import ArtifactStore
 from hermit.kernel.context.models.context import TaskExecutionContext
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.policy import ActionRequest, PolicyDecision
+from hermit.kernel.task.models.records import EvidenceCaseRecord
 
 
 class EvidenceCaseService:
@@ -24,7 +25,7 @@ class EvidenceCaseService:
         action_request_ref: str | None,
         policy_result_ref: str | None,
         witness_ref: str | None,
-    ):
+    ) -> tuple[EvidenceCaseRecord, str]:
         support_refs = [
             ref
             for ref in [context_pack_ref, action_request_ref, policy_result_ref, witness_ref]

@@ -67,35 +67,8 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         decision_required=True,
         witness_required=True,
         receipt_required=True,
-        reconcile_strategy="filesystem_observation",
-        rollback_strategy="file_restore",
-    ),
-    "patch_file": ActionContract(
-        action_class="patch_file",
-        default_risk_band="high",
-        decision_required=True,
-        witness_required=True,
-        receipt_required=True,
-        reconcile_strategy="filesystem_observation",
-        rollback_strategy="file_restore",
-    ),
-    "execute_command": ActionContract(
-        action_class="execute_command",
-        default_risk_band="critical",
-        decision_required=True,
-        witness_required=True,
-        receipt_required=True,
-        reconcile_strategy="command_observation",
-        rollback_strategy="manual_or_followup",
-    ),
-    "vcs_mutation": ActionContract(
-        action_class="vcs_mutation",
-        default_risk_band="critical",
-        decision_required=True,
-        witness_required=True,
-        receipt_required=True,
-        reconcile_strategy="git_observation",
-        rollback_strategy="git_revert_or_reset",
+        reconcile_strategy="observe_then_reconcile",
+        rollback_strategy="manual_only",
     ),
     "network_write": ActionContract(
         action_class="network_write",
@@ -103,35 +76,35 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         decision_required=True,
         witness_required=True,
         receipt_required=True,
-        reconcile_strategy="remote_observation",
-        rollback_strategy="compensating_action",
+        reconcile_strategy="observe_then_reconcile",
+        rollback_strategy="manual_only",
     ),
-    "credentialed_api_call": ActionContract(
-        action_class="credentialed_api_call",
+    "process_exec": ActionContract(
+        action_class="process_exec",
         default_risk_band="high",
         decision_required=True,
         witness_required=True,
         receipt_required=True,
-        reconcile_strategy="remote_observation",
-        rollback_strategy="compensating_action",
+        reconcile_strategy="observe_then_reconcile",
+        rollback_strategy="manual_only",
     ),
-    "publication": ActionContract(
-        action_class="publication",
-        default_risk_band="high",
-        decision_required=True,
-        witness_required=True,
-        receipt_required=True,
-        reconcile_strategy="remote_observation",
-        rollback_strategy="compensating_action",
+    "ui_read": ActionContract(
+        action_class="ui_read",
+        default_risk_band="low",
+        decision_required=False,
+        witness_required=False,
+        receipt_required=False,
+        reconcile_strategy="none",
+        rollback_strategy="not_needed",
     ),
-    "external_mutation": ActionContract(
-        action_class="external_mutation",
-        default_risk_band="high",
+    "ui_mutation": ActionContract(
+        action_class="ui_mutation",
+        default_risk_band="medium",
         decision_required=True,
-        witness_required=True,
+        witness_required=False,
         receipt_required=True,
-        reconcile_strategy="remote_observation",
-        rollback_strategy="compensating_action",
+        reconcile_strategy="store_observation",
+        rollback_strategy="manual_or_followup",
     ),
     "scheduler_mutation": ActionContract(
         action_class="scheduler_mutation",
@@ -191,7 +164,34 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
 
 
 def contract_for(action_class: str) -> ActionContract:
+    """Return the contract for *action_class*, falling back to the high-risk
+    default contract when the class is not explicitly registered.
+
+    Callers that need to distinguish a genuine registration miss from an
+    intentional fall-through should use :func:`contract_for_strict` instead.
+    """
     return ACTION_CONTRACTS.get(action_class, _DEFAULT_CONTRACT)
+
+
+def contract_for_strict(action_class: str) -> ActionContract:
+    """Return the contract for *action_class*, raising ``KeyError`` if it is
+    not registered.
+
+    Use this during configuration-time validation or in tests where an
+    unrecognised action class should be treated as a programming error rather
+    than silently defaulting to the high-risk fallback.
+
+    Raises:
+        KeyError: If *action_class* has no entry in ``ACTION_CONTRACTS``.
+    """
+    try:
+        return ACTION_CONTRACTS[action_class]
+    except KeyError:
+        registered = ", ".join(sorted(ACTION_CONTRACTS))
+        raise KeyError(
+            f"No ActionContract registered for {action_class!r}. "
+            f"Registered action classes: {registered}"
+        ) from None
 
 
 def known_action_classes() -> set[str]:

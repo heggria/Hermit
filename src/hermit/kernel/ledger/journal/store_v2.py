@@ -42,11 +42,13 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
         rollback_expectation: str | None = None,
         selected_template_ref: str | None = None,
         superseded_by_contract_id: str | None = None,
+        task_family: str | None = None,
+        verification_requirements: dict[str, Any] | None = None,
     ) -> ExecutionContractRecord:
         contract_id = self._id("contract")
         created_at = time.time()
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO execution_contracts (
                     contract_id, task_id, step_id, step_attempt_id, objective,
@@ -56,8 +58,12 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
                     fallback_contract_refs_json, operator_summary, risk_budget_json,
                     expected_artifact_shape_json, contract_version, action_contract_refs_json,
                     state_witness_ref, rollback_expectation, selected_template_ref,
-                    superseded_by_contract_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    superseded_by_contract_id, task_family, verification_requirements_json,
+                    created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?
+                )
                 """,
                 (
                     contract_id,
@@ -85,6 +91,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
                     rollback_expectation,
                     selected_template_ref,
                     superseded_by_contract_id,
+                    task_family,
+                    json.dumps(dict(verification_requirements or {}), ensure_ascii=False)
+                    if verification_requirements
+                    else None,
                     created_at,
                     created_at,
                 ),
@@ -120,6 +130,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
                     "rollback_expectation": rollback_expectation,
                     "selected_template_ref": selected_template_ref,
                     "superseded_by_contract_id": superseded_by_contract_id,
+                    "task_family": task_family,
+                    "verification_requirements": dict(verification_requirements or {})
+                    if verification_requirements
+                    else None,
                 },
             )
         contract = self.get_execution_contract(contract_id)
@@ -127,11 +141,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
         return contract
 
     def get_execution_contract(self, contract_id: str) -> ExecutionContractRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM execution_contracts WHERE contract_id = ?",
-                (contract_id,),
-            )
+        row = self._row(
+            "SELECT * FROM execution_contracts WHERE contract_id = ?",
+            (contract_id,),
+        )
         return self._execution_contract_from_row(row) if row is not None else None
 
     def list_execution_contracts(
@@ -147,11 +160,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
             params.append(step_attempt_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM execution_contracts {where} ORDER BY created_at DESC LIMIT ?",
-                tuple(params),
-            )
+        rows = self._rows(
+            f"SELECT * FROM execution_contracts {where} ORDER BY created_at DESC LIMIT ?",
+            tuple(params),
+        )
         return [self._execution_contract_from_row(row) for row in rows]
 
     def update_execution_contract(
@@ -166,7 +178,9 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> None:
         contract = self.get_execution_contract(contract_id)
         if contract is None:
-            return
+            raise ValueError(
+                f"update_execution_contract: no contract found with id={contract_id!r}"
+            )
         updated_at = time.time()
         payload = {
             "evidence_case_ref": contract.evidence_case_ref
@@ -183,8 +197,8 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
             if superseded_by_contract_id is UNSET
             else superseded_by_contract_id,
         }
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 UPDATE execution_contracts
                 SET evidence_case_ref = ?, authorization_plan_ref = ?, status = ?,
@@ -234,8 +248,8 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> EvidenceCaseRecord:
         evidence_case_id = self._id("evidence_case")
         created_at = time.time()
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO evidence_cases (
                     evidence_case_id, task_id, subject_kind, subject_ref, support_refs_json,
@@ -297,11 +311,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
         return record
 
     def get_evidence_case(self, evidence_case_id: str) -> EvidenceCaseRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM evidence_cases WHERE evidence_case_id = ?",
-                (evidence_case_id,),
-            )
+        row = self._row(
+            "SELECT * FROM evidence_cases WHERE evidence_case_id = ?",
+            (evidence_case_id,),
+        )
         return self._evidence_case_from_row(row) if row is not None else None
 
     def list_evidence_cases(
@@ -317,11 +330,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
             params.append(subject_ref)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM evidence_cases {where} ORDER BY created_at DESC LIMIT ?",
-                tuple(params),
-            )
+        rows = self._rows(
+            f"SELECT * FROM evidence_cases {where} ORDER BY created_at DESC LIMIT ?",
+            tuple(params),
+        )
         return [self._evidence_case_from_row(row) for row in rows]
 
     def update_evidence_case(
@@ -337,7 +349,9 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> None:
         record = self.get_evidence_case(evidence_case_id)
         if record is None:
-            return
+            raise ValueError(
+                f"update_evidence_case: no evidence case found with id={evidence_case_id!r}"
+            )
         updated_at = time.time()
         next_status = record.status if status is UNSET else str(status)
         next_contradiction_refs = (
@@ -365,8 +379,8 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
             if last_checked_at is UNSET
             else cast(float | None, last_checked_at)
         )
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 UPDATE evidence_cases
                 SET contradiction_refs_json = ?, sufficiency_score = ?, unresolved_gaps_json = ?,
@@ -428,8 +442,8 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> AuthorizationPlanRecord:
         authorization_plan_id = self._id("auth_plan")
         created_at = time.time()
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO authorization_plans (
                     authorization_plan_id, task_id, step_id, step_attempt_id, contract_ref,
@@ -501,11 +515,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
         return record
 
     def get_authorization_plan(self, authorization_plan_id: str) -> AuthorizationPlanRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM authorization_plans WHERE authorization_plan_id = ?",
-                (authorization_plan_id,),
-            )
+        row = self._row(
+            "SELECT * FROM authorization_plans WHERE authorization_plan_id = ?",
+            (authorization_plan_id,),
+        )
         return self._authorization_plan_from_row(row) if row is not None else None
 
     def list_authorization_plans(
@@ -521,11 +534,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
             params.append(step_attempt_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM authorization_plans {where} ORDER BY created_at DESC LIMIT ?",
-                tuple(params),
-            )
+        rows = self._rows(
+            f"SELECT * FROM authorization_plans {where} ORDER BY created_at DESC LIMIT ?",
+            tuple(params),
+        )
         return [self._authorization_plan_from_row(row) for row in rows]
 
     def update_authorization_plan(
@@ -538,7 +550,9 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> None:
         record = self.get_authorization_plan(authorization_plan_id)
         if record is None:
-            return
+            raise ValueError(
+                f"update_authorization_plan: no authorization plan found with id={authorization_plan_id!r}"
+            )
         updated_at = time.time()
         next_status = record.status if status is UNSET else str(status)
         next_current_gaps = (
@@ -549,8 +563,8 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
             if operator_packet_ref is UNSET
             else cast(str | None, operator_packet_ref)
         )
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 UPDATE authorization_plans
                 SET status = ?, current_gaps_json = ?, operator_packet_ref = ?, updated_at = ?
@@ -606,8 +620,8 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
     ) -> ReconciliationRecord:
         reconciliation_id = self._id("reconciliation")
         created_at = time.time()
-        with self._lock, self._conn:
-            self._conn.execute(
+        with self._get_conn():
+            self._get_conn().execute(
                 """
                 INSERT INTO reconciliations (
                     reconciliation_id, task_id, step_id, step_attempt_id, contract_ref,
@@ -678,11 +692,10 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
         return record
 
     def get_reconciliation(self, reconciliation_id: str) -> ReconciliationRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM reconciliations WHERE reconciliation_id = ?",
-                (reconciliation_id,),
-            )
+        row = self._row(
+            "SELECT * FROM reconciliations WHERE reconciliation_id = ?",
+            (reconciliation_id,),
+        )
         return self._reconciliation_from_row(row) if row is not None else None
 
     def list_reconciliations(
@@ -698,9 +711,8 @@ class KernelV2StoreMixin(KernelStoreTypingBase):
             params.append(step_attempt_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
-        with self._lock:
-            rows = self._rows(
-                f"SELECT * FROM reconciliations {where} ORDER BY created_at DESC LIMIT ?",
-                tuple(params),
-            )
+        rows = self._rows(
+            f"SELECT * FROM reconciliations {where} ORDER BY created_at DESC LIMIT ?",
+            tuple(params),
+        )
         return [self._reconciliation_from_row(row) for row in rows]

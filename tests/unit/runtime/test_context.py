@@ -52,3 +52,10 @@ def test_default_context_template_switches_by_locale() -> None:
     assert default_context_template(locale="en-US") == DEFAULT_CONTEXT_TEMPLATE
     assert "你是一个偏个人使用场景的 AI Agent" in default_context_template(locale="zh-CN")
     assert "## Identity" in default_context_template(locale="en-US")
+
+
+def test_build_base_context_includes_workspace_boundary(tmp_path: Path) -> None:
+    settings = Settings(base_dir=tmp_path)
+    prompt = build_base_context(settings=settings, working_dir=tmp_path / "workspace")
+
+    assert "workspace_boundary" in prompt

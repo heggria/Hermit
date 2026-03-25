@@ -285,7 +285,7 @@ def test_policy_engine_allows_network_read_without_approval() -> None:
 
     assert decision.decision == "allow"
     assert decision.action_class == "network_read"
-    assert decision.requires_receipt is False
+    assert decision.requires_receipt is True
 
 
 def test_policy_engine_allows_adapter_owned_attachment_ingest_and_denies_agent_calls() -> None:

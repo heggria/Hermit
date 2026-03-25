@@ -95,11 +95,22 @@ def _load_catalog(locale: str) -> dict[str, str]:
 
 
 def _read_catalog(locale: str) -> dict[str, str]:
+    import logging
+
     merged: dict[str, str] = {}
     for path in _catalog_paths(locale):
         with path.open("r", encoding="utf-8") as handle:
-            raw = json.load(handle)
-        merged.update({str(key): str(value) for key, value in raw.items()})
+            try:
+                raw = json.load(handle)
+            except json.JSONDecodeError as exc:
+                logging.getLogger(__name__).warning(
+                    "i18n: skipping malformed catalog file %s: %s", path, exc
+                )
+                continue
+        if not isinstance(raw, dict):
+            continue
+        items = cast(dict[str, object], raw)
+        merged.update({str(key): str(value) for key, value in items.items()})
     return merged
 
 
@@ -203,3 +214,15 @@ def localize_schema(schema: Any, *, locale: str | None = None) -> Any:
             default=default_title if isinstance(default_title, str) else "",
         )
     return localized
+
+
+def t(message_key: str, *, default: str | None = None, **kwargs: object) -> str:  # pyright: ignore[reportUnusedFunction]
+    """Shared i18n helper used across modules.
+
+    Resolves the current locale automatically via :func:`resolve_locale` and
+    delegates to :func:`tr`.  Import this instead of re-defining the same
+    two-line wrapper in every module::
+
+        from hermit.infra.system.i18n import t
+    """
+    return tr(message_key, locale=resolve_locale(), default=default, **kwargs)

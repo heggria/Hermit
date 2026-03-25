@@ -46,31 +46,32 @@ class SignalConsumer:
     def _create_task(self, signal: object) -> str | None:
         from hermit.kernel.signals.models import EvidenceSignal
 
-        sig = signal if isinstance(signal, EvidenceSignal) else None
-        if sig is None:
+        # Reject anything that isn't a concrete EvidenceSignal early.
+        if not isinstance(signal, EvidenceSignal):
             return None
 
-        use_competition = sig.risk_level in ("high", "critical") and self._competition is not None
+        conv_id = signal.conversation_id or f"signal_{signal.signal_id}"
+        self._task_controller.store.ensure_conversation(conv_id, source_channel="signal")
 
-        if use_competition and self._competition is not None:
-            conv_id = sig.conversation_id or f"signal_{sig.signal_id}"
-            self._task_controller.store.ensure_conversation(conv_id, source_channel="signal")
-            comp = self._competition.create_competition(
+        use_competition = (
+            signal.risk_level in ("high", "critical") and self._competition is not None
+        )
+
+        if use_competition:
+            # use_competition already implies self._competition is not None.
+            comp = self._competition.create_competition(  # type: ignore[union-attr]
                 conversation_id=conv_id,
-                goal=sig.suggested_goal,
+                goal=signal.suggested_goal,
                 candidate_count=2,
                 source_channel="signal",
             )
-            self._competition.spawn_candidates(comp.competition_id)
-            # Return the parent task id
+            self._competition.spawn_candidates(comp.competition_id)  # type: ignore[union-attr]
             comp_record = self._task_controller.store.get_competition(comp.competition_id)
             return comp_record.parent_task_id if comp_record else None
 
-        conv_id = sig.conversation_id or f"signal_{sig.signal_id}"
-        self._task_controller.store.ensure_conversation(conv_id, source_channel="signal")
         ctx = self._task_controller.start_task(
             conversation_id=conv_id,
-            goal=sig.suggested_goal,
+            goal=signal.suggested_goal,
             source_channel="signal",
             kind="execute",
         )

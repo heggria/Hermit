@@ -18,40 +18,75 @@ def infer_action_class(tool: ToolSpec) -> str:
     return "unknown"
 
 
+# Canonical symbolic scope tokens that are passed through without path resolution.
+_SYMBOLIC_SCOPES = frozenset(
+    {
+        "task_workspace",
+        "repo",
+        "home",
+        "system",
+        "network",
+        "remote_service",
+        "memory_store",
+        "unknown",
+    }
+)
+
+# Filesystem path prefixes that classify as "system" scope.
+_SYSTEM_PATH_PREFIXES = ("/etc", "/usr", "/Library", "/System")
+
+
 def normalize_scope_hints(
     scope_hint: str | list[str] | None, *, workspace_root: str = ""
 ) -> list[str]:
-    hints = scope_hint if isinstance(scope_hint, list) else ([scope_hint] if scope_hint else [])
+    """Normalize raw scope hints into canonical scope tokens.
+
+    Each hint is either a symbolic token (passed through as-is) or an
+    absolute/relative path that is resolved and classified into one of:
+    ``task_workspace``, ``home``, ``system``, or ``unknown``.
+
+    The previous implementation fell through to ``"repo"`` for any path that
+    did not match the workspace, home, or known system prefixes.  Paths such
+    as ``/tmp``, ``/var``, ``/Volumes/...``, or a mounted network drive share
+    have nothing to do with a source repository, so mapping them to ``"repo"``
+    produced silently incorrect policy decisions.  They are now classified as
+    ``"unknown"``, which causes the policy engine to apply the most
+    conservative risk band and require explicit approval.
+    """
+    hints: list[str] = (
+        scope_hint if isinstance(scope_hint, list) else ([scope_hint] if scope_hint else [])
+    )
     scopes: list[str] = []
     workspace = Path(workspace_root).resolve() if workspace_root else None
+
     for hint in hints:
         if not hint:
             continue
-        if hint in {
-            "task_workspace",
-            "repo",
-            "home",
-            "system",
-            "network",
-            "remote_service",
-            "memory_store",
-            "unknown",
-        }:
+
+        # Pass symbolic tokens through without path resolution.
+        if hint in _SYMBOLIC_SCOPES:
             scopes.append(hint)
             continue
+
         try:
             path = Path(hint).expanduser().resolve()
         except OSError:
             scopes.append("unknown")
             continue
+
         if workspace and (path == workspace or workspace in path.parents):
             scopes.append("task_workspace")
         elif str(path).startswith(str(Path.home())):
             scopes.append("home")
-        elif str(path).startswith(("/etc", "/usr", "/Library", "/System")):
+        elif str(path).startswith(_SYSTEM_PATH_PREFIXES):
             scopes.append("system")
         else:
-            scopes.append("repo")
+            # The path does not match the workspace, home directory, or any
+            # known system prefix.  Fall back to "unknown" rather than "repo"
+            # to avoid misclassifying paths like /tmp or /Volumes/... as source-
+            # repository scope, which would grant them undeserved trust.
+            scopes.append("unknown")
+
     return list(dict.fromkeys(scopes or ["unknown"]))
 
 
@@ -66,6 +101,12 @@ def build_action_request(
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     contract = contract_for(action_class)
     ingress = dict(attempt_ctx.ingress_metadata or {}) if attempt_ctx else {}
+    actor_principal_id = attempt_ctx.actor_principal_id if attempt_ctx else None
+    actor = (
+        {"kind": "principal", "principal_id": actor_principal_id, "agent_id": "hermit"}
+        if actor_principal_id
+        else {"kind": "agent", "agent_id": "hermit"}
+    )
     return ActionRequest(
         request_id=request_id,
         idempotency_key=request_id,
@@ -85,6 +126,7 @@ def build_action_request(
         if tool.requires_receipt is not None
         else contract.receipt_required,
         supports_preview=bool(tool.supports_preview),
+        actor=actor,
         context={
             "cwd": workspace_root,
             "repo_root": workspace_root,

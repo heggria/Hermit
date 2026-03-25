@@ -207,17 +207,20 @@ def test_cleanup_all_skips_files(tmp_path: Path) -> None:
 
 
 def test_cleanup_all_rmdir_silent_on_nonempty(tmp_path: Path) -> None:
-    """Lines 90-93: OSError from rmdir is caught silently (dir not empty)."""
+    """Lines 90-93: OSError from rmdir is caught silently; leftover file is not deleted."""
     inspector = FakeInspector()
     mgr = CompetitionWorkspaceManager(tmp_path, inspector=inspector)
 
     comp_dir = tmp_path / ".hermit" / "competition" / "comp-1"
     comp_dir.mkdir(parents=True)
-    # Leave a file so rmdir will fail
-    (comp_dir / "leftover.txt").write_text("data")
+    leftover = comp_dir / "leftover.txt"
+    leftover.write_text("data")
 
-    # Should not raise
+    # cleanup_all must not raise even though rmdir will fail on a non-empty dir
     mgr.cleanup_all("comp-1")
+
+    # The directory (and the leftover file) should still exist — rmdir failed silently
+    assert leftover.exists(), "leftover file must survive the silent OSError from rmdir"
 
 
 # -- list_orphans ------------------------------------------------------------

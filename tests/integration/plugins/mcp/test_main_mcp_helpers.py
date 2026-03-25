@@ -8,9 +8,6 @@ from types import SimpleNamespace
 import pytest
 import typer
 
-import hermit.surfaces.cli._helpers as helpers_mod
-import hermit.surfaces.cli._preflight as preflight_mod
-import hermit.surfaces.cli.main as main_mod
 from hermit.runtime.capability.contracts.base import McpServerSpec, McpToolGovernance
 from hermit.runtime.capability.resolver.mcp_client import (
     MCP_TOOL_PREFIX,
@@ -25,6 +22,9 @@ from hermit.runtime.capability.resolver.mcp_client import (
 def test_main_env_helpers_and_output_helpers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import hermit.surfaces.cli._helpers as helpers_mod
+    import hermit.surfaces.cli.main as main_mod
+
     base_dir = tmp_path / ".hermit"
     env_path = base_dir / ".env"
     base_dir.mkdir(parents=True)
@@ -54,6 +54,8 @@ def test_main_env_helpers_and_output_helpers(
 
 
 def test_stream_printer_handles_thinking_and_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    import hermit.surfaces.cli._helpers as helpers_mod
+
     stream = io.StringIO()
     monkeypatch.setattr(helpers_mod.sys, "stdout", stream)
     printer = helpers_mod._StreamPrinter()
@@ -71,6 +73,8 @@ def test_stream_printer_handles_thinking_and_text(monkeypatch: pytest.MonkeyPatc
 def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import hermit.surfaces.cli._helpers as helpers_mod
+
     settings = SimpleNamespace(
         provider="codex-oauth",
         claude_api_key=None,
@@ -191,6 +195,9 @@ def test_main_auth_snapshot_workspace_caffeinate_and_require_auth(
 def test_main_preflight_helpers_cover_codex_and_oauth_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import hermit.surfaces.cli._preflight as preflight_mod
+    import hermit.surfaces.cli.main as _main_init  # noqa: F401 – must load before _preflight to resolve circular imports
+
     base_dir = tmp_path / ".hermit"
     base_dir.mkdir(parents=True)
     monkeypatch.setenv("HERMIT_BASE_DIR", str(base_dir))
@@ -280,6 +287,7 @@ def test_mcp_client_helpers_and_call_paths(monkeypatch: pytest.MonkeyPatch) -> N
         parse_mcp_tool_name("plain-tool")
 
     mgr = object.__new__(McpClientManager)
+    mgr._connections_lock = __import__("threading").Lock()
     mgr._connections = {
         "server": _ServerConnection(
             spec=McpServerSpec(
@@ -326,7 +334,9 @@ def test_mcp_client_helpers_and_call_paths(monkeypatch: pytest.MonkeyPatch) -> N
     mgr._lifecycle_future = SimpleNamespace(
         result=lambda timeout=15: (_ for _ in ()).throw(RuntimeError("close boom"))
     )
-    mgr._thread = SimpleNamespace(join=lambda timeout=5: loop_calls.append("join"))
+    mgr._thread = SimpleNamespace(
+        join=lambda timeout=5: loop_calls.append("join"), is_alive=lambda: False
+    )
     mgr.close_all_sync()
     assert loop_calls == ["call", "shutdown", "call", "stop", "join"]
     assert mgr._connections == {}
@@ -335,7 +345,9 @@ def test_mcp_client_helpers_and_call_paths(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.asyncio
 async def test_mcp_call_tool_and_connect_one_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     mgr = object.__new__(McpClientManager)
+    mgr._connections_lock = __import__("threading").Lock()
     mgr._connections = {}
+    mgr._oauth_base_dir = None
 
     assert (
         await mgr._call_tool("missing", "tool", {}) == "Error: MCP server 'missing' not connected"

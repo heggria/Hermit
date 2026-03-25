@@ -20,7 +20,7 @@ class WebhookRoute:
 
 @dataclass
 class WebhookConfig:
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8321
     routes: list[WebhookRoute] = field(default_factory=list[WebhookRoute])
     control_secret: str | None = None
@@ -40,7 +40,7 @@ def load_config(settings: Any = None) -> WebhookConfig:
     host_override = getattr(settings, "webhook_host", None)
     port_override = getattr(settings, "webhook_port", None)
     control_secret_override = getattr(settings, "webhook_control_secret", None)
-    host = str(host_override or raw.get("host", "0.0.0.0"))
+    host = str(host_override or raw.get("host", "127.0.0.1"))
     port = int(port_override or raw.get("port", 8321))
     control_secret = str(control_secret_override or raw.get("control_secret") or "").strip() or None
 

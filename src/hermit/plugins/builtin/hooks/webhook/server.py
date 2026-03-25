@@ -430,9 +430,28 @@ class WebhookServer:
             host=self._config.host,
             port=self._config.port,
         )
+        if not self._config.control_secret:
+            _log.error(  # type: ignore[call-arg]
+                "webhook_control_api_unauthenticated",
+                detail="Control API endpoints (approvals, rollbacks, projections) are running "
+                "WITHOUT authentication. Set HERMIT_WEBHOOK_CONTROL_SECRET or "
+                "webhook_control_secret in config to secure these endpoints.",
+            )
+        for route in self._config.routes:
+            if route.secret is None:
+                _log.warning(  # type: ignore[call-arg]
+                    "webhook_route_no_secret",
+                    route=route.name,
+                    path=route.path,
+                    detail="Route has no HMAC secret; incoming requests will not be verified",
+                )
 
     def stop(self) -> None:
         if self._server is not None:
             self._server.should_exit = True
-        self._executor.shutdown(wait=False)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                _log.warning("webhook_server_thread_still_alive")  # type: ignore[call-arg]
+        self._executor.shutdown(wait=True)
         _log.info("webhook_server_stopped")  # type: ignore[call-arg]

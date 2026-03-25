@@ -16,7 +16,13 @@ from hermit.infra.system.i18n import tr
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.plugins.builtin.hooks.scheduler.models import JobExecutionRecord, ScheduledJob
 from hermit.runtime.provider_host.execution.runtime import AgentResult
-from hermit.surfaces.cli.main import app
+
+
+def _lazy_app():
+    """Import the Typer app lazily to avoid module-level side effects from main.py."""
+    from hermit.surfaces.cli.main import app
+
+    return app
 
 
 def test_profiles_list_reads_config_toml(tmp_path, monkeypatch) -> None:
@@ -43,7 +49,7 @@ model = "claude-3-7-sonnet-latest"
     get_settings.cache_clear()
 
     runner = CliRunner()
-    result = runner.invoke(app, ["profiles", "list"])
+    result = runner.invoke(_lazy_app(), ["profiles", "list"])
 
     assert result.exit_code == 0
     assert "codex-local（默认） 提供方=codex-oauth 模型=gpt-5.4" in result.output
@@ -59,7 +65,7 @@ def test_profiles_list_reports_missing_config_toml(tmp_path, monkeypatch) -> Non
     get_settings.cache_clear()
 
     runner = CliRunner()
-    result = runner.invoke(app, ["profiles", "list"])
+    result = runner.invoke(_lazy_app(), ["profiles", "list"])
 
     assert result.exit_code == 0
     assert (
@@ -95,7 +101,7 @@ model = "claude-3-7-sonnet-latest"
     get_settings.cache_clear()
 
     runner = CliRunner()
-    result = runner.invoke(app, ["config", "show"])
+    result = runner.invoke(_lazy_app(), ["config", "show"])
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -130,7 +136,7 @@ provider = "codex-oauth"
     get_settings.cache_clear()
 
     runner = CliRunner()
-    result = runner.invoke(app, ["auth", "status"])
+    result = runner.invoke(_lazy_app(), ["auth", "status"])
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -178,7 +184,7 @@ def test_reload_removes_stale_pid_file(tmp_path, monkeypatch) -> None:
     )
 
     runner = CliRunner()
-    result = runner.invoke(app, ["reload"])
+    result = runner.invoke(_lazy_app(), ["reload"])
 
     assert result.exit_code == 1
     assert "PID 文件已过期" in result.output
@@ -329,14 +335,14 @@ def test_reload_and_service_helpers_cover_permission_and_success_paths(
     monkeypatch.setattr(
         serve_mod.os, "kill", lambda pid, sig: (_ for _ in ()).throw(PermissionError())
     )
-    denied = runner.invoke(app, ["reload"])
+    denied = runner.invoke(_lazy_app(), ["reload"])
     assert denied.exit_code == 1
     assert "Permission denied" in denied.output
 
     pid_path.write_text("4321", encoding="utf-8")
     sent: list[tuple[int, int]] = []
     monkeypatch.setattr(serve_mod.os, "kill", lambda pid, sig: sent.append((pid, sig)))
-    success = runner.invoke(app, ["reload"])
+    success = runner.invoke(_lazy_app(), ["reload"])
     assert success.exit_code == 0
     assert sent and sent[0][0] == 4321
 
@@ -363,7 +369,7 @@ def test_serve_refuses_duplicate_live_process(
 
     monkeypatch.setattr(serve_mod.os, "kill", lambda pid, sig: None)
 
-    result = CliRunner().invoke(app, ["serve"])
+    result = CliRunner().invoke(_lazy_app(), ["serve"])
 
     assert result.exit_code == 1
     assert "already running" in result.output
@@ -399,7 +405,7 @@ def test_serve_cleans_stale_pid_before_start(
     monkeypatch.setattr(serve_mod.os, "kill", fake_kill)
     monkeypatch.setattr(serve_mod, "_serve_loop", fake_serve_loop)
 
-    result = CliRunner().invoke(app, ["serve"])
+    result = CliRunner().invoke(_lazy_app(), ["serve"])
 
     assert result.exit_code == 0
     assert "stale PID file" in result.output
@@ -410,7 +416,10 @@ def test_serve_cleans_stale_pid_before_start(
 def test_plugin_commands_manage_installed_plugins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from hermit.runtime.assembly.config import get_settings
+
     monkeypatch.setenv("HERMIT_LOCALE", "en-US")
+    get_settings.cache_clear()
     settings = SimpleNamespace(
         base_dir=tmp_path / ".hermit",
         plugins_dir=tmp_path / ".hermit" / "plugins",
@@ -448,10 +457,12 @@ def test_plugin_commands_manage_installed_plugins(
     )
 
     runner = CliRunner()
-    listed = runner.invoke(app, ["plugin", "list"])
-    installed = runner.invoke(app, ["plugin", "install", "https://example.com/new-plugin.git"])
-    info = runner.invoke(app, ["plugin", "info", "demo"])
-    removed = runner.invoke(app, ["plugin", "remove", "demo"])
+    listed = runner.invoke(_lazy_app(), ["plugin", "list"])
+    installed = runner.invoke(
+        _lazy_app(), ["plugin", "install", "https://example.com/new-plugin.git"]
+    )
+    info = runner.invoke(_lazy_app(), ["plugin", "info", "demo"])
+    removed = runner.invoke(_lazy_app(), ["plugin", "remove", "demo"])
 
     assert listed.exit_code == 0
     assert "[builtin] builtin-demo v1.0.0" in listed.output
@@ -502,16 +513,16 @@ def test_schedule_commands_cover_listing_mutation_and_history(
     )
 
     runner = CliRunner()
-    listed = runner.invoke(app, ["schedule", "list"])
-    history = runner.invoke(app, ["schedule", "history", "--job-id", cron_job.id])
+    listed = runner.invoke(_lazy_app(), ["schedule", "list"])
+    history = runner.invoke(_lazy_app(), ["schedule", "history", "--job-id", cron_job.id])
     future_once = (dt.datetime.now() + dt.timedelta(days=1)).replace(microsecond=0).isoformat()
     added = runner.invoke(
-        app,
+        _lazy_app(),
         ["schedule", "add", "--name", "new-once", "--prompt", "do work", "--once", future_once],
     )
-    enabled = runner.invoke(app, ["schedule", "enable", interval_job.id])
-    disabled = runner.invoke(app, ["schedule", "disable", cron_job.id])
-    removed = runner.invoke(app, ["schedule", "remove", once_job.id])
+    enabled = runner.invoke(_lazy_app(), ["schedule", "enable", interval_job.id])
+    disabled = runner.invoke(_lazy_app(), ["schedule", "disable", cron_job.id])
+    removed = runner.invoke(_lazy_app(), ["schedule", "remove", once_job.id])
 
     assert listed.exit_code == 0
     assert "cron-job" in listed.output

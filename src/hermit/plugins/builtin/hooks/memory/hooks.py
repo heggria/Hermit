@@ -109,11 +109,45 @@ def register(ctx: PluginContext) -> None:
 
     def _hook_session_end(session_id: str, messages: list[dict[str, Any]]) -> None:
         save_memories(engine, settings, session_id, messages)
+        _run_consolidation_if_available(settings)
 
     ctx.add_hook(HookEvent.SYSTEM_PROMPT, _hook_system_prompt, priority=20)
     ctx.add_hook(HookEvent.PRE_RUN, _hook_pre_run, priority=20)
     ctx.add_hook(HookEvent.POST_RUN, _hook_post_run, priority=20)
     ctx.add_hook(HookEvent.SESSION_END, _hook_session_end, priority=90)
+
+
+def _run_consolidation_if_available(settings: Any) -> None:
+    """Run memory consolidation if kernel store is available.
+
+    Called at SESSION_END after memory save. Failures are logged and swallowed
+    so they never break session teardown.
+    """
+    kernel_db_path = getattr(settings, "kernel_db_path", None)
+    if not kernel_db_path:
+        return
+    try:
+        from pathlib import Path
+
+        from hermit.kernel.context.memory.consolidation import ConsolidationService
+        from hermit.kernel.ledger.journal.store import KernelStore
+
+        store = KernelStore(Path(kernel_db_path))
+        try:
+            service = ConsolidationService()
+            report = service.run_consolidation(store)
+            log.info(
+                "session_end_consolidation_complete",
+                merged=report.merged_count,
+                strengthened=report.strengthened_count,
+                decayed=report.decayed_count,
+                insights=report.new_insights_count,
+                pitfalls=report.new_pitfalls_count,
+            )
+        finally:
+            store.close()
+    except Exception:
+        log.warning("session_end_consolidation_failed", exc_info=True)
 
 
 # --- Backward-compatible aliases ---

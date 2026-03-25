@@ -23,6 +23,9 @@ class HookEvent(StrEnum):
     SERVE_START = "serve_start"
     SERVE_STOP = "serve_stop"
     DISPATCH_RESULT = "dispatch_result"
+    SUBTASK_SPAWN = "subtask_spawn"
+    SUBTASK_COMPLETE = "subtask_complete"
+    TOOL_START = "tool_start"
 
     def __str__(self) -> str:
         return self.value
@@ -37,6 +40,7 @@ class SubagentSpec:
     model: str = ""
     policy_profile: str = "readonly"
     governed: bool = False
+    context_fragments: list[str] | None = None
 
 
 @dataclass(frozen=True)

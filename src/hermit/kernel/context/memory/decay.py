@@ -161,6 +161,8 @@ class MemoryDecayService:
         new_evidence_refs: list[str],
     ) -> bool:
         """Revive a quarantined memory with fresh evidence, resetting its decay clock."""
+        if not new_evidence_refs:
+            return False
         record = store.get_memory_record(memory_id)
         if record is None or record.status != "quarantined":
             return False

@@ -334,7 +334,7 @@ def test_task_controller_handles_planning_gate_and_followup_steps(tmp_path: Path
     task = store.get_task(ctx.task_id)
     attempt = store.get_step_attempt(ctx.step_attempt_id)
     assert task is not None and task.status == "blocked"
-    assert attempt is not None and attempt.waiting_reason == "awaiting_plan_confirmation"
+    assert attempt is not None and attempt.status_reason == "awaiting_plan_confirmation"
     assert controller.active_task_for_conversation("conv-controller") is None
 
     decision = controller.decide_ingress(
@@ -382,8 +382,8 @@ def test_task_controller_surfaces_missing_task_rows_for_attempt_context(tmp_path
     controller = TaskController(store)
     ctx = _start_task(controller, conversation_id="conv-missing-task")
 
-    with store._lock, store._conn:  # type: ignore[attr-defined]
-        store._conn.execute("DELETE FROM tasks WHERE task_id = ?", (ctx.task_id,))  # type: ignore[attr-defined]
+    with store._get_conn():
+        store._get_conn().execute("DELETE FROM tasks WHERE task_id = ?", (ctx.task_id,))
 
     with pytest.raises(KeyError):
         controller.context_for_attempt(ctx.step_attempt_id)

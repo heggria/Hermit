@@ -5,10 +5,14 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+import structlog
+
 from hermit.kernel.signals.models import SteeringDirective
 
 if TYPE_CHECKING:
     from hermit.kernel.ledger.journal.store import KernelStore
+
+log = structlog.get_logger()
 
 
 class SteeringProtocol:
@@ -115,4 +119,4 @@ class SteeringProtocol:
                 payload={"reason": "steering_directive_issued"},
             )
         except Exception:
-            pass  # best-effort
+            log.warning("mark_input_dirty_failed", task_id=task_id, exc_info=True)

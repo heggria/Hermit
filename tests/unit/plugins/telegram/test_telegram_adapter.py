@@ -63,6 +63,7 @@ def test_build_session_id_group():
     assert sid == "tg:200:42"
 
 
+@pytest.mark.asyncio
 async def test_start_raises_without_token():
     settings = SimpleNamespace(telegram_bot_token=None)
     adapter = TelegramAdapter(settings=settings)
@@ -71,6 +72,7 @@ async def test_start_raises_without_token():
         await adapter.start(runner)
 
 
+@pytest.mark.asyncio
 async def test_stop_clears_state():
     import hermit.plugins.builtin.adapters.telegram.adapter as adapter_mod
 

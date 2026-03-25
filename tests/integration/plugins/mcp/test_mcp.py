@@ -307,7 +307,7 @@ disabled_builtin_plugins = ["github"]
         assert all(manifest.name != "github" for manifest in pm.manifests)
         assert pm.mcp_specs == []
 
-    def test_resolve_plugin_context_renders_lists_and_warns_for_required_missing(
+    def test_resolve_plugin_context_renders_lists_and_errors_for_required_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         base_dir = tmp_path / ".hermit"
@@ -329,11 +329,11 @@ disabled_builtin_plugins = ["github"]
             },
         )
 
-        warnings: list[dict[str, object]] = []
+        errors: list[dict[str, object]] = []
         import hermit.runtime.capability.loader.config as plugin_config
 
         monkeypatch.setattr(
-            plugin_config.log, "warning", lambda *args, **kwargs: warnings.append(kwargs)
+            plugin_config.log, "error", lambda *args, **kwargs: errors.append(kwargs)
         )
 
         vars_resolved, config_resolved = resolve_plugin_context(manifest, settings)
@@ -341,7 +341,7 @@ disabled_builtin_plugins = ["github"]
         assert vars_resolved["api_token"] is None
         assert config_resolved["argv"] == ["run"]
         assert config_resolved["headers"]["Authorization"] == "Bearer "
-        assert warnings == [{"plugin": "demo", "variable": "api_token"}]
+        assert errors == [{"plugin": "demo", "variable": "api_token", "env_vars": []}]
 
 
 # ── mcp_loader plugin (.mcp.json parsing) ────────────────────────

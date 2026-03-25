@@ -41,10 +41,8 @@ class DecaySweepReport:
     sweep_id: str
     swept_at: float
     total_evaluated: int = 0
-    transitions: list[DecaySweepTransition] = field(
-        default_factory=lambda: list[DecaySweepTransition]()
-    )
-    quarantine_candidates: list[str] = field(default_factory=lambda: list[str]())
+    transitions: list[DecaySweepTransition] = field(default_factory=list)
+    quarantine_candidates: list[str] = field(default_factory=list)
 
 
 __all__ = [

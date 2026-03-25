@@ -20,7 +20,7 @@ class ProofAnchor:
     anchor_method: str
     anchor_ref: str
     anchored_at: float
-    anchor_payload: dict[str, Any] = field(default_factory=dict[str, Any])
+    anchor_payload: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from hermit.infra.paths import project_root as _project_root
 from hermit.infra.system.executables import resolve_uv_bin
 from hermit.infra.system.i18n import catalog_locales, tr
 from hermit.runtime.provider_host.shared.profiles import load_profile_catalog
@@ -63,8 +64,6 @@ def log_companion_event(
     lines = [f"[{timestamp}] {level.upper()} {action}: {message}"]
     if detail:
         lines.append(detail.rstrip())
-    if not path.exists():
-        path.touch()
     with path.open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n\n")
     return path
@@ -354,10 +353,10 @@ def command_prefix() -> list[str]:
             "--project",
             str(project_root),
             "--python",
-            "3.11",
+            "3.13",
             "python",
             "-m",
-            "hermit.surfaces.cli.main",
+            "hermit.surfaces.cli",
         ]
     hermit_bin = Path(sys.executable).parent / "hermit"
     if hermit_bin.exists():
@@ -365,14 +364,7 @@ def command_prefix() -> list[str]:
     installed = shutil.which("hermit")
     if installed:
         return [installed]
-    return [sys.executable, "-m", "hermit.surfaces.cli.main"]
-
-
-def _project_root() -> Path | None:
-    candidate = Path(__file__).resolve().parents[2]
-    if (candidate / "pyproject.toml").exists():
-        return candidate
-    return None
+    return [sys.executable, "-m", "hermit.surfaces.cli"]
 
 
 def readme_path() -> Path:

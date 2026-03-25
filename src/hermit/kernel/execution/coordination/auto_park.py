@@ -48,3 +48,9 @@ class AutoParkService:
                 "auto_unpark_focus_switched",
                 to_task=resumed_task_id,
             )
+        else:
+            log.info(
+                "auto_unpark_focus_retained",
+                resumed_task=resumed_task_id,
+                retained_focus=best.task_id,
+            )

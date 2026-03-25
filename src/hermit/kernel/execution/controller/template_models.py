@@ -31,9 +31,9 @@ class ContractTemplate:
     tool_name: str
     risk_level: str
     reversibility_class: str
-    expected_effects: list[str] = field(default_factory=lambda: list[str]())
-    success_criteria: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
-    drift_budget: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    expected_effects: list[str] = field(default_factory=list)
+    success_criteria: dict[str, Any] = field(default_factory=dict)
+    drift_budget: dict[str, Any] = field(default_factory=dict)
     source_contract_ref: str = ""
     source_reconciliation_ref: str = ""
     invocation_count: int = 0
@@ -42,9 +42,9 @@ class ContractTemplate:
     success_rate: float = 0.0
     last_failure_at: float | None = None
     last_used_at: float = 0.0
-    resource_scope_pattern: list[str] = field(default_factory=lambda: list[str]())
-    constraint_defaults: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
-    evidence_requirements: list[str] = field(default_factory=lambda: list[str]())
+    resource_scope_pattern: list[str] = field(default_factory=list)
+    constraint_defaults: dict[str, Any] = field(default_factory=dict)
+    evidence_requirements: list[str] = field(default_factory=list)
     workspace_ref: str = ""
     scope_kind: str = "global"
 
@@ -55,5 +55,5 @@ class TemplateMatch:
 
     template_ref: str
     confidence: float
-    match_reasons: list[str] = field(default_factory=lambda: list[str]())
+    match_reasons: list[str] = field(default_factory=list)
     template: ContractTemplate | None = None

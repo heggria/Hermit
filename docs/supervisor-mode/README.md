@@ -29,23 +29,24 @@ cp docs/supervisor-mode/mcp.json .mcp.json
 
 ### 3. Add supervisor instructions to CLAUDE.md
 
-Append the following to your project's `CLAUDE.md`:
+The project's `CLAUDE.md` already includes delegation rules under
+"Claude ↔ Hermit Division of Labor". These define Claude as the bridge
+(read/analyze/orchestrate) and Hermit as the autonomous executor.
 
-```markdown
-## Supervisor Mode
+See `.agents/skills/hermit-delegate/SKILL.md` for the full delegation workflow.
 
-You are in SUPERVISOR mode. You CANNOT directly edit files or execute code.
-You can ONLY: read/analyze → delegate to Hermit → monitor → approve/deny → report.
+### Policy profiles
 
-### Workflow
+| Profile | Autonomy | When to use |
+|---------|----------|-------------|
+| `autonomous` | **High** — auto-approves most ops, receipts preserved | Default for trusted project work |
+| `default` | Medium — approval required for mutations | Unfamiliar areas, external integrations |
+| `supervised` | Low — approval required for everything | Untrusted agents, production-touching work |
+| `readonly` | None — denies all side effects | Analysis-only tasks |
 
-1. Analyze the task and read relevant code
-2. Submit work to Hermit via `hermit_submit_task`
-3. Poll `hermit_task_status` to monitor progress
-4. When blocked, review pending approvals via `hermit_pending_approvals`
-5. Approve safe operations, deny risky ones
-6. Report results back to the user
-```
+**Recommended default: `autonomous`** — Hermit still enforces critical guards
+(no sudo, no sensitive paths, no kernel self-modification) while letting routine
+operations flow without approval friction.
 
 ## How It Works
 
@@ -59,9 +60,11 @@ You can ONLY: read/analyze → delegate to Hermit → monitor → approve/deny �
 
 | Tool | Purpose |
 |------|---------|
-| `hermit_submit_task` | Submit a task for governed execution |
+| `hermit_submit` | Submit single or batch tasks for governed execution |
+| `hermit_submit_dag_task` | Submit a DAG task with parallel/dependent steps |
 | `hermit_task_status` | Get task status, events, and pending approvals |
 | `hermit_list_tasks` | List recent tasks |
+| `hermit_metrics` | Kernel health, governance, and task metrics |
 | `hermit_pending_approvals` | List all pending approval requests |
 | `hermit_approve` | Approve an approval request |
 | `hermit_deny` | Deny an approval request |

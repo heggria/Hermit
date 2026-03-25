@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,16 @@ from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
 log = structlog.get_logger()
 
 _GOVERNANCE = MemoryGovernanceService()
+
+# Phase-level retrieval cache: keyed by (conversation_id, query_hash) → rendered prompt.
+# Bounded to last 16 entries to prevent unbounded growth.
+_retrieval_cache: dict[str, str] = {}
+_RETRIEVAL_CACHE_MAX = 16
+
+
+def _retrieval_cache_key(conversation_id: str | None, query: str) -> str:
+    q_hash = hashlib.sha256(query[:400].encode()).hexdigest()[:16]
+    return f"{conversation_id or ''}:{q_hash}"
 
 
 def inject_memory(engine: MemoryEngine, settings: Any | None = None) -> str:
@@ -58,17 +69,26 @@ def inject_relevant_memory(
     if prompt is None:
         prompt = str(settings or "")
         settings = None
-    compiler_result = _compile_context_pack(
-        engine,
-        settings,
-        query=prompt,
-        conversation_id=session_id,
-        runner=runner,
-    )
-    if compiler_result is None:
-        relevant = ""
+
+    cache_key = _retrieval_cache_key(session_id, prompt or "")
+    if cache_key in _retrieval_cache:
+        relevant = _retrieval_cache[cache_key]
+        log.debug("memory_retrieval_cache_hit", session_id=session_id)
     else:
-        relevant = compiler_result["retrieval_prompt"]
+        compiler_result = _compile_context_pack(
+            engine,
+            settings,
+            query=prompt,
+            conversation_id=session_id,
+            runner=runner,
+        )
+        relevant = compiler_result["retrieval_prompt"] if compiler_result is not None else ""
+        # Evict oldest entries if cache is full
+        if len(_retrieval_cache) >= _RETRIEVAL_CACHE_MAX:
+            oldest_key = next(iter(_retrieval_cache))
+            del _retrieval_cache[oldest_key]
+        _retrieval_cache[cache_key] = relevant
+
     if not relevant:
         return prompt
     return f"<relevant_memory>\n{relevant}\n</relevant_memory>\n\n{prompt}"

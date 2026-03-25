@@ -27,7 +27,7 @@ class EvidenceSignal:
     task_id: str | None = None
     summary: str = ""
     confidence: float = 0.5
-    evidence_refs: list[str] = field(default_factory=list[str])
+    evidence_refs: list[str] = field(default_factory=list)
     suggested_goal: str = ""
     suggested_policy_profile: str = "default"
     risk_level: str = "low"
@@ -35,10 +35,19 @@ class EvidenceSignal:
     cooldown_key: str = ""
     cooldown_seconds: int = 86400
     produced_task_id: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     expires_at: float | None = None
     acted_at: float | None = None
+
+
+_STEERING_RISK_LEVEL: dict[str, str] = {
+    "scope": "medium",
+    "strategy": "medium",
+    "constraint": "low",
+    "priority": "low",
+    "policy": "high",
+}
 
 
 @dataclass
@@ -49,11 +58,11 @@ class SteeringDirective:
     steering_type: str = ""
     directive: str = ""
     directive_id: str = field(default_factory=_steer_id)
-    evidence_refs: list[str] = field(default_factory=list[str])
+    evidence_refs: list[str] = field(default_factory=list)
     issued_by: str = "operator"
     disposition: str = "pending"
     supersedes_id: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     applied_at: float | None = None
 
@@ -64,17 +73,18 @@ class SteeringDirective:
         meta["issued_by"] = self.issued_by
         if self.supersedes_id:
             meta["supersedes_id"] = self.supersedes_id
+        risk_level = _STEERING_RISK_LEVEL.get(self.steering_type, "low")
         return EvidenceSignal(
             signal_id=self.directive_id,
             source_kind=f"steering:{self.steering_type}",
             source_ref=f"task://{self.task_id}",
             task_id=self.task_id,
             summary=self.directive,
-            confidence=1.0,
+            confidence=0.9,
             evidence_refs=list(self.evidence_refs),
             suggested_goal=self.directive,
             suggested_policy_profile="default",
-            risk_level="low",
+            risk_level=risk_level,
             disposition=self.disposition,
             metadata=meta,
             created_at=self.created_at,

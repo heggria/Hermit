@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from hermit.apps.companion import appbundle
+from hermit.infra import paths as _paths_mod
 
 
 def test_install_app_bundle_creates_expected_structure(tmp_path: Path, monkeypatch) -> None:
@@ -128,7 +129,7 @@ def test_launcher_command_prefers_companion_binary(tmp_path: Path, monkeypatch) 
 
 
 def test_project_root_and_icon_source_follow_repo_layout(tmp_path: Path, monkeypatch) -> None:
-    fake_file = tmp_path / "pkg" / "companion" / "appbundle.py"
+    fake_file = tmp_path / "src" / "hermit" / "apps" / "companion" / "appbundle.py"
     fake_file.parent.mkdir(parents=True)
     fake_file.write_text("", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='hermit'\n", encoding="utf-8")
@@ -136,7 +137,9 @@ def test_project_root_and_icon_source_follow_repo_layout(tmp_path: Path, monkeyp
     docs_dir.mkdir()
     icon = docs_dir / "hermit-icon.svg"
     icon.write_text("<svg/>", encoding="utf-8")
-    monkeypatch.setattr(appbundle, "__file__", str(fake_file))
+    monkeypatch.setattr(
+        _paths_mod, "__file__", str(tmp_path / "src" / "hermit" / "infra" / "paths.py")
+    )
 
     assert appbundle._project_root() == tmp_path
     assert appbundle._icon_source() == icon

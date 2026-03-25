@@ -84,7 +84,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         now = time.time()
         criteria_json = json.dumps(evaluation_criteria or {}, ensure_ascii=False)
         weights_json = json.dumps(scoring_weights or {}, ensure_ascii=False)
-        with self._lock, self._conn:
+        with self._get_conn():
             self._conn.execute(
                 """
                 INSERT INTO competitions (
@@ -114,35 +114,33 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 "SELECT * FROM competitions WHERE competition_id = ?",
                 (competition_id,),
             )
-        assert row is not None
+        if row is None:
+            raise RuntimeError(f"Failed to retrieve competition after insert: {competition_id}")
         return self._competition_from_row(row)
 
     def get_competition(self, competition_id: str) -> CompetitionRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM competitions WHERE competition_id = ?",
-                (competition_id,),
-            )
+        row = self._row(
+            "SELECT * FROM competitions WHERE competition_id = ?",
+            (competition_id,),
+        )
         return self._competition_from_row(row) if row is not None else None
 
     def find_competition_by_parent_task(self, task_id: str) -> CompetitionRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM competitions WHERE parent_task_id = ? ORDER BY created_at DESC",
-                (task_id,),
-            )
+        row = self._row(
+            "SELECT * FROM competitions WHERE parent_task_id = ? ORDER BY created_at DESC",
+            (task_id,),
+        )
         return self._competition_from_row(row) if row is not None else None
 
     def find_competition_by_candidate_task(self, task_id: str) -> CompetitionRecord | None:
-        with self._lock:
-            row = self._row(
-                """
-                SELECT c.* FROM competitions c
-                JOIN competition_candidates cc ON cc.competition_id = c.competition_id
-                WHERE cc.task_id = ?
-                """,
-                (task_id,),
-            )
+        row = self._row(
+            """
+            SELECT c.* FROM competitions c
+            JOIN competition_candidates cc ON cc.competition_id = c.competition_id
+            WHERE cc.task_id = ?
+            """,
+            (task_id,),
+        )
         return self._competition_from_row(row) if row is not None else None
 
     def update_competition_status(
@@ -156,7 +154,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         evaluation_artifact_ref: str | None = None,
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._get_conn():
             row = self._row(
                 "SELECT status FROM competitions WHERE competition_id = ?",
                 (competition_id,),
@@ -197,7 +195,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
     ) -> CompetitionCandidateRecord:
         candidate_id = self._id("cand")
         now = time.time()
-        with self._lock, self._conn:
+        with self._get_conn():
             self._conn.execute(
                 """
                 INSERT INTO competition_candidates (
@@ -212,7 +210,8 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
                 "SELECT * FROM competition_candidates WHERE candidate_id = ?",
                 (candidate_id,),
             )
-        assert row is not None
+        if row is None:
+            raise RuntimeError(f"Failed to retrieve candidate after insert: {candidate_id}")
         return self._candidate_from_row(row)
 
     def list_candidates(
@@ -227,16 +226,14 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
             query += " AND status = ?"
             params.append(status)
         query += " ORDER BY created_at ASC"
-        with self._lock:
-            rows = self._rows(query, params)
+        rows = self._rows(query, params)
         return [self._candidate_from_row(r) for r in rows]
 
     def find_candidate_by_task(self, task_id: str) -> CompetitionCandidateRecord | None:
-        with self._lock:
-            row = self._row(
-                "SELECT * FROM competition_candidates WHERE task_id = ?",
-                (task_id,),
-            )
+        row = self._row(
+            "SELECT * FROM competition_candidates WHERE task_id = ?",
+            (task_id,),
+        )
         return self._candidate_from_row(row) if row is not None else None
 
     def update_candidate_status(
@@ -251,7 +248,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         discard_reason: str | None = None,
     ) -> None:
         now = time.time()
-        with self._lock, self._conn:
+        with self._get_conn():
             row = self._row(
                 "SELECT status FROM competition_candidates WHERE candidate_id = ?",
                 (candidate_id,),
@@ -296,7 +293,7 @@ class CompetitionStoreMixin(KernelStoreTypingBase):
         promoted: bool | None = None,
     ) -> None:
         """Update scoring fields without changing candidate status."""
-        with self._lock, self._conn:
+        with self._get_conn():
             row = self._row(
                 "SELECT candidate_id FROM competition_candidates WHERE candidate_id = ?",
                 (candidate_id,),

@@ -11,6 +11,7 @@
       "Bash(git diff:*)",
       "Bash(git show:*)",
       "mcp__hermit__hermit_submit_task",
+      "mcp__hermit__hermit_submit_dag_task",
       "mcp__hermit__hermit_task_status",
       "mcp__hermit__hermit_list_tasks",
       "mcp__hermit__hermit_pending_approvals",

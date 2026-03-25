@@ -105,6 +105,7 @@ class PolicyDecision:
     normalized_constraints: dict[str, Any] = field(default_factory=dict[str, Any])
     approval_packet: dict[str, Any] | None = None
     risk_level: str = "low"
+    rule_outcomes: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def decision(self) -> str:
@@ -132,6 +133,7 @@ class PolicyDecision:
             "obligations": self.obligations.to_dict(),
             "normalized_constraints": dict(self.normalized_constraints),
             "approval_packet": dict(self.approval_packet) if self.approval_packet else None,
+            "rule_outcomes": list(self.rule_outcomes),
         }
 
     @classmethod
@@ -140,6 +142,12 @@ class PolicyDecision:
         obligations: Any = data.get("obligations", {})
         reasons: list[Any] = list(data.get("reasons", []) or [])
         approval_packet: Any = data.get("approval_packet")
+        raw_outcomes: Any = data.get("rule_outcomes")
+        rule_outcomes: list[dict[str, Any]] = (
+            [dict(cast(dict[str, Any], o)) for o in raw_outcomes if isinstance(o, dict)]
+            if isinstance(raw_outcomes, list)
+            else []
+        )
         return cls(
             verdict=verdict,
             action_class=str(data.get("action_class", "unknown")),
@@ -158,4 +166,5 @@ class PolicyDecision:
             if isinstance(approval_packet, dict)
             else None,
             risk_level=str(data.get("risk_level", "low")),
+            rule_outcomes=rule_outcomes,
         )

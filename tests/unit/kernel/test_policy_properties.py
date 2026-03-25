@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from hypothesis import given, settings
-from hypothesis import strategies as st
+import pytest
 
 from hermit.kernel.policy.guards.merge import _PRIORITY, merge_outcomes
 from hermit.kernel.policy.guards.rules import RuleOutcome, evaluate_rules
@@ -12,6 +11,13 @@ from hermit.kernel.policy.models.models import (
     PolicyObligations,
     PolicyReason,
 )
+
+hypothesis = pytest.importorskip(
+    "hypothesis", reason="hypothesis not installed; skipping property tests"
+)
+given = hypothesis.given
+settings = hypothesis.settings
+st = pytest.importorskip("hypothesis.strategies", reason="hypothesis not installed")
 
 _VERDICTS = list(_PRIORITY.keys())
 

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import time
+from typing import Any
+
+import structlog
 
 from hermit.kernel.analytics.models import ActionRiskEntry, GovernanceMetrics
 from hermit.kernel.ledger.journal.store import KernelStore
+
+_log = structlog.get_logger()
 
 
 class AnalyticsEngine:
@@ -23,7 +28,7 @@ class AnalyticsEngine:
         window_start: float | None = None,
         window_end: float | None = None,
         task_id: str | None = None,
-        limit: int = 500,
+        limit: int = 2000,
     ) -> GovernanceMetrics:
         """Compute governance metrics over the given time window.
 
@@ -34,6 +39,10 @@ class AnalyticsEngine:
                 Defaults to now.
             task_id: Optional task ID to scope metrics to a single task.
             limit: Maximum number of records to query per entity type.
+                Set higher than the expected record count in the window
+                to avoid silent truncation before Python-side time
+                filtering.  The store layer should eventually support
+                native time-window parameters to eliminate this issue.
 
         Returns:
             GovernanceMetrics with aggregated statistics.
@@ -44,26 +53,58 @@ class AnalyticsEngine:
         if window_start is None:
             window_start = window_end - 86400.0
 
-        receipts = self._store.list_receipts(task_id=task_id, limit=limit)
+        # TODO(perf): Push time-window filtering into the store layer (SQL WHERE
+        # clauses) so the limit applies *after* the time predicate.  Until then,
+        # `limit` must be set high enough to avoid silently dropping records that
+        # fall inside the window but beyond the LIMIT cutoff.
+
+        raw_receipts = self._store.list_receipts(task_id=task_id, limit=limit)
         receipts = [
             r
-            for r in receipts
+            for r in raw_receipts
             if r.created_at is not None and window_start <= r.created_at <= window_end
         ]
+        if len(raw_receipts) >= limit:
+            _log.warning(
+                "analytics_possible_truncation",
+                entity="receipts",
+                limit=limit,
+                window_start=window_start,
+                window_end=window_end,
+                hint="increase limit or push time filtering to SQL",
+            )
 
-        approvals = self._store.list_approvals(task_id=task_id, limit=limit)
+        raw_approvals = self._store.list_approvals(task_id=task_id, limit=limit)
         approvals = [
             a
-            for a in approvals
+            for a in raw_approvals
             if a.requested_at is not None and window_start <= a.requested_at <= window_end
         ]
+        if len(raw_approvals) >= limit:
+            _log.warning(
+                "analytics_possible_truncation",
+                entity="approvals",
+                limit=limit,
+                window_start=window_start,
+                window_end=window_end,
+                hint="increase limit or push time filtering to SQL",
+            )
 
-        decisions = self._store.list_decisions(task_id=task_id, limit=limit)
+        raw_decisions = self._store.list_decisions(task_id=task_id, limit=limit)
         decisions = [
             d
-            for d in decisions
+            for d in raw_decisions
             if d.created_at is not None and window_start <= d.created_at <= window_end
         ]
+        if len(raw_decisions) >= limit:
+            _log.warning(
+                "analytics_possible_truncation",
+                entity="decisions",
+                limit=limit,
+                window_start=window_start,
+                window_end=window_end,
+                hint="increase limit or push time filtering to SQL",
+            )
 
         reconciliations = self._store.list_reconciliations(task_id=task_id, limit=limit)
         reconciliations = [
@@ -83,7 +124,8 @@ class AnalyticsEngine:
         tasks = [
             t
             for t in tasks
-            if window_start <= t.created_at <= window_end
+            if t.created_at is not None
+            and window_start <= t.created_at <= window_end
             and (task_id is None or t.task_id == task_id)
         ]
         task_throughput = len(tasks)
@@ -109,11 +151,11 @@ class AnalyticsEngine:
 
         # Evidence sufficiency average from evidence cases
         if evidence_cases:
-            evidence_sufficiency_avg = sum(e.sufficiency_score for e in evidence_cases) / len(
+            avg_evidence_sufficiency = sum(e.sufficiency_score for e in evidence_cases) / len(
                 evidence_cases
             )
         else:
-            evidence_sufficiency_avg = 0.0
+            avg_evidence_sufficiency = 0.0
 
         # Tool usage counts from receipt action_type
         tool_usage_counts: dict[str, int] = {}
@@ -153,10 +195,55 @@ class AnalyticsEngine:
             approval_rate=approval_rate,
             avg_approval_latency=avg_approval_latency,
             rollback_rate=rollback_rate,
-            evidence_sufficiency_avg=evidence_sufficiency_avg,
+            avg_evidence_sufficiency=avg_evidence_sufficiency,
             tool_usage_counts=tool_usage_counts,
             action_class_distribution=action_class_distribution,
             risk_entries=risk_entries,
             window_start=window_start,
             window_end=window_end,
         )
+
+    def guard_effectiveness_report(
+        self,
+        *,
+        window_days: int = 30,
+        limit: int = 2000,
+    ) -> dict[str, Any]:
+        """Compute guard effectiveness metrics over a time window.
+
+        Returns per-action_class statistics:
+        - deny_count: how many times the guard denied an action
+        - total_count: total actions of this class
+        - deny_rate: deny_count / total_count
+        - approval_override_count: actions that required approval but were overridden
+        - never_denied: True if deny_count == 0 (candidate for governance downgrade)
+        """
+        now = time.time()
+        window_start = now - (window_days * 86400)
+
+        decisions = self._store.list_decisions(limit=limit)
+        recent = [d for d in decisions if (d.created_at or 0) >= window_start]
+
+        class_stats: dict[str, dict[str, int]] = {}
+        for d in recent:
+            ac = d.action_type or "unknown"
+            if ac not in class_stats:
+                class_stats[ac] = {"deny": 0, "total": 0, "override": 0}
+            class_stats[ac]["total"] += 1
+            if d.verdict == "deny":
+                class_stats[ac]["deny"] += 1
+            if d.verdict in ("allow_with_receipt",) and d.risk_level in ("high", "critical"):
+                class_stats[ac]["override"] += 1
+
+        report: dict[str, Any] = {"window_days": window_days, "action_classes": {}}
+        for ac, stats in sorted(class_stats.items()):
+            total = stats["total"]
+            deny = stats["deny"]
+            report["action_classes"][ac] = {
+                "deny_count": deny,
+                "total_count": total,
+                "deny_rate": round(deny / total, 4) if total > 0 else 0.0,
+                "approval_override_count": stats["override"],
+                "never_denied": deny == 0,
+            }
+        return report

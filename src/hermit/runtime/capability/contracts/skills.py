@@ -14,6 +14,7 @@ class SkillDefinition:
     description: str
     path: Path
     content: str
+    max_tokens: int | None = None
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
@@ -53,12 +54,16 @@ def load_skills(skills_dir: Path) -> list[SkillDefinition]:
                 "No description",
             )
 
+        raw_max = fields.get("max_tokens")
+        max_tokens = int(raw_max) if raw_max and raw_max.isdigit() else None
+
         skills.append(
             SkillDefinition(
                 name=name,
                 description=description,
                 path=path,
                 content=body.strip(),
+                max_tokens=max_tokens,
             )
         )
     return skills

@@ -17,11 +17,16 @@ class CapabilityGrantRecord:
     issued_by_principal_id: str
     workspace_lease_ref: str | None
     action_class: str
-    resource_scope: list[str] = field(default_factory=list[str])
-    constraints: dict[str, Any] = field(default_factory=dict[str, Any])
+    resource_scope: list[str] = field(default_factory=list)
+    constraints: dict[str, Any] = field(default_factory=dict)
     idempotency_key: str | None = None
     status: str = "issued"
     issued_at: float | None = None
     expires_at: float | None = None
     consumed_at: float | None = None
     revoked_at: float | None = None
+    # Reference to the parent grant this record was derived from.
+    # When set, enforce() verifies that this grant's scope is a subset of the
+    # parent grant's scope, and cascade_revocation() can revoke all children
+    # when the parent is revoked.
+    parent_grant_ref: str | None = None

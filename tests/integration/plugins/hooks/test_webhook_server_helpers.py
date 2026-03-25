@@ -105,6 +105,12 @@ async def test_webhook_server_helpers_cover_kernel_store_control_and_lifecycle(
         def start(self):
             started.append(self.name)
 
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return False
+
     shutdowns: list[bool] = []
     server._executor = SimpleNamespace(shutdown=lambda wait=False: shutdowns.append(wait))
     monkeypatch.setattr("hermit.plugins.builtin.hooks.webhook.server.uvicorn.Config", FakeConfig)
@@ -115,7 +121,7 @@ async def test_webhook_server_helpers_cover_kernel_store_control_and_lifecycle(
     assert started == ["webhook-http"]
     server.stop()
     assert server._server.should_exit is True
-    assert shutdowns == [False]
+    assert shutdowns == [True]
 
 
 @pytest.mark.asyncio

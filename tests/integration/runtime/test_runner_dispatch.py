@@ -38,7 +38,7 @@ class _FakePluginManager:
         self.ended: list[tuple[str, list]] = []
         self.post_run: list[str] = []
 
-    def on_session_start(self, session_id: str) -> None:
+    def on_session_start(self, session_id: str, *, runner: object = None) -> None:
         self.started.append(session_id)
 
     def on_session_end(self, session_id: str, messages: list) -> None:
@@ -90,8 +90,20 @@ class _FakeStore:
     def get_approval(self, approval_id: str):
         return self.approval if self.approval and approval_id == self.approval.approval_id else None
 
+    def get_step_attempt(self, step_attempt_id: str):
+        """Return a minimal stub; approval tests don't need real attempt data."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            step_attempt_id=step_attempt_id,
+            context={"ingress_metadata": {}},
+        )
+
     def resolve_approval(self, approval_id: str, **kwargs) -> None:
         self.resolved.append({"approval_id": approval_id, **kwargs})
+
+    def get_task(self, task_id: str):
+        return None
 
 
 class _FakeTaskController:
@@ -380,6 +392,7 @@ def test_runner_messages_can_render_zh_cn(monkeypatch) -> None:
 
 def test_runner_background_services_start_stop_and_wake(monkeypatch) -> None:
     runner, _agent, _session_manager, _plugin_manager, _controller = _make_runner()
+    monkeypatch.setenv("HERMIT_DISPATCH_MODE", "flat")
     started: list[str] = []
     stopped: list[str] = []
     wakes: list[str] = []

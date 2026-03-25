@@ -1,0 +1,71 @@
+{
+  "action_request_ref": "artifact_8db02628e024",
+  "action_type": "write_local",
+  "approval_packet_hash": null,
+  "capability_grant_hash": "1ab088c258414341ffd6bfe5dd5eb4cd487c8ed9ffcb413bcfa9f9930bbcf7fe",
+  "capability_grant_ref": "grant_0700eec35e2f",
+  "context_manifest_ref": "artifact_60e19729ef1a",
+  "decision_ref": "decision_92db7ee93704",
+  "environment_hash": "62f8a648642faa7766cf83287c017a7e7491d08023e9bbd9d1f49f2b3a6322cd",
+  "idempotency_key": "req_f0b5339067f5",
+  "input_hashes": {
+    "artifact_2b42356099f3": "8684915a0201efda9597e50492c6148e13096b2bea219404563edb75f535d9ac"
+  },
+  "output_hashes": {
+    "artifact_f47676099ca9": "c48b5b1a9776c84602de2306d7903a7241158a5077e7a8519af75c33441b8334"
+  },
+  "policy_result_hash": "5720bf234b36638a1c9c9586294c9a16e07cd4e161e961f00db79c54809a8c5b",
+  "policy_result_ref": "artifact_3e3f1ec8d28e",
+  "proof_coverage": {
+    "available_modes": [
+      "hash_only",
+      "hash_chained",
+      "signed",
+      "signed_with_inclusion_proof"
+    ],
+    "current_mode": "hash_chained",
+    "inclusion_proof_coverage": {
+      "proved_receipts": 0,
+      "total_receipts": 1
+    },
+    "missing_features": [
+      "signature",
+      "inclusion_proof"
+    ],
+    "notes": {
+      "baseline": "hash-linked events with sealed receipt bundles",
+      "missing": [
+        "signature",
+        "inclusion_proof"
+      ]
+    },
+    "receipt_bundle_coverage": {
+      "bundled_receipts": 0,
+      "total_receipts": 1
+    },
+    "signature_coverage": {
+      "signed_receipts": 0,
+      "total_receipts": 1
+    },
+    "unsigned_receipts": [
+      "receipt_51f6c63ffcac"
+    ]
+  },
+  "proof_mode": "hash_chained",
+  "receipt_class": "write_local",
+  "receipt_id": "receipt_51f6c63ffcac",
+  "result_code": "succeeded",
+  "rollback_artifact_hashes": {
+    "artifact_2860f13eff4e": "514674df33906cb775aea21bd9c75ccf28de95e4db305cab1971bafffa37ce86"
+  },
+  "rollback_ref": null,
+  "rollback_status": "not_requested",
+  "rollback_strategy": "file_restore",
+  "rollback_supported": true,
+  "schema": "receipt.bundle/v1",
+  "signer_ref": null,
+  "task_event_head_hash": "7bfe83b140fe8e21fce81cc166c947e1b07722aa7f8c026d4deba8678bc6cc9c",
+  "verifiability": "baseline_verifiable",
+  "witness_ref": "artifact_cf0206f896df",
+  "workspace_lease_ref": "lease_8387199670b4"
+}

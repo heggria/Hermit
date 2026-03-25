@@ -15,6 +15,9 @@ def json_loads(raw: str | None) -> Any:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
+        import structlog
+
+        structlog.get_logger().warning("json_parse_error", raw_preview=raw[:200] if raw else "")
         return {}
 
 
@@ -76,14 +79,3 @@ def sqlite_list(value: Any, *, default: Sequence[Any] | None = None) -> list[Any
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return list(cast(Sequence[Any], value))
     return list(default or [])
-
-
-_json_loads = json_loads
-_canonical_json = canonical_json
-_canonical_json_from_raw = canonical_json_from_raw
-_sha256_hex = sha256_hex
-_sqlite_optional_text = sqlite_optional_text
-_sqlite_optional_float = sqlite_optional_float
-_sqlite_int = sqlite_int
-_sqlite_dict = sqlite_dict
-_sqlite_list = sqlite_list

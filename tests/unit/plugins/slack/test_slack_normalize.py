@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hermit.plugins.builtin.adapters.slack.normalize import (
     SlackMessage,
     normalize_event,
@@ -142,8 +144,5 @@ def test_slack_message_is_frozen():
         thread_ts=None,
     )
     assert msg.channel_id == "C1"
-    try:
+    with pytest.raises(AttributeError):
         msg.channel_id = "C2"  # type: ignore[misc]
-        raise AssertionError("Should have raised")
-    except AttributeError:
-        pass

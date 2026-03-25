@@ -53,11 +53,25 @@ else:  # pragma: no cover - exercised manually on macOS
     _import_error = None
 
 
+# Module-level locale cache: resolved once on first use to avoid redundant
+# get_settings() + resolve_locale() calls on every _t() invocation.
+# Call _clear_locale_cache() after a profile/settings change if the locale may shift.
+_cached_locale: str | None = None
+
+
+def _clear_locale_cache() -> None:
+    """Reset the cached locale so the next _t() call re-resolves it from settings."""
+    global _cached_locale
+    _cached_locale = None
+
+
 def _t(key: str, **kwargs: object) -> str:
-    settings = get_settings()
-    locale_raw = getattr(settings, "locale", None)
-    locale = resolve_locale(str(locale_raw) if locale_raw is not None else None)
-    return tr(key, locale=locale, **kwargs)  # type: ignore[arg-type]
+    global _cached_locale
+    if _cached_locale is None:
+        settings = get_settings()
+        locale_raw = getattr(settings, "locale", None)
+        _cached_locale = resolve_locale(str(locale_raw) if locale_raw is not None else None)
+    return tr(key, locale=_cached_locale, **kwargs)  # type: ignore[arg-type]
 
 
 def _profile_menu_entry(profile_name: str, *, base_dir: Path) -> tuple[str, bool]:
@@ -137,6 +151,9 @@ if rumps is not None:  # pragma: no branch - class only exists when dependency i
             self.open_wiki_item = rumps.MenuItem(  # type: ignore[union-attr]
                 _t("menubar.action.open_wiki"), callback=self._open_wiki
             )
+            self.open_webui_item = rumps.MenuItem(  # type: ignore[union-attr]
+                _t("menubar.action.open_webui"), callback=self._open_webui
+            )
             self.about_item = rumps.MenuItem(_t("menubar.action.about"), callback=self._show_about)  # type: ignore[union-attr]
             self.menu = [
                 self.status_item,
@@ -155,6 +172,7 @@ if rumps is not None:  # pragma: no branch - class only exists when dependency i
                 self.install_app_item,
                 None,
                 self.open_settings_item,
+                self.open_webui_item,
                 self.open_readme_item,
                 self.open_wiki_item,
                 rumps.MenuItem(_t("menubar.action.open_logs"), callback=self._open_logs),  # type: ignore[union-attr]
@@ -459,6 +477,18 @@ if rumps is not None:  # pragma: no branch - class only exists when dependency i
             except Exception as exc:
                 message, detail = format_exception_message(exc)
                 self._handle_failure(_t("menubar.title"), "open_readme", message, detail=detail)
+
+        def _open_webui(self, _sender: Any) -> None:
+            try:
+                settings = load_runtime_settings(self.base_dir)
+                port = getattr(settings, "webui_port", 8323)
+                host = getattr(settings, "webui_host", "127.0.0.1")
+                url = f"http://{host}:{port}"
+                open_url(url)
+                self._record_result("open_webui", url)
+            except Exception as exc:
+                message, detail = format_exception_message(exc)
+                self._handle_failure(_t("menubar.title"), "open_webui", message, detail=detail)
 
         def _open_wiki(self, _sender: Any) -> None:
             try:

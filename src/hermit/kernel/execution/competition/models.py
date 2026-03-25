@@ -33,6 +33,8 @@ def validate_transition(
     allowed = transitions.get(current)
     if allowed is None:
         raise ValueError(f"Unknown {label} state: {current!r}")
+    if target not in transitions:
+        raise ValueError(f"Unknown {label} state: {target!r}")
     if target not in allowed:
         raise ValueError(
             f"Invalid {label} transition: {current!r} -> {target!r} "
@@ -51,8 +53,8 @@ class CompetitionRecord:
     strategy: str
     candidate_count: int
     min_candidates: int
-    evaluation_criteria: dict[str, Any] = field(default_factory=dict[str, Any])
-    scoring_weights: dict[str, float] = field(default_factory=dict[str, float])
+    evaluation_criteria: dict[str, Any] = field(default_factory=dict)
+    scoring_weights: dict[str, float] = field(default_factory=dict)
     status: str = "draft"
     timeout_policy: str = "evaluate_completed"
     winner_task_id: str | None = None
@@ -73,7 +75,7 @@ class CompetitionCandidateRecord:
     workspace_ref: str | None = None
     status: str = "pending"
     score: float | None = None
-    score_breakdown: dict[str, float] = field(default_factory=dict[str, float])
+    score_breakdown: dict[str, float] = field(default_factory=dict)
     evaluation_receipt_ref: str | None = None
     promoted: bool = False
     discard_reason: str | None = None
@@ -86,5 +88,5 @@ class CandidateScore:
     candidate_id: str
     task_id: str
     total: float
-    breakdown: dict[str, float] = field(default_factory=dict[str, float])
+    breakdown: dict[str, float] = field(default_factory=dict)
     passed: bool = False

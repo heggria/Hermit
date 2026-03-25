@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 
@@ -16,10 +17,19 @@ class TaskRecord:
     policy_profile: str
     source_channel: str
     parent_task_id: str | None = None
+    program_id: str | None = None
+    team_id: str | None = None
     task_contract_ref: str | None = None
     created_at: float = 0.0
     updated_at: float = 0.0
     requested_by_principal_id: str | None = None
+    # Artifact refs produced by child tasks spawned under this task.
+    # Populated as children reach terminal status and report their output_ref.
+    child_result_refs: list[str] = field(default_factory=list)
+    budget_tokens_used: int = 0
+    budget_tokens_limit: int | None = None
+    acceptance_criteria: list[str] = field(default_factory=list)
+    complexity_band: str = "moderate"
 
     @property
     def owner(self) -> str:
@@ -37,12 +47,18 @@ class StepRecord:
     kind: str
     status: str
     attempt: int
+    node_key: str | None = None
     input_ref: str | None = None
     output_ref: str | None = None
     title: str | None = None
     contract_ref: str | None = None
-    depends_on: list[str] = field(default_factory=list[str])
+    depends_on: list[str] = field(default_factory=list)
+    join_strategy: str = "all_required"
+    input_bindings: dict[str, str] = field(default_factory=dict)
     max_attempts: int = 1
+    verification_required: bool = False
+    verifies: list[str] = field(default_factory=list)
+    supersedes: list[str] = field(default_factory=list)
     started_at: float | None = None
     finished_at: float | None = None
     created_at: float | None = None
@@ -56,9 +72,9 @@ class StepAttemptRecord:
     step_id: str
     attempt: int
     status: str
-    context: dict[str, Any] = field(default_factory=dict[str, Any])
+    context: dict[str, Any] = field(default_factory=dict)
     queue_priority: int = 0
-    waiting_reason: str | None = None
+    status_reason: str | None = None
     approval_id: str | None = None
     decision_id: str | None = None
     capability_grant_id: str | None = None
@@ -84,7 +100,10 @@ class StepAttemptRecord:
     selected_contract_template_ref: str | None = None
     resume_from_ref: str | None = None
     superseded_by_step_attempt_id: str | None = None
+    waiting_reason: str | None = None
     started_at: float | None = None
+    claimed_at: float | None = None
+    last_heartbeat_at: float | None = None
     finished_at: float | None = None
 
     @property
@@ -113,14 +132,14 @@ class ApprovalRecord:
     authorization_plan_ref: str | None = None
     evidence_case_ref: str | None = None
     drift_expiry: float | None = None
-    fallback_contract_refs: list[str] = field(default_factory=list[str])
+    fallback_contract_refs: list[str] = field(default_factory=list)
     decision_ref: str | None = None
     state_witness_ref: str | None = None
     requested_at: float | None = None
     expires_at: float | None = None
     resolved_at: float | None = None
     resolved_by_principal_id: str | None = None
-    resolution: dict[str, Any] = field(default_factory=dict[str, Any])
+    resolution: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.approval_packet_ref is None:
@@ -144,7 +163,7 @@ class DecisionRecord:
     reason: str
     summary: str | None = None
     rationale: str | None = None
-    evidence_refs: list[str] = field(default_factory=list[str])
+    evidence_refs: list[str] = field(default_factory=list)
     policy_ref: str | None = None
     approval_ref: str | None = None
     contract_ref: str | None = None
@@ -183,7 +202,7 @@ class ArtifactRecord:
     byte_size: int | None = None
     sensitivity_class: str | None = None
     lineage_ref: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float | None = None
 
 
@@ -221,7 +240,7 @@ class ReceiptRecord:
     rollback_strategy: str | None = None
     rollback_status: str = "not_requested"
     rollback_ref: str | None = None
-    rollback_artifact_refs: list[str] = field(default_factory=list[str])
+    rollback_artifact_refs: list[str] = field(default_factory=list)
     observed_effect_summary: str | None = None
     reconciliation_required: bool = False
     created_at: float | None = None
@@ -248,15 +267,15 @@ class BeliefRecord:
     scope_ref: str
     category: str
     claim_text: str
-    structured_assertion: dict[str, Any] = field(default_factory=dict[str, Any])
+    structured_assertion: dict[str, Any] = field(default_factory=dict)
     promotion_candidate: bool = True
     status: str = "active"
     confidence: float = 0.5
     trust_tier: str = "observed"
-    evidence_refs: list[str] = field(default_factory=list[str])
+    evidence_refs: list[str] = field(default_factory=list)
     evidence_case_ref: str | None = None
-    supersedes: list[str] = field(default_factory=list[str])
-    contradicts: list[str] = field(default_factory=list[str])
+    supersedes: list[str] = field(default_factory=list)
+    contradicts: list[str] = field(default_factory=list)
     epistemic_origin: str = "observed"
     freshness_class: str | None = None
     last_validated_at: float | None = None
@@ -279,22 +298,23 @@ class MemoryRecord:
     conversation_id: str | None
     category: str
     claim_text: str
-    structured_assertion: dict[str, Any] = field(default_factory=dict[str, Any])
+    structured_assertion: dict[str, Any] = field(default_factory=dict)
     scope_kind: str = "conversation"
     scope_ref: str = ""
     promotion_reason: str = "belief_promotion"
     retention_class: str = "volatile_fact"
     status: str = "active"
     confidence: float = 0.5
+    importance: int = 5  # 1-10, from LLM extraction
     trust_tier: str = "durable"
-    evidence_refs: list[str] = field(default_factory=list[str])
+    evidence_refs: list[str] = field(default_factory=list)
     memory_kind: str = "durable_fact"
     validation_basis: str | None = None
     last_validated_at: float | None = None
     supersession_reason: str | None = None
     learned_from_reconciliation_ref: str | None = None
-    supersedes: list[str] = field(default_factory=list[str])
-    supersedes_memory_ids: list[str] = field(default_factory=list[str])
+    supersedes: list[str] = field(default_factory=list)
+    supersedes_memory_ids: list[str] = field(default_factory=list)
     superseded_by_memory_id: str | None = None
     source_belief_ref: str | None = None
     invalidation_reason: str | None = None
@@ -321,7 +341,7 @@ class RollbackRecord:
     strategy: str
     status: str = "not_requested"
     result_summary: str | None = None
-    artifact_refs: list[str] = field(default_factory=list[str])
+    artifact_refs: list[str] = field(default_factory=list)
     created_at: float | None = None
     executed_at: float | None = None
 
@@ -333,26 +353,28 @@ class ExecutionContractRecord:
     step_id: str
     step_attempt_id: str
     objective: str
-    proposed_action_refs: list[str] = field(default_factory=list[str])
-    expected_effects: list[str] = field(default_factory=list[str])
-    success_criteria: dict[str, Any] = field(default_factory=dict[str, Any])
+    proposed_action_refs: list[str] = field(default_factory=list)
+    expected_effects: list[str] = field(default_factory=list)
+    success_criteria: dict[str, Any] = field(default_factory=dict)
     evidence_case_ref: str | None = None
     authorization_plan_ref: str | None = None
     reversibility_class: str = "reversible"
-    required_receipt_classes: list[str] = field(default_factory=list[str])
-    drift_budget: dict[str, Any] = field(default_factory=dict[str, Any])
+    required_receipt_classes: list[str] = field(default_factory=list)
+    drift_budget: dict[str, Any] = field(default_factory=dict)
     expiry_at: float | None = None
     status: str = "draft"
-    fallback_contract_refs: list[str] = field(default_factory=list[str])
+    fallback_contract_refs: list[str] = field(default_factory=list)
     operator_summary: str | None = None
-    risk_budget: dict[str, Any] = field(default_factory=dict[str, Any])
-    expected_artifact_shape: dict[str, Any] = field(default_factory=dict[str, Any])
+    risk_budget: dict[str, Any] = field(default_factory=dict)
+    expected_artifact_shape: dict[str, Any] = field(default_factory=dict)
     contract_version: int = 1
-    action_contract_refs: list[str] = field(default_factory=list[str])
+    action_contract_refs: list[str] = field(default_factory=list)
     state_witness_ref: str | None = None
     rollback_expectation: str | None = None
     selected_template_ref: str | None = None
     superseded_by_contract_id: str | None = None
+    task_family: str | None = None
+    verification_requirements: dict[str, Any] | None = None
     created_at: float | None = None
     updated_at: float | None = None
 
@@ -363,17 +385,17 @@ class EvidenceCaseRecord:
     task_id: str
     subject_kind: str
     subject_ref: str
-    support_refs: list[str] = field(default_factory=list[str])
-    contradiction_refs: list[str] = field(default_factory=list[str])
-    freshness_window: dict[str, Any] = field(default_factory=dict[str, Any])
+    support_refs: list[str] = field(default_factory=list)
+    contradiction_refs: list[str] = field(default_factory=list)
+    freshness_window: dict[str, Any] = field(default_factory=dict)
     sufficiency_score: float = 0.0
     drift_sensitivity: str = "medium"
-    unresolved_gaps: list[str] = field(default_factory=list[str])
+    unresolved_gaps: list[str] = field(default_factory=list)
     status: str = "insufficient"
-    witness_refs: list[str] = field(default_factory=list[str])
-    invalidates_refs: list[str] = field(default_factory=list[str])
+    witness_refs: list[str] = field(default_factory=list)
+    invalidates_refs: list[str] = field(default_factory=list)
     last_checked_at: float | None = None
-    confidence_interval: dict[str, Any] = field(default_factory=dict[str, Any])
+    confidence_interval: dict[str, Any] = field(default_factory=dict)
     freshness_basis: str | None = None
     operator_summary: str | None = None
     created_at: float | None = None
@@ -388,21 +410,21 @@ class AuthorizationPlanRecord:
     step_attempt_id: str
     contract_ref: str
     policy_profile_ref: str
-    requested_action_classes: list[str] = field(default_factory=list[str])
-    required_decision_refs: list[str] = field(default_factory=list[str])
+    requested_action_classes: list[str] = field(default_factory=list)
+    required_decision_refs: list[str] = field(default_factory=list)
     approval_route: str = "none"
-    witness_requirements: list[str] = field(default_factory=list[str])
-    proposed_grant_shape: dict[str, Any] = field(default_factory=dict[str, Any])
-    downgrade_options: list[str] = field(default_factory=list[str])
-    current_gaps: list[str] = field(default_factory=list[str])
+    witness_requirements: list[str] = field(default_factory=list)
+    proposed_grant_shape: dict[str, Any] = field(default_factory=dict)
+    downgrade_options: list[str] = field(default_factory=list)
+    current_gaps: list[str] = field(default_factory=list)
     status: str = "draft"
     estimated_authority_cost: float | None = None
-    expiry_constraints: dict[str, Any] = field(default_factory=dict[str, Any])
-    revalidation_rules: dict[str, Any] = field(default_factory=dict[str, Any])
+    expiry_constraints: dict[str, Any] = field(default_factory=dict)
+    revalidation_rules: dict[str, Any] = field(default_factory=dict)
     operator_packet_ref: str | None = None
     required_workspace_mode: str | None = None
     required_secret_policy: str | None = None
-    proposed_lease_shape: dict[str, Any] = field(default_factory=dict[str, Any])
+    proposed_lease_shape: dict[str, Any] = field(default_factory=dict)
     created_at: float | None = None
     updated_at: float | None = None
 
@@ -414,8 +436,8 @@ class ReconciliationRecord:
     step_id: str
     step_attempt_id: str
     contract_ref: str
-    receipt_refs: list[str] = field(default_factory=list[str])
-    observed_output_refs: list[str] = field(default_factory=list[str])
+    receipt_refs: list[str] = field(default_factory=list)
+    observed_output_refs: list[str] = field(default_factory=list)
     intended_effect_summary: str = ""
     authorized_effect_summary: str = ""
     observed_effect_summary: str = ""
@@ -424,10 +446,10 @@ class ReconciliationRecord:
     confidence_delta: float = 0.0
     recommended_resolution: str = ""
     rollback_recommendation_ref: str | None = None
-    invalidated_belief_refs: list[str] = field(default_factory=list[str])
-    superseded_memory_refs: list[str] = field(default_factory=list[str])
+    invalidated_belief_refs: list[str] = field(default_factory=list)
+    superseded_memory_refs: list[str] = field(default_factory=list)
     promoted_template_ref: str | None = None
-    promoted_memory_refs: list[str] = field(default_factory=list[str])
+    promoted_memory_refs: list[str] = field(default_factory=list)
     operator_summary: str | None = None
     final_state_witness_ref: str | None = None
     created_at: float | None = None
@@ -443,13 +465,31 @@ class ConversationRecord:
     focus_reason: str | None = None
     focus_updated_at: float | None = None
     status: str = "open"
-    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    metadata: dict[str, Any] = field(default_factory=dict)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_cache_read_tokens: int = 0
     total_cache_creation_tokens: int = 0
     created_at: float = 0.0
     updated_at: float = 0.0
+
+
+@dataclass
+class ObservationTicketRecord:
+    ticket_id: str
+    task_id: str
+    step_id: str
+    step_attempt_id: str
+    observer_kind: str
+    status: str
+    poll_after_seconds: float
+    hard_deadline_at: float | None = None
+    ready_patterns: list[Any] = field(default_factory=list)
+    failure_patterns: list[Any] = field(default_factory=list)
+    ticket_data: dict[str, Any] = field(default_factory=dict)
+    created_at: float = 0.0
+    last_polled_at: float | None = None
+    resolved_at: float | None = None
 
 
 @dataclass
@@ -464,13 +504,44 @@ class IngressRecord:
     reply_to_ref: str | None = None
     quoted_message_ref: str | None = None
     explicit_task_ref: str | None = None
-    referenced_artifact_refs: list[str] = field(default_factory=list[str])
+    referenced_artifact_refs: list[str] = field(default_factory=list)
     status: str = "received"
     resolution: str = "none"
     chosen_task_id: str | None = None
     parent_task_id: str | None = None
     confidence: float | None = None
     margin: float | None = None
-    rationale: dict[str, Any] = field(default_factory=dict[str, Any])
+    rationale: dict[str, Any] = field(default_factory=dict)
     created_at: float = 0.0
     updated_at: float = 0.0
+
+
+class BlackboardEntryType(StrEnum):
+    claim = "claim"
+    evidence = "evidence"
+    patch = "patch"
+    risk = "risk"
+    conflict = "conflict"
+    todo = "todo"
+    decision = "decision"
+
+
+class BlackboardEntryStatus(StrEnum):
+    active = "active"
+    superseded = "superseded"
+    resolved = "resolved"
+
+
+@dataclass
+class BlackboardRecord:
+    entry_id: str
+    task_id: str
+    step_id: str
+    step_attempt_id: str | None
+    entry_type: str
+    content: dict[str, Any] = field(default_factory=dict)
+    confidence: float = 0.5
+    supersedes_entry_id: str | None = None
+    status: str = "active"
+    resolution: str | None = None
+    created_at: float | None = None

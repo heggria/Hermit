@@ -9,7 +9,11 @@ from typing import Any, cast
 
 from hermit.infra.system.i18n import resolve_locale, tr, tr_list_all_locales
 from hermit.kernel.context.models.context import TaskExecutionContext
+from hermit.kernel.execution.coordination.data_flow import StepDataFlowService
 from hermit.kernel.ledger.journal.store import KernelStore
+from hermit.kernel.task.constants import _FEISHU_META_RE as _FEISHU_TAG_RE
+from hermit.kernel.task.constants import _SESSION_TIME_RE
+from hermit.kernel.task.models.records import TaskRecord
 from hermit.kernel.task.services.ingress_router import BindingDecision, IngressRouter
 from hermit.kernel.task.services.planning import PlanningService
 from hermit.kernel.task.state.continuation import (
@@ -25,12 +29,11 @@ from hermit.kernel.task.state.outcomes import (
     build_task_outcome,
     clean_runtime_text,
 )
+from hermit.kernel.task.state.transitions import validate_task_transition
 
 _AUTO_PARENT = object()
 AUTO_PARENT = _AUTO_PARENT  # Public alias for use outside this module
 _LOW_SIGNAL_RE = re.compile(r"^[\s\?\uff1f!！,，。\.~～…]+$")
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_TAG_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
 _ARTIFACT_REF_RE = re.compile(r"\bartifact_[a-z0-9]{6,}\b", re.IGNORECASE)
 
 
@@ -59,9 +62,14 @@ class IngressDecision:
 
 
 class TaskController:
-    def __init__(self, store: KernelStore) -> None:
+    def __init__(
+        self,
+        store: KernelStore,
+        workspace_lease_service: Any | None = None,
+    ) -> None:
         self.store = store
         self.ingress_router = IngressRouter(store)
+        self._workspace_lease_service = workspace_lease_service
 
     def _t(self, message_key: str, *, default: str | None = None, **kwargs: object) -> str:
         return tr(message_key, locale=resolve_locale(), default=default, **kwargs)
@@ -104,10 +112,10 @@ class TaskController:
             source_channel=source_channel or self.source_from_session(conversation_id),
         )
 
-    def latest_task(self, conversation_id: str) -> object | None:
+    def latest_task(self, conversation_id: str) -> TaskRecord | None:
         return self.store.get_last_task_for_conversation(conversation_id)
 
-    def active_task_for_conversation(self, conversation_id: str):
+    def active_task_for_conversation(self, conversation_id: str) -> TaskRecord | None:
         focus_task_id = self.store.ensure_valid_focus(conversation_id)
         task = self.store.get_task(focus_task_id) if focus_task_id else None
         if task is None:
@@ -118,7 +126,7 @@ class TaskController:
             attempt = next(iter(self.store.list_step_attempts(task_id=task.task_id, limit=1)), None)
             if (
                 attempt is not None
-                and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation"
+                and str(attempt.status_reason or "") == "awaiting_plan_confirmation"
             ):
                 return None
         if task.status in {"queued", "running", "blocked"}:
@@ -137,6 +145,7 @@ class TaskController:
         parent_task_id: str | None | object = _AUTO_PARENT,
         requested_by: str | None = None,
         ingress_metadata: dict[str, Any] | None = None,
+        acceptance_criteria: list[str] | None = None,
     ) -> TaskExecutionContext:
         self.ensure_conversation(conversation_id, source_channel=source_channel)
         parent = self.store.get_last_task_for_conversation(conversation_id)
@@ -157,6 +166,7 @@ class TaskController:
             policy_profile=policy_profile,
             requested_by=requested_by,
             continuation_anchor=dict(metadata.get("continuation_anchor", {}) or {}) or None,
+            acceptance_criteria=acceptance_criteria,
         )
         step = self.store.create_step(task_id=task.task_id, kind=kind, status="running")
         attempt_context = {
@@ -192,10 +202,83 @@ class TaskController:
             step_id=step.step_id,
             step_attempt_id=attempt.step_attempt_id,
             source_channel=source_channel,
+            actor_principal_id=(task.requested_by_principal_id or requested_by or "principal_user"),
             policy_profile=policy_profile,
             workspace_root=workspace_root,
             ingress_metadata=metadata,
         )
+
+    def start_dag_task(
+        self,
+        *,
+        conversation_id: str,
+        goal: str,
+        source_channel: str,
+        nodes: list[Any],
+        policy_profile: str = "default",
+        workspace_root: str = "",
+        requested_by: str | None = None,
+        ingress_metadata: dict[str, Any] | None = None,
+        acceptance_criteria: list[str] | None = None,
+        team_id: str | None = None,
+    ) -> tuple[TaskExecutionContext, Any, dict[str, str], list[TaskExecutionContext]]:
+        """Create a task with a DAG of steps.
+
+        Returns (ctx_for_first_root, DAGDefinition, key→step_id mapping, all_root_contexts).
+
+        Fix 6: all_root_contexts contains one TaskExecutionContext per root node,
+        enabling callers to dispatch multiple roots in parallel for multi-root DAGs.
+        """
+        from hermit.kernel.task.services.dag_builder import StepDAGBuilder
+
+        self.ensure_conversation(conversation_id, source_channel=source_channel)
+        metadata = dict(ingress_metadata or {})
+        task = self.store.create_task(
+            conversation_id=conversation_id,
+            title=(goal.strip() or "DAG task")[:120],
+            goal=goal,
+            source_channel=source_channel,
+            policy_profile=policy_profile,
+            requested_by=requested_by,
+            acceptance_criteria=acceptance_criteria,
+            team_id=team_id,
+        )
+        builder = StepDAGBuilder(self.store)
+        dag, key_to_step_id = builder.build_and_materialize(
+            task.task_id,
+            nodes,
+            ingress_metadata=metadata,
+            workspace_root=workspace_root,
+        )
+        self.store.update_task_status(task.task_id, "queued")
+
+        # Fix 6: build contexts for ALL roots, not just the first one.
+        all_root_contexts: list[TaskExecutionContext] = []
+        for root_key in dag.roots:
+            root_step_id = key_to_step_id[root_key]
+            root_attempts = self.store.list_step_attempts(step_id=root_step_id, limit=1)
+            root_attempt = root_attempts[0] if root_attempts else None
+            all_root_contexts.append(
+                TaskExecutionContext(
+                    conversation_id=conversation_id,
+                    task_id=task.task_id,
+                    step_id=root_step_id,
+                    step_attempt_id=root_attempt.step_attempt_id if root_attempt else "",
+                    source_channel=source_channel,
+                    actor_principal_id=(
+                        task.requested_by_principal_id or requested_by or "principal_user"
+                    ),
+                    policy_profile=policy_profile,
+                    workspace_root=workspace_root,
+                    ingress_metadata=metadata,
+                )
+            )
+
+        ctx = all_root_contexts[0]
+        self._set_focus(
+            conversation_id=conversation_id, task_id=task.task_id, reason="dag_task_started"
+        )
+        return ctx, dag, key_to_step_id, all_root_contexts
 
     def enqueue_task(
         self,
@@ -210,6 +293,7 @@ class TaskController:
         requested_by: str | None = None,
         ingress_metadata: dict[str, Any] | None = None,
         source_ref: str | None = None,
+        team_id: str | None = None,
     ) -> TaskExecutionContext:
         self.store.ensure_conversation(
             conversation_id,
@@ -235,6 +319,7 @@ class TaskController:
             policy_profile=policy_profile,
             requested_by=requested_by,
             continuation_anchor=dict(metadata.get("continuation_anchor", {}) or {}) or None,
+            team_id=team_id,
         )
         step = self.store.create_step(task_id=task.task_id, kind=kind, status="ready")
         attempt_context = {
@@ -270,6 +355,7 @@ class TaskController:
             step_id=step.step_id,
             step_attempt_id=attempt.step_attempt_id,
             source_channel=source_channel,
+            actor_principal_id=(task.requested_by_principal_id or requested_by or "principal_user"),
             policy_profile=policy_profile,
             workspace_root=workspace_root,
             ingress_metadata=metadata,
@@ -326,6 +412,9 @@ class TaskController:
             step_id=step.step_id,
             step_attempt_id=attempt.step_attempt_id,
             source_channel=task.source_channel,
+            actor_principal_id=(
+                task.requested_by_principal_id or task.owner_principal_id or "principal_user"
+            ),
             policy_profile=task.policy_profile,
             workspace_root=workspace_root,
             ingress_metadata=dict(ingress_metadata or {}),
@@ -356,6 +445,9 @@ class TaskController:
             step_id=attempt.step_id,
             step_attempt_id=step_attempt_id,
             source_channel=task.source_channel,
+            actor_principal_id=(
+                task.requested_by_principal_id or task.owner_principal_id or "principal_user"
+            ),
             policy_profile=task.policy_profile,
             workspace_root=str(attempt.context.get("workspace_root", "") or ""),
             ingress_metadata=dict(attempt.context.get("ingress_metadata", {}) or {}),
@@ -382,7 +474,7 @@ class TaskController:
             )
         context = dict(attempt.context or {})
         if bool(context.get("input_dirty")) and (
-            str(attempt.waiting_reason or "") == "awaiting_approval"
+            str(attempt.status_reason or "") == "awaiting_approval"
             or str(attempt.status or "") == "awaiting_approval"
             or str(context.get("phase", "") or "") == "awaiting_approval"
         ):
@@ -412,7 +504,7 @@ class TaskController:
                 step_attempt_id,
                 status="superseded",
                 context=superseded_context,
-                waiting_reason="input_changed_reenter_policy",
+                status_reason="input_changed_reenter_policy",
                 superseded_by_step_attempt_id=successor.step_attempt_id,
                 finished_at=time.time(),
             )
@@ -437,6 +529,9 @@ class TaskController:
                 step_id=attempt.step_id,
                 step_attempt_id=successor.step_attempt_id,
                 source_channel=task.source_channel,
+                actor_principal_id=(
+                    task.requested_by_principal_id or task.owner_principal_id or "principal_user"
+                ),
                 policy_profile=task.policy_profile,
                 workspace_root=str(successor_context.get("workspace_root", "") or ""),
                 ingress_metadata=dict(successor_context.get("ingress_metadata", {}) or {}),
@@ -450,7 +545,7 @@ class TaskController:
             step_attempt_id,
             status="ready",
             context=context,
-            waiting_reason=None,
+            status_reason=None,
             finished_at=None,
         )
         self.store.update_task_status(task.task_id, "queued")
@@ -460,6 +555,9 @@ class TaskController:
             step_id=attempt.step_id,
             step_attempt_id=step_attempt_id,
             source_channel=task.source_channel,
+            actor_principal_id=(
+                task.requested_by_principal_id or task.owner_principal_id or "principal_user"
+            ),
             policy_profile=task.policy_profile,
             workspace_root=str(context.get("workspace_root", "") or ""),
             ingress_metadata=dict(context.get("ingress_metadata", {}) or {}),
@@ -708,7 +806,7 @@ class TaskController:
             )
             if (
                 attempt is not None
-                and str(attempt.waiting_reason or "") == "awaiting_plan_confirmation"
+                and str(attempt.status_reason or "") == "awaiting_plan_confirmation"
             ):
                 self.store.update_ingress(
                     ingress.ingress_id,
@@ -909,9 +1007,34 @@ class TaskController:
         result_preview: str | None = None,
         result_text: str | None = None,
     ) -> None:
+        # Atomic CAS guard: prevent double-finalization from concurrent workers.
+        # try_finalize_step_attempt() does a conditional UPDATE that only succeeds
+        # if the attempt is not already in a terminal state, eliminating the
+        # TOCTOU window that caused duplicate DAG activations.
         now = time.time()
+        if not self.store.try_finalize_step_attempt(
+            ctx.step_attempt_id, status=status, finished_at=now
+        ):
+            # Step already finalized (e.g. by reconciliation executor), but we
+            # may still have a result_text from the LLM's post-tool-call
+            # response.  Append it to the task event so the WebUI can display
+            # the answer.
+            if result_text:
+                task = self.store.get_task(ctx.task_id)
+                if task is not None and task.status in ("completed", "succeeded"):
+                    self.store.append_event(
+                        event_type="task.result_text_attached",
+                        entity_type="task",
+                        entity_id=ctx.task_id,
+                        task_id=ctx.task_id,
+                        actor="kernel",
+                        payload={
+                            "result_text": result_text,
+                            "result_preview": result_preview or result_text[:200],
+                        },
+                    )
+            return
         self.store.update_step(ctx.step_id, status=status, output_ref=output_ref, finished_at=now)
-        self.store.update_step_attempt(ctx.step_attempt_id, status=status, finished_at=now)
         payload: dict[str, Any] | None = None
         if result_preview or result_text:
             payload = {}
@@ -920,11 +1043,70 @@ class TaskController:
             if result_text:
                 payload["result_text"] = result_text
         self._apply_acknowledged_steerings(ctx.task_id)
-        self.store.update_task_status(
-            ctx.task_id,
-            "completed" if status == "succeeded" else status,
-            payload=payload,
-        )
+
+        if status in ("succeeded", "completed", "skipped"):
+            activated_step_ids = self.store.activate_waiting_dependents(ctx.task_id, ctx.step_id)
+            # Fix 2: auto-inject input_bindings for newly activated steps.
+            # Fix 3: load key_to_step_id from DB via node_key so symbolic bindings
+            #        resolve even when the in-memory mapping is not available
+            #        (e.g. across process restarts or in a separate worker).
+            if activated_step_ids:
+                _data_flow = StepDataFlowService(self.store)
+                key_to_step_id = self.store.get_key_to_step_id(ctx.task_id)
+                for activated_step_id in activated_step_ids:
+                    activated_attempts = self.store.list_step_attempts(
+                        step_id=activated_step_id, status="ready", limit=1
+                    )
+                    if activated_attempts:
+                        resolved = _data_flow.resolve_inputs(
+                            ctx.task_id, activated_step_id, key_to_step_id=key_to_step_id
+                        )
+                        if resolved:
+                            _data_flow.inject_resolved_inputs(
+                                activated_attempts[0].step_attempt_id, resolved
+                            )
+        elif status in ("failed", "needs_attention"):
+            # Fix 1: max_attempts retry — use retry_step() for atomic attempt increment
+            #        instead of raw _get_conn() calls.
+            # needs_attention (dispatch denial, uncertain outcome) is treated as
+            # failure for DAG propagation so the task fails fast instead of
+            # hanging until the staleness guard intervenes.
+            step = self.store.get_step(ctx.step_id)
+            if step is not None and step.attempt < step.max_attempts:
+                self.store.retry_step(ctx.task_id, ctx.step_id)
+            else:
+                self.store.propagate_step_failure(ctx.task_id, ctx.step_id)
+
+        if self.store.has_non_terminal_steps(ctx.task_id):
+            task_status = "running"
+        else:
+            task_status = "completed" if status in ("succeeded", "completed", "skipped") else status
+        # Release workspace leases when task reaches terminal state
+        if task_status in TERMINAL_TASK_STATUSES and self._workspace_lease_service is not None:
+            try:
+                released = self._workspace_lease_service.release_all_for_task(ctx.task_id)
+                if released:
+                    self.store.append_event(
+                        event_type="workspace.task_terminal_cleanup",
+                        entity_type="task",
+                        entity_id=ctx.task_id,
+                        task_id=ctx.task_id,
+                        actor="kernel",
+                        payload={
+                            "released_lease_ids": released,
+                            "task_status": task_status,
+                        },
+                    )
+            except Exception:
+                import structlog
+
+                structlog.get_logger().warning(
+                    "finalize_result_lease_release_failed",
+                    task_id=ctx.task_id,
+                    exc_info=True,
+                )
+
+        self.store.update_task_status(ctx.task_id, task_status, payload=payload)
         self._refresh_focus_after_task_status(ctx.conversation_id, ctx.task_id)
 
     def mark_planning_ready(
@@ -945,7 +1127,7 @@ class TaskController:
         self.store.update_step_attempt(
             ctx.step_attempt_id,
             status="awaiting_plan_confirmation",
-            waiting_reason="awaiting_plan_confirmation",
+            status_reason="awaiting_plan_confirmation",
             finished_at=now,
         )
         payload: dict[str, Any] = {
@@ -966,6 +1148,17 @@ class TaskController:
         self.mark_suspended(ctx, waiting_kind="awaiting_approval")
 
     def mark_suspended(self, ctx: TaskExecutionContext, *, waiting_kind: str) -> None:
+        task = self.store.get_task(ctx.task_id)
+        if task is not None and not validate_task_transition(task.status, "blocked"):
+            import structlog
+
+            structlog.get_logger().warning(
+                "invalid_task_transition",
+                task_id=ctx.task_id,
+                current=task.status,
+                target="blocked",
+                caller="mark_suspended",
+            )
         self.store.update_step(ctx.step_id, status="blocked")
         self.store.update_step_attempt(ctx.step_attempt_id, status=waiting_kind)
         self.store.update_task_status(ctx.task_id, "blocked")
@@ -984,10 +1177,29 @@ class TaskController:
                     task_id=task_id,
                 )
             )
+        if not validate_task_transition(task.status, "paused"):
+            import structlog
+
+            structlog.get_logger().warning(
+                "invalid_task_transition",
+                task_id=task_id,
+                current=task.status,
+                target="paused",
+                caller="pause_task",
+            )
         self.store.update_task_status(task_id, "paused")
         self._refresh_focus_after_task_status(task.conversation_id, task_id)
 
-    def cancel_task(self, task_id: str) -> None:
+    def cancel_task(self, task_id: str, *, _cascaded_from: str | None = None) -> list[str]:
+        """Cancel a task and recursively cascade cancellation to all descendants.
+
+        When *_cascaded_from* is set this is an internal recursive call triggered
+        by a parent cancellation — a ``task.cascade_cancelled`` audit event is
+        emitted instead of a plain cancellation.
+
+        Returns the list of task IDs that were cascade-cancelled (excludes the
+        root task itself and any children already in a terminal state).
+        """
         task = self.store.get_task(task_id)
         if task is None:
             raise KeyError(
@@ -997,8 +1209,88 @@ class TaskController:
                     task_id=task_id,
                 )
             )
+        if not validate_task_transition(task.status, "cancelled"):
+            import structlog
+
+            structlog.get_logger().warning(
+                "invalid_task_transition",
+                task_id=task_id,
+                current=task.status,
+                target="cancelled",
+                caller="cancel_task",
+            )
+
+        # ── Depth-first cascade: cancel all non-terminal descendants first ──
+        cascade_cancelled: list[str] = []
+        children = self.store.list_child_tasks(parent_task_id=task_id)
+        for child in children:
+            if child.status in TERMINAL_TASK_STATUSES:
+                continue
+            # Recurse into grandchildren before cancelling the child itself.
+            grandchild_ids = self.cancel_task(child.task_id, _cascaded_from=task_id)
+            cascade_cancelled.extend(grandchild_ids)
+            cascade_cancelled.append(child.task_id)
+
+        # ── Release workspace leases for *this* task ──
+        if self._workspace_lease_service is not None:
+            try:
+                released = self._workspace_lease_service.release_all_for_task(task_id)
+                if released:
+                    self.store.append_event(
+                        event_type="workspace.task_terminal_cleanup",
+                        entity_type="task",
+                        entity_id=task_id,
+                        task_id=task_id,
+                        actor="kernel",
+                        payload={
+                            "released_lease_ids": released,
+                            "task_status": "cancelled",
+                        },
+                    )
+            except Exception:
+                import structlog
+
+                structlog.get_logger().warning(
+                    "cancel_task_lease_release_failed",
+                    task_id=task_id,
+                    exc_info=True,
+                )
+
+        # ── Cancel the task itself ──
+        # C11: Resolve any active observation tickets for this task before
+        # marking it as cancelled so they do not remain orphaned.
+        try:
+            self.store.resolve_observations_for_task(task_id, status="cancelled")
+        except Exception:
+            import structlog
+
+            structlog.get_logger().warning(
+                "cancel_task_observation_cleanup_failed",
+                task_id=task_id,
+                exc_info=True,
+            )
+
+        # Note: update_task_status will call _cascade_cancel_children internally,
+        # but all children are already terminal so that will be a no-op.
         self.store.update_task_status(task_id, "cancelled")
+
+        # ── Emit cascade audit event when this cancellation was triggered by a parent ──
+        if _cascaded_from is not None:
+            self.store.append_event(
+                event_type="task.cascade_cancelled",
+                entity_type="task",
+                entity_id=task_id,
+                task_id=task_id,
+                actor="kernel",
+                payload={
+                    "cascaded_from": _cascaded_from,
+                    "task_status": "cancelled",
+                    "child_cascade_count": len(cascade_cancelled),
+                },
+            )
+
         self._refresh_focus_after_task_status(task.conversation_id, task_id)
+        return cascade_cancelled
 
     def focus_task(self, conversation_id: str, task_id: str) -> IngressDecision | None:
         task = self.store.get_task(task_id)
@@ -1051,7 +1343,7 @@ class TaskController:
             )
         context = dict(attempt.context or {})
         if bool(context.get("input_dirty")) and (
-            str(attempt.waiting_reason or "") == "awaiting_approval"
+            str(attempt.status_reason or "") == "awaiting_approval"
             or str(attempt.status or "") == "awaiting_approval"
             or str(context.get("phase", "") or "") == "awaiting_approval"
         ):
@@ -1070,7 +1362,7 @@ class TaskController:
             self.store.update_step_attempt(
                 step_attempt_id,
                 context=context,
-                waiting_reason="reentry_resumed",
+                status_reason="reentry_resumed",
             )
             self.store.append_event(
                 event_type="step_attempt.reentry_resumed",

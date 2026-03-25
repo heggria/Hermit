@@ -175,8 +175,9 @@ def test_run_subagent_supports_unavailable_success_and_error_paths(monkeypatch) 
         model="child-model",
     )
 
+    se = pm._subagent_executor
     assert (
-        pm._run_subagent(spec, "hello")
+        se.run_subagent(spec, "hello")
         == "[Subagent 'researcher' unavailable: agent runner not configured]"
     )
 
@@ -190,7 +191,8 @@ def test_run_subagent_supports_unavailable_success_and_error_paths(monkeypatch) 
     pm._registry = registry
     pm.configure_subagent_runtime(runtime)
 
-    result = pm._run_subagent(spec, "x" * 100)
+    se = pm._subagent_executor
+    result = se.run_subagent(spec, "x" * 100)
 
     assert result == "research complete"
     assert sub_agent.calls == [("x" * 100, True)]
@@ -202,10 +204,11 @@ def test_run_subagent_supports_unavailable_success_and_error_paths(monkeypatch) 
     error_pm = PluginManager()
     error_pm._registry = registry
     error_pm.configure_subagent_runtime(_FakeRuntime(_FakeSubAgent(error=RuntimeError("boom"))))
+    error_se = error_pm._subagent_executor
     stderr = StringIO()
     monkeypatch.setattr("sys.stderr", stderr)
 
-    assert error_pm._run_subagent(spec, "hello") == "[Subagent 'researcher' error: boom]"
+    assert error_se.run_subagent(spec, "hello") == "[Subagent 'researcher' error: boom]"
     assert "error: boom" in stderr.getvalue()
 
 

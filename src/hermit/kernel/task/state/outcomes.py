@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from hermit.kernel.task.constants import _FEISHU_META_RE, _SESSION_TIME_RE
 from hermit.kernel.task.services.topics import build_task_topic
 
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
-_SESSION_TIME_RE = re.compile(r"<session_time>.*?</session_time>\s*", re.DOTALL)
-_FEISHU_META_RE = re.compile(r"<feishu_[^>]+>.*?</feishu_[^>]+>\s*", re.DOTALL)
 
 
 def clean_runtime_text(value: Any) -> str:
@@ -21,6 +19,14 @@ def clean_runtime_text(value: Any) -> str:
 
 
 def trim_text(value: Any, *, limit: int) -> str:
+    """Return *value* cleaned and truncated to at most *limit* characters.
+
+    Raises ``ValueError`` if *limit* is negative, which would otherwise cause
+    ``cleaned[: limit - 1]`` to silently slice from the end of the string and
+    return a wrong result.
+    """
+    if limit < 0:
+        raise ValueError(f"trim_text: limit must be >= 0, got {limit!r}")
     cleaned = clean_runtime_text(value)
     if len(cleaned) <= limit:
         return cleaned

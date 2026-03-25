@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from hermit.surfaces.cli._serve import (
     _serve_loop,
     _ServeRunResult,
@@ -215,3 +217,91 @@ class TestServeLoopPrevRunnerCleanup:
 
         # prev_runner (runners[0]) should have been stopped during second cycle
         mock_stop_bg.assert_any_call(runners[0])
+
+
+# ------------------------------------------------------------------
+# _serve_loop — unknown adapter KeyError (lines 284-286)
+# ------------------------------------------------------------------
+
+
+class TestServeLoopUnknownAdapter:
+    def test_unknown_adapter_exits(self, tmp_path: Path) -> None:
+        import typer
+
+        fake_settings = SimpleNamespace(
+            base_dir=tmp_path,
+            log_level="WARNING",
+            plugins_dir=tmp_path / "plugins",
+        )
+        pid_file = tmp_path / "serve-test.pid"
+
+        mock_pm = MagicMock()
+        mock_pm.get_adapter.side_effect = KeyError("No adapter 'bad'")
+
+        with (
+            patch("hermit.surfaces.cli._serve.get_settings") as mock_gs,
+            patch("hermit.surfaces.cli._serve.configure_logging"),
+            patch("hermit.surfaces.cli._serve.iso_now", return_value="now"),
+            patch("hermit.surfaces.cli._serve.PluginManager", return_value=mock_pm),
+            pytest.raises(typer.Exit),
+        ):
+            mock_gs.return_value = fake_settings
+            mock_gs.cache_clear = MagicMock()
+            _serve_loop("bad", pid_file)
+
+
+# ------------------------------------------------------------------
+# _serve_loop — KeyboardInterrupt (lines 329-332)
+# ------------------------------------------------------------------
+
+
+class TestServeLoopKeyboardInterrupt:
+    def test_keyboard_interrupt_stops_adapter(self, tmp_path: Path) -> None:
+        fake_settings = SimpleNamespace(
+            base_dir=tmp_path,
+            log_level="WARNING",
+            plugins_dir=tmp_path / "plugins",
+        )
+        pid_file = tmp_path / "serve-test.pid"
+
+        mock_pm = MagicMock()
+        mock_adapter = MagicMock()
+        mock_pm.get_adapter.return_value = mock_adapter
+        mock_adapter.required_skills = []
+
+        mock_runner = MagicMock()
+
+        # First call to asyncio.run(_serve_with_signals) raises KeyboardInterrupt.
+        # Second call to asyncio.run(adapter_instance.stop()) should succeed.
+        call_count = 0
+
+        def asyncio_run_side_effect(coro):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise KeyboardInterrupt
+            return None  # stop() call
+
+        with (
+            patch("hermit.surfaces.cli._serve.get_settings") as mock_gs,
+            patch("hermit.surfaces.cli._serve.configure_logging"),
+            patch("hermit.surfaces.cli._serve.iso_now", return_value="now"),
+            patch("hermit.surfaces.cli._serve.PluginManager", return_value=mock_pm),
+            patch(_BUILD_RUNNER_PATCH, return_value=(mock_runner, None)),
+            patch(
+                "hermit.surfaces.cli._serve.asyncio.run",
+                side_effect=asyncio_run_side_effect,
+            ),
+            patch("hermit.surfaces.cli._serve.caffeinate") as mc,
+            patch("hermit.surfaces.cli._serve.write_serve_status"),
+            patch("hermit.surfaces.cli._serve.stop_runner_background_services"),
+        ):
+            mock_gs.return_value = fake_settings
+            mock_gs.cache_clear = MagicMock()
+            mc.return_value.__enter__ = MagicMock()
+            mc.return_value.__exit__ = MagicMock(return_value=False)
+
+            _serve_loop("test", pid_file)
+
+        # Should have called asyncio.run twice (serve_with_signals + adapter.stop)
+        assert call_count == 2

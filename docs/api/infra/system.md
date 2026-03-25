@@ -1,8 +1,6 @@
 # System
 
-Sandbox, internationalization, and executable management.
-
-::: hermit.infra.system.sandbox
+Internationalization and executable management.
 
 ::: hermit.infra.system.i18n
 

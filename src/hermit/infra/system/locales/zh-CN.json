@@ -27,6 +27,7 @@
   "menubar.action.open_config": "打开配置",
   "menubar.action.open_settings": "打开设置",
   "menubar.action.open_readme": "打开 README",
+  "menubar.action.open_webui": "打开 WebUI",
   "menubar.action.open_wiki": "打开 Wiki",
   "menubar.action.open_logs": "打开日志",
   "menubar.action.open_home": "打开 Hermit 目录",

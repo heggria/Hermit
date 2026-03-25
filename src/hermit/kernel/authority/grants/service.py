@@ -15,7 +15,7 @@ class CapabilityGrantError(RuntimeError):
 
 
 class CapabilityGrantService:
-    def __init__(self, store: KernelStore, *, default_ttl_seconds: int = 300) -> None:
+    def __init__(self, store: KernelStore, *, default_ttl_seconds: int = 1800) -> None:
         self.store = store
         self.default_ttl_seconds = default_ttl_seconds
 
@@ -73,6 +73,7 @@ class CapabilityGrantService:
         self,
         grant_id: str,
         *,
+        task_id: str,
         action_class: str,
         resource_scope: list[str],
         constraints: dict[str, Any] | None = None,
@@ -80,6 +81,11 @@ class CapabilityGrantService:
         grant = self.store.get_capability_grant(grant_id)
         if grant is None:
             raise CapabilityGrantError("missing", f"Capability grant not found: {grant_id}")
+        if grant.task_id != task_id:
+            raise CapabilityGrantError(
+                "task_mismatch",
+                f"Capability grant {grant_id} belongs to task {grant.task_id!r}, not {task_id!r}.",
+            )
         if grant.status != "issued":
             raise CapabilityGrantError(
                 "inactive",

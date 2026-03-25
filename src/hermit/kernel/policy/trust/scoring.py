@@ -39,8 +39,7 @@ class TrustScorer:
         If *task_id* is supplied the score is scoped to that task; otherwise it
         spans all tasks in the store.
         """
-        receipts = self._store.list_receipts(task_id=task_id, limit=limit)
-        relevant = [r for r in receipts if r.action_type == action_class]
+        relevant = self._store.list_receipts(task_id=task_id, action_type=action_class, limit=limit)
 
         if len(relevant) < _MIN_EXECUTIONS:
             return None
@@ -52,7 +51,14 @@ class TrustScorer:
         success_rate = successful / total
         rollback_rate = rolled_back / total
 
-        avg_recon_confidence = self._avg_reconciliation_confidence(task_id=task_id, limit=limit)
+        reconciliations = self._store.list_reconciliations(task_id=task_id, limit=limit)
+        if reconciliations:
+            total_confidence = sum(
+                max(0.0, min(1.0, 0.5 + r.confidence_delta)) for r in reconciliations
+            )
+            avg_recon_confidence = total_confidence / len(reconciliations)
+        else:
+            avg_recon_confidence = 0.5  # neutral default when no reconciliations exist
 
         composite = 0.5 * success_rate + 0.3 * (1 - rollback_rate) + 0.2 * avg_recon_confidence
 
@@ -62,7 +68,7 @@ class TrustScorer:
             total_executions=total,
             successful_executions=successful,
             rolled_back_executions=rolled_back,
-            reconciliation_count=self._reconciliation_count(task_id=task_id, limit=limit),
+            reconciliation_count=len(reconciliations),
             avg_reconciliation_confidence=avg_recon_confidence,
             composite_score=round(composite, 4),
             computed_at=time.time(),
@@ -112,6 +118,7 @@ class TrustScorer:
             entity_id=adjustment.subject_ref,
             task_id=task_id,
             step_id=step_id,
+            step_attempt_id=step_attempt_id,
             actor="trust_scorer",
             payload={
                 "subject_kind": adjustment.subject_kind,
@@ -120,6 +127,7 @@ class TrustScorer:
                 "suggested_risk_band": adjustment.suggested_risk_band,
                 "reason": adjustment.reason,
                 "trust_score_ref": adjustment.trust_score_ref,
+                "step_attempt_id": step_attempt_id,
                 "advisory_only": True,
             },
         )
@@ -127,21 +135,6 @@ class TrustScorer:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    def _avg_reconciliation_confidence(self, *, task_id: str | None, limit: int) -> float:
-        reconciliations = self._store.list_reconciliations(task_id=task_id, limit=limit)
-        if not reconciliations:
-            return 0.5  # neutral default when no reconciliations exist
-
-        # confidence_delta ranges from -0.3 to +0.2 in the codebase.
-        # Normalise to [0, 1] by treating delta as an offset from a 0.5 baseline.
-        total_confidence = sum(
-            max(0.0, min(1.0, 0.5 + r.confidence_delta)) for r in reconciliations
-        )
-        return total_confidence / len(reconciliations)
-
-    def _reconciliation_count(self, *, task_id: str | None, limit: int) -> int:
-        return len(self._store.list_reconciliations(task_id=task_id, limit=limit))
 
     @staticmethod
     def _band_for_score(composite: float) -> str:

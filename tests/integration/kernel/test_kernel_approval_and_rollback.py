@@ -288,7 +288,7 @@ def test_rollback_service_covers_apply_rollback_and_error_paths(
             self.rollback_updates.append({"receipt_id": receipt_id, "status": rollback_status})
 
         def get_artifact(self, artifact_id: str):
-            return SimpleNamespace(uri="artifact://1")
+            return SimpleNamespace(uri="artifact://1", content_hash="")
 
     service = object.__new__(RollbackService)
     service.store = FakeStore()

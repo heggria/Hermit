@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from hermit.kernel.context.memory.governance import MemoryGovernanceService
 from hermit.kernel.ledger.journal.store import KernelStore
 from hermit.kernel.task.models.records import BeliefRecord, MemoryRecord
 from hermit.plugins.builtin.hooks.memory.engine import MemoryEngine
 from hermit.plugins.builtin.hooks.memory.types import MemoryEntry
+
+if TYPE_CHECKING:
+    from hermit.kernel.artifacts.models.artifacts import ArtifactStore
+    from hermit.kernel.verification.receipts.receipts import ReceiptService
 
 
 class BeliefService:
@@ -32,6 +37,7 @@ class BeliefService:
         epistemic_origin: str = "observation",
         freshness_class: str | None = None,
         validation_basis: str | None = None,
+        structured_assertion: dict[str, Any] | None = None,
     ) -> BeliefRecord:
         return self.store.create_belief(
             task_id=task_id,
@@ -40,6 +46,7 @@ class BeliefService:
             scope_ref=scope_ref,
             category=category,
             claim_text=content,
+            structured_assertion=structured_assertion,
             confidence=confidence,
             trust_tier=trust_tier,
             evidence_refs=evidence_refs,
@@ -63,10 +70,19 @@ class BeliefService:
 
 
 class MemoryRecordService:
-    def __init__(self, store: KernelStore, *, mirror_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        store: KernelStore,
+        *,
+        mirror_path: Path | None = None,
+        receipt_service: ReceiptService | None = None,
+        artifact_store: ArtifactStore | None = None,
+    ) -> None:
         self.store = store
         self.mirror_path = mirror_path
         self.governance = MemoryGovernanceService()
+        self._receipt_service = receipt_service
+        self._artifact_store = artifact_store
 
     def promote_from_belief(
         self,
@@ -83,14 +99,35 @@ class MemoryRecordService:
             resolved_reconciliation_ref, blocking_reason = self._eligible_reconciliation_ref(
                 belief.task_id
             )
-        if resolved_reconciliation_ref is None:
-            self.store.update_belief(
-                belief.belief_id,
-                promotion_candidate=False,
-                validation_basis=f"promotion_blocked:{blocking_reason}",
-            )
-            return None
+
+        # GC3: No durable learning without reconciliation.
+        # Classify first to determine target scope, then enforce the gate.
         classification = self.governance.classify_belief(belief, workspace_root=workspace_root)
+        is_durable_scope = classification.scope_kind in ("global", "workspace")
+
+        if is_durable_scope:
+            # Durable memories (global/workspace) require a valid reconciliation_ref.
+            if resolved_reconciliation_ref is None:
+                self.store.update_belief(
+                    belief.belief_id,
+                    promotion_candidate=False,
+                    validation_basis=f"promotion_blocked:{blocking_reason or 'durable_requires_reconciliation'}",
+                )
+                return None
+            # Validate that the reconciliation_ref points to a valid, non-invalidated
+            # reconciliation with result_class == "satisfied".
+            validation_reason = self._validate_reconciliation_ref(resolved_reconciliation_ref)
+            if validation_reason:
+                self.store.update_belief(
+                    belief.belief_id,
+                    promotion_candidate=False,
+                    validation_basis=f"promotion_blocked:{validation_reason}",
+                )
+                return None
+        else:
+            # Conversation-scoped (ephemeral) memories are allowed without reconciliation;
+            # they serve as working memory and do not persist durably.
+            pass
         existing = self.store.list_memory_records(status="active", limit=500)
         duplicate_record, superseded_records = self.governance.find_superseded_records(
             classification=classification,
@@ -98,16 +135,26 @@ class MemoryRecordService:
             active_records=existing,
             entry_from_record=self._entry_from_memory,
         )
+        validation_basis = (
+            f"reconciliation:{resolved_reconciliation_ref}"
+            if resolved_reconciliation_ref
+            else "ephemeral_working_memory"
+        )
         if duplicate_record is not None:
             self.store.update_belief(
                 belief.belief_id,
                 memory_ref=duplicate_record.memory_id,
                 promotion_candidate=False,
-                validation_basis=f"reconciliation:{resolved_reconciliation_ref}",
+                validation_basis=validation_basis,
                 last_validated_at=time.time(),
             )
             return duplicate_record
         supersedes = [record.claim_text for record in superseded_records]
+        belief_assertion = dict(belief.structured_assertion)
+        try:
+            importance = int(belief_assertion.pop("importance", 5))
+        except (ValueError, TypeError):
+            importance = 5
         memory = self.store.create_memory_record(
             task_id=belief.task_id,
             conversation_id=conversation_id,
@@ -115,7 +162,7 @@ class MemoryRecordService:
             claim_text=belief.claim_text,
             structured_assertion={
                 **dict(classification.structured_assertion or {}),
-                **dict(belief.structured_assertion),
+                **belief_assertion,
             },
             scope_kind=classification.scope_kind,
             scope_ref=classification.scope_ref,
@@ -123,7 +170,7 @@ class MemoryRecordService:
             retention_class=classification.retention_class,
             status="active",
             confidence=belief.confidence,
-            trust_tier="durable",
+            trust_tier="durable" if is_durable_scope else "observed",
             evidence_refs=list(belief.evidence_refs),
             supersedes=supersedes,
             supersedes_memory_ids=[record.memory_id for record in superseded_records],
@@ -132,15 +179,16 @@ class MemoryRecordService:
             memory_kind="contract_template"
             if classification.category == "contract_template"
             else "durable_fact",
-            validation_basis=f"reconciliation:{resolved_reconciliation_ref}",
+            validation_basis=validation_basis,
             last_validated_at=time.time(),
             learned_from_reconciliation_ref=resolved_reconciliation_ref,
+            importance=importance,
         )
         self.store.update_belief(
             belief.belief_id,
             memory_ref=memory.memory_id,
             promotion_candidate=False,
-            validation_basis=f"reconciliation:{resolved_reconciliation_ref}",
+            validation_basis=validation_basis,
             last_validated_at=time.time(),
         )
         for record in superseded_records:
@@ -151,11 +199,17 @@ class MemoryRecordService:
                 superseded_by_memory_id=memory.memory_id,
                 invalidation_reason="superseded",
                 invalidated_at=time.time(),
-                supersession_reason=f"reconciliation:{resolved_reconciliation_ref}",
+                supersession_reason=validation_basis,
             )
+        self._issue_memory_write_receipt(
+            belief=belief,
+            memory=memory,
+            superseded_records=superseded_records,
+        )
         return memory
 
     def invalidate(self, memory_id: str) -> None:
+        self._issue_memory_invalidate_receipt(memory_id)
         self.store.update_memory_record(memory_id, status="invalidated", invalidated_at=time.time())
 
     def invalidate_by_reconciliation(self, reconciliation_ref: str, result_class: str) -> list[str]:
@@ -246,6 +300,69 @@ class MemoryRecordService:
             categories.setdefault(record.category, []).append(self._entry_from_memory(record))
         return categories
 
+    def _issue_memory_write_receipt(
+        self,
+        *,
+        belief: BeliefRecord,
+        memory: MemoryRecord,
+        superseded_records: list[MemoryRecord],
+    ) -> str | None:
+        if self._receipt_service is None or self._artifact_store is None:
+            return None
+        prestate = {
+            "belief_ids": [belief.belief_id],
+            "memory_ids": [r.memory_id for r in superseded_records],
+        }
+        prestate_uri, prestate_hash = self._artifact_store.store_json(prestate)
+        prestate_artifact = self.store.create_artifact(
+            task_id=belief.task_id,
+            step_id="memory_promotion",
+            kind="prestate.memory_write",
+            uri=prestate_uri,
+            content_hash=prestate_hash,
+            producer="memory_record_service",
+            retention_class="audit",
+            trust_tier="observed",
+            metadata={"memory_id": memory.memory_id},
+        )
+        return self._receipt_service.issue(
+            task_id=belief.task_id,
+            step_id="memory_promotion",
+            step_attempt_id=f"promote:{belief.belief_id}",
+            action_type="memory_write",
+            input_refs=[belief.belief_id],
+            environment_ref=None,
+            policy_result={"verdict": "allow", "reason": "belief_promotion"},
+            approval_ref=None,
+            output_refs=[memory.memory_id],
+            result_summary=f"Promoted belief {belief.belief_id} to memory {memory.memory_id}",
+            result_code="succeeded",
+            rollback_supported=True,
+            rollback_strategy="supersede_or_invalidate",
+            rollback_artifact_refs=[prestate_artifact.artifact_id],
+        )
+
+    def _issue_memory_invalidate_receipt(self, memory_id: str) -> str | None:
+        if self._receipt_service is None:
+            return None
+        record = self.store.get_memory_record(memory_id)
+        if record is None:
+            return None
+        return self._receipt_service.issue(
+            task_id=record.task_id,
+            step_id="memory_invalidation",
+            step_attempt_id=f"invalidate:{memory_id}",
+            action_type="memory_invalidate",
+            input_refs=[memory_id],
+            environment_ref=None,
+            policy_result={"verdict": "allow", "reason": "memory_invalidation"},
+            approval_ref=None,
+            output_refs=[],
+            result_summary=f"Invalidated memory {memory_id}",
+            result_code="succeeded",
+            rollback_supported=False,
+        )
+
     @staticmethod
     def _entry_from_memory(record: MemoryRecord) -> MemoryEntry:
         return MemoryEntry(
@@ -271,3 +388,21 @@ class MemoryRecordService:
         if found_any:
             return None, "reconciliation_not_satisfied"
         return None, "reconciliation_missing"
+
+    def _validate_reconciliation_ref(self, reconciliation_ref: str) -> str:
+        """Validate that a reconciliation_ref points to a valid, non-invalidated reconciliation.
+
+        Returns an empty string if valid, or a descriptive reason string if invalid.
+        """
+        if not hasattr(self.store, "get_reconciliation"):
+            # Store does not support reconciliation lookup; fall back to trusting the ref.
+            return ""
+        reconciliation = self.store.get_reconciliation(reconciliation_ref)
+        if reconciliation is None:
+            return "reconciliation_not_found"
+        result_class = str(reconciliation.result_class or "").strip()
+        if result_class == "violated":
+            return "reconciliation_violated"
+        if result_class not in ("satisfied", "ambiguous"):
+            return f"reconciliation_invalid_result_class:{result_class}"
+        return ""

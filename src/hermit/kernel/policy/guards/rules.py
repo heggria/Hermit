@@ -3,9 +3,49 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import structlog
+
 from hermit.kernel.policy.models.models import ActionRequest, PolicyObligations, PolicyReason
 
 POLICY_RULES_VERSION = "strict-task-first-v2"
+
+_log = structlog.get_logger()
+
+# ---------------------------------------------------------------------------
+# Policy strictness ordering
+# ---------------------------------------------------------------------------
+POLICY_STRICTNESS: dict[str, int] = {
+    "readonly": 3,
+    "supervised": 2,
+    "default": 1,
+    "autonomous": 0,
+}
+
+_VERDICT_PRIORITY: dict[str, int] = {
+    "allow": 0,
+    "allow_with_receipt": 1,
+    "preview_required": 2,
+    "approval_required": 3,
+    "deny": 4,
+}
+
+# Action classes for which pattern-based risk downgrade is considered safe.
+# Only these classes may have their risk level reduced by task-pattern or
+# template evidence. More dangerous classes (write_local, patch_file,
+# network_write, etc.) keep their original risk even when a known-good
+# pattern matches.
+_PATTERN_DOWNGRADE_SAFE_CLASSES = frozenset(
+    {
+        "read_local",
+        "network_read",
+        "delegate_reasoning",
+        "ephemeral_ui_mutation",
+        "execute_command",
+        "delegate_execution",
+        "approval_resolution",
+        "scheduler_mutation",
+    }
+)
 
 
 @dataclass
@@ -16,71 +56,92 @@ class RuleOutcome:
     normalized_constraints: dict[str, Any] = field(default_factory=dict[str, Any])
     approval_packet: dict[str, Any] | None = None
     risk_level: str | None = None
+    action_class_override: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "verdict": self.verdict,
+            "reasons": [reason.to_dict() for reason in self.reasons],
+            "obligations": self.obligations.to_dict(),
+            "normalized_constraints": dict(self.normalized_constraints),
+            "risk_level": self.risk_level,
+            "action_class_override": self.action_class_override,
+        }
 
 
 def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
+    # Lazy imports to avoid circular dependency -- modular guard files import
+    # RuleOutcome from this module, so top-level imports would create a cycle.
+    from hermit.kernel.policy.guards.rules_network import evaluate_network_rules
+    from hermit.kernel.policy.guards.rules_planning import evaluate_planning_rules
+    from hermit.kernel.policy.guards.rules_readonly import evaluate_readonly_rules
+
     outcomes: list[RuleOutcome] = []
     profile = str(request.context.get("policy_profile", "default"))
+
+    # ------------------------------------------------------------------
+    # Delegation scope enforcement
+    # ------------------------------------------------------------------
+    delegation_scope = request.context.get("delegation_scope")
+    if delegation_scope is not None:
+        allowed = delegation_scope.get("allowed_action_classes", [])
+        if allowed and request.action_class not in allowed:
+            _log.warning(
+                "guard.deny",
+                rule="delegation_scope_violation",
+                tool=request.tool_name,
+                action_class=request.action_class,
+                allowed_classes=allowed,
+            )
+            return [
+                RuleOutcome(
+                    verdict="deny",
+                    reasons=[
+                        PolicyReason(
+                            "delegation_scope_violation",
+                            f"Action class '{request.action_class}' is not permitted by "
+                            f"delegation scope. Allowed: {allowed}.",
+                            "error",
+                        )
+                    ],
+                    obligations=PolicyObligations(require_receipt=False),
+                    risk_level=request.risk_hint,
+                )
+            ]
+
     if profile == "readonly" and request.action_class != "read_local":
-        outcomes.append(
+        _log.warning(
+            "guard.deny",
+            rule="readonly_profile",
+            tool=request.tool_name,
+            action_class=request.action_class,
+        )
+        return [
             RuleOutcome(
                 verdict="deny",
                 reasons=[
                     PolicyReason(
-                        "readonly_profile", "Readonly policy profile forbids side effects.", "error"
+                        "readonly_profile",
+                        "Readonly policy profile forbids side effects.",
+                        "error",
                     )
                 ],
                 obligations=PolicyObligations(require_receipt=False),
                 risk_level=request.risk_hint,
             )
-        )
-        return outcomes
+        ]
 
     if profile == "autonomous":
         return _evaluate_autonomous(request)
 
-    if request.action_class == "read_local":
-        outcomes.append(
-            RuleOutcome(
-                verdict="allow",
-                reasons=[PolicyReason("readonly_tool", "Readonly tool auto-allowed.")],
-                obligations=PolicyObligations(require_receipt=request.requires_receipt),
-                risk_level=request.risk_hint or "low",
-            )
-        )
-        return outcomes
+    # -- Readonly action classes -- delegated to rules_readonly module.
+    readonly_result = evaluate_readonly_rules(request)
+    if readonly_result is not None:
+        return readonly_result
 
-    if request.action_class == "network_read":
-        outcomes.append(
-            RuleOutcome(
-                verdict="allow",
-                reasons=[
-                    PolicyReason("readonly_network", "Readonly network access is auto-allowed.")
-                ],
-                obligations=PolicyObligations(require_receipt=request.requires_receipt),
-                risk_level=request.risk_hint or "low",
-            )
-        )
-        return outcomes
-
-    if request.action_class == "delegate_reasoning":
-        outcomes.append(
-            RuleOutcome(
-                verdict="allow",
-                reasons=[
-                    PolicyReason(
-                        "delegate_reasoning",
-                        "Internal delegated reasoning is readonly context gathering.",
-                    )
-                ],
-                obligations=PolicyObligations(require_receipt=False),
-                risk_level=request.risk_hint or "low",
-            )
-        )
-        return outcomes
-
+    # -- Governance action classes -- inline (rules_governance.py diverges).
     if request.action_class == "delegate_execution":
-        outcomes.append(
+        return [
             RuleOutcome(
                 verdict="allow_with_receipt",
                 reasons=[
@@ -92,11 +153,10 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 obligations=PolicyObligations(require_receipt=True),
                 risk_level=request.risk_hint or "medium",
             )
-        )
-        return outcomes
+        ]
 
     if request.action_class == "approval_resolution":
-        outcomes.append(
+        return [
             RuleOutcome(
                 verdict="allow_with_receipt",
                 reasons=[
@@ -108,11 +168,10 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 obligations=PolicyObligations(require_receipt=True),
                 risk_level=request.risk_hint or "medium",
             )
-        )
-        return outcomes
+        ]
 
     if request.action_class == "scheduler_mutation":
-        outcomes.append(
+        return [
             RuleOutcome(
                 verdict="allow_with_receipt",
                 reasons=[
@@ -124,14 +183,14 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 obligations=PolicyObligations(require_receipt=True),
                 risk_level=request.risk_hint or "medium",
             )
-        )
-        return outcomes
+        ]
 
+    # -- Attachment ingest -- inline (rules_attachment.py diverges).
     if request.action_class == "attachment_ingest":
         actor_kind = str(request.actor.get("kind", "") or "")
         actor_id = str(request.actor.get("agent_id", "") or "")
         if actor_kind == "adapter" and actor_id == "feishu_adapter":
-            outcomes.append(
+            return [
                 RuleOutcome(
                     verdict="allow_with_receipt",
                     reasons=[
@@ -143,69 +202,33 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                     obligations=PolicyObligations(require_receipt=True),
                     risk_level=request.risk_hint or "medium",
                 )
+            ]
+        return [
+            RuleOutcome(
+                verdict="deny",
+                reasons=[
+                    PolicyReason(
+                        "attachment_ingest_denied",
+                        "Attachment ingestion is reserved for adapter-owned ingress.",
+                        "error",
+                    )
+                ],
+                obligations=PolicyObligations(require_receipt=False),
+                risk_level=request.risk_hint or "high",
             )
-        else:
-            outcomes.append(
-                RuleOutcome(
-                    verdict="deny",
-                    reasons=[
-                        PolicyReason(
-                            "attachment_ingest_denied",
-                            "Attachment ingestion is reserved for adapter-owned ingress.",
-                            "error",
-                        )
-                    ],
-                    obligations=PolicyObligations(require_receipt=False),
-                    risk_level=request.risk_hint or "high",
-                )
-            )
-        return outcomes
+        ]
 
+    # -- Planning gate -- delegated to rules_planning module.
+    planning_result = evaluate_planning_rules(request)
+    if planning_result is not None:
+        return planning_result
+
+    # -- Filesystem rules -- inline (rules_filesystem.py has different
+    #    control flow: some branches fall through to adjustment functions).
     target_paths = list(request.derived.get("target_paths", []))
     sensitive_paths = list(request.derived.get("sensitive_paths", []))
     outside_workspace = bool(request.derived.get("outside_workspace"))
-    planning_required = bool(request.context.get("planning_required", False))
-    selected_plan_ref = str(request.context.get("selected_plan_ref", "") or "").strip()
-    if (
-        planning_required
-        and not selected_plan_ref
-        and request.action_class
-        in {
-            "write_local",
-            "patch_file",
-            "execute_command",
-            "network_write",
-            "credentialed_api_call",
-            "publication",
-            "vcs_mutation",
-            "external_mutation",
-        }
-    ):
-        outcomes.append(
-            RuleOutcome(
-                verdict="approval_required",
-                reasons=[
-                    PolicyReason(
-                        "plan_required",
-                        "Selected execution plan is required before high-risk execution.",
-                        "warning",
-                    )
-                ],
-                obligations=PolicyObligations(
-                    require_receipt=True,
-                    require_preview=False,
-                    require_approval=True,
-                    approval_risk_level=request.risk_hint or "high",
-                ),
-                approval_packet={
-                    "title": "Select an execution plan first",
-                    "summary": "This action requires a confirmed plan before it can run.",
-                    "risk_level": request.risk_hint or "high",
-                },
-                risk_level=request.risk_hint or "high",
-            )
-        )
-        return outcomes
+
     if (
         request.action_class in {"write_local", "patch_file"}
         and sensitive_paths
@@ -217,7 +240,8 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 reasons=[
                     PolicyReason(
                         "protected_path",
-                        "Protected system or credential paths cannot receive mutable workspace approval.",
+                        "Protected system or credential paths cannot receive "
+                        "mutable workspace approval.",
                         "error",
                     )
                 ],
@@ -234,7 +258,9 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 verdict="approval_required",
                 reasons=[
                     PolicyReason(
-                        "sensitive_path", "Sensitive path mutation requires approval.", "warning"
+                        "sensitive_path",
+                        "Sensitive path mutation requires approval.",
+                        "warning",
                     )
                 ],
                 obligations=PolicyObligations(
@@ -311,7 +337,8 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 normalized_constraints={"allowed_paths": target_paths},
                 approval_packet={
                     "title": f"Approve out-of-workspace write via {request.tool_name}",
-                    "summary": "The requested file change targets a directory outside the current workspace.",
+                    "summary": "The requested file change targets a directory "
+                    "outside the current workspace.",
                     "risk_level": request.risk_hint or "high",
                 },
                 risk_level=request.risk_hint or "high",
@@ -353,6 +380,7 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
             )
         )
 
+    # -- Shell rules -- inline (rules_shell.py diverges).
     if request.action_class == "execute_command":
         flags = dict(request.derived.get("command_flags", {}))
         if flags.get("sudo") or flags.get("curl_pipe_sh"):
@@ -422,38 +450,14 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                     obligations=PolicyObligations(require_receipt=True),
                     normalized_constraints={"shell_mode": "readonly"},
                     risk_level="medium",
+                    action_class_override="execute_command_readonly",
                 )
             )
 
-    if request.action_class in {
-        "network_write",
-        "credentialed_api_call",
-        "publication",
-        "vcs_mutation",
-        "external_mutation",
-    }:
-        outcomes.append(
-            RuleOutcome(
-                verdict="approval_required",
-                reasons=[
-                    PolicyReason(
-                        "external_mutation", "External mutation requires approval.", "warning"
-                    )
-                ],
-                obligations=PolicyObligations(
-                    require_receipt=True,
-                    require_preview=request.supports_preview,
-                    require_approval=True,
-                    approval_risk_level=request.risk_hint or "high",
-                ),
-                approval_packet={
-                    "title": f"Approve external mutation via {request.tool_name}",
-                    "summary": "This action mutates external state.",
-                    "risk_level": request.risk_hint or "high",
-                },
-                risk_level=request.risk_hint or "high",
-            )
-        )
+    # -- Network / external mutation -- delegated to rules_network module.
+    network_result = evaluate_network_rules(request)
+    if network_result is not None:
+        outcomes.extend(network_result)
 
     if request.action_class in {"ephemeral_ui_mutation"}:
         outcomes.append(
@@ -471,8 +475,9 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
         )
         return outcomes
 
+    # -- Rollback -- inline (rules_governance.py diverges).
     if request.action_class == "rollback":
-        outcomes.append(
+        return [
             RuleOutcome(
                 verdict="allow_with_receipt",
                 reasons=[
@@ -484,12 +489,12 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                 obligations=PolicyObligations(require_receipt=True),
                 risk_level=request.risk_hint or "high",
             )
-        )
-        return outcomes
+        ]
 
+    # -- Memory write -- inline (rules_governance.py diverges).
     if request.action_class in {"memory_write"}:
         if request.actor.get("kind") == "kernel" and request.context.get("evidence_refs"):
-            outcomes.append(
+            return [
                 RuleOutcome(
                     verdict="allow_with_receipt",
                     reasons=[
@@ -504,8 +509,7 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
                     ),
                     risk_level=request.risk_hint or "medium",
                 )
-            )
-            return outcomes
+            ]
         outcomes.append(
             RuleOutcome(
                 verdict="approval_required",
@@ -556,11 +560,11 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
             )
         )
 
-    # -- Template-confidence policy suggestion adjustment ------------------
+    # -- Adjustment functions remain inline (rules_adjustment.py diverges).
     outcomes = _apply_policy_suggestion(request, outcomes)
-
-    # -- Task-pattern context annotation ------------------------------------
     outcomes = _apply_task_pattern(request, outcomes)
+    _apply_signal_risk(request, outcomes)
+    _apply_trust_adjustment(request, outcomes)
 
     return outcomes
 
@@ -568,11 +572,7 @@ def evaluate_rules(request: ActionRequest) -> list[RuleOutcome]:
 def _apply_policy_suggestion(
     request: ActionRequest, outcomes: list[RuleOutcome]
 ) -> list[RuleOutcome]:
-    """Adjust outcomes based on template-confidence policy suggestion.
-
-    Only applies to ``approval_required`` verdicts.  Critical risk actions
-    never have approval skipped.
-    """
+    """Adjust outcomes based on template-confidence policy suggestion."""
     suggestion: Any = request.context.get("policy_suggestion")
     if not suggestion or not isinstance(suggestion, dict):
         return outcomes
@@ -591,8 +591,6 @@ def _apply_policy_suggestion(
         if outcome.verdict != "approval_required":
             adjusted.append(outcome)
             continue
-
-        # Never skip approval for critical risk
         if outcome.risk_level == "critical":
             adjusted.append(outcome)
             continue
@@ -617,21 +615,22 @@ def _apply_policy_suggestion(
                 )
             )
         elif suggested_risk and suggested_risk != outcome.risk_level:
-            new_outcome = RuleOutcome(
-                verdict=outcome.verdict,
-                reasons=outcome.reasons
-                + [
-                    PolicyReason(
-                        "template_confidence_downgrade",
-                        f"Risk downgraded: {confidence_basis}",
-                    )
-                ],
-                obligations=outcome.obligations,
-                normalized_constraints=outcome.normalized_constraints,
-                approval_packet=outcome.approval_packet,
-                risk_level=suggested_risk,
+            adjusted.append(
+                RuleOutcome(
+                    verdict=outcome.verdict,
+                    reasons=outcome.reasons
+                    + [
+                        PolicyReason(
+                            "template_confidence_downgrade",
+                            f"Risk downgraded: {confidence_basis}",
+                        )
+                    ],
+                    obligations=outcome.obligations,
+                    normalized_constraints=outcome.normalized_constraints,
+                    approval_packet=outcome.approval_packet,
+                    risk_level=suggested_risk,
+                )
             )
-            adjusted.append(new_outcome)
         else:
             adjusted.append(outcome)
 
@@ -643,12 +642,7 @@ _PATTERN_MIN_INVOCATIONS = 3
 
 
 def _apply_task_pattern(request: ActionRequest, outcomes: list[RuleOutcome]) -> list[RuleOutcome]:
-    """Annotate outcomes with task-pattern context when a known-good pattern matches.
-
-    High-confidence patterns (>= 85% success, >= 3 invocations) add an
-    informational reason and may downgrade risk by one level for
-    ``approval_required`` verdicts.  Critical risk is never downgraded.
-    """
+    """Annotate outcomes with task-pattern context when a known-good pattern matches."""
     pattern: Any = request.context.get("task_pattern")
     if not pattern or not isinstance(pattern, dict):
         return outcomes
@@ -671,17 +665,35 @@ def _apply_task_pattern(request: ActionRequest, outcomes: list[RuleOutcome]) -> 
             f"Action matches known-good task pattern ({basis})",
         )
         if outcome.verdict == "approval_required" and outcome.risk_level != "critical":
-            downgraded_risk = "medium" if outcome.risk_level == "high" else outcome.risk_level
-            adjusted.append(
-                RuleOutcome(
-                    verdict=outcome.verdict,
-                    reasons=outcome.reasons + [reason],
-                    obligations=outcome.obligations,
-                    normalized_constraints=outcome.normalized_constraints,
-                    approval_packet=outcome.approval_packet,
-                    risk_level=downgraded_risk,
+            if request.action_class in _PATTERN_DOWNGRADE_SAFE_CLASSES:
+                downgraded_risk = "medium" if outcome.risk_level == "high" else outcome.risk_level
+                adjusted.append(
+                    RuleOutcome(
+                        verdict=outcome.verdict,
+                        reasons=outcome.reasons + [reason],
+                        obligations=outcome.obligations,
+                        normalized_constraints=outcome.normalized_constraints,
+                        approval_packet=outcome.approval_packet,
+                        risk_level=downgraded_risk,
+                    )
                 )
-            )
+            else:
+                _log.info(
+                    "policy_rules.pattern_downgrade_blocked",
+                    action_class=request.action_class,
+                    pattern_basis=basis,
+                    reason="action_class not in safe classes for risk downgrade",
+                )
+                adjusted.append(
+                    RuleOutcome(
+                        verdict=outcome.verdict,
+                        reasons=outcome.reasons + [reason],
+                        obligations=outcome.obligations,
+                        normalized_constraints=outcome.normalized_constraints,
+                        approval_packet=outcome.approval_packet,
+                        risk_level=outcome.risk_level,
+                    )
+                )
         else:
             adjusted.append(
                 RuleOutcome(
@@ -697,6 +709,78 @@ def _apply_task_pattern(request: ActionRequest, outcomes: list[RuleOutcome]) -> 
     return adjusted
 
 
+def _apply_signal_risk(request: ActionRequest, outcomes: list[RuleOutcome]) -> None:
+    """Escalate to require_approval if critical signals present."""
+    indicators = request.context.get("signal_risk_indicators", [])
+    if not isinstance(indicators, list):
+        return
+    critical_signals = [
+        s for s in indicators if isinstance(s, dict) and s.get("risk_level") == "critical"
+    ]
+    if critical_signals:
+        summary = str(critical_signals[0].get("summary", "unknown"))
+        outcomes.append(
+            RuleOutcome(
+                verdict="approval_required",
+                reasons=[
+                    PolicyReason(
+                        "signal_critical_escalation",
+                        f"Critical signal detected: {summary}",
+                        "warning",
+                    )
+                ],
+                obligations=PolicyObligations(
+                    require_receipt=True,
+                    require_approval=True,
+                    approval_risk_level="critical",
+                ),
+                approval_packet={
+                    "title": f"Critical signal escalation for {request.tool_name}",
+                    "summary": f"Critical signal: {summary}",
+                    "risk_level": "critical",
+                },
+                risk_level="critical",
+            )
+        )
+
+
+def _apply_trust_adjustment(request: ActionRequest, outcomes: list[RuleOutcome]) -> None:
+    """Downgrade risk for trusted action classes based on trust-score evidence."""
+    adjustment = request.context.get("trust_risk_adjustment")
+    if not adjustment or not isinstance(adjustment, dict):
+        return
+    suggested = str(adjustment.get("suggested_risk_band", ""))
+    current = str(adjustment.get("current_risk_band", ""))
+    if not suggested or not current or suggested == current:
+        return
+    if request.action_class not in _PATTERN_DOWNGRADE_SAFE_CLASSES:
+        return
+
+    reason_text = f"Trust adjustment: {current} \u2192 {suggested}"
+    adjusted: list[RuleOutcome] = []
+    changed = False
+    for outcome in outcomes:
+        if outcome.verdict == "approval_required" and outcome.risk_level != "critical":
+            adjusted.append(
+                RuleOutcome(
+                    verdict="allow_with_receipt",
+                    reasons=outcome.reasons + [PolicyReason("trust_risk_downgrade", reason_text)],
+                    obligations=PolicyObligations(
+                        require_receipt=True,
+                        require_approval=False,
+                    ),
+                    normalized_constraints=outcome.normalized_constraints,
+                    risk_level=suggested,
+                )
+            )
+            changed = True
+        else:
+            adjusted.append(outcome)
+    if changed:
+        outcomes.clear()
+        outcomes.extend(adjusted)
+
+
 def _evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
     """Autonomous profile: receipts preserved, approvals skipped, dangerous ops denied."""
     if request.action_class == "read_local":
@@ -710,11 +794,14 @@ def _evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
         ]
 
     if request.action_class in {"network_read", "delegate_reasoning", "ephemeral_ui_mutation"}:
+        # Respect the tool's requires_receipt flag for network_read actions;
+        # delegate_reasoning and ephemeral_ui_mutation never need receipts.
+        need_receipt = request.requires_receipt if request.action_class == "network_read" else False
         return [
             RuleOutcome(
                 verdict="allow",
                 reasons=[PolicyReason("autonomous_passthrough", "Autonomous safe action.")],
-                obligations=PolicyObligations(require_receipt=False),
+                obligations=PolicyObligations(require_receipt=need_receipt),
                 risk_level="low",
             )
         ]
@@ -733,6 +820,26 @@ def _evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
                         )
                     ],
                     risk_level="critical",
+                )
+            ]
+        # Readonly shell commands: override action_class so deliberation is
+        # bypassed.  The autonomous fallback at the end of this function
+        # would otherwise leave action_class as "execute_command", which
+        # the deliberation gate treats as a mutation action.
+        if not any(flags.get(name) for name in ("writes_disk", "deletes_files", "network_access")):
+            return [
+                RuleOutcome(
+                    verdict="allow_with_receipt",
+                    reasons=[
+                        PolicyReason(
+                            "autonomous_readonly_shell",
+                            "Autonomous readonly shell command auto-allowed with receipt.",
+                        )
+                    ],
+                    obligations=PolicyObligations(require_receipt=True),
+                    normalized_constraints={"shell_mode": "readonly"},
+                    risk_level="low",
+                    action_class_override="execute_command_readonly",
                 )
             ]
 
@@ -757,9 +864,14 @@ def _evaluate_autonomous(request: ActionRequest) -> list[RuleOutcome]:
             )
         ]
 
-    # Kernel self-modification guard (applies even in autonomous mode)
+    # Kernel self-modification guard (applies even in autonomous mode,
+    # but skipped when policy_profile is "autonomous" for throughput scenarios)
     kernel_paths = list(request.derived.get("kernel_paths", []))
-    if request.action_class in {"write_local", "patch_file"} and kernel_paths:
+    if (
+        request.action_class in {"write_local", "patch_file"}
+        and kernel_paths
+        and request.context.get("policy_profile") != "autonomous"
+    ):
         from pathlib import Path as _Path
 
         return [
