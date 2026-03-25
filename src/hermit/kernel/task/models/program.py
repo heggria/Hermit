@@ -2,7 +2,7 @@
 
 Spec hierarchy: 人 → Hermit Instance → Program → Team/Graph → Roles → Worker Pool → Task → Step → StepAttempt
 
-Program lifecycle: draft → active → paused → blocked → completed | failed
+Program lifecycle: active ↔ archived
 The contract layer is referenced via ``program_contract_ref`` (analogous to
 ``task_contract_ref`` on TaskRecord).
 """
@@ -27,45 +27,29 @@ __all__ = [
 class ProgramState(StrEnum):
     """All valid program states.
 
-    Spec-required lifecycle: draft → active → paused → blocked → completed | failed
+    Lifecycle: active ↔ archived
     """
 
-    draft = "draft"
     active = "active"
-    paused = "paused"
-    blocked = "blocked"
-    completed = "completed"
-    failed = "failed"
+    archived = "archived"
 
 
 TERMINAL_PROGRAM_STATES: frozenset[ProgramState] = frozenset(
     {
-        ProgramState.completed,
-        ProgramState.failed,
+        ProgramState.archived,
     }
 )
 
 ACTIVE_PROGRAM_STATES: frozenset[ProgramState] = frozenset(
     {
-        ProgramState.draft,
         ProgramState.active,
-        ProgramState.paused,
-        ProgramState.blocked,
     }
 )
 
 # Valid state transitions — used for validation in update_program_status.
 PROGRAM_STATE_TRANSITIONS: dict[ProgramState, frozenset[ProgramState]] = {
-    ProgramState.draft: frozenset({ProgramState.active, ProgramState.failed}),
-    ProgramState.active: frozenset(
-        {ProgramState.paused, ProgramState.blocked, ProgramState.completed, ProgramState.failed}
-    ),
-    ProgramState.paused: frozenset({ProgramState.active, ProgramState.failed}),
-    ProgramState.blocked: frozenset(
-        {ProgramState.active, ProgramState.paused, ProgramState.failed}
-    ),
-    ProgramState.completed: frozenset(),
-    ProgramState.failed: frozenset(),
+    ProgramState.active: frozenset({ProgramState.archived}),
+    ProgramState.archived: frozenset({ProgramState.active}),
 }
 
 
@@ -81,7 +65,7 @@ class ProgramRecord:
     program_id: str
     title: str
     goal: str
-    status: str = ProgramState.draft
+    status: str = ProgramState.active
     description: str = ""
     priority: str = "normal"
     program_contract_ref: str | None = None

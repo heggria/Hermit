@@ -145,6 +145,7 @@ class TaskController:
         parent_task_id: str | None | object = _AUTO_PARENT,
         requested_by: str | None = None,
         ingress_metadata: dict[str, Any] | None = None,
+        acceptance_criteria: list[str] | None = None,
     ) -> TaskExecutionContext:
         self.ensure_conversation(conversation_id, source_channel=source_channel)
         parent = self.store.get_last_task_for_conversation(conversation_id)
@@ -165,6 +166,7 @@ class TaskController:
             policy_profile=policy_profile,
             requested_by=requested_by,
             continuation_anchor=dict(metadata.get("continuation_anchor", {}) or {}) or None,
+            acceptance_criteria=acceptance_criteria,
         )
         step = self.store.create_step(task_id=task.task_id, kind=kind, status="running")
         attempt_context = {
@@ -217,6 +219,7 @@ class TaskController:
         workspace_root: str = "",
         requested_by: str | None = None,
         ingress_metadata: dict[str, Any] | None = None,
+        acceptance_criteria: list[str] | None = None,
     ) -> tuple[TaskExecutionContext, Any, dict[str, str], list[TaskExecutionContext]]:
         """Create a task with a DAG of steps.
 
@@ -236,6 +239,7 @@ class TaskController:
             source_channel=source_channel,
             policy_profile=policy_profile,
             requested_by=requested_by,
+            acceptance_criteria=acceptance_criteria,
         )
         builder = StepDAGBuilder(self.store)
         dag, key_to_step_id = builder.build_and_materialize(
@@ -1007,7 +1011,25 @@ class TaskController:
         if not self.store.try_finalize_step_attempt(
             ctx.step_attempt_id, status=status, finished_at=now
         ):
-            return  # another worker already finalized this attempt
+            # Step already finalized (e.g. by reconciliation executor), but we
+            # may still have a result_text from the LLM's post-tool-call
+            # response.  Append it to the task event so the WebUI can display
+            # the answer.
+            if result_text:
+                task = self.store.get_task(ctx.task_id)
+                if task is not None and task.status in ("completed", "succeeded"):
+                    self.store.append_event(
+                        event_type="task.result_text_attached",
+                        entity_type="task",
+                        entity_id=ctx.task_id,
+                        task_id=ctx.task_id,
+                        actor="kernel",
+                        payload={
+                            "result_text": result_text,
+                            "result_preview": result_preview or result_text[:200],
+                        },
+                    )
+            return
         self.store.update_step(ctx.step_id, status=status, output_ref=output_ref, finished_at=now)
         payload: dict[str, Any] | None = None
         if result_preview or result_text:

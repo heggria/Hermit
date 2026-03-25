@@ -246,7 +246,6 @@ class TestProgramResolutionFallback:
         # Create a root task that acts as the program's backing task.
         _mk_task(store, title="Active Program Task", goal="Ship v2")
         program = store.create_program(title="Active Program Task", goal="Ship v2")
-        store.update_program_status(program.program_id, "active")
         result = service.process_message(message="show me the overview")
         assert result.requires_execution is False
         # Should still include the approval queue (global overview).
@@ -313,24 +312,22 @@ class TestHandleControlCommand:
     def test_pause_program(self, tmp_path: Path) -> None:
         store, service = _setup(tmp_path)
         program = store.create_program(title="Deploy", goal="Ship it")
-        store.update_program_status(program.program_id, "active")
         result = service.process_message(message=f"pause {program.program_id}")
         assert result.requires_execution is False
         assert result.response["handler"] == "control_command"
         assert result.response["action"] == "pause"
         assert result.response.get("applied") is True
-        assert result.response["new_status"] == "paused"
+        assert result.response["new_status"] == "archived"
 
         # Verify state changed in store
         updated = store.get_program(program.program_id)
         assert updated is not None
-        assert updated.status == "paused"
+        assert updated.status == "archived"
 
-    def test_resume_paused_program(self, tmp_path: Path) -> None:
+    def test_resume_archived_program(self, tmp_path: Path) -> None:
         store, service = _setup(tmp_path)
         program = store.create_program(title="Deploy", goal="Ship it")
-        store.update_program_status(program.program_id, "active")
-        store.update_program_status(program.program_id, "paused")
+        store.update_program_status(program.program_id, "archived")
         result = service.process_message(message=f"resume {program.program_id}")
         assert result.requires_execution is False
         assert result.response.get("applied") is True
@@ -339,25 +336,22 @@ class TestHandleControlCommand:
     def test_cancel_active_program(self, tmp_path: Path) -> None:
         store, service = _setup(tmp_path)
         program = store.create_program(title="Deploy", goal="Ship it")
-        store.update_program_status(program.program_id, "active")
         result = service.process_message(message=f"cancel {program.program_id}")
         assert result.requires_execution is False
         assert result.response.get("applied") is True
-        assert result.response["new_status"] == "failed"
+        assert result.response["new_status"] == "archived"
 
-    def test_pause_already_completed_is_noop(self, tmp_path: Path) -> None:
+    def test_pause_already_archived_is_noop(self, tmp_path: Path) -> None:
         store, service = _setup(tmp_path)
         program = store.create_program(title="Done", goal="Already shipped")
-        store.update_program_status(program.program_id, "active")
-        store.update_program_status(program.program_id, "completed")
+        store.update_program_status(program.program_id, "archived")
         result = service.process_message(message=f"pause {program.program_id}")
         assert result.requires_execution is False
         assert result.response.get("applied") is False
 
-    def test_resume_non_paused_is_noop(self, tmp_path: Path) -> None:
+    def test_resume_non_archived_is_noop(self, tmp_path: Path) -> None:
         store, service = _setup(tmp_path)
         program = store.create_program(title="Deploy", goal="Ship it")
-        store.update_program_status(program.program_id, "active")
         result = service.process_message(message=f"resume {program.program_id}")
         assert result.requires_execution is False
         assert result.response.get("applied") is False
@@ -384,7 +378,6 @@ class TestHandleControlCommand:
     def test_control_never_creates_tasks(self, tmp_path: Path) -> None:
         store, service = _setup(tmp_path)
         program = store.create_program(title="P", goal="G")
-        store.update_program_status(program.program_id, "active")
         tasks_before = store.list_tasks(limit=100)
         service.process_message(message=f"pause {program.program_id}")
         tasks_after = store.list_tasks(limit=100)
@@ -393,7 +386,6 @@ class TestHandleControlCommand:
     def test_unknown_action_is_noop(self, tmp_path: Path) -> None:
         store, service = _setup(tmp_path)
         program = store.create_program(title="P", goal="G")
-        store.update_program_status(program.program_id, "active")
         # "scale" is a control keyword but maps to "unknown" action
         result = service.process_message(message=f"scale {program.program_id}")
         assert result.requires_execution is False

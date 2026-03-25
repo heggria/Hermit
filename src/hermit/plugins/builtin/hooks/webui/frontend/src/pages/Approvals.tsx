@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ShieldAlert } from "lucide-react";
 import { ApprovalCard } from "@/components/approvals/ApprovalCard";
 import { useApprovals, useApproveMutation, useDenyMutation } from "@/api/hooks";
-import { ShieldAlert } from "lucide-react";
+import { DataContainer } from "@/components/ui/DataContainer";
+import { EmptyState } from "@/components/layout/EmptyState";
+import { CardGridSkeleton } from "@/components/ui/skeletons";
 
 export default function Approvals() {
   const { t } = useTranslation();
@@ -53,60 +56,36 @@ export default function Approvals() {
         )}
       </div>
 
-      {/* Loading state */}
-      {approvalsQuery.isLoading && (
-        <div className="flex items-center justify-center py-16">
-          <div className="flex items-center gap-3">
-            <div className="size-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            <p className="text-sm text-muted-foreground">{t("approvals.loading")}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Error state */}
-      {approvalsQuery.isError && (
-        <div className="flex items-center justify-center py-16">
-          <p className="text-sm text-rose-600">
-            {t("approvals.loadError", {
-              message: approvalsQuery.error.message,
-            })}
-          </p>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!approvalsQuery.isLoading &&
-        !approvalsQuery.isError &&
-        approvals.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16">
-            <div className="mb-4 flex size-16 items-center justify-center rounded-2xl bg-muted">
-              <ShieldAlert className="size-8 text-muted-foreground/60" />
-            </div>
-            <p className="text-sm font-medium text-foreground">
-              {t("approvals.noApprovals")}
-            </p>
-          </div>
-        )}
-
-      {/* Approval cards grid */}
-      <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
-        {approvals.map((approval) => (
-          <ApprovalCard
-            key={approval.approval_id}
-            approval={approval}
-            onApprove={handleApprove}
-            onDeny={handleDeny}
-            isApproving={
-              processingId === approval.approval_id &&
-              processingAction === "approve"
-            }
-            isDenying={
-              processingId === approval.approval_id &&
-              processingAction === "deny"
-            }
+      <DataContainer
+        isLoading={approvalsQuery.isLoading}
+        isEmpty={approvals.length === 0}
+        skeleton={<CardGridSkeleton count={4} height="h-36" columns="sm:grid-cols-1 lg:grid-cols-2" />}
+        emptyState={
+          <EmptyState
+            icon={<ShieldAlert className="size-8 text-muted-foreground/60" />}
+            title={t("approvals.noApprovals")}
           />
-        ))}
-      </div>
+        }
+      >
+        <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
+          {approvals.map((approval) => (
+            <ApprovalCard
+              key={approval.approval_id}
+              approval={approval}
+              onApprove={handleApprove}
+              onDeny={handleDeny}
+              isApproving={
+                processingId === approval.approval_id &&
+                processingAction === "approve"
+              }
+              isDenying={
+                processingId === approval.approval_id &&
+                processingAction === "deny"
+              }
+            />
+          ))}
+        </div>
+      </DataContainer>
     </div>
   );
 }

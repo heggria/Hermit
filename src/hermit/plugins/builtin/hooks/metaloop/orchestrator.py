@@ -999,6 +999,8 @@ class MetaLoopOrchestrator:
             for step in steps
         ]
         tc = self._runner.task_controller
+        spec_data = _coerce_dict(metadata.get("generated_spec", {}))
+        criteria = list(spec_data.get("acceptance_criteria", []))
         try:
             result = tc.start_dag_task(
                 conversation_id=f"metaloop-{state.spec_id}",
@@ -1007,6 +1009,7 @@ class MetaLoopOrchestrator:
                 nodes=nodes,
                 policy_profile="autonomous",
                 workspace_root=self._workspace_root,
+                acceptance_criteria=criteria or None,
             )
         except Exception as exc:
             log.exception(

@@ -21,6 +21,7 @@ from hermit.kernel.ledger.events.store_ledger import KernelLedgerStoreMixin
 from hermit.kernel.ledger.journal.store_assurance import AssuranceStoreMixin
 from hermit.kernel.ledger.journal.store_programs import ProgramStoreMixin
 from hermit.kernel.ledger.journal.store_records import KernelStoreRecordMixin
+from hermit.kernel.ledger.journal.store_roles import RoleDefinitionStoreMixin
 from hermit.kernel.ledger.journal.store_scheduler import KernelSchedulerStoreMixin
 from hermit.kernel.ledger.journal.store_self_iterate import SelfIterateStoreMixin
 from hermit.kernel.ledger.journal.store_support import canonical_json as _canonical_json
@@ -37,7 +38,7 @@ from hermit.kernel.task.services.delegation_store import DelegationStoreMixin
 from hermit.kernel.verification.benchmark.history import BenchmarkHistoryStoreMixin
 
 _SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-_SCHEMA_VERSION = "19"
+_SCHEMA_VERSION = "20"
 _MIGRATABLE_SCHEMA_VERSIONS = {
     "5",
     "6",
@@ -53,6 +54,7 @@ _MIGRATABLE_SCHEMA_VERSIONS = {
     "16",
     "17",
     "18",
+    "19",
     _SCHEMA_VERSION,
 }
 _KNOWN_KERNEL_TABLES = {
@@ -103,6 +105,7 @@ _KNOWN_KERNEL_TABLES = {
     "assurance_replay_entries",
     "entity_links",
     "benchmark_history",
+    "role_definitions",
 }
 
 
@@ -162,6 +165,7 @@ class KernelStore(
     SelfIterateStoreMixin,
     ProgramStoreMixin,
     KernelTeamStoreMixin,
+    RoleDefinitionStoreMixin,
     BenchmarkHistoryStoreMixin,
 ):
     def __init__(self, db_path: Path) -> None:
@@ -882,6 +886,10 @@ class KernelStore(
                 "receipts", "rollback_artifact_refs_json", "TEXT NOT NULL DEFAULT '[]'"
             )
             self._ensure_column("tasks", "task_contract_ref", "TEXT")
+            self._ensure_column("tasks", "program_id", "TEXT")
+            self._ensure_column("tasks", "team_id", "TEXT")
+            self._ensure_column("tasks", "acceptance_criteria_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column("tasks", "complexity_band", "TEXT NOT NULL DEFAULT 'moderate'")
             self._ensure_column("steps", "title", "TEXT")
             self._ensure_column("steps", "contract_ref", "TEXT")
             self._ensure_column("steps", "depends_on_json", "TEXT NOT NULL DEFAULT '[]'")
@@ -1085,6 +1093,22 @@ class KernelStore(
                 )
                 """
             )
+            # -- role_definitions table --
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS role_definitions (
+                    role_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT NOT NULL DEFAULT '',
+                    mcp_servers_json TEXT NOT NULL DEFAULT '[]',
+                    skills_json TEXT NOT NULL DEFAULT '[]',
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    is_builtin INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
             # -- delegations table + indexes --
             self._init_delegation_schema()
             self._ensure_column("delegations", "approval_policy_json", "TEXT")
@@ -1176,6 +1200,8 @@ class KernelStore(
             )
             self._migrate_event_hashes_table()
             self._backfill_event_hash_chain()
+            self._migrate_to_v20()
+            self._seed_builtin_roles()
             self._conn.execute(
                 """
                 INSERT INTO kernel_meta(key, value) VALUES ('schema_version', ?)
@@ -1535,6 +1561,58 @@ class KernelStore(
               AND ready_for_dispatch = 0
             """
         )
+
+    def _migrate_to_v20(self) -> None:
+        """Migrate from schema v19 to v20: role_definitions table.
+
+        Idempotent — safe to run on databases that already have the table
+        (e.g. freshly created via ``_init_schema``).
+        """
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS role_definitions (
+                role_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL DEFAULT '',
+                mcp_servers_json TEXT NOT NULL DEFAULT '[]',
+                skills_json TEXT NOT NULL DEFAULT '[]',
+                config_json TEXT NOT NULL DEFAULT '{}',
+                is_builtin INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+
+    def _seed_builtin_roles(self) -> None:
+        """Seed builtin role definitions from WorkerRole enum values.
+
+        Uses INSERT OR IGNORE to avoid duplicates on subsequent runs.
+        """
+        now = time.time()
+        builtin_roles = [
+            ("planner", "Plans and decomposes tasks into steps"),
+            ("executor", "Executes task steps"),
+            ("verifier", "Verifies execution results"),
+            ("benchmarker", "Runs benchmarks and quality gates"),
+            ("researcher", "Researches context and prior art"),
+            ("reconciler", "Reconciles authorized vs observed effects"),
+            ("tester", "Writes and runs tests"),
+            ("spec", "Generates specifications"),
+            ("reviewer", "Reviews code and artifacts"),
+        ]
+        for role_name, description in builtin_roles:
+            role_id = f"builtin_{role_name}"
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO role_definitions (
+                    role_id, name, description,
+                    mcp_servers_json, skills_json, config_json,
+                    is_builtin, created_at, updated_at
+                ) VALUES (?, ?, ?, '[]', '[]', '{}', 1, ?, ?)
+                """,
+                (role_id, role_name, description, now, now),
+            )
 
     # ------------------------------------------------------------------
     # Blackboard CRUD

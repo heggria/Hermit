@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import structlog
 
@@ -201,3 +202,48 @@ class AnalyticsEngine:
             window_start=window_start,
             window_end=window_end,
         )
+
+    def guard_effectiveness_report(
+        self,
+        *,
+        window_days: int = 30,
+        limit: int = 2000,
+    ) -> dict[str, Any]:
+        """Compute guard effectiveness metrics over a time window.
+
+        Returns per-action_class statistics:
+        - deny_count: how many times the guard denied an action
+        - total_count: total actions of this class
+        - deny_rate: deny_count / total_count
+        - approval_override_count: actions that required approval but were overridden
+        - never_denied: True if deny_count == 0 (candidate for governance downgrade)
+        """
+        now = time.time()
+        window_start = now - (window_days * 86400)
+
+        decisions = self._store.list_decisions(limit=limit)
+        recent = [d for d in decisions if (d.created_at or 0) >= window_start]
+
+        class_stats: dict[str, dict[str, int]] = {}
+        for d in recent:
+            ac = d.action_type or "unknown"
+            if ac not in class_stats:
+                class_stats[ac] = {"deny": 0, "total": 0, "override": 0}
+            class_stats[ac]["total"] += 1
+            if d.verdict == "deny":
+                class_stats[ac]["deny"] += 1
+            if d.verdict in ("allow_with_receipt",) and d.risk_level in ("high", "critical"):
+                class_stats[ac]["override"] += 1
+
+        report: dict[str, Any] = {"window_days": window_days, "action_classes": {}}
+        for ac, stats in sorted(class_stats.items()):
+            total = stats["total"]
+            deny = stats["deny"]
+            report["action_classes"][ac] = {
+                "deny_count": deny,
+                "total_count": total,
+                "deny_rate": round(deny / total, 4) if total > 0 else 0.0,
+                "approval_override_count": stats["override"],
+                "never_denied": deny == 0,
+            }
+        return report

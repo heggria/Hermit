@@ -61,6 +61,7 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             policy_profile=str(row["policy_profile"]),
             source_channel=str(row["source_channel"]),
             parent_task_id=row["parent_task_id"],
+            program_id=row["program_id"] if "program_id" in keys else None,
             task_contract_ref=row["task_contract_ref"],
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
@@ -71,6 +72,12 @@ class KernelStoreRecordMixin(KernelStoreTypingBase):
             budget_tokens_limit=int(row["budget_tokens_limit"])
             if "budget_tokens_limit" in keys and row["budget_tokens_limit"] is not None
             else None,
+            acceptance_criteria=json_loads(row["acceptance_criteria_json"])
+            if "acceptance_criteria_json" in keys
+            else [],
+            complexity_band=str(row["complexity_band"])
+            if "complexity_band" in keys
+            else "moderate",
         )
 
     def _step_from_row(self, row: sqlite3.Row) -> StepRecord:

@@ -17,6 +17,7 @@ class TaskRecord:
     policy_profile: str
     source_channel: str
     parent_task_id: str | None = None
+    program_id: str | None = None
     task_contract_ref: str | None = None
     created_at: float = 0.0
     updated_at: float = 0.0
@@ -26,6 +27,8 @@ class TaskRecord:
     child_result_refs: list[str] = field(default_factory=list)
     budget_tokens_used: int = 0
     budget_tokens_limit: int | None = None
+    acceptance_criteria: list[str] = field(default_factory=list)
+    complexity_band: str = "moderate"
 
     @property
     def owner(self) -> str:

@@ -36,10 +36,9 @@ class TestProgramLifecycleCreateTeamMilestoneTasks:
         # 1. Create program (draft state)
         program = pm.compile_program(goal="Ship authentication module v2")
         assert program.program_id.startswith("program_")
-        assert program.status == ProgramState.draft
+        assert program.status == ProgramState.active
 
-        # 2. Transition to active
-        pm.activate_program(program.program_id)
+        # 2. Verify already in active state
         updated_program = store.get_program(program.program_id)
         assert updated_program is not None
         assert updated_program.status == ProgramState.active

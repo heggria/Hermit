@@ -1,56 +1,54 @@
-import { useState, useMemo } from "react";
-import { Search } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import { Search, Brain } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { MemoryCard } from "@/components/memory/MemoryCard";
 import { useMemories } from "@/api/hooks";
+import { DataContainer } from "@/components/ui/DataContainer";
+import { EmptyState } from "@/components/layout/EmptyState";
+import { CardGridSkeleton } from "@/components/ui/skeletons";
+import { FilterTabs } from "@/components/ui/FilterTabs";
+import { useFilteredData } from "@/hooks/useFilteredData";
+import type { MemoryRecord } from "@/types";
 
-type FilterTab = "all" | "active" | "invalidated";
+const STATUS_FILTERS = ["active", "invalidated", "all"] as const;
 
 export default function Memory() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterTab>("all");
-  const { data, isLoading, error } = useMemories();
+  const { data, isLoading } = useMemories();
 
   const memories = data?.memories ?? [];
 
-  const counts = useMemo(
-    () => ({
-      all: memories.length,
-      active: memories.filter((m) => m.status === "active").length,
-      invalidated: memories.filter((m) => m.status === "invalidated").length,
-    }),
-    [memories]
+  const getStatus = useCallback((m: MemoryRecord) => m.status, []);
+  const labelFn = useCallback(
+    (key: string) => {
+      switch (key) {
+        case "all":
+          return t("memory.filterAll");
+        case "active":
+          return t("memory.filterActive");
+        case "invalidated":
+          return t("memory.filterInvalidated");
+        default:
+          return key;
+      }
+    },
+    [t],
   );
 
+  const { filtered: statusFiltered, activeTab, setActiveTab, filterTabs } =
+    useFilteredData(memories, STATUS_FILTERS, getStatus, labelFn);
+
+  // Apply text search on top of status filter
   const filtered = useMemo(() => {
-    let result = memories;
-
-    if (filter !== "all") {
-      result = result.filter((m) => m.status === filter);
-    }
-
-    if (search.trim()) {
-      const query = search.toLowerCase();
-      result = result.filter(
-        (m) =>
-          m.claim_text.toLowerCase().includes(query) ||
-          m.category.toLowerCase().includes(query)
-      );
-    }
-
-    return result;
-  }, [memories, filter, search]);
-
-  const tabs: { key: FilterTab; label: string; count: number }[] = [
-    { key: "all", label: t("memory.filterAll"), count: counts.all },
-    { key: "active", label: t("memory.filterActive"), count: counts.active },
-    {
-      key: "invalidated",
-      label: t("memory.filterInvalidated"),
-      count: counts.invalidated,
-    },
-  ];
+    if (!search.trim()) return statusFiltered;
+    const query = search.toLowerCase();
+    return statusFiltered.filter(
+      (m) =>
+        m.claim_text.toLowerCase().includes(query) ||
+        m.category.toLowerCase().includes(query),
+    );
+  }, [statusFiltered, search]);
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 space-y-6">
@@ -73,43 +71,37 @@ export default function Memory() {
       </div>
 
       {/* Filter pills */}
-      <div className="flex gap-2">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setFilter(tab.key)}
-            className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-              filter === tab.key
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-card text-muted-foreground hover:bg-muted border border-border"
-            }`}
-          >
-            {tab.label} ({tab.count})
-          </button>
-        ))}
-      </div>
+      <FilterTabs
+        tabs={filterTabs}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
 
       {/* Content */}
-      {isLoading && (
-        <p className="py-12 text-center text-sm text-muted-foreground">
-          {t("memory.loading")}
-        </p>
-      )}
-      {error && (
-        <p className="py-12 text-center text-sm text-red-500">
-          {t("memory.loadError")}: {(error as Error).message}
-        </p>
-      )}
-      {!isLoading && !error && filtered.length === 0 && (
-        <p className="py-12 text-center text-sm text-muted-foreground">
-          {t("memory.noResults")}
-        </p>
-      )}
-      <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-        {filtered.map((memory) => (
-          <MemoryCard key={memory.memory_id} memory={memory} />
-        ))}
-      </div>
+      <DataContainer
+        isLoading={isLoading}
+        isEmpty={filtered.length === 0}
+        skeleton={
+          <CardGridSkeleton
+            count={6}
+            height="h-32"
+            columns="sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
+          />
+        }
+        emptyState={
+          <EmptyState
+            icon={<Brain className="size-5 text-muted-foreground/60" />}
+            title={t("memory.noResults")}
+            layout="horizontal"
+          />
+        }
+      >
+        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((memory) => (
+            <MemoryCard key={memory.memory_id} memory={memory} />
+          ))}
+        </div>
+      </DataContainer>
     </div>
   );
 }

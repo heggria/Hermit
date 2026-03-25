@@ -1,22 +1,11 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { getResultCodeStyle } from "@/lib/status-styles";
 import { FileText } from "lucide-react";
 import type { ReceiptRecord } from "@/types";
 
-const RESULT_CODE_STYLES: Record<string, { bg: string; text: string }> = {
-  succeeded: { bg: "bg-emerald-50 dark:bg-emerald-950/40", text: "text-emerald-700 dark:text-emerald-300" },
-  failed: { bg: "bg-red-50 dark:bg-red-950/40", text: "text-red-600 dark:text-red-400" },
-  uncertain: { bg: "bg-amber-50 dark:bg-amber-950/40", text: "text-amber-600 dark:text-amber-400" },
-  denied: { bg: "bg-muted", text: "text-muted-foreground" },
-};
-
 function getResultStyle(resultCode: string) {
-  return (
-    RESULT_CODE_STYLES[resultCode] ?? {
-      bg: "bg-muted",
-      text: "text-muted-foreground",
-    }
-  );
+  return getResultCodeStyle(resultCode);
 }
 
 interface ReceiptListProps {

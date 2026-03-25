@@ -19,18 +19,11 @@ _log = structlog.get_logger()
 
 # Valid control actions and the program states they transition *from* → *to*.
 _CONTROL_TRANSITIONS: dict[str, dict[str, str]] = {
-    "pause": {
-        ProgramState.active: ProgramState.paused,
-    },
-    "resume": {
-        ProgramState.paused: ProgramState.active,
+    "archive": {
+        ProgramState.active: ProgramState.archived,
     },
     "activate": {
-        ProgramState.draft: ProgramState.active,
-    },
-    "complete": {
-        ProgramState.active: ProgramState.completed,
-        ProgramState.paused: ProgramState.completed,
+        ProgramState.archived: ProgramState.active,
     },
 }
 
@@ -389,7 +382,7 @@ class ProgramToolService:
         program_id: str,
         action: str,
     ) -> dict[str, Any]:
-        """Execute a control action: pause, resume, activate, complete."""
+        """Execute a control action: archive, activate."""
         if not program_id:
             return {"error": "program_id is required"}
         if not action:
@@ -405,7 +398,8 @@ class ProgramToolService:
             return {"error": f"Program not found: {program_id}"}
 
         current = program.status
-        if current in TERMINAL_PROGRAM_STATES:
+        # Terminal state check: archived programs can only be re-activated.
+        if current in TERMINAL_PROGRAM_STATES and action != "activate":
             return {
                 "error": f"Program is in terminal state '{current}' and cannot be changed",
                 "program_id": program_id,

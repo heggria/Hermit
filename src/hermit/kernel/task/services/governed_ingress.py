@@ -23,7 +23,7 @@ from typing import Any
 import structlog
 
 from hermit.kernel.ledger.journal.store import KernelStore
-from hermit.kernel.task.models.program import ACTIVE_PROGRAM_STATES, ProgramState
+from hermit.kernel.task.models.program import ProgramState
 from hermit.kernel.task.models.records import ConversationRecord, TaskRecord
 from hermit.kernel.task.projections.status import StatusProjectionService
 from hermit.kernel.task.services.governor import (
@@ -418,33 +418,23 @@ class GovernedIngressService:
         if program is None:
             return {"error": f"Program not found: {program_id}"}
 
-        if action == "pause" and program.status in ACTIVE_PROGRAM_STATES:
-            self.store.update_program_status(program_id, ProgramState.paused)
-            log.info("governed_ingress.program_paused", program_id=program_id)
+        if action in ("archive", "cancel", "pause") and program.status == ProgramState.active:
+            self.store.update_program_status(program_id, ProgramState.archived)
+            log.info("governed_ingress.program_archived", program_id=program_id)
             return {
                 "program_id": program_id,
                 "previous_status": str(program.status),
-                "new_status": str(ProgramState.paused),
+                "new_status": str(ProgramState.archived),
                 "applied": True,
             }
 
-        if action == "resume" and program.status == ProgramState.paused:
+        if action in ("activate", "resume") and program.status == ProgramState.archived:
             self.store.update_program_status(program_id, ProgramState.active)
-            log.info("governed_ingress.program_resumed", program_id=program_id)
+            log.info("governed_ingress.program_activated", program_id=program_id)
             return {
                 "program_id": program_id,
                 "previous_status": str(program.status),
                 "new_status": str(ProgramState.active),
-                "applied": True,
-            }
-
-        if action == "cancel" and program.status in ACTIVE_PROGRAM_STATES:
-            self.store.update_program_status(program_id, ProgramState.failed)
-            log.info("governed_ingress.program_cancelled", program_id=program_id)
-            return {
-                "program_id": program_id,
-                "previous_status": str(program.status),
-                "new_status": str(ProgramState.failed),
                 "applied": True,
             }
 

@@ -257,7 +257,8 @@ class PluginManager:
             return
         from hermit.runtime.capability.resolver.mcp_client import McpClientManager
 
-        self._mcp_manager = McpClientManager()
+        base_dir = getattr(self.settings, "base_dir", None) if self.settings else None
+        self._mcp_manager = McpClientManager(oauth_base_dir=base_dir)
         try:
             self._mcp_manager.connect_all_sync(self._all_mcp)
         except Exception:
@@ -273,3 +274,89 @@ class PluginManager:
         if self._mcp_manager is not None:
             self._mcp_manager.close_all_sync()
             self._mcp_manager = None
+
+    def reload_user_mcp_servers(self) -> None:
+        """Re-read user mcp.json and reconnect all MCP servers.
+
+        Stops the existing MCP manager, re-reads ``mcp.json`` to pick up
+        added/removed servers, then reconnects everything (built-in specs
+        are preserved).
+        """
+        if self._registry is None:
+            return
+
+        from hermit.runtime.capability.resolver.mcp_client import (
+            MCP_TOOL_PREFIX,
+            McpClientManager,
+        )
+
+        # 1. Unregister all existing MCP tools from the registry
+        mcp_tools = [n for n in list(self._registry._tools) if n.startswith(MCP_TOOL_PREFIX)]
+        for name in mcp_tools:
+            self._registry.unregister(name)
+
+        # 2. Stop existing connections
+        self.stop_mcp_servers()
+
+        # 3. Separate builtin MCP specs from user (mcp_loader) specs
+        builtin_specs = [s for s in self._all_mcp if not self._is_user_mcp_spec(s)]
+
+        # 4. Re-read user mcp.json
+        user_specs = self._load_user_mcp_specs()
+
+        # 5. Merge
+        self._all_mcp = builtin_specs + user_specs
+
+        # 6. Reconnect
+        if self._all_mcp:
+            base_dir = getattr(self.settings, "base_dir", None) if self.settings else None
+            self._mcp_manager = McpClientManager(oauth_base_dir=base_dir)
+            try:
+                self._mcp_manager.connect_all_sync(self._all_mcp)
+            except Exception:
+                log.exception("mcp_reload_error")
+            for tool in self._mcp_manager.get_tool_specs():
+                try:
+                    self._registry.register(tool)
+                except ValueError:
+                    log.warning("mcp_duplicate_tool", name=tool.name)
+
+        log.info(
+            "mcp_servers_reloaded",
+            builtin=len(builtin_specs),
+            user=len(user_specs),
+            total=len(self._all_mcp),
+        )
+
+    def _is_user_mcp_spec(self, spec: McpServerSpec) -> bool:
+        """Check if a spec was loaded from user mcp.json (vs builtin plugin)."""
+        if self.settings is None:
+            return False
+        import json
+
+        mcp_path = self.settings.base_dir / "mcp.json"
+        if not mcp_path.is_file():
+            return False
+        try:
+            with open(mcp_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return spec.name in data.get("mcpServers", {})
+        except (json.JSONDecodeError, OSError):
+            return False
+
+    def _load_user_mcp_specs(self) -> list[McpServerSpec]:
+        """Load MCP server specs from user mcp.json."""
+        if self.settings is None:
+            return []
+        from hermit.plugins.builtin.mcp.mcp_loader.mcp import _load_mcp_json, _parse_server_entry
+
+        specs: list[McpServerSpec] = []
+        mcp_path = self.settings.base_dir / "mcp.json"
+        data = _load_mcp_json(mcp_path)
+        for name, entry in data.get("mcpServers", {}).items():
+            if not isinstance(entry, dict):
+                continue
+            spec = _parse_server_entry(name, entry)
+            if spec:
+                specs.append(spec)
+        return specs

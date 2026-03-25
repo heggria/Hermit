@@ -2,19 +2,9 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ApprovalActions } from "@/components/approvals/ApprovalActions";
 import { formatTimeAgo } from "@/lib/format";
+import { getRiskStyle } from "@/lib/status-styles";
 import { AlertTriangle, Terminal } from "lucide-react";
 import type { ApprovalRecord } from "@/types";
-
-const RISK_STYLES: Record<string, { bg: string; text: string }> = {
-  critical: { bg: "bg-red-100 dark:bg-red-950/40", text: "text-red-700 dark:text-red-300" },
-  high: { bg: "bg-orange-100 dark:bg-orange-950/40", text: "text-orange-700 dark:text-orange-300" },
-  medium: { bg: "bg-yellow-100 dark:bg-yellow-950/40", text: "text-yellow-700 dark:text-yellow-300" },
-  low: { bg: "bg-emerald-100 dark:bg-emerald-950/40", text: "text-emerald-700 dark:text-emerald-300" },
-};
-
-function getRiskStyle(level: string) {
-  return RISK_STYLES[level] ?? { bg: "bg-muted", text: "text-muted-foreground" };
-}
 
 interface ApprovalCardProps {
   readonly approval: ApprovalRecord;

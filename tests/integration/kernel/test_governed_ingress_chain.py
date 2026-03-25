@@ -69,9 +69,8 @@ class TestStatusQueryPath:
         store = _make_store(tmp_path)
         service = _make_service(store)
 
-        # Create and activate a program
+        # Create a program (starts as active)
         program = store.create_program(title="Feature Alpha", goal="Ship v2")
-        store.update_program_status(program.program_id, ProgramState.active)
 
         result = service.process_message(message="查看进展")
 
@@ -100,16 +99,15 @@ class TestStatusQueryPath:
 
 class TestControlCommandPath:
     """Create a program, activate it, then send Chinese pause command.
-    Verify program is paused and requires_execution=False."""
+    Verify program is archived and requires_execution=False."""
 
     def test_pause_program_chinese(self, tmp_path: Path) -> None:
-        """'暂停 program_xxx' should pause the program and not trigger execution."""
+        """'暂停 program_xxx' should archive the program and not trigger execution."""
         store = _make_store(tmp_path)
         service = _make_service(store)
 
-        # Create and activate a program
+        # Create a program (starts as active)
         program = store.create_program(title="Deployment Pipeline", goal="Deploy v3")
-        store.update_program_status(program.program_id, ProgramState.active)
 
         # Send pause command with the program ID
         result = service.process_message(message=f"暂停 {program.program_id}")
@@ -120,12 +118,12 @@ class TestControlCommandPath:
         assert result.response["handler"] == "control_command"
         assert result.response["action"] == "pause"
         assert result.response.get("applied") is True
-        assert result.response["new_status"] == str(ProgramState.paused)
+        assert result.response["new_status"] == str(ProgramState.archived)
 
         # Verify state actually changed in the store
         updated_program = store.get_program(program.program_id)
         assert updated_program is not None
-        assert updated_program.status == ProgramState.paused
+        assert updated_program.status == ProgramState.archived
 
     def test_control_command_never_creates_tasks(self, tmp_path: Path) -> None:
         """Control commands must not create any new tasks."""
@@ -133,7 +131,6 @@ class TestControlCommandPath:
         service = _make_service(store)
 
         program = store.create_program(title="Pipeline", goal="Run CI")
-        store.update_program_status(program.program_id, ProgramState.active)
 
         tasks_before = store.list_tasks(limit=100)
         service.process_message(message=f"暂停 {program.program_id}")
@@ -425,9 +422,8 @@ class TestFullChainIntegration:
         assert work_result.requires_execution is True
         assert work_result.binding_decision is not None
 
-        # 3. Control command — create program, activate, then pause
+        # 3. Control command — create program (active), then pause (archives)
         program = store.create_program(title="Alpha", goal="Ship it")
-        store.update_program_status(program.program_id, ProgramState.active)
         ctrl_result = service.process_message(message=f"暂停 {program.program_id}")
         assert ctrl_result.intent_class == "control_command"
         assert ctrl_result.requires_execution is False
@@ -436,7 +432,7 @@ class TestFullChainIntegration:
         # Verify the program state persisted
         updated = store.get_program(program.program_id)
         assert updated is not None
-        assert updated.status == ProgramState.paused
+        assert updated.status == ProgramState.archived
 
     def test_resolution_traceability(self, tmp_path: Path) -> None:
         """Each result should carry an IntentResolution for traceability."""

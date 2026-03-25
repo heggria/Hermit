@@ -48,6 +48,7 @@ export interface ReceiptRecord {
   task_id: string;
   step_id: string;
   action_type: string;
+  action_label?: string;
   result_code: string;
   result_summary: string;
   rollback_supported: boolean;
@@ -128,4 +129,90 @@ export interface ApprovalActionResponse {
   status: string;
   approval_id: string;
   text: string;
+}
+
+export interface ProgramRecord {
+  program_id: string;
+  title: string;
+  goal: string;
+  status: string;
+  description: string;
+  priority: string;
+  program_contract_ref: string | null;
+  budget_limits: Record<string, unknown>;
+  milestone_ids: string[];
+  metadata: Record<string, unknown>;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface RoleSlotSpec {
+  role: string;
+  count: number;
+  config: Record<string, unknown>;
+}
+
+export interface TeamRecord {
+  team_id: string;
+  program_id: string;
+  title: string;
+  workspace_id: string;
+  status: string;
+  role_assembly: Record<string, RoleSlotSpec>;
+  context_boundary: string[];
+  created_at: number;
+  updated_at: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface MilestoneRecord {
+  milestone_id: string;
+  team_id: string;
+  title: string;
+  description: string;
+  status: string;
+  dependency_ids: string[];
+  acceptance_criteria: string[];
+  created_at: number;
+  completed_at: number | null;
+}
+
+export interface McpServerInfo {
+  name: string;
+  description: string;
+  transport: string;
+  connected: boolean;
+  tools: { name: string; description: string }[];
+  source: 'builtin' | 'user';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  allowedTools?: string[];
+  auth_type?: 'api_key' | 'oauth' | null;
+  auth_token_url?: string | null;
+  auth_env_key?: string | null;
+  has_empty_env_keys?: string[];
+  has_oauth_token?: boolean;
+}
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  source: 'builtin' | 'user';
+  content?: string;
+  max_tokens?: number;
+}
+
+export interface RoleDefinition {
+  role_id: string;
+  name: string;
+  description: string;
+  mcp_servers: string[];
+  skills: string[];
+  config: Record<string, unknown>;
+  is_builtin: boolean;
+  created_at: number;
+  updated_at: number;
 }

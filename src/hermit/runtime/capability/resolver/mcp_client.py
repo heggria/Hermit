@@ -33,6 +33,19 @@ log = structlog.get_logger()
 MCP_TOOL_PREFIX = "mcp__"
 MCP_TOOL_SEP = "__"
 
+# Lazy import to avoid circular deps
+_OAuthManager = None
+
+
+def _get_oauth_manager() -> Any:
+    """Get a lazily-imported McpOAuthManager class."""
+    global _OAuthManager
+    if _OAuthManager is None:
+        from hermit.runtime.capability.resolver.mcp_oauth import McpOAuthManager
+
+        _OAuthManager = McpOAuthManager
+    return _OAuthManager
+
 
 def _sanitize_http_headers(headers: dict[str, Any] | None) -> dict[str, str]:
     """Drop invalid or empty HTTP headers before constructing the client."""
@@ -84,9 +97,10 @@ class McpClientManager:
     and exited in the same asyncio Task.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, oauth_base_dir: Any | None = None) -> None:
         self._connections: dict[str, _ServerConnection] = {}
         self._connections_lock = threading.Lock()
+        self._oauth_base_dir = oauth_base_dir
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever,
@@ -227,6 +241,11 @@ class McpClientManager:
             import httpx
 
             headers = _sanitize_http_headers(spec.headers)
+            # Inject stored OAuth token if no Authorization header is present
+            if "authorization" not in {k.lower() for k in headers}:
+                oauth_token = self._get_oauth_token(spec.name)
+                if oauth_token:
+                    headers["Authorization"] = f"Bearer {oauth_token}"
             http_client = await stack.enter_async_context(httpx.AsyncClient(headers=headers))
             transport = await stack.enter_async_context(
                 streamable_http_client(spec.url, http_client=http_client)
@@ -255,10 +274,22 @@ class McpClientManager:
             str(tool["name"]) for tool in raw_tools if tool["name"] not in spec.tool_governance
         ]
         if missing_governance:
-            raise ValueError(
-                f"MCP server '{spec.name}' is missing governance metadata for tools: "
-                f"{', '.join(sorted(missing_governance))}"
-            )
+            if spec.tool_governance:
+                # Explicit governance was provided but incomplete — this is an error.
+                raise ValueError(
+                    f"MCP server '{spec.name}' is missing governance metadata for tools: "
+                    f"{', '.join(sorted(missing_governance))}"
+                )
+            # No governance config at all (typical for user-installed third-party servers).
+            # Auto-assign sensible defaults so they can connect without manual config.
+            for tool_name in missing_governance:
+                spec.tool_governance[tool_name] = McpToolGovernance(
+                    action_class="tool_use",
+                    risk_hint="medium",
+                    requires_receipt=True,
+                    readonly=False,
+                    supports_preview=False,
+                )
 
         conn = _ServerConnection(spec=spec, session=session, tools=raw_tools)
         with self._connections_lock:
@@ -311,3 +342,14 @@ class McpClientManager:
         if governance is None:
             raise ValueError(f"MCP tool governance missing for {spec.name}/{tool_name}")
         return governance
+
+    def _get_oauth_token(self, server_name: str) -> str | None:
+        """Look up a stored OAuth token for *server_name*."""
+        if self._oauth_base_dir is None:
+            return None
+        try:
+            mgr_cls = _get_oauth_manager()
+            manager = mgr_cls(self._oauth_base_dir)
+            return manager.get_stored_token(server_name)
+        except Exception:
+            return None

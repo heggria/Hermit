@@ -25,6 +25,7 @@ class HookEvent(StrEnum):
     DISPATCH_RESULT = "dispatch_result"
     SUBTASK_SPAWN = "subtask_spawn"
     SUBTASK_COMPLETE = "subtask_complete"
+    TOOL_START = "tool_start"
 
     def __str__(self) -> str:
         return self.value

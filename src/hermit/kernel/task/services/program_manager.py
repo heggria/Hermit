@@ -127,8 +127,7 @@ class ProgramManager:
     ) -> ProgramRecord:
         """Compile a high-level goal into a Program.
 
-        The program is created in ``draft`` state.  Call :meth:`activate_program`
-        once teams and milestones have been attached.
+        The program is created in ``active`` state.
 
         Returns the created :class:`ProgramRecord`.
         """
@@ -242,46 +241,18 @@ class ProgramManager:
     # ------------------------------------------------------------------
 
     def activate_program(self, program_id: str) -> None:
-        """Transition program from draft to active.
+        """Transition program to active (e.g. from archived).
 
         Raises :class:`ProgramManagerError` if the transition is invalid.
         """
         self._transition_program(program_id, ProgramState.active)
 
-    def pause_program(self, program_id: str) -> None:
-        """Pause an active program.
+    def archive_program(self, program_id: str) -> None:
+        """Archive an active program.
 
         Raises :class:`ProgramManagerError` if the transition is invalid.
         """
-        self._transition_program(program_id, ProgramState.paused)
-
-    def resume_program(self, program_id: str) -> None:
-        """Resume a paused program.
-
-        Only valid when the program is in ``paused`` state.
-        Raises :class:`ProgramManagerError` if the program is not paused.
-        """
-        program = self._get_program_or_raise(program_id)
-        if program.status != ProgramState.paused:
-            raise ProgramManagerError(
-                f"Cannot resume program {program_id}: current state is "
-                f"'{program.status}', expected 'paused'"
-            )
-        self._transition_program(program_id, ProgramState.active)
-
-    def complete_program(self, program_id: str) -> None:
-        """Mark program as completed.
-
-        Raises :class:`ProgramManagerError` if the transition is invalid.
-        """
-        self._transition_program(program_id, ProgramState.completed)
-
-    def fail_program(self, program_id: str) -> None:
-        """Mark program as failed.
-
-        Raises :class:`ProgramManagerError` if the transition is invalid.
-        """
-        self._transition_program(program_id, ProgramState.failed)
+        self._transition_program(program_id, ProgramState.archived)
 
     # ------------------------------------------------------------------
     # Queries
@@ -650,7 +621,7 @@ class ProgramManager:
         * Lower risk band -> higher score
         * Higher program priority -> higher score
         * Milestones with no unmet dependencies -> higher score
-        * Programs in ``active`` state preferred over ``draft``
+        * Programs in ``active`` state preferred
 
         *allowed_risk_bands* restricts candidates to specific risk levels;
         defaults to ``{"low", "medium"}`` for safe background execution.

@@ -13,11 +13,12 @@ export function LanguageSwitcher() {
   return (
     <Button
       variant="ghost"
-      size="sm"
+      size="icon"
       onClick={toggle}
-      className="text-xs text-sidebar-foreground/70 hover:text-sidebar-foreground"
+      className="text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+      aria-label={t(isZh ? 'common.switchLang.en' : 'common.switchLang.zh')}
     >
-      {isZh ? t('common.switchLang.en') : t('common.switchLang.zh')}
+      {isZh ? 'EN' : '中'}
     </Button>
   );
 }

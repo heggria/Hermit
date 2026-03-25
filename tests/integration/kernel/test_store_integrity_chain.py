@@ -301,6 +301,7 @@ class TestMilestoneCRUD:
 
         assert ms.completed_at is None
 
+        store.update_milestone_status(ms.milestone_id, "active")
         store.update_milestone_status(ms.milestone_id, "completed")
 
         updated = store.get_milestone(ms.milestone_id)

@@ -85,3 +85,17 @@ class ActionClass(StrEnum):
     def _missing_(cls, value: object) -> None:
         valid = ", ".join(f'"{m.value}"' for m in cls)
         raise ValueError(f"{value!r} is not a valid {cls.__name__}. Expected one of: {valid}")
+
+
+class ComplexityBand(StrEnum):
+    """Task complexity bands for governance intensity adaptation.
+
+    Higher complexity bands trigger more governance stages (witness capture,
+    contract synthesis, deliberation, reconciliation). Lower bands skip
+    expensive stages to reduce overhead on simple tasks.
+    """
+
+    TRIVIAL = "trivial"  # Single-step read-only operations
+    SIMPLE = "simple"  # 1-2 steps, low-risk write operations
+    MODERATE = "moderate"  # 3-5 steps, mixed read/write
+    COMPLEX = "complex"  # DAG tasks, high-risk, supervised

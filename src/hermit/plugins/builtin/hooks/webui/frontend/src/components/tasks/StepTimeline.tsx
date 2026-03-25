@@ -7,60 +7,24 @@ import {
   XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getStatusStyle } from "@/lib/status-styles";
 import type { StepRecord } from "@/types";
 
-const STEP_STATUS_CONFIG: Record<
-  string,
-  {
-    icon: typeof Circle;
-    color: string;
-    bgColor: string;
-    textColor: string;
-    pulses?: boolean;
-  }
-> = {
-  completed: {
-    icon: CheckCircle,
-    color: "text-emerald-500 dark:text-emerald-400",
-    bgColor: "bg-emerald-50 dark:bg-emerald-950/40",
-    textColor: "text-emerald-700 dark:text-emerald-300",
-  },
-  running: {
-    icon: Circle,
-    color: "text-primary",
-    bgColor: "bg-primary/10",
-    textColor: "text-primary",
-    pulses: true,
-  },
-  failed: {
-    icon: XCircle,
-    color: "text-red-500 dark:text-red-400",
-    bgColor: "bg-red-50 dark:bg-red-950/40",
-    textColor: "text-red-600 dark:text-red-400",
-  },
-  pending: {
-    icon: Circle,
-    color: "text-muted-foreground/60",
-    bgColor: "bg-muted",
-    textColor: "text-muted-foreground",
-  },
-  blocked: {
-    icon: Clock,
-    color: "text-amber-500 dark:text-amber-400",
-    bgColor: "bg-amber-50 dark:bg-amber-950/40",
-    textColor: "text-amber-700 dark:text-amber-300",
-  },
+const STEP_ICONS: Record<string, typeof Circle> = {
+  completed: CheckCircle,
+  failed: XCircle,
+  blocked: Clock,
 };
 
 function getStepConfig(status: string) {
-  return (
-    STEP_STATUS_CONFIG[status] ?? {
-      icon: Circle,
-      color: "text-muted-foreground/60",
-      bgColor: "bg-muted",
-      textColor: "text-muted-foreground",
-    }
-  );
+  const style = getStatusStyle(status);
+  return {
+    icon: STEP_ICONS[status] ?? Circle,
+    color: style.text,
+    bgColor: style.bg,
+    textColor: style.text,
+    pulses: style.pulse ?? false,
+  };
 }
 
 function formatDuration(

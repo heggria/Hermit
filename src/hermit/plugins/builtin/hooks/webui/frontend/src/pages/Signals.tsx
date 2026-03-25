@@ -1,32 +1,49 @@
-import { useState, useMemo } from "react";
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { Radio } from "lucide-react";
 import { SignalCard } from "@/components/signals/SignalCard";
 import { useSignals, useSignalAction } from "@/api/hooks";
+import { DataContainer } from "@/components/ui/DataContainer";
+import { EmptyState } from "@/components/layout/EmptyState";
+import { CardGridSkeleton } from "@/components/ui/skeletons";
+import { FilterTabs } from "@/components/ui/FilterTabs";
+import { useFilteredData } from "@/hooks/useFilteredData";
+import type { EvidenceSignal } from "@/types";
 
-type FilterTab = "all" | "pending" | "acted" | "dismissed";
+const DISPOSITION_FILTERS = ["pending", "acted", "dismissed", "all"] as const;
 
 export default function Signals() {
   const { t } = useTranslation();
-  const [filter, setFilter] = useState<FilterTab>("all");
-  const { data, isLoading, error } = useSignals();
+  const { data, isLoading } = useSignals();
   const signalAction = useSignalAction();
 
   const signals = data?.signals ?? [];
 
-  const counts = useMemo(
-    () => ({
-      all: signals.length,
-      pending: signals.filter((s) => s.disposition === "pending").length,
-      acted: signals.filter((s) => s.disposition === "acted").length,
-      dismissed: signals.filter((s) => s.disposition === "dismissed").length,
-    }),
-    [signals]
+  const getStatus = useCallback((s: EvidenceSignal) => s.disposition, []);
+  const labelFn = useCallback(
+    (key: string) => {
+      switch (key) {
+        case "all":
+          return t("signals.filterAll");
+        case "pending":
+          return t("signals.filterPending");
+        case "acted":
+          return t("signals.filterActed");
+        case "dismissed":
+          return t("signals.filterDismissed");
+        default:
+          return key;
+      }
+    },
+    [t],
   );
 
-  const filtered = useMemo(() => {
-    if (filter === "all") return signals;
-    return signals.filter((s) => s.disposition === filter);
-  }, [signals, filter]);
+  const { filtered, activeTab, setActiveTab, filterTabs } = useFilteredData(
+    signals,
+    DISPOSITION_FILTERS,
+    getStatus,
+    labelFn,
+  );
 
   const handleAct = (signalId: string) => {
     signalAction.mutate({ signalId, action: "act" });
@@ -36,17 +53,6 @@ export default function Signals() {
     signalAction.mutate({ signalId, action: "suppress" });
   };
 
-  const tabs: { key: FilterTab; label: string; count: number }[] = [
-    { key: "all", label: t("signals.filterAll"), count: counts.all },
-    { key: "pending", label: t("signals.filterPending"), count: counts.pending },
-    { key: "acted", label: t("signals.filterActed"), count: counts.acted },
-    {
-      key: "dismissed",
-      label: t("signals.filterDismissed"),
-      count: counts.dismissed,
-    },
-  ];
-
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 space-y-6">
       {/* Header */}
@@ -54,57 +60,55 @@ export default function Signals() {
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
           {t("signals.title")}
         </h1>
-        {counts.pending > 0 && (
-          <span className="inline-flex items-center rounded-full bg-primary px-3 py-0.5 text-xs font-semibold text-primary-foreground">
-            {t("signals.actionable", { count: counts.pending })}
-          </span>
-        )}
+        {filterTabs.find((tab) => tab.key === "pending")?.count
+          ? (
+            <span className="inline-flex items-center rounded-full bg-primary px-3 py-0.5 text-xs font-semibold text-primary-foreground">
+              {t("signals.actionable", {
+                count: filterTabs.find((tab) => tab.key === "pending")!.count,
+              })}
+            </span>
+          )
+          : null}
       </div>
 
       {/* Filter pills */}
-      <div className="flex gap-2">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setFilter(tab.key)}
-            className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-              filter === tab.key
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-card text-muted-foreground hover:bg-muted border border-border"
-            }`}
-          >
-            {tab.label} ({tab.count})
-          </button>
-        ))}
-      </div>
+      <FilterTabs
+        tabs={filterTabs}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
 
       {/* Content */}
-      {isLoading && (
-        <p className="py-12 text-center text-sm text-muted-foreground">
-          {t("signals.loading")}
-        </p>
-      )}
-      {error && (
-        <p className="py-12 text-center text-sm text-red-500">
-          {t("signals.loadError")}: {(error as Error).message}
-        </p>
-      )}
-      {!isLoading && !error && filtered.length === 0 && (
-        <p className="py-12 text-center text-sm text-muted-foreground">
-          {t("signals.noResults")}
-        </p>
-      )}
-      <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-        {filtered.map((signal) => (
-          <SignalCard
-            key={signal.signal_id}
-            signal={signal}
-            onAct={handleAct}
-            onSuppress={handleSuppress}
-            isActing={signalAction.isPending}
+      <DataContainer
+        isLoading={isLoading}
+        isEmpty={filtered.length === 0}
+        skeleton={
+          <CardGridSkeleton
+            count={6}
+            height="h-32"
+            columns="sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
           />
-        ))}
-      </div>
+        }
+        emptyState={
+          <EmptyState
+            icon={<Radio className="size-5 text-muted-foreground/60" />}
+            title={t("signals.noResults")}
+            layout="horizontal"
+          />
+        }
+      >
+        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((signal) => (
+            <SignalCard
+              key={signal.signal_id}
+              signal={signal}
+              onAct={handleAct}
+              onSuppress={handleSuppress}
+              isActing={signalAction.isPending}
+            />
+          ))}
+        </div>
+      </DataContainer>
     </div>
   );
 }

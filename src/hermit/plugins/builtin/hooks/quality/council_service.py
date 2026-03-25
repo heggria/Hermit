@@ -498,6 +498,16 @@ class ReviewCouncilService:
 
         system_prompt = perspective.system_prompt_template.replace("{council_id}", council_id)
 
+        # Inject calibration examples if available
+        if perspective.calibration_examples:
+            from hermit.plugins.builtin.hooks.quality.calibration import (
+                render_calibration_section,
+            )
+
+            calibration_section = render_calibration_section(perspective.calibration_examples)
+            if calibration_section:
+                system_prompt = system_prompt + calibration_section
+
         model = perspective.model or self._default_model
 
         from hermit.runtime.provider_host.shared.contracts import ProviderRequest

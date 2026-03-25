@@ -58,7 +58,7 @@ class ProgramStoreMixin(KernelStoreTypingBase):
                     program_contract_ref,
                     budget_limits_json, milestone_ids_json, metadata_json,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, '[]', ?, ?, ?)
+                ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, '[]', ?, ?, ?)
                 """,
                 (
                     program_id,
@@ -130,9 +130,8 @@ class ProgramStoreMixin(KernelStoreTypingBase):
     ) -> None:
         """Update program status with state-transition validation.
 
-        Raises ValueError if the transition is not allowed by the spec lifecycle:
-        draft → active → paused/blocked → completed/failed
-        Terminal states (completed, failed) cannot transition further.
+        Raises ValueError if the transition is not allowed.
+        Valid transitions: active ↔ archived.
         """
         program = self.get_program(program_id)
         if program is None:

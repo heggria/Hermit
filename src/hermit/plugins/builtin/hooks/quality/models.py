@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hermit.plugins.builtin.hooks.quality.calibration import CalibrationExample
 
 
 class FindingSeverity(StrEnum):
@@ -53,6 +57,7 @@ class ReviewPerspective:
     timeout_seconds: float  # Per-reviewer LLM call timeout
     model: str = ""  # Override model for this perspective (empty = use default)
     requires_passed: tuple[str, ...] = ()  # Roles that must pass before this runs
+    calibration_examples: tuple[CalibrationExample, ...] = ()  # Few-shot calibration
 
 
 @dataclass(frozen=True)

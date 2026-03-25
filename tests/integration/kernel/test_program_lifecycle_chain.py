@@ -18,9 +18,9 @@ class TestProgramLifecycleChain:
         return ProgramManager(store)
 
     def test_full_lifecycle(self, pm, store):
-        # 1. Compile program
+        # 1. Compile program (starts as active now)
         prog = pm.compile_program(goal="Build v1", title="V1 Release")
-        assert prog.status == ProgramState.draft
+        assert prog.status == ProgramState.active
 
         # 2. Add 2 teams with milestones
         team_a = pm.add_team(program_id=prog.program_id, title="Backend")
@@ -38,14 +38,14 @@ class TestProgramLifecycleChain:
         )
         ms3 = pm.add_milestone(team_id=team_b.team_id, title="UI Components")
 
-        # 3. Activate program
-        pm.activate_program(prog.program_id)
+        # 3. Program already active from compile
         refreshed = store.get_program(prog.program_id)
         assert refreshed.status == ProgramState.active
 
         # 4. Complete milestones in order
         store.update_milestone_status(ms1.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(ms1.milestone_id, MilestoneState.COMPLETED)
+        store.update_milestone_status(ms3.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(ms3.milestone_id, MilestoneState.COMPLETED)
 
         # 5. Verify milestone dependency — ms2 depends on ms1
@@ -64,19 +64,19 @@ class TestProgramLifecycleChain:
         assert len(tasks) == 1
         assert tasks[0].scope["milestone_id"] == ms2.milestone_id
 
-        # 7. Pause and resume
-        pm.pause_program(prog.program_id)
-        paused = store.get_program(prog.program_id)
-        assert paused.status == ProgramState.paused
+        # 7. Archive and re-activate (replaces old pause/resume)
+        pm.archive_program(prog.program_id)
+        archived = store.get_program(prog.program_id)
+        assert archived.status == ProgramState.archived
 
-        pm.resume_program(prog.program_id)
-        resumed = store.get_program(prog.program_id)
-        assert resumed.status == ProgramState.active
+        pm.activate_program(prog.program_id)
+        reactivated = store.get_program(prog.program_id)
+        assert reactivated.status == ProgramState.active
 
-        # 8. Complete program
-        pm.complete_program(prog.program_id)
+        # 8. Archive program (replaces old complete)
+        pm.archive_program(prog.program_id)
         final = store.get_program(prog.program_id)
-        assert final.status == ProgramState.completed
+        assert final.status == ProgramState.archived
 
         # 9. Verify full structure
         structure = pm.get_program_with_teams(prog.program_id)
@@ -98,18 +98,16 @@ class TestProgramLifecycleChain:
         # The store emits "program.created" (not "program.compiled")
         assert "program.created" in event_types
         assert "program.active" in event_types
-        assert "program.paused" in event_types
-        assert "program.completed" in event_types
+        assert "program.archived" in event_types
         assert "team.created" in event_types
         assert "milestone.created" in event_types
         assert "milestone.active" in event_types
         assert "milestone.completed" in event_types
 
-    def test_program_cannot_add_team_after_completion(self, pm):
-        """Terminal programs reject team additions."""
+    def test_program_cannot_add_team_after_archival(self, pm):
+        """Archived programs reject team additions."""
         prog = pm.compile_program(goal="Short-lived", title="Done Quick")
-        pm.activate_program(prog.program_id)
-        pm.complete_program(prog.program_id)
+        pm.archive_program(prog.program_id)
 
         from hermit.kernel.task.services.program_manager import ProgramManagerError
 
@@ -122,13 +120,9 @@ class TestProgramLifecycleChain:
 
         from hermit.kernel.task.services.program_manager import ProgramManagerError
 
-        # Cannot pause a draft program (draft -> paused not allowed)
+        # Cannot activate an already-active program (active -> active not allowed)
         with pytest.raises(ProgramManagerError, match="Invalid program transition"):
-            pm.pause_program(prog.program_id)
-
-        # Cannot resume a non-paused program
-        with pytest.raises(ProgramManagerError, match="Cannot resume"):
-            pm.resume_program(prog.program_id)
+            pm.activate_program(prog.program_id)
 
     def test_milestone_dependency_validation(self, pm):
         """Adding a milestone with non-existent dependency raises error."""
@@ -145,12 +139,11 @@ class TestProgramLifecycleChain:
             )
 
     def test_generate_tasks_skips_terminal_program(self, pm):
-        """generate_tasks returns empty list for completed/failed programs."""
+        """generate_tasks returns empty list for archived programs."""
         prog = pm.compile_program(goal="Terminal test", title="Terminal")
         team = pm.add_team(program_id=prog.program_id, title="Team")
         pm.add_milestone(team_id=team.team_id, title="MS1")
-        pm.activate_program(prog.program_id)
-        pm.complete_program(prog.program_id)
+        pm.archive_program(prog.program_id)
 
         tasks = pm.generate_tasks(prog.program_id)
         assert tasks == []
@@ -178,7 +171,7 @@ class TestProgramLifecycleChain:
                 },
             ],
         )
-        assert result.program.status == ProgramState.draft
+        assert result.program.status == ProgramState.active
         assert len(result.teams) == 1
         assert len(result.milestones) == 2
         # Design has no deps so it should generate a task contract

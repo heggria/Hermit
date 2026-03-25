@@ -1,5 +1,6 @@
 import { Zap, Ban } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { getRiskStyle } from "@/lib/status-styles";
 import type { EvidenceSignal } from "@/types";
 
 interface SignalCardProps {
@@ -8,13 +9,6 @@ interface SignalCardProps {
   onSuppress: (signalId: string) => void;
   isActing: boolean;
 }
-
-const RISK_STYLES: Record<string, string> = {
-  low: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-  medium: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-  high: "bg-orange-50 text-orange-700 dark:bg-orange-950 dark:text-orange-300",
-  critical: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
-};
 
 const SOURCE_KIND_LABELS: Record<string, Record<string, string>> = {
   en: {
@@ -47,7 +41,7 @@ export function SignalCard({
   const { t, i18n } = useTranslation();
   const confidencePct = Math.round(signal.confidence * 100);
   const isPending = signal.disposition === "pending";
-  const riskStyle = RISK_STYLES[signal.risk_level] ?? RISK_STYLES.low;
+  const riskStyle = getRiskStyle(signal.risk_level);
   const sourceLabel = getSourceKindLabel(signal.source_kind, i18n.language);
 
   return (
@@ -72,7 +66,7 @@ export function SignalCard({
           {sourceLabel}
         </span>
         <span
-          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${riskStyle}`}
+          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${riskStyle.bg} ${riskStyle.text}`}
         >
           {signal.risk_level}
         </span>

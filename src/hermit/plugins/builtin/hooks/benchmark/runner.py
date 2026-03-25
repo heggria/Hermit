@@ -76,6 +76,7 @@ class BenchmarkRunner:
         changed_files: list[str] | None = None,
         strategy: str = "tiered",
         verification_baseline: list[dict[str, Any]] | None = None,
+        acceptance_criteria: list[str] | None = None,
     ) -> BenchmarkResult:
         """Execute quality checks and parse results.
 
@@ -216,6 +217,7 @@ class BenchmarkRunner:
             delta_info=delta_info,
             tier_reached=tier,
             strategy_used=strategy_used,
+            metadata={"acceptance_criteria": acceptance_criteria} if acceptance_criteria else {},
         )
         log.info(
             "benchmark_done",

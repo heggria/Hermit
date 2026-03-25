@@ -49,6 +49,13 @@ def _on_serve_stop(*, reload_mode: bool = False, **kw: Any) -> None:
             _server = None
 
 
+def _on_tool_start(*, task_id: str, tool_name: str, input_summary: str, **kw: Any) -> None:
+    from hermit.plugins.builtin.hooks.webui.api import tool_activity
+
+    tool_activity.set_active(task_id, tool_name, input_summary)
+
+
 def register(ctx: PluginContext) -> None:
     ctx.add_hook(HookEvent.SERVE_START, _on_serve_start, priority=30)
     ctx.add_hook(HookEvent.SERVE_STOP, _on_serve_stop, priority=30)
+    ctx.add_hook(HookEvent.TOOL_START, _on_tool_start, priority=50)

@@ -89,7 +89,7 @@ export function DrawerChat({ task, onNewTask }: DrawerChatProps) {
   );
 
   return (
-    <div className="border-t border-border/50 bg-card px-4 pb-4 pt-3">
+    <div className="border-t border-border/50 bg-card px-4 pb-4 pt-3" data-tour-id="drawer-chat">
       {/* Mode indicator */}
       <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/70">
         <span

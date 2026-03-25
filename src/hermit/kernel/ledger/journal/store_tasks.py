@@ -172,9 +172,12 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
         priority: str = "normal",
         policy_profile: str = "default",
         parent_task_id: str | None = None,
+        program_id: str | None = None,
         requested_by: str | None = None,
         task_contract_ref: str | None = None,
         continuation_anchor: dict[str, Any] | None = None,
+        acceptance_criteria: list[str] | None = None,
+        complexity_band: str = "moderate",
     ) -> TaskRecord:
         now = time.time()
         task_id = self._id("task")
@@ -191,9 +194,10 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 """
                 INSERT INTO tasks (
                     task_id, conversation_id, title, goal, status, priority, owner_principal_id,
-                    policy_profile, source_channel, parent_task_id, task_contract_ref,
-                    requested_by_principal_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    policy_profile, source_channel, parent_task_id, program_id, task_contract_ref,
+                    requested_by_principal_id, acceptance_criteria_json,
+                    complexity_band, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -206,8 +210,11 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     policy_profile,
                     source_channel,
                     normalized_parent_task_id,
+                    sqlite_optional_text(program_id),
                     normalized_task_contract_ref,
                     sqlite_optional_text(requested_by_principal_id),
+                    json.dumps(acceptance_criteria or [], ensure_ascii=False),
+                    complexity_band,
                     now,
                     now,
                 ),
@@ -233,9 +240,11 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                     "policy_profile": policy_profile,
                     "source_channel": source_channel,
                     "parent_task_id": normalized_parent_task_id,
+                    "program_id": sqlite_optional_text(program_id),
                     "task_contract_ref": normalized_task_contract_ref,
                     "requested_by_principal_id": sqlite_optional_text(requested_by_principal_id),
                     "continuation_anchor": sqlite_dict(continuation_anchor),
+                    "acceptance_criteria": acceptance_criteria or [],
                     "created_at": now,
                     "updated_at": now,
                 },
@@ -295,6 +304,22 @@ class KernelTaskStoreMixin(KernelStoreTypingBase):
                 "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC",
                 (parent_task_id,),
             )
+        return [self._task_from_row(row) for row in rows]
+
+    def list_tasks_by_program(
+        self, program_id: str, *, status: str | None = None, limit: int = 50
+    ) -> list[TaskRecord]:
+        clauses = ["program_id = ?"]
+        params: list[Any] = [program_id]
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " AND ".join(clauses)
+        params.append(limit)
+        rows = self._rows(
+            f"SELECT * FROM tasks WHERE {where} ORDER BY updated_at DESC LIMIT ?",
+            tuple(params),
+        )
         return [self._task_from_row(row) for row in rows]
 
     def update_task_status(

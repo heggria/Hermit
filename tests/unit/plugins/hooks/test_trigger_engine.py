@@ -43,7 +43,7 @@ def test_analyze_test_failure() -> None:
     assert len(matches) >= 1
     found = [m for m in matches if m.rule.source_kind == "test_failure"]
     assert found
-    assert "Fix failing test" in found[0].suggested_goal
+    assert "test failure" in found[0].suggested_goal.lower()
 
 
 def test_analyze_lint_violation() -> None:
@@ -59,7 +59,7 @@ def test_analyze_todo() -> None:
     matches = engine.analyze("# TODO: refactor this module into smaller pieces")
     found = [m for m in matches if m.rule.source_kind == "todo_scan"]
     assert found
-    assert "Address TODO" in found[0].suggested_goal
+    assert "Address" in found[0].suggested_goal or "TODO" in found[0].suggested_goal
 
 
 def test_analyze_security_cve() -> None:

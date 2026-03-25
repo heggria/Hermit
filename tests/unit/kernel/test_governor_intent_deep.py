@@ -288,8 +288,8 @@ class TestPriorityStrategyResolution:
         assert resolved is None
 
     def test_no_active_programs_returns_none(self) -> None:
-        """If all programs are completed, resolve_program returns None."""
-        prog = SimpleNamespace(program_id="prog_done", status="completed")
+        """If all programs are archived, resolve_program returns None."""
+        prog = SimpleNamespace(program_id="prog_done", status="archived")
         gov = GovernorService(store=_make_store(programs=[prog]))
         resolved = gov.resolve_program()
         assert resolved is None

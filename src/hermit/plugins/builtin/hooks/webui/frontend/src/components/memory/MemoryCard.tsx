@@ -17,19 +17,19 @@ function formatRelativeTime(
   const diff = now - ms;
 
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return t("common.justNow");
+  if (seconds < 60) return t("common.time.justNow");
 
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return t("common.minutesAgo", { count: minutes });
+  if (minutes < 60) return t("common.time.minutesAgo", { count: minutes });
 
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return t("common.hoursAgo", { count: hours });
+  if (hours < 24) return t("common.time.hoursAgo", { count: hours });
 
   const days = Math.floor(hours / 24);
-  if (days < 30) return t("common.daysAgo", { count: days });
+  if (days < 30) return t("common.time.daysAgo", { count: days });
 
   const months = Math.floor(days / 30);
-  return t("common.monthsAgo", { count: months });
+  return t("common.time.monthsAgo", { count: months });
 }
 
 function confidenceGradient(confidence: number): string {
@@ -45,7 +45,7 @@ export function MemoryCard({ memory }: MemoryCardProps) {
   return (
     <div className="group rounded-2xl bg-card border border-border p-5 shadow-sm transition-all duration-200 hover:-translate-y-[1px] hover:shadow-md">
       {/* Claim text */}
-      <p className="text-sm leading-relaxed text-foreground">
+      <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words">
         {memory.claim_text}
       </p>
 
@@ -76,7 +76,7 @@ export function MemoryCard({ memory }: MemoryCardProps) {
             <div className="flex items-center gap-1">
               <FileText className="size-3" />
               <span>
-                {t("memory.evidenceCount", {
+                {t("memory.card.evidence", {
                   count: memory.evidence_refs.length,
                 })}
               </span>

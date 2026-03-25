@@ -49,7 +49,7 @@ class TestCompileProgram:
         assert isinstance(program, ProgramRecord)
         assert program.program_id.startswith("program_")
         assert program.goal == "Ship v1 of the product"
-        assert program.status == ProgramState.draft
+        assert program.status == ProgramState.active
         assert program.priority == "normal"
 
     def test_title_defaults_to_goal(self, pm: ProgramManager) -> None:
@@ -93,7 +93,7 @@ class TestCompileProgram:
         assert program.priority == "high"
         assert program.budget_limits == {"tokens": 50_000}
         assert program.metadata == {"env": "prod"}
-        assert program.status == ProgramState.draft
+        assert program.status == ProgramState.active
 
     def test_compile_emits_event(self, pm: ProgramManager, store: KernelStore) -> None:
         program = pm.compile_program(goal="Event test")
@@ -162,28 +162,12 @@ class TestAddTeam:
 
     def test_add_team_to_active_program(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Active test")
-        pm.activate_program(program.program_id)
         team = pm.add_team(program_id=program.program_id, title="Late Team")
         assert team.title == "Late Team"
 
-    def test_add_team_to_paused_program(self, pm: ProgramManager) -> None:
-        program = pm.compile_program(goal="Paused test")
-        pm.activate_program(program.program_id)
-        pm.pause_program(program.program_id)
-        team = pm.add_team(program_id=program.program_id, title="Paused Team")
-        assert team.title == "Paused Team"
-
-    def test_add_team_to_completed_program_raises(self, pm: ProgramManager) -> None:
-        program = pm.compile_program(goal="Completed test")
-        pm.activate_program(program.program_id)
-        pm.complete_program(program.program_id)
-        with pytest.raises(ProgramManagerError, match="terminal state"):
-            pm.add_team(program_id=program.program_id, title="Too Late")
-
-    def test_add_team_to_failed_program_raises(self, pm: ProgramManager) -> None:
-        program = pm.compile_program(goal="Failed test")
-        pm.activate_program(program.program_id)
-        pm.fail_program(program.program_id)
+    def test_add_team_to_archived_program_raises(self, pm: ProgramManager) -> None:
+        program = pm.compile_program(goal="Archived test")
+        pm.archive_program(program.program_id)
         with pytest.raises(ProgramManagerError, match="terminal state"):
             pm.add_team(program_id=program.program_id, title="Too Late")
 
@@ -325,61 +309,26 @@ class TestAddMilestone:
 
 
 class TestProgramLifecycle:
-    def test_activate_from_draft(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Activate test")
-        pm.activate_program(program.program_id)
+    def test_program_starts_active(self, pm: ProgramManager, store: KernelStore) -> None:
+        program = pm.compile_program(goal="Start active test")
         updated = store.get_program(program.program_id)
         assert updated is not None
         assert updated.status == ProgramState.active
 
-    def test_pause_active_program(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Pause test")
-        pm.activate_program(program.program_id)
-        pm.pause_program(program.program_id)
+    def test_archive_active_program(self, pm: ProgramManager, store: KernelStore) -> None:
+        program = pm.compile_program(goal="Archive test")
+        pm.archive_program(program.program_id)
         updated = store.get_program(program.program_id)
         assert updated is not None
-        assert updated.status == ProgramState.paused
+        assert updated.status == ProgramState.archived
 
-    def test_resume_paused_program(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Resume test")
+    def test_activate_archived_program(self, pm: ProgramManager, store: KernelStore) -> None:
+        program = pm.compile_program(goal="Reactivate test")
+        pm.archive_program(program.program_id)
         pm.activate_program(program.program_id)
-        pm.pause_program(program.program_id)
-        pm.resume_program(program.program_id)
         updated = store.get_program(program.program_id)
         assert updated is not None
         assert updated.status == ProgramState.active
-
-    def test_complete_active_program(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Complete test")
-        pm.activate_program(program.program_id)
-        pm.complete_program(program.program_id)
-        updated = store.get_program(program.program_id)
-        assert updated is not None
-        assert updated.status == ProgramState.completed
-
-    def test_fail_active_program(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Fail test")
-        pm.activate_program(program.program_id)
-        pm.fail_program(program.program_id)
-        updated = store.get_program(program.program_id)
-        assert updated is not None
-        assert updated.status == ProgramState.failed
-
-    def test_fail_draft_program(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Draft fail test")
-        pm.fail_program(program.program_id)
-        updated = store.get_program(program.program_id)
-        assert updated is not None
-        assert updated.status == ProgramState.failed
-
-    def test_fail_paused_program(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Paused fail test")
-        pm.activate_program(program.program_id)
-        pm.pause_program(program.program_id)
-        pm.fail_program(program.program_id)
-        updated = store.get_program(program.program_id)
-        assert updated is not None
-        assert updated.status == ProgramState.failed
 
     def test_full_lifecycle(self, pm: ProgramManager, store: KernelStore) -> None:
         program = pm.compile_program(
@@ -395,14 +344,11 @@ class TestProgramLifecycle:
             dependency_ids=[ms1.milestone_id],
             acceptance_criteria=["All tests pass"],
         )
-        pm.activate_program(program.program_id)
-        pm.pause_program(program.program_id)
-        pm.resume_program(program.program_id)
-        pm.complete_program(program.program_id)
+        pm.archive_program(program.program_id)
 
         final = store.get_program(program.program_id)
         assert final is not None
-        assert final.status == ProgramState.completed
+        assert final.status == ProgramState.archived
         assert final.priority == "high"
         assert len(final.milestone_ids) == 2
 
@@ -413,41 +359,16 @@ class TestProgramLifecycle:
 
 
 class TestInvalidTransitions:
-    def test_activate_completed_raises(self, pm: ProgramManager) -> None:
+    def test_activate_active_raises(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Bad transition")
-        pm.activate_program(program.program_id)
-        pm.complete_program(program.program_id)
         with pytest.raises(ProgramManagerError, match="Invalid program transition"):
             pm.activate_program(program.program_id)
 
-    def test_pause_draft_raises(self, pm: ProgramManager) -> None:
+    def test_archive_archived_raises(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Bad transition")
+        pm.archive_program(program.program_id)
         with pytest.raises(ProgramManagerError, match="Invalid program transition"):
-            pm.pause_program(program.program_id)
-
-    def test_complete_draft_raises(self, pm: ProgramManager) -> None:
-        program = pm.compile_program(goal="Bad transition")
-        with pytest.raises(ProgramManagerError, match="Invalid program transition"):
-            pm.complete_program(program.program_id)
-
-    def test_resume_draft_raises(self, pm: ProgramManager) -> None:
-        program = pm.compile_program(goal="Bad transition")
-        with pytest.raises(ProgramManagerError, match="Cannot resume program"):
-            pm.resume_program(program.program_id)
-
-    def test_pause_completed_raises(self, pm: ProgramManager) -> None:
-        program = pm.compile_program(goal="Bad transition")
-        pm.activate_program(program.program_id)
-        pm.complete_program(program.program_id)
-        with pytest.raises(ProgramManagerError, match="Invalid program transition"):
-            pm.pause_program(program.program_id)
-
-    def test_complete_failed_raises(self, pm: ProgramManager) -> None:
-        program = pm.compile_program(goal="Bad transition")
-        pm.activate_program(program.program_id)
-        pm.fail_program(program.program_id)
-        with pytest.raises(ProgramManagerError, match="Invalid program transition"):
-            pm.complete_program(program.program_id)
+            pm.archive_program(program.program_id)
 
     def test_nonexistent_program_raises(self, pm: ProgramManager) -> None:
         with pytest.raises(ProgramManagerError, match="Program not found"):
@@ -465,7 +386,7 @@ class TestGetProgramWithTeams:
         result = pm.get_program_with_teams(program.program_id)
         assert result["program_id"] == program.program_id
         assert result["goal"] == "Empty test"
-        assert result["status"] == ProgramState.draft
+        assert result["status"] == ProgramState.active
         assert result["teams"] == []
 
     def test_program_with_teams_and_milestones(self, pm: ProgramManager) -> None:
@@ -553,28 +474,21 @@ class TestListActivePrograms:
         result = pm.list_active_programs()
         assert result == []
 
-    def test_includes_draft_active_paused(self, pm: ProgramManager) -> None:
-        p1 = pm.compile_program(goal="Draft")
-        p2 = pm.compile_program(goal="Active")
-        pm.activate_program(p2.program_id)
-        p3 = pm.compile_program(goal="Paused")
-        pm.activate_program(p3.program_id)
-        pm.pause_program(p3.program_id)
+    def test_includes_active_programs(self, pm: ProgramManager) -> None:
+        p1 = pm.compile_program(goal="Active 1")
+        p2 = pm.compile_program(goal="Active 2")
 
         active = pm.list_active_programs()
         ids = {p.program_id for p in active}
         assert p1.program_id in ids
         assert p2.program_id in ids
-        assert p3.program_id in ids
 
-    def test_excludes_completed_and_failed(self, pm: ProgramManager) -> None:
-        p1 = pm.compile_program(goal="Completed")
-        pm.activate_program(p1.program_id)
-        pm.complete_program(p1.program_id)
+    def test_excludes_archived(self, pm: ProgramManager) -> None:
+        p1 = pm.compile_program(goal="Archived 1")
+        pm.archive_program(p1.program_id)
 
-        p2 = pm.compile_program(goal="Failed")
-        pm.activate_program(p2.program_id)
-        pm.fail_program(p2.program_id)
+        p2 = pm.compile_program(goal="Archived 2")
+        pm.archive_program(p2.program_id)
 
         p3 = pm.compile_program(goal="Still active")
 
@@ -601,32 +515,18 @@ class TestListActivePrograms:
 
 
 class TestProgramManagerEvents:
-    def test_activate_emits_event(self, pm: ProgramManager, store: KernelStore) -> None:
+    def test_archive_emits_event(self, pm: ProgramManager, store: KernelStore) -> None:
         program = pm.compile_program(goal="Event test")
-        pm.activate_program(program.program_id)
-        events = store.list_events(event_type="program.active")
+        pm.archive_program(program.program_id)
+        events = store.list_events(event_type="program.archived")
         assert len(events) >= 1
         assert events[0]["entity_id"] == program.program_id
 
-    def test_pause_emits_event(self, pm: ProgramManager, store: KernelStore) -> None:
+    def test_activate_archived_emits_event(self, pm: ProgramManager, store: KernelStore) -> None:
         program = pm.compile_program(goal="Event test")
+        pm.archive_program(program.program_id)
         pm.activate_program(program.program_id)
-        pm.pause_program(program.program_id)
-        events = store.list_events(event_type="program.paused")
-        assert len(events) >= 1
-
-    def test_complete_emits_event(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Event test")
-        pm.activate_program(program.program_id)
-        pm.complete_program(program.program_id)
-        events = store.list_events(event_type="program.completed")
-        assert len(events) >= 1
-
-    def test_fail_emits_event(self, pm: ProgramManager, store: KernelStore) -> None:
-        program = pm.compile_program(goal="Event test")
-        pm.activate_program(program.program_id)
-        pm.fail_program(program.program_id)
-        events = store.list_events(event_type="program.failed")
+        events = store.list_events(event_type="program.active")
         assert len(events) >= 1
 
     def test_add_team_emits_event(self, pm: ProgramManager, store: KernelStore) -> None:
@@ -707,7 +607,6 @@ class TestProgramManagerEdgeCases:
             title="Milestone X",
             acceptance_criteria=["Verified"],
         )
-        pm.activate_program(program.program_id)
 
         # Verify via store directly
         raw_program = store.get_program(program.program_id)
@@ -745,7 +644,7 @@ class TestCompileProgramWithStructure:
         )
         assert isinstance(result, CompilationResult)
         assert result.program.goal == "Build auth system"
-        assert result.program.status == ProgramState.draft
+        assert result.program.status == ProgramState.active
         assert len(result.teams) == 2
         assert result.teams[0].title == "Backend Team"
         assert result.teams[1].title == "Frontend Team"
@@ -895,7 +794,8 @@ class TestGenerateTasks:
             dependency_ids=[ms1.milestone_id],
         )
 
-        # Complete Phase 1
+        # Complete Phase 1 (pending → active → completed)
+        store.update_milestone_status(ms1.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(ms1.milestone_id, MilestoneState.COMPLETED)
 
         contracts = pm.generate_tasks(program.program_id)
@@ -907,8 +807,7 @@ class TestGenerateTasks:
         program = pm.compile_program(goal="Terminal test")
         team = pm.add_team(program_id=program.program_id, title="Team A")
         pm.add_milestone(team_id=team.team_id, title="Ready MS")
-        pm.activate_program(program.program_id)
-        pm.complete_program(program.program_id)
+        pm.archive_program(program.program_id)
 
         contracts = pm.generate_tasks(program.program_id)
         assert contracts == []
@@ -966,7 +865,6 @@ class TestGenerateTasks:
 class TestGenerateFollowups:
     def test_rejected_without_issues_produces_retry(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Followup test")
-        pm.activate_program(program.program_id)
 
         verdict = create_verdict(
             task_id="task_123",
@@ -982,7 +880,6 @@ class TestGenerateFollowups:
 
     def test_rejected_with_issues_produces_mitigate(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Issue followup")
-        pm.activate_program(program.program_id)
 
         verdict = create_verdict(
             task_id="task_456",
@@ -1001,7 +898,6 @@ class TestGenerateFollowups:
 
     def test_blocked_produces_escalate(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Blocked followup")
-        pm.activate_program(program.program_id)
 
         verdict = create_verdict(
             task_id="task_789",
@@ -1016,7 +912,6 @@ class TestGenerateFollowups:
 
     def test_accepted_with_followups_produces_replan(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Replan followup")
-        pm.activate_program(program.program_id)
 
         verdict = create_verdict(
             task_id="task_abc",
@@ -1031,7 +926,6 @@ class TestGenerateFollowups:
 
     def test_accepted_produces_no_followups(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Clean accept")
-        pm.activate_program(program.program_id)
 
         verdict = create_verdict(
             task_id="task_clean",
@@ -1043,8 +937,7 @@ class TestGenerateFollowups:
 
     def test_terminal_program_returns_empty(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Terminal followup")
-        pm.activate_program(program.program_id)
-        pm.complete_program(program.program_id)
+        pm.archive_program(program.program_id)
 
         verdict = create_verdict(task_id="task_x", verdict="rejected")
         followups = pm.generate_followups(program_id=program.program_id, verdict=verdict)
@@ -1057,7 +950,6 @@ class TestGenerateFollowups:
 
     def test_accepted_with_followups_no_recommendation(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="No recommendation")
-        pm.activate_program(program.program_id)
 
         verdict = create_verdict(
             task_id="task_no_rec",
@@ -1069,7 +961,6 @@ class TestGenerateFollowups:
 
     def test_mitigate_contract_includes_scope(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Scope check")
-        pm.activate_program(program.program_id)
 
         verdict = create_verdict(
             task_id="task_scope",
@@ -1089,7 +980,6 @@ class TestGenerateFollowups:
 class TestSelectBackgroundWork:
     def test_selects_ready_milestones(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Background test", priority="high")
-        pm.activate_program(program.program_id)
         team = pm.add_team(program_id=program.program_id, title="Team A")
         pm.add_milestone(
             team_id=team.team_id,
@@ -1106,7 +996,6 @@ class TestSelectBackgroundWork:
 
     def test_respects_max_items(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Max items test")
-        pm.activate_program(program.program_id)
         team = pm.add_team(program_id=program.program_id, title="Team A")
         for i in range(10):
             pm.add_milestone(team_id=team.team_id, title=f"MS {i}")
@@ -1116,7 +1005,6 @@ class TestSelectBackgroundWork:
 
     def test_excludes_blocked_milestones(self, pm: ProgramManager, store: KernelStore) -> None:
         program = pm.compile_program(goal="Blocked milestone test")
-        pm.activate_program(program.program_id)
         team = pm.add_team(program_id=program.program_id, title="Team A")
         ms1 = pm.add_milestone(team_id=team.team_id, title="Phase 1")
         pm.add_milestone(
@@ -1136,22 +1024,19 @@ class TestSelectBackgroundWork:
 
     def test_empty_when_all_terminal(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Terminal bg test")
-        pm.activate_program(program.program_id)
         team = pm.add_team(program_id=program.program_id, title="Team A")
         pm.add_milestone(team_id=team.team_id, title="Ready")
-        pm.complete_program(program.program_id)
+        pm.archive_program(program.program_id)
 
         items = pm.select_background_work()
         assert items == []
 
     def test_higher_priority_scores_higher(self, pm: ProgramManager) -> None:
         p_high = pm.compile_program(goal="High prio", priority="high")
-        pm.activate_program(p_high.program_id)
         t_high = pm.add_team(program_id=p_high.program_id, title="Team H")
         pm.add_milestone(team_id=t_high.team_id, title="High Work")
 
         p_low = pm.compile_program(goal="Low prio", priority="low")
-        pm.activate_program(p_low.program_id)
         t_low = pm.add_team(program_id=p_low.program_id, title="Team L")
         pm.add_milestone(team_id=t_low.team_id, title="Low Work")
 
@@ -1160,26 +1045,23 @@ class TestSelectBackgroundWork:
         # First item should be higher priority
         assert items[0].score >= items[1].score
 
-    def test_active_programs_score_higher_than_draft(self, pm: ProgramManager) -> None:
-        p_draft = pm.compile_program(goal="Draft")
-        t_draft = pm.add_team(program_id=p_draft.program_id, title="Team D")
-        pm.add_milestone(team_id=t_draft.team_id, title="Draft Work")
+    def test_archived_programs_excluded_from_background_work(self, pm: ProgramManager) -> None:
+        p_archived = pm.compile_program(goal="Archived")
+        t_archived = pm.add_team(program_id=p_archived.program_id, title="Team D")
+        pm.add_milestone(team_id=t_archived.team_id, title="Archived Work")
+        pm.archive_program(p_archived.program_id)
 
         p_active = pm.compile_program(goal="Active")
-        pm.activate_program(p_active.program_id)
         t_active = pm.add_team(program_id=p_active.program_id, title="Team A")
         pm.add_milestone(team_id=t_active.team_id, title="Active Work")
 
         items = pm.select_background_work()
-        assert len(items) == 2
-        # Active should score higher due to state_bonus
-        active_item = next(i for i in items if i.contract.goal == "Active Work")
-        draft_item = next(i for i in items if i.contract.goal == "Draft Work")
-        assert active_item.score > draft_item.score
+        # Only active program's work should appear
+        assert len(items) == 1
+        assert items[0].contract.goal == "Active Work"
 
     def test_skips_non_active_teams(self, pm: ProgramManager, store: KernelStore) -> None:
         program = pm.compile_program(goal="Paused team test")
-        pm.activate_program(program.program_id)
         team = pm.add_team(program_id=program.program_id, title="Paused Team")
         pm.add_milestone(team_id=team.team_id, title="Paused Work")
         # Pause the team directly via store
@@ -1194,7 +1076,6 @@ class TestSelectBackgroundWork:
     def test_multi_program_aggregation(self, pm: ProgramManager) -> None:
         for i in range(3):
             p = pm.compile_program(goal=f"Program {i}")
-            pm.activate_program(p.program_id)
             t = pm.add_team(program_id=p.program_id, title=f"Team {i}")
             pm.add_milestone(team_id=t.team_id, title=f"Work {i}")
 
@@ -1203,7 +1084,6 @@ class TestSelectBackgroundWork:
 
     def test_contract_fields_populated(self, pm: ProgramManager) -> None:
         program = pm.compile_program(goal="Fields test")
-        pm.activate_program(program.program_id)
         team = pm.add_team(
             program_id=program.program_id,
             title="Team A",

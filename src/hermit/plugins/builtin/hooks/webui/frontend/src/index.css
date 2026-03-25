@@ -3,6 +3,8 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+@plugin "@tailwindcss/typography";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -162,6 +164,16 @@
   40% { opacity: 1; transform: scale(1); }
 }
 
+@keyframes spotlightIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes tourPopoverIn {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -199,6 +211,12 @@
   .dark ::-webkit-scrollbar-thumb:hover {
     background: oklch(0.40 0.01 60);
   }
+}
+
+/* ─── React Flow edge selection ─── */
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--destructive) !important;
+  stroke-width: 3 !important;
 }
 
 /* ─── Selection color ─── */

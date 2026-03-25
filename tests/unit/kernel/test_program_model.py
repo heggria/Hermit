@@ -24,46 +24,29 @@ from hermit.kernel.task.models.program import (
 
 class TestProgramState:
     def test_values(self) -> None:
-        assert ProgramState.draft == "draft"
         assert ProgramState.active == "active"
-        assert ProgramState.paused == "paused"
-        assert ProgramState.blocked == "blocked"
-        assert ProgramState.completed == "completed"
-        assert ProgramState.failed == "failed"
+        assert ProgramState.archived == "archived"
 
     def test_terminal_states(self) -> None:
-        assert ProgramState.completed in TERMINAL_PROGRAM_STATES
-        assert ProgramState.failed in TERMINAL_PROGRAM_STATES
+        assert ProgramState.archived in TERMINAL_PROGRAM_STATES
         assert ProgramState.active not in TERMINAL_PROGRAM_STATES
-        assert ProgramState.blocked not in TERMINAL_PROGRAM_STATES
 
     def test_active_states(self) -> None:
-        assert ProgramState.draft in ACTIVE_PROGRAM_STATES
         assert ProgramState.active in ACTIVE_PROGRAM_STATES
-        assert ProgramState.paused in ACTIVE_PROGRAM_STATES
-        assert ProgramState.blocked in ACTIVE_PROGRAM_STATES
-        assert ProgramState.completed not in ACTIVE_PROGRAM_STATES
-        assert ProgramState.failed not in ACTIVE_PROGRAM_STATES
+        assert ProgramState.archived not in ACTIVE_PROGRAM_STATES
 
     def test_state_transitions_completeness(self) -> None:
         """Every ProgramState member must have a transitions entry."""
         for state in ProgramState:
             assert state in PROGRAM_STATE_TRANSITIONS
 
-    def test_terminal_states_have_no_transitions(self) -> None:
-        for state in TERMINAL_PROGRAM_STATES:
-            assert PROGRAM_STATE_TRANSITIONS[state] == frozenset()
+    def test_terminal_states_have_transitions_back(self) -> None:
+        """Archived state can transition back to active."""
+        assert ProgramState.active in PROGRAM_STATE_TRANSITIONS[ProgramState.archived]
 
-    def test_blocked_state_transitions(self) -> None:
-        allowed = PROGRAM_STATE_TRANSITIONS[ProgramState.blocked]
-        assert ProgramState.active in allowed
-        assert ProgramState.paused in allowed
-        assert ProgramState.failed in allowed
-        assert ProgramState.completed not in allowed
-
-    def test_active_can_transition_to_blocked(self) -> None:
+    def test_active_can_transition_to_archived(self) -> None:
         allowed = PROGRAM_STATE_TRANSITIONS[ProgramState.active]
-        assert ProgramState.blocked in allowed
+        assert ProgramState.archived in allowed
 
 
 class TestProgramRecord:
@@ -73,7 +56,7 @@ class TestProgramRecord:
         assert rec.program_id == "prog_1"
         assert rec.title == "Alpha"
         assert rec.goal == "Ship v1"
-        assert rec.status == ProgramState.draft
+        assert rec.status == ProgramState.active
         assert rec.description == ""
         assert rec.priority == "normal"
         assert rec.program_contract_ref is None
@@ -171,7 +154,7 @@ class TestProgramStoreMixin:
         assert prog.program_id.startswith("program_")
         assert prog.title == "Alpha"
         assert prog.goal == "Ship v1"
-        assert prog.status == "draft"
+        assert prog.status == "active"
         assert prog.description == ""
         assert prog.priority == "normal"
         assert prog.program_contract_ref is None
@@ -226,13 +209,13 @@ class TestProgramStoreMixin:
 
     def test_list_programs_filter_by_status(self, store: KernelStore) -> None:
         p1 = store.create_program(title="P1", goal="G1")
-        store.create_program(title="P2", goal="G2")
-        store.update_program_status(p1.program_id, "active")
+        p2 = store.create_program(title="P2", goal="G2")
+        store.update_program_status(p1.program_id, "archived")
         active = store.list_programs(status="active")
         assert len(active) == 1
-        assert active[0].program_id == p1.program_id
-        drafts = store.list_programs(status="draft")
-        assert len(drafts) == 1
+        assert active[0].program_id == p2.program_id
+        archived = store.list_programs(status="archived")
+        assert len(archived) == 1
 
     def test_list_programs_filter_by_priority(self, store: KernelStore) -> None:
         store.create_program(title="P1", goal="G1", priority="high")
@@ -256,50 +239,37 @@ class TestProgramStoreMixin:
 
     def test_update_program_status(self, store: KernelStore) -> None:
         prog = store.create_program(title="Alpha", goal="Ship")
-        assert prog.status == "draft"
-        store.update_program_status(prog.program_id, "active")
+        assert prog.status == "active"
+        store.update_program_status(prog.program_id, "archived")
         updated = store.get_program(prog.program_id)
         assert updated is not None
-        assert updated.status == "active"
+        assert updated.status == "archived"
         assert updated.updated_at > prog.updated_at
 
     def test_update_program_status_with_payload(self, store: KernelStore) -> None:
         prog = store.create_program(title="Alpha", goal="Ship")
-        store.update_program_status(prog.program_id, "active")
         store.update_program_status(
             prog.program_id,
-            "completed",
+            "archived",
             payload={"reason": "all_milestones_reached"},
         )
         updated = store.get_program(prog.program_id)
         assert updated is not None
-        assert updated.status == "completed"
+        assert updated.status == "archived"
 
     def test_update_program_status_invalid_transition_raises(self, store: KernelStore) -> None:
         prog = store.create_program(title="Alpha", goal="Ship")
-        # draft -> completed is not allowed
+        # active -> active is not allowed
         with pytest.raises(ValueError, match="Invalid program state transition"):
-            store.update_program_status(prog.program_id, "completed")
-
-    def test_update_program_status_terminal_cannot_transition(self, store: KernelStore) -> None:
-        prog = store.create_program(title="Alpha", goal="Ship")
-        store.update_program_status(prog.program_id, "active")
-        store.update_program_status(prog.program_id, "completed")
-        with pytest.raises(ValueError, match="terminal state"):
             store.update_program_status(prog.program_id, "active")
 
-    def test_update_program_status_blocked_transition(self, store: KernelStore) -> None:
+    def test_update_program_status_reactivate_from_archived(self, store: KernelStore) -> None:
         prog = store.create_program(title="Alpha", goal="Ship")
+        store.update_program_status(prog.program_id, "archived")
         store.update_program_status(prog.program_id, "active")
-        store.update_program_status(prog.program_id, "blocked")
         updated = store.get_program(prog.program_id)
         assert updated is not None
-        assert updated.status == "blocked"
-        # Can unblock back to active
-        store.update_program_status(prog.program_id, "active")
-        updated2 = store.get_program(prog.program_id)
-        assert updated2 is not None
-        assert updated2.status == "active"
+        assert updated.status == "active"
 
     def test_update_program_status_nonexistent_program(self, store: KernelStore) -> None:
         # Should silently return without error
@@ -411,17 +381,8 @@ class TestProgramStoreMixin:
 
     def test_update_status_emits_event(self, store: KernelStore) -> None:
         prog = store.create_program(title="Alpha", goal="Ship")
-        store.update_program_status(prog.program_id, "active")
-        events = store.list_events(event_type="program.active")
-        assert len(events) >= 1
-        latest = events[0]
-        assert latest["entity_id"] == prog.program_id
-
-    def test_blocked_status_emits_event(self, store: KernelStore) -> None:
-        prog = store.create_program(title="Alpha", goal="Ship")
-        store.update_program_status(prog.program_id, "active")
-        store.update_program_status(prog.program_id, "blocked")
-        events = store.list_events(event_type="program.blocked")
+        store.update_program_status(prog.program_id, "archived")
+        events = store.list_events(event_type="program.archived")
         assert len(events) >= 1
         latest = events[0]
         assert latest["entity_id"] == prog.program_id
@@ -440,34 +401,29 @@ class TestProgramStoreMixin:
             goal="Validate all transitions",
             priority="high",
         )
-        assert prog.status == "draft"
+        assert prog.status == "active"
 
-        store.update_program_status(prog.program_id, "active")
         store.add_milestone_to_program(prog.program_id, "ms_research")
         store.add_milestone_to_program(prog.program_id, "ms_impl")
 
-        store.update_program_status(prog.program_id, "paused")
-        store.update_program_status(prog.program_id, "active")
-        store.update_program_status(prog.program_id, "completed")
+        store.update_program_status(prog.program_id, "archived")
 
         final = store.get_program(prog.program_id)
         assert final is not None
-        assert final.status == "completed"
+        assert final.status == "archived"
         assert final.milestone_ids == ["ms_research", "ms_impl"]
         assert final.priority == "high"
 
-    def test_full_lifecycle_with_blocked(self, store: KernelStore) -> None:
-        """Test lifecycle that includes the blocked state."""
-        prog = store.create_program(title="Blocked Lifecycle", goal="Test blocked")
+    def test_full_lifecycle_with_reactivation(self, store: KernelStore) -> None:
+        """Test lifecycle that includes archiving and reactivation."""
+        prog = store.create_program(title="Reactivation Lifecycle", goal="Test reactivation")
+        store.update_program_status(prog.program_id, "archived")
         store.update_program_status(prog.program_id, "active")
-        store.update_program_status(prog.program_id, "blocked")
-        store.update_program_status(prog.program_id, "active")
-        store.update_program_status(prog.program_id, "blocked")
-        store.update_program_status(prog.program_id, "failed")
+        store.update_program_status(prog.program_id, "archived")
 
         final = store.get_program(prog.program_id)
         assert final is not None
-        assert final.status == "failed"
+        assert final.status == "archived"
 
     def test_create_program_event_includes_contract_ref(self, store: KernelStore) -> None:
         store.create_program(

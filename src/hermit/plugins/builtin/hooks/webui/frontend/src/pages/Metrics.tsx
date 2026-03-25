@@ -4,6 +4,7 @@ import { useGovernanceMetrics } from "@/api/hooks";
 import { ToolUsageChart } from "@/components/metrics/ToolUsageChart";
 import { ActionClassChart } from "@/components/metrics/ActionClassChart";
 import { RiskTable } from "@/components/metrics/RiskTable";
+import { PageHeader } from "@/components/layout/PageHeader";
 
 const TIME_WINDOWS = [
   { label: "1h", hours: 1 },
@@ -47,34 +48,32 @@ export default function Metrics() {
   const riskEntries = data?.risk_entries ?? [];
   const windowDesc = useWindowDescription(hours);
 
+  const timeWindowSelector = (
+    <div className="flex gap-1 rounded-full border border-border bg-card p-1">
+      {TIME_WINDOWS.map((tw) => (
+        <button
+          key={tw.hours}
+          onClick={() => setHours(tw.hours)}
+          className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
+            hours === tw.hours
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted"
+          }`}
+        >
+          {tw.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 space-y-6">
+    <div className="space-y-4">
       {/* Header with time window selector */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            {t("metrics.title")}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("metrics.description", { window: windowDesc })}
-          </p>
-        </div>
-        <div className="flex gap-1 rounded-full border border-border bg-card p-1">
-          {TIME_WINDOWS.map((tw) => (
-            <button
-              key={tw.hours}
-              onClick={() => setHours(tw.hours)}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
-                hours === tw.hours
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              {tw.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title={t("metrics.title")}
+        subtitle={t("metrics.description", { window: windowDesc })}
+        extra={timeWindowSelector}
+      />
 
       {/* Summary cards */}
       {isLoading ? (

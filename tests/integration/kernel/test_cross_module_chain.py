@@ -238,7 +238,7 @@ class TestCrossModuleChain:
 
         # Verify program was created
         assert compilation.program is not None
-        assert compilation.program.status == ProgramState.draft
+        assert compilation.program.status == ProgramState.active
         assert compilation.program.title == "v0.3 Governance Refactor"
 
         # Verify teams were created

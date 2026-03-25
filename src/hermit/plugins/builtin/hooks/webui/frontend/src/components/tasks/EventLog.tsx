@@ -1,34 +1,11 @@
 import { useTranslation } from "react-i18next";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatTimeAgo } from "@/lib/format";
+import { getEventTypeStyle } from "@/lib/status-styles";
 import { Calendar } from "lucide-react";
 
 interface EventLogProps {
   readonly events: Record<string, unknown>[];
-}
-
-const EVENT_TYPE_STYLES: Record<string, { bg: string; text: string }> = {
-  task_created: { bg: "bg-blue-50 dark:bg-blue-950/40", text: "text-blue-600 dark:text-blue-400" },
-  task_started: { bg: "bg-blue-50 dark:bg-blue-950/40", text: "text-blue-600 dark:text-blue-400" },
-  task_completed: { bg: "bg-emerald-50 dark:bg-emerald-950/40", text: "text-emerald-600 dark:text-emerald-400" },
-  task_failed: { bg: "bg-red-50 dark:bg-red-950/40", text: "text-red-600 dark:text-red-400" },
-  step_started: { bg: "bg-blue-50 dark:bg-blue-950/40", text: "text-blue-600 dark:text-blue-400" },
-  step_completed: { bg: "bg-emerald-50 dark:bg-emerald-950/40", text: "text-emerald-600 dark:text-emerald-400" },
-  step_failed: { bg: "bg-red-50 dark:bg-red-950/40", text: "text-red-600 dark:text-red-400" },
-  approval_requested: { bg: "bg-amber-50 dark:bg-amber-950/40", text: "text-amber-600 dark:text-amber-400" },
-  approval_granted: { bg: "bg-emerald-50 dark:bg-emerald-950/40", text: "text-emerald-600 dark:text-emerald-400" },
-  approval_denied: { bg: "bg-red-50 dark:bg-red-950/40", text: "text-red-600 dark:text-red-400" },
-  tool_executed: { bg: "bg-violet-50 dark:bg-violet-950/40", text: "text-violet-600 dark:text-violet-400" },
-  receipt_issued: { bg: "bg-indigo-50 dark:bg-indigo-950/40", text: "text-indigo-600 dark:text-indigo-400" },
-};
-
-function getEventStyle(eventType: string) {
-  return (
-    EVENT_TYPE_STYLES[eventType] ?? {
-      bg: "bg-muted",
-      text: "text-muted-foreground",
-    }
-  );
 }
 
 export function EventLog({ events }: EventLogProps) {
@@ -59,7 +36,7 @@ export function EventLog({ events }: EventLogProps) {
           const entityType = (event.entity_type as string) ?? "";
           const actor = (event.actor as string) ?? "";
           const createdAt = event.created_at as number | null;
-          const style = getEventStyle(eventType);
+          const style = getEventTypeStyle(eventType);
 
           return (
             <div

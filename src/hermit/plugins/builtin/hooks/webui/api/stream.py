@@ -10,6 +10,7 @@ import structlog
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
+from hermit.plugins.builtin.hooks.webui.api import tool_activity
 from hermit.plugins.builtin.hooks.webui.api.deps import get_store
 
 _log = structlog.get_logger()
@@ -60,6 +61,19 @@ async def stream_events() -> EventSourceResponse:
                             "event": "approvals.pending",
                             "data": json.dumps([a.__dict__ for a in approvals], default=str),
                         }
+
+                # --- Active tool calls ---
+                active_tools = tool_activity.get_all()
+                for _tid, info in active_tools.items():
+                    yield {
+                        "event": "tool.active",
+                        "data": json.dumps(info, default=str),
+                    }
+                # Clear entries for tasks that are no longer running
+                for tid in list(active_tools):
+                    task_state = last_task_states.get(tid, "")
+                    if task_state.startswith(("completed:", "failed:", "cancelled:")):
+                        tool_activity.clear(tid)
 
                 # --- Heartbeat ---
                 mono_now = time.monotonic()

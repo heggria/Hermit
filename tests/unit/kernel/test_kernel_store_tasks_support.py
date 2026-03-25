@@ -5,15 +5,15 @@ import sqlite3
 from pathlib import Path
 
 from hermit.kernel.ledger.journal.store import KernelStore
-from hermit.kernel.ledger.journal.store_support import _UNSET, _json_loads
+from hermit.kernel.ledger.journal.store_support import _UNSET, json_loads
 from hermit.kernel.verification.proofs.proofs import ProofService
 
 
 def test_store_support_json_loads_handles_empty_and_invalid() -> None:
-    assert _json_loads(None) == {}
-    assert _json_loads("") == {}
-    assert _json_loads("{bad") == {}
-    assert _json_loads('{"ok": true}') == {"ok": True}
+    assert json_loads(None) == {}
+    assert json_loads("") == {}
+    assert json_loads("{bad") == {}
+    assert json_loads('{"ok": true}') == {"ok": True}
     assert _UNSET is not None
 
 

@@ -1,69 +1,63 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle,
   Circle,
   Clock,
-  FileText,
   Loader2,
+  MinusCircle,
   RotateCcw,
+  SkipForward,
   X,
   XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getStatusStyle } from "@/lib/status-styles";
 import {
   useTaskSteps,
   useTaskReceipts,
   useApprovals,
   useCancelTask,
   useRollbackReceipt,
-  useTaskOutput,
 } from "@/api/hooks";
 import { InlineApproval } from "@/components/control/InlineApproval";
-import type { TaskRecord, StepRecord } from "@/types";
+import type { TaskRecord, StepRecord, ReceiptRecord } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Step icon config
+// Step icon config — icons are component-specific, colors come from central styles
 // ---------------------------------------------------------------------------
 
-const STEP_ICON_CONFIG: Record<
-  string,
-  { icon: typeof Circle; color: string; animate?: boolean }
-> = {
-  completed: {
-    icon: CheckCircle,
-    color: "text-emerald-500 dark:text-emerald-400",
-  },
-  running: {
-    icon: Circle,
-    color: "text-primary",
-    animate: true,
-  },
-  blocked: {
-    icon: Clock,
-    color: "text-amber-500 dark:text-amber-400",
-  },
-  pending: {
-    icon: Circle,
-    color: "text-muted-foreground/40",
-  },
-  failed: {
-    icon: XCircle,
-    color: "text-rose-500 dark:text-rose-400",
-  },
+const STEP_ICON_MAP: Record<string, typeof Circle> = {
+  completed: CheckCircle,
+  succeeded: CheckCircle,
+  failed: XCircle,
+  blocked: Clock,
+  awaiting_approval: Clock,
+  waiting: Clock,
+  skipped: SkipForward,
+  superseded: MinusCircle,
 };
 
 function getStepIcon(status: string) {
-  return (
-    STEP_ICON_CONFIG[status] ?? {
-      icon: Circle,
-      color: "text-muted-foreground/40",
-    }
-  );
+  const style = getStatusStyle(status);
+  return {
+    icon: STEP_ICON_MAP[status] ?? Circle,
+    color: style.text,
+    animate: style.pulse ?? false,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const RUNNING_STATUSES = new Set([
+  "running",
+  "dispatching",
+  "contracting",
+  "preflighting",
+]);
 
 function formatDuration(
   startedAt: number | null,
@@ -81,6 +75,40 @@ function formatDuration(
 
 const ACTIVE_STATUSES = new Set(["running", "queued", "blocked"]);
 
+/** Group receipts by their step_id. */
+function groupReceiptsByStep(
+  receipts: ReadonlyArray<ReceiptRecord>,
+): Map<string, ReceiptRecord[]> {
+  const map = new Map<string, ReceiptRecord[]>();
+  for (const receipt of receipts) {
+    if (!receipt.step_id) continue;
+    const existing = map.get(receipt.step_id);
+    if (existing) {
+      existing.push(receipt);
+    } else {
+      map.set(receipt.step_id, [receipt]);
+    }
+  }
+  return map;
+}
+
+// ---------------------------------------------------------------------------
+// Live duration hook — ticks every second while any step is running
+// ---------------------------------------------------------------------------
+
+function useLiveTick(steps: ReadonlyArray<StepRecord>): number {
+  const [tick, setTick] = useState(0);
+  const hasRunning = steps.some((s) => RUNNING_STATUSES.has(s.status));
+
+  useEffect(() => {
+    if (!hasRunning) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [hasRunning]);
+
+  return tick;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -91,15 +119,22 @@ interface TaskCardExpandedProps {
 
 export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const isActive = ACTIVE_STATUSES.has(task.status);
+
+  // Active tool call (set via SSE tool.active event)
+  const activeTool = isActive
+    ? (queryClient.getQueryData<{ tool_name: string; input_summary: string }>(
+        ["tasks", task.task_id, "active-tool"],
+      ) ?? null)
+    : null;
 
   const { data: stepsData, isLoading: stepsLoading } = useTaskSteps(
     task.task_id,
   );
   const { data: receiptsData } = useTaskReceipts(task.task_id);
   const { data: approvalsData } = useApprovals("pending", 50);
-  const { data: outputData } = useTaskOutput(task.task_id);
 
   const cancelMutation = useCancelTask();
   const rollbackMutation = useRollbackReceipt();
@@ -110,8 +145,13 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
     (a) => a.task_id === task.task_id,
   );
 
+  const receiptsByStep = groupReceiptsByStep(receipts);
+
   const rollbackReceipts = receipts.filter((r) => r.rollback_supported);
   const rollbackCount = rollbackReceipts.length;
+
+  // Live-tick so running step durations update every second
+  useLiveTick(steps);
 
   function handleCancel() {
     if (!window.confirm(t("control.actions.cancelConfirm"))) return;
@@ -131,13 +171,15 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Goal */}
-      <div>
-        <p className="text-sm text-foreground/80">{task.goal}</p>
-      </div>
+    <div className="space-y-3" data-tour-id="step-timeline">
+      {/* Goal -- only if different from title */}
+      {task.goal && task.goal !== task.title && (
+        <div>
+          <p className="text-sm text-foreground/80">{task.goal}</p>
+        </div>
+      )}
 
-      {/* Step Timeline */}
+      {/* Step Timeline with inline receipts */}
       {stepsLoading ? (
         <div className="space-y-1.5">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -157,11 +199,16 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
           {steps.map((step, index) => {
             const config = getStepIcon(step.status);
             const Icon = config.icon;
-            const duration = formatDuration(step.started_at, step.finished_at);
+            const isStepRunning = RUNNING_STATUSES.has(step.status);
+            const duration = formatDuration(
+              step.started_at,
+              isStepRunning ? null : step.finished_at,
+            );
             const isLast = index === steps.length - 1;
             const stepApprovals = taskApprovals.filter(
               (a) => a.step_id === step.step_id,
             );
+            const stepReceipts = receiptsByStep.get(step.step_id) ?? [];
 
             return (
               <div key={step.step_id} className="relative flex gap-2 pb-3">
@@ -171,20 +218,20 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
                 )}
 
                 {/* Icon */}
-                <div className="relative z-10 flex-shrink-0 pt-0.5">
-                  <div
+                <div className="relative z-10 flex size-4 flex-shrink-0 items-center justify-center">
+                  <Icon
                     className={cn(
-                      "flex size-4 items-center justify-center",
+                      "size-3.5",
+                      config.color,
                       config.animate && "animate-pulse",
                     )}
-                  >
-                    <Icon className={cn("size-3.5", config.color)} />
-                  </div>
+                  />
                 </div>
 
                 {/* Content */}
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  {/* Step header */}
+                  <div className="flex flex-wrap items-center gap-1.5 leading-4">
                     <span className="text-xs font-medium text-foreground">
                       {step.title ?? step.kind}
                     </span>
@@ -196,12 +243,80 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
                       </span>
                     )}
                     {duration && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60">
+                      <span className={cn(
+                        "flex items-center gap-0.5 text-[10px]",
+                        isStepRunning
+                          ? "text-primary tabular-nums"
+                          : "text-muted-foreground/60",
+                      )}>
                         <Clock className="size-2" />
                         {duration}
                       </span>
                     )}
                   </div>
+
+                  {/* Inline receipts (tool use entries) */}
+                  {stepReceipts.length > 0 && (
+                    <div className="mt-1 space-y-0.5">
+                      {stepReceipts.map((receipt) => (
+                        <div
+                          key={receipt.receipt_id}
+                          className="flex items-center gap-1.5 text-[11px]"
+                        >
+                          <span
+                            className={cn(
+                              "size-1.5 shrink-0 rounded-full",
+                              receipt.result_code === "succeeded"
+                                ? "bg-emerald-500"
+                                : receipt.result_code === "failed"
+                                  ? "bg-rose-500"
+                                  : "bg-muted-foreground/40",
+                            )}
+                          />
+                          <span className="shrink-0 font-medium text-foreground/60">
+                            {receipt.action_type}
+                          </span>
+                          <span
+                            className="min-w-0 flex-1 truncate font-mono text-muted-foreground/60"
+                            title={receipt.action_label || receipt.result_summary || ""}
+                          >
+                            {receipt.action_label || receipt.result_summary || ""}
+                          </span>
+                          {receipt.rollback_supported && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRollbackSingle(receipt.receipt_id)
+                              }
+                              disabled={rollbackMutation.isPending}
+                              className="ml-auto shrink-0 text-muted-foreground/40 transition-colors hover:text-amber-500"
+                            >
+                              <RotateCcw className="size-2.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Running indicator when step is active */}
+                  {isStepRunning && (
+                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+                      <Loader2 className="size-2.5 animate-spin shrink-0" />
+                      {activeTool ? (
+                        <>
+                          <span className="shrink-0 font-medium">{activeTool.tool_name}</span>
+                          {activeTool.input_summary && (
+                            <span className="min-w-0 truncate font-mono text-muted-foreground/40">
+                              {activeTool.input_summary}
+                            </span>
+                          )}
+                        </>
+                      ) : stepReceipts.length === 0 ? (
+                        <span>{t("taskDetail.steps.executing")}</span>
+                      ) : null}
+                    </div>
+                  )}
 
                   {/* Inline approvals for blocked steps */}
                   {stepApprovals.length > 0 && (
@@ -221,63 +336,6 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
         </div>
       )}
 
-      {/* Output section -- all receipt summaries with result_summary */}
-      {receipts.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-            <FileText className="size-3" />
-            {t("control.expanded.output")} ({receipts.length})
-          </div>
-          <div className="space-y-1 rounded-xl bg-muted/50 px-3 py-2">
-            {receipts.map((receipt) => (
-              <div
-                key={receipt.receipt_id}
-                className="flex items-start gap-1.5 text-[11px]"
-              >
-                <span className="flex-shrink-0 font-mono text-muted-foreground/70">
-                  {receipt.action_type}
-                </span>
-                <span className="flex-shrink-0 text-muted-foreground/40">&rarr;</span>
-                <span
-                  className={cn(
-                    "flex-shrink-0 font-medium",
-                    receipt.result_code === "succeeded"
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : receipt.result_code === "failed"
-                        ? "text-rose-600 dark:text-rose-400"
-                        : "text-muted-foreground",
-                  )}
-                >
-                  {receipt.result_code}
-                </span>
-                {receipt.result_summary && (
-                  <span className="min-w-0 flex-1 text-muted-foreground/60">
-                    {receipt.result_summary}
-                  </span>
-                )}
-                {receipt.rollback_supported && (
-                  <button
-                    type="button"
-                    onClick={() => handleRollbackSingle(receipt.receipt_id)}
-                    disabled={rollbackMutation.isPending}
-                    className="ml-auto flex-shrink-0 text-muted-foreground/40 transition-colors hover:text-amber-500"
-                  >
-                    <RotateCcw className="size-2.5" />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* No output placeholder */}
-      {receipts.length === 0 && !outputData?.response_text && (
-        <div className="text-[11px] text-muted-foreground/50">
-          {t("control.expanded.noOutput")}
-        </div>
-      )}
-
       {/* Inline approvals not attached to a specific step */}
       {taskApprovals.filter((a) => !a.step_id).length > 0 && (
         <div className="space-y-1">
@@ -292,8 +350,9 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
         </div>
       )}
 
-      {/* Action buttons row */}
-      <div className="flex items-center gap-2 pt-0.5">
+      {/* Action buttons row — only render when there are buttons */}
+      {(isActive || rollbackCount > 0) && (
+        <div className="flex items-center gap-2 pt-0.5">
         {/* Cancel Task -- active tasks */}
         {isActive && (
           <button
@@ -328,6 +387,7 @@ export function TaskCardExpanded({ task }: TaskCardExpandedProps) {
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -63,6 +63,9 @@ class WebUIServer:
         from hermit.plugins.builtin.hooks.webui.api.config import router as config_router
         from hermit.plugins.builtin.hooks.webui.api.grants import router as grants_router
         from hermit.plugins.builtin.hooks.webui.api.iterations import router as iterations_router
+        from hermit.plugins.builtin.hooks.webui.api.mcp_servers import (
+            router as mcp_servers_router,
+        )
         from hermit.plugins.builtin.hooks.webui.api.memory import router as memory_router
         from hermit.plugins.builtin.hooks.webui.api.memory_stats import (
             router as memory_stats_router,
@@ -70,13 +73,17 @@ class WebUIServer:
         from hermit.plugins.builtin.hooks.webui.api.metrics import router as metrics_router
         from hermit.plugins.builtin.hooks.webui.api.patterns import router as patterns_router
         from hermit.plugins.builtin.hooks.webui.api.policy import router as policy_router
+        from hermit.plugins.builtin.hooks.webui.api.programs import router as programs_router
         from hermit.plugins.builtin.hooks.webui.api.reconciliation import (
             router as reconciliation_router,
         )
+        from hermit.plugins.builtin.hooks.webui.api.roles import router as roles_router
         from hermit.plugins.builtin.hooks.webui.api.schedules import router as schedules_router
         from hermit.plugins.builtin.hooks.webui.api.signals import router as signals_router
+        from hermit.plugins.builtin.hooks.webui.api.skills import router as skills_router
         from hermit.plugins.builtin.hooks.webui.api.stream import router as stream_router
         from hermit.plugins.builtin.hooks.webui.api.tasks import router as tasks_router
+        from hermit.plugins.builtin.hooks.webui.api.teams import router as teams_router
         from hermit.plugins.builtin.hooks.webui.api.webhooks import router as webhooks_router
 
         self._app.include_router(tasks_router, prefix="/api")
@@ -96,6 +103,11 @@ class WebUIServer:
         self._app.include_router(webhooks_router, prefix="/api")
         self._app.include_router(reconciliation_router, prefix="/api")
         self._app.include_router(patterns_router, prefix="/api")
+        self._app.include_router(programs_router, prefix="/api")
+        self._app.include_router(teams_router, prefix="/api")
+        self._app.include_router(roles_router, prefix="/api")
+        self._app.include_router(mcp_servers_router, prefix="/api")
+        self._app.include_router(skills_router, prefix="/api")
 
         # Mount static files for SPA (must be last)
         if _DIST_DIR.exists():

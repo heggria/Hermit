@@ -10,6 +10,8 @@ from hermit.kernel.ledger.journal.store_support import (
 )
 from hermit.kernel.ledger.journal.store_types import KernelStoreTypingBase
 from hermit.kernel.task.models.team import (
+    MILESTONE_STATE_TRANSITIONS,
+    TEAM_STATE_TRANSITIONS,
     MilestoneRecord,
     RoleSlotSpec,
     TeamRecord,
@@ -134,6 +136,12 @@ class KernelTeamStoreMixin(KernelStoreTypingBase):
 
     def update_team_status(self, team_id: str, status: str) -> None:
         """Transition a team's status and emit an event."""
+        team = self.get_team(team_id)
+        if team is None:
+            raise ValueError(f"Team {team_id} not found")
+        allowed = TEAM_STATE_TRANSITIONS.get(team.status, frozenset())
+        if status not in allowed:
+            raise ValueError(f"Invalid team status transition: {team.status!r} -> {status!r}")
         now = time.time()
         with self._get_conn():
             self._get_conn().execute(
@@ -289,6 +297,14 @@ class KernelTeamStoreMixin(KernelStoreTypingBase):
         return [self._milestone_from_row(row) for row in rows]
 
     def update_milestone_status(self, milestone_id: str, status: str) -> None:
+        milestone = self.get_milestone(milestone_id)
+        if milestone is None:
+            raise ValueError(f"Milestone {milestone_id} not found")
+        allowed = MILESTONE_STATE_TRANSITIONS.get(milestone.status, frozenset())
+        if status not in allowed:
+            raise ValueError(
+                f"Invalid milestone status transition: {milestone.status!r} -> {status!r}"
+            )
         now = time.time()
         completed_at = now if status == "completed" else None
         with self._get_conn():

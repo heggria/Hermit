@@ -495,7 +495,30 @@ class AgentRunner:
         on_tool_call: ToolCallback | None = None,
         on_tool_start: ToolStartCallback | None = None,
     ) -> AgentResult:
+        from hermit.runtime.capability.contracts.base import HookEvent
         from hermit.runtime.control.runner.task_executor import RunnerTaskExecutor
+
+        # Wire on_tool_start → TOOL_START hook so plugins (e.g. WebUI) can
+        # observe live tool calls without coupling to the runtime.
+        attempt = self.task_controller.store.get_step_attempt(step_attempt_id)
+        _task_id = attempt.task_id if attempt else None
+
+        def _hook_tool_start(tool_name: str, tool_input: dict) -> None:
+            summary = ""
+            if isinstance(tool_input, dict):
+                for key in ("command", "cmd", "query", "path", "file_path", "url", "description"):
+                    val = tool_input.get(key)
+                    if val:
+                        summary = str(val)[:120]
+                        break
+            self.pm.hooks.fire(
+                HookEvent.TOOL_START,
+                task_id=_task_id,
+                tool_name=tool_name,
+                input_summary=summary,
+            )
+            if on_tool_start:
+                on_tool_start(tool_name, tool_input)
 
         executor = RunnerTaskExecutor(
             session_manager=self.session_manager,
@@ -508,7 +531,7 @@ class AgentRunner:
         return executor.process_claimed_attempt(
             step_attempt_id,
             on_tool_call=on_tool_call,
-            on_tool_start=on_tool_start,
+            on_tool_start=_hook_tool_start,
             ensure_session_started=self._ensure_session_started,
             runner=self,
         )

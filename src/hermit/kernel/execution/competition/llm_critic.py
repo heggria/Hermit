@@ -43,6 +43,7 @@ class CriticRole:
     role: str
     system_prompt: str
     model: str | None = None
+    calibration_examples: tuple[dict[str, Any], ...] = ()  # Few-shot calibration
 
 
 _DEFAULT_CRITIC_ROLES: tuple[CriticRole, ...] = (
@@ -313,10 +314,21 @@ class CritiqueGenerator:
             "Return ONLY a JSON array, no other text."
         )
 
+        # Build system prompt with optional calibration examples
+        system_prompt = critic_role.system_prompt
+        if critic_role.calibration_examples:
+            cal_lines = ["\n## Calibration Examples\n"]
+            for i, ex in enumerate(critic_role.calibration_examples, 1):
+                cal_lines.append(f"### Example {i}")
+                cal_lines.append(f"Input: {ex.get('input_summary', '')}")
+                cal_lines.append(f"Expected: {ex.get('expected_verdict', '')}")
+                cal_lines.append(f"Reasoning: {ex.get('reasoning', '')}\n")
+            system_prompt = system_prompt + "\n".join(cal_lines)
+
         request = ProviderRequest(
             model=model,
             max_tokens=_DEFAULT_MAX_TOKENS,
-            system_prompt=critic_role.system_prompt,
+            system_prompt=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
 

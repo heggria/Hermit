@@ -8,37 +8,22 @@ import {
   usePolicyActionClasses,
   useApproveAllMutation,
 } from '@/api/hooks';
+import {
+  getRiskStyle as getRiskStyleObj,
+  getVerdictStyle,
+} from '@/lib/status-styles';
 
 // ---------------------------------------------------------------------------
 // Risk badge helper
 // ---------------------------------------------------------------------------
 
 function riskColor(risk: string): string {
-  switch (risk) {
-    case 'low':
-      return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
-    case 'medium':
-      return 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300';
-    case 'high':
-      return 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300';
-    case 'critical':
-      return 'bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300';
-    default:
-      return 'bg-muted text-muted-foreground';
-  }
+  const s = getRiskStyleObj(risk);
+  return `${s.bg} ${s.text}`;
 }
 
 function verdictColor(verdict: string): string {
-  switch (verdict) {
-    case 'allow':
-      return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
-    case 'allow_with_receipt':
-      return 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300';
-    case 'approval_required':
-      return 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300';
-    default:
-      return 'bg-muted text-muted-foreground';
-  }
+  return getVerdictStyle(verdict);
 }
 
 function verdictLabel(verdict: string): string {

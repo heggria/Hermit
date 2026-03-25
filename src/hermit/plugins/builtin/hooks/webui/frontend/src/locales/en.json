@@ -1,15 +1,14 @@
 {
   "nav": {
-    "controlCenter": "Control Center",
-    "dashboard": "Dashboard",
-    "tasks": "Tasks",
-    "approvals": "Approvals",
-    "policy": "Policy",
-    "chat": "Chat",
-    "memory": "Memory",
-    "signals": "Signals",
+    "projects": "Projects",
+    "teams": "Teams",
+    "roles": "Roles",
+    "mcpServers": "MCP Servers",
+    "skills": "Skills",
     "metrics": "Metrics",
     "config": "Config",
+    "pendingApprovals": "pending approvals",
+    "tasks": "Tasks",
     "grants": "Grants & Authority",
     "artifacts": "Artifacts",
     "memoryStats": "Memory Analytics",
@@ -23,6 +22,8 @@
     "title": "Control Center",
     "subtitle": "Submit tasks and monitor execution in real-time.",
     "inputPlaceholder": "Describe your task...",
+    "addImage": "Add image",
+    "imageOnlyTask": "Image task",
     "submit": "Submit",
     "submitting": "Submitting...",
     "submitSuccess": "Task submitted successfully",
@@ -170,7 +171,8 @@
     "steps": {
       "noSteps": "No steps recorded yet.",
       "attempt": "attempt {{number}}",
-      "dependsOn": "depends on:"
+      "dependsOn": "depends on:",
+      "executing": "Executing..."
     },
     "events": {
       "noEvents": "No events recorded yet.",
@@ -360,9 +362,10 @@
     }
   },
   "config": {
-    "title": "Configuration",
+    "title": "Settings",
     "subtitle": "System status and loaded plugins.",
     "description": "System status and loaded plugins.",
+    "general": "General",
     "systemStatus": "System Status",
     "systemStatusDesc": "Hermit service runtime information",
     "statusError": "Unable to fetch system status.",
@@ -370,14 +373,19 @@
     "port": "Port",
     "pid": "PID",
     "uptime": "Uptime",
-    "plugins": "Loaded Plugins",
+    "plugins": "Plugins",
+    "pluginsDesc": "Extensions loaded into the Hermit runtime.",
     "pluginName": "Name",
     "pluginVersion": "Version",
     "pluginDescription": "Description",
     "pluginType": "Type",
-    "pluginBuiltin": "builtin",
-    "pluginUser": "user",
-    "noPlugins": "No plugins loaded."
+    "pluginBuiltin": "Built-in",
+    "pluginUser": "User",
+    "noPlugins": "No plugins loaded.",
+    "about": "About",
+    "aboutDesc": "Hermit kernel version and runtime information.",
+    "version": "Version",
+    "runtime": "Runtime"
   },
   "control": {
     "taskCard": {
@@ -401,6 +409,7 @@
     "actions": {
       "cancel": "Cancel",
       "rollback": "Rollback",
+      "archive": "Archive",
       "cancelConfirm": "Are you sure you want to cancel this task?",
       "rollbackConfirm": "Are you sure you want to rollback this receipt?",
       "rollbackAllConfirm": "Are you sure you want to rollback all supported receipts?"
@@ -424,6 +433,7 @@
     "no": "No",
     "unknown": "Unknown",
     "delete": "Delete",
+    "deleteConfirm": "Are you sure you want to delete \"{{name}}\"?",
     "justNow": "just now",
     "governedAgentKernel": "Governed Agent Kernel",
     "switchLang": {
@@ -433,16 +443,22 @@
     "switchToLight": "Switch to light mode",
     "switchToDark": "Switch to dark mode",
     "status": {
-      "queued": "queued",
-      "running": "running",
-      "blocked": "blocked",
-      "completed": "completed",
-      "failed": "failed",
-      "cancelled": "cancelled",
-      "reconciling": "reconciling",
-      "pending": "pending",
-      "granted": "granted",
-      "denied": "denied"
+      "draft": "Draft",
+      "active": "Active",
+      "archived": "Archived",
+      "paused": "Paused",
+      "queued": "Queued",
+      "running": "Running",
+      "blocked": "Blocked",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "reconciling": "Reconciling",
+      "pending": "Pending",
+      "granted": "Granted",
+      "denied": "Denied",
+      "disbanded": "Disbanded",
+      "skipped": "Skipped"
     },
     "risk": {
       "low": "low",
@@ -673,6 +689,346 @@
       "accepted": "Accepted",
       "failed": "Failed",
       "rejected": "Rejected"
+    }
+  },
+  "projects": {
+    "title": "Projects",
+    "subtitle": "Manage programs and track execution",
+    "create": "New Project",
+    "archive": "Archive",
+    "reactivate": "Reactivate",
+    "archiveDialog": {
+      "title": "Archive Project",
+      "description": "This will archive \"{{name}}\". You can reactivate it later.",
+      "prompt": "Type \"{{name}}\" to confirm:"
+    },
+    "emptyState": "No projects yet. Create one to get started.",
+    "selectProject": "Select a project to view details",
+    "goal": "Goal",
+    "description": "Description",
+    "priority": "Priority",
+    "status": "Status",
+    "tabs": {
+      "tasks": "Tasks",
+      "memory": "Memory",
+      "signals": "Signals",
+      "approvals": "Approvals",
+      "policy": "Policy",
+      "chat": "Chat"
+    },
+    "team": "Team:",
+    "noTeam": "None",
+    "createTeamInline": "+ Create Team",
+    "archive": "Archive",
+    "reactivate": "Reactivate",
+    "archiveDialog": {
+      "title": "Archive Project",
+      "description": "Once archived, the project will no longer accept new tasks. This can be undone.",
+      "prompt": "Type the project name \"{{name}}\" to confirm:"
+    }
+  },
+  "teams": {
+    "title": "Teams",
+    "subtitle": "Configure role-based DAG orchestration",
+    "create": "New Team",
+    "emptyState": "No teams yet.",
+    "emptyStateHint": "Create a team to organize workers with role-based DAG orchestration.",
+    "dagEditor": "Role Graph Editor",
+    "milestones": "Milestones",
+    "filterProgram": "Filter by project",
+    "allPrograms": "All projects",
+    "allStatuses": "All",
+    "emptyStatusState": "No {{status}} teams.",
+    "workspace": "Workspace",
+    "roles": "Roles",
+    "status": "Status",
+    "detail": {
+      "backToTeams": "Back to Teams",
+      "statusActions": "Status Actions",
+      "activate": "Activate",
+      "pause": "Pause",
+      "complete": "Complete",
+      "archive": "Archive",
+      "archiveConfirmTitle": "Archive Team",
+      "archiveConfirmDesc": "Are you sure you want to archive \"{{name}}\"? The team will stop accepting new tasks. You can reactivate it later."
+    },
+    "createDialog": {
+      "title": "Create New Team",
+      "description": "Set up a new team with role assembly for orchestration.",
+      "program": "Project",
+      "programPlaceholder": "Select a project",
+      "teamTitle": "Title",
+      "teamTitlePlaceholder": "Enter team title",
+      "roleAssembly": "Role Assembly",
+      "role": "Role",
+      "rolePlaceholder": "Select a role",
+      "count": "Count",
+      "addRole": "Add Role",
+      "workspaceId": "Workspace ID",
+      "workspaceIdPlaceholder": "Auto-generated if empty",
+      "cancel": "Cancel",
+      "submit": "Create Team",
+      "submitting": "Creating..."
+    },
+    "dag": {
+      "addRole": "Add Role",
+      "save": "Save",
+      "saving": "Saving...",
+      "saved": "Saved",
+      "deleteHint": "Select a node or edge and press Backspace to delete",
+      "noRoles": "No roles in assembly. Click a role from the left panel to add.",
+      "roleList": "Roles",
+      "noAvailableRoles": "No roles available. Create a role definition first."
+    },
+    "milestone": {
+      "addTitle": "Add Milestone",
+      "titlePlaceholder": "Milestone title",
+      "descriptionPlaceholder": "Description (optional)",
+      "add": "Add",
+      "adding": "Adding...",
+      "progress": "{{completed}}/{{total}} completed",
+      "empty": "No milestones yet.",
+      "pending": "Pending",
+      "active": "Active",
+      "completed": "Completed",
+      "failed": "Failed",
+      "blocked": "Blocked",
+      "skipped": "Skipped"
+    },
+    "nodeDetail": {
+      "title": "Node Config",
+      "roleName": "Role",
+      "nodeId": "Node ID",
+      "description": "Description",
+      "workerCount": "Worker Count",
+      "workerCountHint": "Number of concurrent workers for this role",
+      "config": "Config",
+      "deleteNode": "Delete Node"
+    }
+  },
+  "roles": {
+    "title": "Roles",
+    "subtitle": "Define and customize worker roles",
+    "create": "New Role",
+    "builtinBadge": "Built-in",
+    "emptyState": "No custom roles defined.",
+    "mcpServers": "MCP Servers",
+    "skills": "Skills",
+    "noDescription": "No description",
+    "deleteConfirm": "Are you sure you want to delete the role \"{{name}}\"? This action cannot be undone.",
+    "deleteTitle": "Delete Role",
+    "confirmDeleteInline": "Sure?",
+    "form": {
+      "createTitle": "Create Role",
+      "editTitle": "Edit Role",
+      "detailTitle": "Role Detail",
+      "name": "Name",
+      "namePlaceholder": "e.g. researcher",
+      "description": "Description",
+      "descriptionPlaceholder": "What this role does...",
+      "mcpServers": "MCP Servers",
+      "mcpServersPlaceholder": "Type server name and press Enter",
+      "skills": "Skills",
+      "skillsPlaceholder": "Type skill name and press Enter",
+      "creating": "Creating...",
+      "updating": "Updating...",
+      "createBtn": "Create",
+      "updateBtn": "Update",
+      "nameRequired": "Role name is required.",
+      "mcpServersSelectPlaceholder": "Select MCP servers...",
+      "mcpServersCustomHint": "Search or type custom name...",
+      "skillsSelectPlaceholder": "Select skills...",
+      "skillsCustomHint": "Search or type custom name...",
+      "noMcpServersAvailable": "No MCP servers available",
+      "noSkillsAvailable": "No skills available"
+    }
+  },
+  "mcpServers": {
+    "title": "MCP Servers",
+    "subtitle": "Manage MCP server configurations and view connection status.",
+    "empty": "No MCP servers configured.",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "toolCount": "{{count}} tool",
+    "toolCount_plural": "{{count}} tools",
+    "create": "Add MCP Server",
+    "builtinBadge": "Builtin",
+    "deleteTitle": "Delete MCP Server",
+    "deleteConfirm": "Are you sure you want to delete \"{{name}}\"? Changes take effect after reload.",
+    "needsReload": "Changes require hermit reload to take effect.",
+    "form": {
+      "createTitle": "Add MCP Server",
+      "editTitle": "Edit MCP Server",
+      "name": "Name",
+      "namePlaceholder": "my-server",
+      "transport": "Transport",
+      "transportStdio": "stdio (local command)",
+      "transportHttp": "http (remote URL)",
+      "command": "Command",
+      "commandPlaceholder": "npx",
+      "args": "Arguments",
+      "argsPlaceholder": "One argument per line",
+      "url": "URL",
+      "urlPlaceholder": "https://api.example.com/mcp/",
+      "headers": "Headers",
+      "headersPlaceholder": "Key: Value (one per line)",
+      "env": "Environment Variables",
+      "envPlaceholder": "KEY=value (one per line)",
+      "description": "Description",
+      "descriptionPlaceholder": "What this MCP server does",
+      "nameRequired": "Name is required",
+      "commandRequired": "Command is required for stdio transport",
+      "urlRequired": "URL is required for HTTP transport",
+      "createBtn": "Add",
+      "updateBtn": "Update",
+      "creating": "Adding...",
+      "updating": "Updating..."
+    },
+    "recommended": {
+      "title": "Recommended Servers",
+      "install": "Install"
+    },
+    "login": "Login",
+    "apiKeyDialog": {
+      "title": "Configure {{name}}",
+      "description": "Enter your API key or token to connect this server.",
+      "placeholder": "Paste your token here",
+      "getToken": "Get Token",
+      "save": "Save"
+    }
+  },
+  "skills": {
+    "title": "Skills",
+    "subtitle": "Manage skill definitions available to agents.",
+    "empty": "No skills loaded.",
+    "totalCount": "{{count}} skills available",
+    "noDescription": "No description",
+    "create": "Create Skill",
+    "builtinBadge": "Builtin",
+    "deleteTitle": "Delete Skill",
+    "deleteConfirm": "Are you sure you want to delete \"{{name}}\"? Changes take effect after reload.",
+    "needsReload": "Changes require hermit reload to take effect.",
+    "form": {
+      "createTitle": "Create Skill",
+      "editTitle": "Edit Skill",
+      "name": "Name",
+      "namePlaceholder": "my-skill",
+      "description": "Description",
+      "descriptionPlaceholder": "What this skill does",
+      "content": "Content",
+      "contentPlaceholder": "Skill instructions in Markdown...",
+      "maxTokens": "Max Tokens",
+      "nameRequired": "Name is required",
+      "nameInvalid": "Name must start with a letter or digit and contain only letters, digits, hyphens, underscores",
+      "createBtn": "Create",
+      "updateBtn": "Update",
+      "creating": "Creating...",
+      "updating": "Updating..."
+    },
+    "recommended": {
+      "title": "Trending Skills",
+      "install": "Install"
+    }
+  },
+  "onboarding": {
+    "welcome": {
+      "title": "Welcome to Hermit",
+      "subtitle": "A governed AI agent kernel for durable, inspectable workflows.",
+      "startTour": "Start Tour",
+      "skipForNow": "Skip for Now",
+      "features": {
+        "governed": {
+          "title": "Governed Execution",
+          "description": "Every action is authorized, receipted, and verifiable."
+        },
+        "taskFirst": {
+          "title": "Task-First Workflow",
+          "description": "Submit tasks, track progress, and review results."
+        },
+        "policy": {
+          "title": "Policy Control",
+          "description": "Choose autonomous or supervised execution modes."
+        },
+        "evidence": {
+          "title": "Evidence-Bound",
+          "description": "Memory and decisions backed by evidence references."
+        }
+      }
+    },
+    "tour": {
+      "skip": "Skip",
+      "previous": "Previous",
+      "next": "Next",
+      "finish": "Finish",
+      "stepOf": "Step {{current}} of {{total}}",
+      "elementNotVisible": "This element is not visible right now (you may need to select a task first). Here's what it does:",
+      "steps": {
+        "sidebar": {
+          "title": "Navigation Sidebar",
+          "description": "This is your main navigation. Each section manages a different part of Hermit — from projects and tasks to teams and tools."
+        },
+        "projectList": {
+          "title": "Step 1: Select or Create a Project",
+          "description": "Everything starts with a Project. A project groups related tasks, memories, and policies together. Click a project name on the left to open it, or use the + button to create your first one."
+        },
+        "createProject": {
+          "title": "Create a New Project",
+          "description": "Click this + button to create a project. Give it a clear name (e.g. \"Backend API\", \"Data Pipeline\"). You can have multiple projects for different work streams."
+        },
+        "projectTabs": {
+          "title": "Project Detail Tabs",
+          "description": "After selecting a project, you'll see these tabs:\n\n• Tasks — submit and monitor agent tasks\n• Memory — agent's accumulated knowledge\n• Signals — evidence signals from executions\n• Approvals — review pending approval requests\n• Policy — configure governance rules\n• Chat — direct conversation with the agent"
+        },
+        "taskInput": {
+          "title": "Step 2: Submit Your First Task",
+          "description": "Describe what you want the agent to do in natural language. For example: \"List all Python files in the project\" or \"Review the recent git commits\". Press Enter or click Send to submit."
+        },
+        "policySelector": {
+          "title": "Choose Execution Policy",
+          "description": "This controls how the agent executes:\n\n• Autonomous — the agent runs freely, no approval needed\n• Supervised — every action requires your manual approval\n• Default — uses the project's policy settings\n\nStart with Autonomous for simple tasks, use Supervised when you want full control."
+        },
+        "taskCards": {
+          "title": "Step 3: Monitor Task Progress",
+          "description": "After submitting, your task appears as a card here. The status dot shows its state:\n\n• Green (pulsing) — running\n• Yellow — blocked, waiting for approval\n• Green (solid) — completed successfully\n• Red — failed\n\nClick any card to see its full execution details on the right."
+        },
+        "taskDetailPanel": {
+          "title": "Task Detail View",
+          "description": "When you click a task card, the right panel shows the full execution details — steps taken, tools used, time elapsed, and the agent's response. This is where you inspect exactly what happened."
+        },
+        "stepTimeline": {
+          "title": "Execution Steps & Receipts",
+          "description": "Each step shows what the agent did:\n\n• Step name + duration at the top\n• Tool calls listed below (e.g. execute_command, read_file)\n• Green dot = succeeded, Red dot = failed\n• Click the ↺ icon to rollback a specific action\n\nIf a step is blocked (yellow clock), it's waiting for your approval in the Approvals tab."
+        },
+        "drawerChat": {
+          "title": "Steer or Follow Up",
+          "description": "While a task is running, type here to steer the agent (\"focus on the auth module\" or \"skip the tests\").\n\nAfter a task completes, this becomes a follow-up input — describe a continuation task and click \"New Task\" to chain tasks together."
+        },
+        "teams": {
+          "title": "Teams",
+          "description": "Teams organize multiple agents with different roles working on the same project. Each team has its own workspace and DAG-based workflow for complex multi-step operations."
+        },
+        "roles": {
+          "title": "Roles",
+          "description": "Roles define what an agent can do — which MCP servers it connects to and which skills it has. Create custom roles to give agents specialized capabilities."
+        },
+        "skills": {
+          "title": "Skills",
+          "description": "Skills are domain knowledge modules (written in Markdown) that give agents expertise — coding patterns, API references, deployment guides. Install trending skills or create your own."
+        },
+        "mcpServers": {
+          "title": "MCP Servers",
+          "description": "MCP (Model Context Protocol) servers connect external tools to your agents — GitHub, databases, web search, file systems. View connection status and available tools for each server."
+        },
+        "settings": {
+          "title": "Settings & Preferences",
+          "description": "The bottom bar has: Settings (system config), Help (?), Language switcher, and Dark mode toggle. Click the ? button anytime to restart this tour."
+        }
+      }
+    },
+    "help": {
+      "label": "Help",
+      "restartTour": "Restart Tour",
+      "aboutHermit": "About Hermit"
     }
   }
 }

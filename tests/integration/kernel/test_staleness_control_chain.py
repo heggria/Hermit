@@ -210,7 +210,7 @@ class TestProgramToolServiceControlChain:
         assert "program_id" in result
         assert result["title"] == "Test Suite Program"
         assert result["goal"] == "Build a test suite"
-        assert result["status"] == ProgramState.draft
+        assert result["status"] == ProgramState.active
         program_id = result["program_id"]
 
         # Step 2: add_team_to_program
@@ -235,23 +235,17 @@ class TestProgramToolServiceControlChain:
         assert milestone_result["title"] == "Phase 1 Complete"
         assert milestone_result["acceptance_criteria"] == ["All tests pass", "Coverage > 80%"]
 
-        # Step 4: control_program activate (draft -> active)
+        # Step 4: control_program archive (active -> archived)
+        archive_result = svc.control_program(program_id=program_id, action="archive")
+        assert "error" not in archive_result
+        assert archive_result["new_status"] == ProgramState.archived
+        assert archive_result["previous_status"] == ProgramState.active
+
+        # Step 5: control_program activate (archived -> active)
         activate_result = svc.control_program(program_id=program_id, action="activate")
         assert "error" not in activate_result
         assert activate_result["new_status"] == ProgramState.active
-        assert activate_result["previous_status"] == ProgramState.draft
-
-        # Step 5: control_program pause (active -> paused)
-        pause_result = svc.control_program(program_id=program_id, action="pause")
-        assert "error" not in pause_result
-        assert pause_result["new_status"] == ProgramState.paused
-        assert pause_result["previous_status"] == ProgramState.active
-
-        # Step 6: control_program resume (paused -> active)
-        resume_result = svc.control_program(program_id=program_id, action="resume")
-        assert "error" not in resume_result
-        assert resume_result["new_status"] == ProgramState.active
-        assert resume_result["previous_status"] == ProgramState.paused
+        assert activate_result["previous_status"] == ProgramState.archived
 
         # Step 7: get_program_status — verify projection
         status_result = svc.get_program_status(program_id=program_id)
@@ -275,17 +269,20 @@ class TestProgramToolServiceControlChain:
 
 
 class TestProgramToolServiceInvalidTransitions:
-    def test_complete_from_draft_fails(self, tmp_path) -> None:
+    def test_archive_from_archived_fails(self, tmp_path) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         svc = ProgramToolService(store)
 
         result = svc.create_program(goal="Test invalid transition")
         program_id = result["program_id"]
 
-        # Attempt 'complete' from draft — not a valid source state
-        complete_result = svc.control_program(program_id=program_id, action="complete")
-        assert "error" in complete_result
-        assert "draft" in complete_result["error"]
+        # Archive first (active -> archived)
+        svc.control_program(program_id=program_id, action="archive")
+
+        # Attempt 'archive' again — already archived
+        archive_result = svc.control_program(program_id=program_id, action="archive")
+        assert "error" in archive_result
+        assert "archived" in archive_result["error"]
 
     def test_activate_from_active_fails(self, tmp_path) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
@@ -293,9 +290,8 @@ class TestProgramToolServiceInvalidTransitions:
 
         result = svc.create_program(goal="Test double activate")
         program_id = result["program_id"]
-        svc.control_program(program_id=program_id, action="activate")
 
-        # Attempt 'activate' again — already active
+        # Program starts as active, so activate again should fail
         activate_result = svc.control_program(program_id=program_id, action="activate")
         assert "error" in activate_result
         assert "active" in activate_result["error"]
@@ -311,19 +307,18 @@ class TestProgramToolServiceInvalidTransitions:
         assert "error" in bad_result
         assert "Unknown action" in bad_result["error"]
 
-    def test_control_completed_program_fails(self, tmp_path) -> None:
+    def test_control_archived_program_fails(self, tmp_path) -> None:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         svc = ProgramToolService(store)
 
         result = svc.create_program(goal="Test terminal block")
         program_id = result["program_id"]
-        svc.control_program(program_id=program_id, action="activate")
-        svc.control_program(program_id=program_id, action="complete")
+        svc.control_program(program_id=program_id, action="archive")
 
-        # Attempt any action on completed program
-        resume_result = svc.control_program(program_id=program_id, action="resume")
-        assert "error" in resume_result
-        assert "terminal" in resume_result["error"]
+        # Attempt archive again on archived program — already in terminal state
+        archive_result = svc.control_program(program_id=program_id, action="archive")
+        assert "error" in archive_result
+        assert "archived" in archive_result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -358,8 +353,7 @@ class TestProgramStatusProjection:
             acceptance_criteria=["Approved by stakeholders"],
         )
 
-        # Activate program
-        svc.control_program(program_id=program_id, action="activate")
+        # Program starts as active — no activation needed
 
         # Get status projection
         projection = svc.get_program_status(program_id=program_id)
@@ -385,21 +379,21 @@ class TestProgramStatusProjection:
         store = KernelStore(tmp_path / "kernel" / "state.db")
         svc = ProgramToolService(store)
 
-        # Create two programs, activate one
-        p1 = svc.create_program(goal="Draft program")
-        p2 = svc.create_program(goal="Active program")
-        svc.control_program(program_id=p2["program_id"], action="activate")
-
-        # List only draft programs
-        draft_list = svc.list_programs(status="draft")
-        assert draft_list["count"] >= 1
-        draft_ids = [p["program_id"] for p in draft_list["programs"]]
-        assert p1["program_id"] in draft_ids
-        assert p2["program_id"] not in draft_ids
+        # Create two programs (both start as active), archive one
+        p1 = svc.create_program(goal="Active program")
+        p2 = svc.create_program(goal="Archived program")
+        svc.control_program(program_id=p2["program_id"], action="archive")
 
         # List only active programs
         active_list = svc.list_programs(status="active")
         assert active_list["count"] >= 1
         active_ids = [p["program_id"] for p in active_list["programs"]]
-        assert p2["program_id"] in active_ids
-        assert p1["program_id"] not in active_ids
+        assert p1["program_id"] in active_ids
+        assert p2["program_id"] not in active_ids
+
+        # List only archived programs
+        archived_list = svc.list_programs(status="archived")
+        assert archived_list["count"] >= 1
+        archived_ids = [p["program_id"] for p in archived_list["programs"]]
+        assert p2["program_id"] in archived_ids
+        assert p1["program_id"] not in archived_ids

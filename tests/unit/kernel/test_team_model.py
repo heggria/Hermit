@@ -474,6 +474,7 @@ class TestMilestoneStoreMixin:
         team = store.create_team(program_id="prog_1", title="Alpha", workspace_id="ws_1")
         ms = store.create_milestone(team_id=team.team_id, title="MS 1")
 
+        store.update_milestone_status(ms.milestone_id, "active")
         store.update_milestone_status(ms.milestone_id, "completed")
         updated = store.get_milestone(ms.milestone_id)
         assert updated is not None
@@ -485,6 +486,7 @@ class TestMilestoneStoreMixin:
         team = store.create_team(program_id="prog_1", title="Alpha", workspace_id="ws_1")
         ms = store.create_milestone(team_id=team.team_id, title="MS 1")
 
+        store.update_milestone_status(ms.milestone_id, "active")
         store.update_milestone_status(ms.milestone_id, "blocked")
         updated = store.get_milestone(ms.milestone_id)
         assert updated is not None
@@ -495,6 +497,7 @@ class TestMilestoneStoreMixin:
         team = store.create_team(program_id="prog_1", title="Alpha", workspace_id="ws_1")
         ms = store.create_milestone(team_id=team.team_id, title="MS 1")
 
+        store.update_milestone_status(ms.milestone_id, "active")
         store.update_milestone_status(ms.milestone_id, MilestoneState.FAILED)
         updated = store.get_milestone(ms.milestone_id)
         assert updated is not None
@@ -511,22 +514,17 @@ class TestMilestoneStoreMixin:
         assert updated.status == "skipped"
         assert updated.completed_at is None
 
-    def test_completed_at_preserved_on_non_completed_update(self, store: KernelStore) -> None:
-        """Once a milestone is completed, changing status should preserve completed_at."""
+    def test_completed_at_set_on_completion(self, store: KernelStore) -> None:
+        """When a milestone is completed, completed_at should be set."""
         team = store.create_team(program_id="prog_1", title="Alpha", workspace_id="ws_1")
         ms = store.create_milestone(team_id=team.team_id, title="MS 1")
 
+        store.update_milestone_status(ms.milestone_id, "active")
         store.update_milestone_status(ms.milestone_id, "completed")
         completed = store.get_milestone(ms.milestone_id)
         assert completed is not None
-        original_completed_at = completed.completed_at
-
-        # Changing to blocked should preserve the completed_at via COALESCE
-        store.update_milestone_status(ms.milestone_id, "blocked")
-        updated = store.get_milestone(ms.milestone_id)
-        assert updated is not None
-        assert updated.status == "blocked"
-        assert updated.completed_at == original_completed_at
+        assert completed.completed_at is not None
+        assert completed.completed_at > 0
 
 
 # ------------------------------------------------------------------
@@ -557,6 +555,7 @@ class TestTeamEvents:
     def test_milestone_status_change_event(self, store: KernelStore) -> None:
         team = store.create_team(program_id="prog_1", title="Alpha", workspace_id="ws_1")
         ms = store.create_milestone(team_id=team.team_id, title="MVP")
+        store.update_milestone_status(ms.milestone_id, "active")
         store.update_milestone_status(ms.milestone_id, "completed")
         events = store.list_events(event_type="milestone.completed", limit=10)
         assert len(events) >= 1
@@ -567,6 +566,7 @@ class TestTeamEvents:
     def test_milestone_failed_event(self, store: KernelStore) -> None:
         team = store.create_team(program_id="prog_1", title="Alpha", workspace_id="ws_1")
         ms = store.create_milestone(team_id=team.team_id, title="MVP")
+        store.update_milestone_status(ms.milestone_id, "active")
         store.update_milestone_status(ms.milestone_id, MilestoneState.FAILED)
         events = store.list_events(event_type="milestone.failed", limit=10)
         assert len(events) >= 1

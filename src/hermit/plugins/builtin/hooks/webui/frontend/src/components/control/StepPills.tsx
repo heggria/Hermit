@@ -6,40 +6,19 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { getStatusStyle } from "@/lib/status-styles";
 import type { StepRecord } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Compact dot config — 6px colored circles, no text
 // ---------------------------------------------------------------------------
 
-const DOT_CONFIG: Record<
-  string,
-  { color: string; animate?: boolean }
-> = {
-  completed: {
-    color: "bg-emerald-500 dark:bg-emerald-400",
-  },
-  running: {
-    color: "bg-primary",
-    animate: true,
-  },
-  blocked: {
-    color: "bg-amber-500 dark:bg-amber-400",
-  },
-  pending: {
-    color: "bg-stone-300 dark:bg-stone-600",
-  },
-  failed: {
-    color: "bg-rose-500 dark:bg-rose-400",
-  },
-};
-
 function getDotConfig(status: string) {
-  return (
-    DOT_CONFIG[status] ?? {
-      color: "bg-stone-300 dark:bg-stone-600",
-    }
-  );
+  const style = getStatusStyle(status);
+  return {
+    color: style.dot,
+    animate: style.pulse ?? false,
+  };
 }
 
 // ---------------------------------------------------------------------------

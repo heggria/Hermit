@@ -109,7 +109,7 @@ class TestCompileProgramWithStructure:
         assert result.program.goal == "Build a full-stack application"
         assert result.program.title == "Full-Stack App v1"
         assert result.program.priority == "high"
-        assert result.program.status == ProgramState.draft
+        assert result.program.status == ProgramState.active
         assert result.program.budget_limits == {"tokens": 200_000, "cost_usd": 10.0}
         assert result.program.metadata == {"requested_by": "integration_test"}
 
@@ -187,16 +187,16 @@ class TestGenerateTasksAfterCompletion:
         )
         program_id = result.program.program_id
 
-        # Activate the program
-        pm.activate_program(program_id)
+        # Program starts as active — no activation needed
 
         # Initially only API Design and UI Mockup are ready
         initial_contracts = pm.generate_tasks(program_id)
         initial_goals = {c.goal for c in initial_contracts}
         assert initial_goals == {"API Design", "UI Mockup"}
 
-        # Complete "API Design" milestone
+        # Complete "API Design" milestone (pending → active → completed)
         api_design = next(ms for ms in result.milestones if ms.title == "API Design")
+        store.update_milestone_status(api_design.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(api_design.milestone_id, MilestoneState.COMPLETED)
 
         # Now generate_tasks should find "API Implementation" ready (its dep is done)
@@ -216,12 +216,13 @@ class TestGenerateTasksAfterCompletion:
             team_specs=_two_team_specs(),
         )
         program_id = result.program.program_id
-        pm.activate_program(program_id)
 
         # Complete both root milestones
         api_design = next(ms for ms in result.milestones if ms.title == "API Design")
         ui_mockup = next(ms for ms in result.milestones if ms.title == "UI Mockup")
+        store.update_milestone_status(api_design.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(api_design.milestone_id, MilestoneState.COMPLETED)
+        store.update_milestone_status(ui_mockup.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(ui_mockup.milestone_id, MilestoneState.COMPLETED)
 
         contracts = pm.generate_tasks(program_id)
@@ -247,8 +248,6 @@ class TestGenerateFollowups:
             goal="Followup chain test",
             team_specs=[{"title": "Team A", "milestones": [{"title": "Task X"}]}],
         )
-        pm.activate_program(result.program.program_id)
-
         verdict = create_verdict(
             task_id="task_original_001",
             verdict="rejected",
@@ -293,8 +292,6 @@ class TestGenerateFollowups:
             goal="Retry test",
             team_specs=[{"title": "Team A", "milestones": [{"title": "Task Y"}]}],
         )
-        pm.activate_program(result.program.program_id)
-
         verdict = create_verdict(
             task_id="task_retry_001",
             verdict="rejected",
@@ -315,8 +312,6 @@ class TestGenerateFollowups:
             goal="Escalation test",
             team_specs=[{"title": "Team A", "milestones": [{"title": "Task Z"}]}],
         )
-        pm.activate_program(result.program.program_id)
-
         verdict = create_verdict(
             task_id="task_blocked_001",
             verdict="blocked",
@@ -353,21 +348,18 @@ class TestSelectBackgroundWork:
             priority="high",
             team_specs=specs_simple,
         )
-        pm.activate_program(r_high.program.program_id)
 
-        r_normal = pm.compile_program_with_structure(
+        r_normal = pm.compile_program_with_structure(  # noqa: F841
             goal="Normal priority project",
             priority="normal",
             team_specs=specs_simple,
         )
-        pm.activate_program(r_normal.program.program_id)
 
-        r_low = pm.compile_program_with_structure(
+        r_low = pm.compile_program_with_structure(  # noqa: F841
             goal="Low priority project",
             priority="low",
             team_specs=specs_simple,
         )
-        pm.activate_program(r_low.program.program_id)
 
         items = pm.select_background_work(max_items=10)
         assert len(items) == 3
@@ -388,11 +380,10 @@ class TestSelectBackgroundWork:
     def test_risk_band_filter_excludes_low(self, pm: ProgramManager) -> None:
         """When allowed_risk_bands excludes 'low', no background work should be returned
         because background work defaults to risk_band='low'."""
-        result = pm.compile_program_with_structure(
+        pm.compile_program_with_structure(
             goal="Risk filter test",
             team_specs=[{"title": "Team", "milestones": [{"title": "Risky Work"}]}],
         )
-        pm.activate_program(result.program.program_id)
 
         # Exclude "low" risk band — background work generates "low" risk, so nothing matches
         items = pm.select_background_work(allowed_risk_bands=frozenset({"medium", "high"}))
@@ -400,11 +391,10 @@ class TestSelectBackgroundWork:
 
     def test_risk_band_filter_includes_low(self, pm: ProgramManager) -> None:
         """When allowed_risk_bands includes 'low', background work is returned."""
-        result = pm.compile_program_with_structure(
+        pm.compile_program_with_structure(
             goal="Include low test",
             team_specs=[{"title": "Team", "milestones": [{"title": "Safe Work"}]}],
         )
-        pm.activate_program(result.program.program_id)
 
         items = pm.select_background_work(allowed_risk_bands=frozenset({"low"}))
         assert len(items) == 1
@@ -414,7 +404,7 @@ class TestSelectBackgroundWork:
         self, pm: ProgramManager, store: KernelStore
     ) -> None:
         """Milestones with unmet dependencies should not appear in background work."""
-        result = pm.compile_program_with_structure(
+        pm.compile_program_with_structure(
             goal="Blocked milestone bg test",
             team_specs=[
                 {
@@ -426,7 +416,6 @@ class TestSelectBackgroundWork:
                 }
             ],
         )
-        pm.activate_program(result.program.program_id)
 
         items = pm.select_background_work()
         goals = {item.contract.goal for item in items}
@@ -454,11 +443,10 @@ class TestFullLifecycleChain:
             team_specs=_two_team_specs(),
         )
         program_id = result.program.program_id
-        assert result.program.status == ProgramState.draft
+        assert result.program.status == ProgramState.active
         assert len(result.milestones) == 4
 
-        # --- Step 2: Activate ---
-        pm.activate_program(program_id)
+        # --- Step 2: Verify active state ---
         program = store.get_program(program_id)
         assert program is not None
         assert program.status == ProgramState.active
@@ -471,7 +459,9 @@ class TestFullLifecycleChain:
         # --- Step 4: "Execute" wave 1 — mark root milestones complete ---
         api_design = next(ms for ms in result.milestones if ms.title == "API Design")
         ui_mockup = next(ms for ms in result.milestones if ms.title == "UI Mockup")
+        store.update_milestone_status(api_design.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(api_design.milestone_id, MilestoneState.COMPLETED)
+        store.update_milestone_status(ui_mockup.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(ui_mockup.milestone_id, MilestoneState.COMPLETED)
 
         # --- Step 5: Generate wave 2 tasks ---
@@ -487,7 +477,9 @@ class TestFullLifecycleChain:
         # --- Step 6: "Execute" wave 2 — mark remaining milestones complete ---
         api_impl = next(ms for ms in result.milestones if ms.title == "API Implementation")
         ui_build = next(ms for ms in result.milestones if ms.title == "UI Build")
+        store.update_milestone_status(api_impl.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(api_impl.milestone_id, MilestoneState.COMPLETED)
+        store.update_milestone_status(ui_build.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(ui_build.milestone_id, MilestoneState.COMPLETED)
 
         # --- Step 7: No more tasks to generate ---
@@ -495,10 +487,10 @@ class TestFullLifecycleChain:
         assert wave3 == []
 
         # --- Step 8: Complete the program ---
-        pm.complete_program(program_id)
+        pm.archive_program(program_id)
         final = store.get_program(program_id)
         assert final is not None
-        assert final.status == ProgramState.completed
+        assert final.status == ProgramState.archived
 
         # --- Step 9: Verify terminal state blocks further generation ---
         terminal_contracts = pm.generate_tasks(program_id)
@@ -531,7 +523,6 @@ class TestFullLifecycleChain:
             ],
         )
         program_id = result.program.program_id
-        pm.activate_program(program_id)
 
         # Generate initial tasks — only Implementation is ready
         wave1 = pm.generate_tasks(program_id)
@@ -556,6 +547,7 @@ class TestFullLifecycleChain:
 
         # Now simulate: the fix is done, mark Implementation milestone as completed
         impl_ms = next(ms for ms in result.milestones if ms.title == "Implementation")
+        store.update_milestone_status(impl_ms.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(impl_ms.milestone_id, MilestoneState.COMPLETED)
 
         # Release milestone should now be ready
@@ -565,6 +557,7 @@ class TestFullLifecycleChain:
 
         # Complete Release
         release_ms = next(ms for ms in result.milestones if ms.title == "Release")
+        store.update_milestone_status(release_ms.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(release_ms.milestone_id, MilestoneState.COMPLETED)
 
         # No more tasks
@@ -572,10 +565,10 @@ class TestFullLifecycleChain:
         assert wave3 == []
 
         # Complete program
-        pm.complete_program(program_id)
+        pm.archive_program(program_id)
         final = store.get_program(program_id)
         assert final is not None
-        assert final.status == ProgramState.completed
+        assert final.status == ProgramState.archived
 
     def test_background_work_integrates_with_full_chain(
         self, pm: ProgramManager, store: KernelStore
@@ -596,9 +589,8 @@ class TestFullLifecycleChain:
                 }
             ],
         )
-        pm.activate_program(r1.program.program_id)
 
-        r2 = pm.compile_program_with_structure(
+        r2 = pm.compile_program_with_structure(  # noqa: F841
             goal="Program Beta",
             priority="low",
             team_specs=[
@@ -608,7 +600,6 @@ class TestFullLifecycleChain:
                 }
             ],
         )
-        pm.activate_program(r2.program.program_id)
 
         # Background work should see both ready milestones
         bg_items = pm.select_background_work()
@@ -625,6 +616,7 @@ class TestFullLifecycleChain:
 
         # Complete Alpha Task 1 -> Alpha Task 2 becomes available
         alpha_ms1 = next(ms for ms in r1.milestones if ms.title == "Alpha Task 1")
+        store.update_milestone_status(alpha_ms1.milestone_id, MilestoneState.ACTIVE)
         store.update_milestone_status(alpha_ms1.milestone_id, MilestoneState.COMPLETED)
 
         bg_items2 = pm.select_background_work()
